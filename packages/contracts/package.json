@@ -6,7 +6,7 @@
   "exports": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2023 --strict --skipLibCheck src/index.ts"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "zod": "^4.0.0"

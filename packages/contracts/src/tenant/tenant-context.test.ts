@@ -7,7 +7,7 @@ describe("TenantContextSchema", () => {
     expect(
       TenantContextSchema.safeParse({
         tenantId: "x",
-        userId: "550e8400-e29b-41d4-a716-446655440000",
+        userId: "0190a5c0-7b6d-7f8e-8c9d-0123456789ab",
         permissions: [],
         dataScope: "self",
       }).success,

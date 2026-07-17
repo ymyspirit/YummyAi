@@ -1,3 +1,3 @@
 import { z } from "zod";
 
-export const EntityIdSchema = z.uuid();
+export const EntityIdSchema = z.uuidv7();

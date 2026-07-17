@@ -34,12 +34,16 @@ describe("ProblemDetailsSchema", () => {
 });
 
 describe("common schemas", () => {
-  it("accepts only UUID entity identifiers", () => {
+  it("accepts only UUIDv7 entity identifiers", () => {
     expect(EntityIdSchema.safeParse("not-an-id").success).toBe(false);
+    expect(
+      EntityIdSchema.safeParse("0190a5c0-7b6d-7f8e-8c9d-0123456789ab")
+        .success,
+    ).toBe(true);
     expect(
       EntityIdSchema.safeParse("550e8400-e29b-41d4-a716-446655440000")
         .success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("defaults cursor page size and caps it at 100", () => {
