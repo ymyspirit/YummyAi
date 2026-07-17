@@ -8,6 +8,7 @@ overrides:
 allowBuilds:
   esbuild: true
   msgpackr-extract: false
+  sharp: true
   spawn-sync: false
 
 minimumReleaseAgeExclude:
