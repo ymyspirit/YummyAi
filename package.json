@@ -1,0 +1,20 @@
+{
+  "name": "yummyai-erp",
+  "private": true,
+  "packageManager": "pnpm@11.10.0",
+  "engines": { "node": ">=24.17 <25" },
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:integration": "turbo test:integration",
+    "test:e2e": "turbo test:e2e"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0"
+  }
+}
