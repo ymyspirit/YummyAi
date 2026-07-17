@@ -1,0 +1,12 @@
+{
+  "name": "@yummyai/extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@yummyai/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "jose": "^6.0.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
