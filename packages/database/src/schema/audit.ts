@@ -14,6 +14,7 @@ export const auditEvents = pgTable(
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id"),
+    result: text("result").notNull(),
     traceId: text("trace_id"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
     occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true })
@@ -22,6 +23,7 @@ export const auditEvents = pgTable(
   },
   (table) => [
     check("audit_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+    check("audit_events_result_check", sql`${table.result} in ('success', 'failure', 'denied')`),
     index("audit_events_tenant_occurred_at_idx").on(table.tenantId, table.occurredAt),
     index("audit_events_actor_user_id_idx").on(table.actorUserId),
     index("audit_events_entity_idx").on(table.tenantId, table.entityType, table.entityId),

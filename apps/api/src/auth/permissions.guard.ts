@@ -1,4 +1,10 @@
-import { type CanActivate, type ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
+import {
+  type CanActivate,
+  type ExecutionContext,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { authorize, ForbiddenError, type PermissionValue } from "@yummyai/authz";
 
@@ -7,7 +13,7 @@ import type { AuthenticatedRequest } from "./tenant-context.guard.js";
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(executionContext: ExecutionContext): boolean {
     const required = this.reflector.getAllAndOverride<PermissionValue[]>(REQUIRED_PERMISSIONS, [

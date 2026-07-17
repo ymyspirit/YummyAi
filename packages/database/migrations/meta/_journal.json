@@ -8,6 +8,13 @@
       "when": 1784304000000,
       "tag": "0001_identity_and_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784390400000,
+      "tag": "0002_audit_result",
+      "breakpoints": true
     }
   ]
 }

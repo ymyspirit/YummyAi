@@ -13,6 +13,8 @@
     "@yummyai/authz": "workspace:*",
     "@yummyai/contracts": "workspace:*",
     "@yummyai/database": "workspace:*",
+    "@yummyai/storage": "workspace:*",
+    "drizzle-orm": "^0.44.0",
     "jose": "^6.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0"

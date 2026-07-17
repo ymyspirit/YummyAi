@@ -1,0 +1,2 @@
+export const DATABASE_CONNECTION = Symbol("DATABASE_CONNECTION");
+export const PRIVATE_STORAGE = Symbol("PRIVATE_STORAGE");

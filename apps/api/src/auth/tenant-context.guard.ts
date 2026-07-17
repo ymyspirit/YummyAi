@@ -1,7 +1,8 @@
 import {
-  CanActivate,
+  type CanActivate,
   type ExecutionContext,
   ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -73,8 +74,8 @@ export class DatabaseMembershipContextLoader extends MembershipContextLoader {
 @Injectable()
 export class TenantContextGuard implements CanActivate {
   constructor(
-    private readonly verifier: TokenVerifier,
-    private readonly memberships: MembershipContextLoader,
+    @Inject(TokenVerifier) private readonly verifier: TokenVerifier,
+    @Inject(MembershipContextLoader) private readonly memberships: MembershipContextLoader,
   ) {}
 
   async canActivate(executionContext: ExecutionContext): Promise<boolean> {
