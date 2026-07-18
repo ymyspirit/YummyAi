@@ -2,7 +2,7 @@ import { Boxes } from "lucide-react";
 
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { ProductEditor, type ProductPlanView } from "../../../features/products/product-editor";
-import { getApiHeaders } from "../../../server-api";
+import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -36,10 +36,8 @@ async function loadProductPlan(): Promise<{ plan?: ProductPlanView; error?: stri
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置产品 API。请设置 API_BASE_URL 后重试。" };
   try {
-    const headers = await getApiHeaders();
-    const response = await fetch(`${apiBase.replace(/\/$/, "")}/v1/products/plans`, {
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/products/plans`, {
       cache: "no-store",
-      headers,
     });
     if (!response.ok) throw new Error(`产品计划读取失败 (${response.status})`);
     const plans = (await response.json()) as ProductPlanView[];

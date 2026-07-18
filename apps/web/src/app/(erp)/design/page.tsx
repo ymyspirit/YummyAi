@@ -2,7 +2,7 @@ import { Palette } from "lucide-react";
 
 import { DesignTask, type DesignTaskView } from "../../../features/design/design-task";
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
-import { getApiHeaders } from "../../../server-api";
+import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -36,18 +36,16 @@ async function loadDesignTask(): Promise<{ task?: DesignTaskView; error?: string
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置设计 API。请设置 API_BASE_URL 后重试。" };
   try {
-    const headers = await getApiHeaders();
-    const response = await fetch(`${apiBase.replace(/\/$/, "")}/v1/design/tasks`, {
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/design/tasks`, {
       cache: "no-store",
-      headers,
     });
     if (!response.ok) throw new Error(`设计任务读取失败 (${response.status})`);
     const tasks = (await response.json()) as Omit<DesignTaskView, "versions" | "skuCode">[];
     const task = tasks[0];
     if (!task) return {};
-    const versionsResponse = await fetch(
+    const versionsResponse = await apiFetch(
       `${apiBase.replace(/\/$/, "")}/v1/design/tasks/${task.id}/versions`,
-      { cache: "no-store", headers },
+      { cache: "no-store" },
     );
     if (!versionsResponse.ok) throw new Error(`设计版本读取失败 (${versionsResponse.status})`);
     return {

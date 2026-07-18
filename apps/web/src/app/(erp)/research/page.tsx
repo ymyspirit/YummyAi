@@ -1,7 +1,7 @@
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { DateFilter } from "../../../features/research/date-filter";
 import { ResearchTable, type ResearchItemView } from "../../../features/research/research-table";
-import { getApiHeaders } from "../../../server-api";
+import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -157,9 +157,8 @@ async function loadResearch(
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { items: [], nextCursor: null };
   try {
-    const response = await fetch(`${apiBase.replace(/\/$/, "")}/v1/research-items?${query}`, {
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/research-items?${query}`, {
       cache: "no-store",
-      headers: await getApiHeaders(),
     });
     if (!response.ok) throw new Error(`资料库读取失败 (${response.status})`);
     return (await response.json()) as { items: ResearchItemView[]; nextCursor: string | null };

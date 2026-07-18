@@ -5,7 +5,7 @@ import {
   type OperationsDashboardView,
 } from "../../features/dashboard/operations-dashboard";
 import { ErpSidebar } from "../../features/navigation/erp-sidebar";
-import { getApiHeaders } from "../../server-api";
+import { apiFetch } from "../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -41,13 +41,12 @@ async function loadDashboard(): Promise<{ data?: OperationsDashboardView; error?
   const today = new Date().toISOString().slice(0, 10);
   const from = `${today.slice(0, 8)}01`;
   try {
-    const headers = await getApiHeaders();
     const [metricsResponse, notificationsResponse] = await Promise.all([
-      fetch(
+      apiFetch(
         `${base.replace(/\/$/, "")}/v1/dashboard?from=${from}&to=${today}&timezone=Asia%2FShanghai`,
-        { cache: "no-store", headers },
+        { cache: "no-store" },
       ),
-      fetch(`${base.replace(/\/$/, "")}/v1/notifications?limit=20`, { cache: "no-store", headers }),
+      apiFetch(`${base.replace(/\/$/, "")}/v1/notifications?limit=20`, { cache: "no-store" }),
     ]);
     if (!metricsResponse.ok) throw new Error(`仪表盘读取失败 (${metricsResponse.status})`);
     const metrics = (await metricsResponse.json()) as Omit<

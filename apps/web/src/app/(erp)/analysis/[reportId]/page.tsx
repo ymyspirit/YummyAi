@@ -3,7 +3,7 @@ import { FileSearch2 } from "lucide-react";
 
 import { AnalysisReportView } from "../../../../features/analysis/analysis-report-view";
 import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
-import { getApiHeaders } from "../../../../server-api";
+import { apiFetch } from "../../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -47,10 +47,9 @@ async function loadAnalysis(
   if (!apiBase) return { versions: [], error: "尚未配置分析 API。请设置 API_BASE_URL 后重试。" };
   const base = `${apiBase.replace(/\/$/, "")}/v1/ai/analyses/${encodeURIComponent(reportId)}`;
   try {
-    const headers = await getApiHeaders();
     const [reportResponse, versionsResponse] = await Promise.all([
-      fetch(base, { cache: "no-store", headers }),
-      fetch(`${base}/versions`, { cache: "no-store", headers }),
+      apiFetch(base, { cache: "no-store" }),
+      apiFetch(`${base}/versions`, { cache: "no-store" }),
     ]);
     if (!reportResponse.ok || !versionsResponse.ok)
       throw new Error(`分析报告读取失败 (${reportResponse.status}/${versionsResponse.status})`);

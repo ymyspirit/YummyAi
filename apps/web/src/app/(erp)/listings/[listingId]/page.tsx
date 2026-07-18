@@ -6,7 +6,7 @@ import {
 } from "../../../../features/listings/listing-editor";
 import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import type { ReviewDrawerView } from "../../../../features/reviews/review-drawer";
-import { getApiHeaders } from "../../../../server-api";
+import { apiFetch } from "../../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -47,10 +47,8 @@ async function loadListing(
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置刊登 API。请设置 API_BASE_URL 后重试。" };
   try {
-    const headers = await getApiHeaders();
-    const response = await fetch(`${apiBase.replace(/\/$/, "")}/v1/listings/${id}`, {
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/listings/${id}`, {
       cache: "no-store",
-      headers,
     });
     if (!response.ok) throw new Error(`刊登读取失败 (${response.status})`);
     const payload = (await response.json()) as {

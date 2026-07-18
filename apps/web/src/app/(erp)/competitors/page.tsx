@@ -1,6 +1,6 @@
 import { CompetitorShopLibrary, type CompetitorShopView } from "../../../features/competitors/competitor-shop-library";
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
-import { getApiHeaders } from "../../../server-api";
+import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -37,9 +37,8 @@ async function loadCompetitorShops(): Promise<{ items: CompetitorShopView[]; err
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { items: [] };
   try {
-    const response = await fetch(`${apiBase.replace(/\/$/, "")}/v1/competitor-shops`, {
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/competitor-shops`, {
       cache: "no-store",
-      headers: await getApiHeaders(),
     });
     if (!response.ok) throw new Error(`竞争店铺读取失败 (${response.status})`);
     return (await response.json()) as { items: CompetitorShopView[] };
