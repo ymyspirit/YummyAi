@@ -1,5 +1,24 @@
 export { createEntityId, EntityIdSchema } from "./common/ids.js";
 export {
+  ConditionalVisibilitySchema,
+  CreateSkuInputSchema,
+  CreateSpuInputSchema,
+  CustomizationFieldSchema,
+  CustomizationSchema,
+  MoneySchema,
+  ProductPlanInputSchema,
+  ProductStatusSchema,
+  SupplierCandidateInputSchema,
+  type CreateSkuInput,
+  type CreateSpuInput,
+  type CustomizationDefinition,
+  type CustomizationField,
+  type Money,
+  type ProductPlanInput,
+  type ProductStatus,
+  type SupplierCandidateInput,
+} from "./catalog/product.js";
+export {
   AiTaskTypeSchema,
   AnalysisClaimSchema,
   AnalysisContentSchema,
