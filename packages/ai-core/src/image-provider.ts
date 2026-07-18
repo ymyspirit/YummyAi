@@ -15,6 +15,7 @@ export interface GeneratedImageResult {
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   revisedPrompt?: string;
   providerRequestId?: string;
+  seed?: string;
   costUsd: number;
 }
 

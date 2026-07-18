@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@yummyai/ai-core": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
     "@yummyai/jobs": "workspace:*",
-    "bullmq": "^5.60.0"
+    "bullmq": "^5.60.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   }
 }

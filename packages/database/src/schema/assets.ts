@@ -1,8 +1,11 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   index,
+  integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -26,6 +29,10 @@ export const assetFiles = pgTable(
     mediaType: text("media_type").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     checksumSha256: text("checksum_sha256").notNull(),
+    rightsStatus: text("rights_status").default("unverified").notNull(),
+    rightsMetadata: jsonb("rights_metadata").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    version: integer("version").default(1).notNull(),
+    aiGenerated: boolean("ai_generated").default(false).notNull(),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -36,7 +43,10 @@ export const assetFiles = pgTable(
     check("asset_files_domain_check", sql`${table.assetDomain} in ('research', 'authorized')`),
     check("asset_files_byte_size_check", sql`${table.byteSize} >= 0`),
     check("asset_files_checksum_check", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
+    check("asset_files_rights_status_check", sql`${table.rightsStatus} in ('unverified', 'approved', 'rejected')`),
+    check("asset_files_version_check", sql`${table.version} > 0`),
     uniqueIndex("asset_files_tenant_object_key_unique").on(table.tenantId, table.objectKey),
+    uniqueIndex("asset_files_tenant_id_unique").on(table.tenantId, table.id),
     index("asset_files_tenant_created_at_idx").on(table.tenantId, table.createdAt),
     index("asset_files_owner_user_id_idx").on(table.ownerUserId),
   ],

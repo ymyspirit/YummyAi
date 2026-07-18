@@ -50,6 +50,9 @@ importers:
       '@yummyai/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@yummyai/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@yummyai/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -127,6 +130,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@yummyai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       geist:
         specifier: ^1.7.2
         version: 1.7.2(next@16.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
@@ -161,12 +167,21 @@ importers:
 
   apps/worker:
     dependencies:
+      '@yummyai/ai-core':
+        specifier: workspace:*
+        version: link:../../packages/ai-core
+      '@yummyai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@yummyai/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
       bullmq:
         specifier: ^5.60.0
         version: 5.80.5
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -174,6 +189,9 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(jiti@2.7.0)(jsdom@29.1.1)(tsx@4.23.1)
 
   packages/ai-core:
     dependencies:

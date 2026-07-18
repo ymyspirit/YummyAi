@@ -14,6 +14,7 @@
     "@yummyai/authz": "workspace:*",
     "@yummyai/contracts": "workspace:*",
     "@yummyai/database": "workspace:*",
+    "@yummyai/jobs": "workspace:*",
     "@yummyai/storage": "workspace:*",
     "drizzle-orm": "^0.44.0",
     "jose": "^6.0.0",

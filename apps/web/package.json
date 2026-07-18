@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tanstack/react-table": "^8.21.3",
+    "@yummyai/contracts": "workspace:*",
     "geist": "^1.7.2",
     "lucide-react": "^1.25.0",
     "next": "^16.2.10",
