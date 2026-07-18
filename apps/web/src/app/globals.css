@@ -161,6 +161,8 @@ button, a, label, select { cursor: pointer; }
 /* Competitor shop intelligence */
 .competitor-main {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 18px;
 }
 .competitor-header {
@@ -211,6 +213,8 @@ button, a, label, select { cursor: pointer; }
 }
 .competitor-ledger {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 14px;
 }
 .competitor-record {
