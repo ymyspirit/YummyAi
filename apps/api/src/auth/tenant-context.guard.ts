@@ -4,12 +4,15 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import type { TenantContext } from "@yummyai/contracts";
 import type { DatabaseConnection } from "@yummyai/database";
 
 import { type OidcClaims, TokenVerifier } from "./oidc-jwt.strategy.js";
+import { PUBLIC_ROUTE } from "./public.decorator.js";
 
 export interface AuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -76,9 +79,16 @@ export class TenantContextGuard implements CanActivate {
   constructor(
     @Inject(TokenVerifier) private readonly verifier: TokenVerifier,
     @Inject(MembershipContextLoader) private readonly memberships: MembershipContextLoader,
+    @Optional() @Inject(Reflector) private readonly reflector?: Reflector,
   ) {}
 
   async canActivate(executionContext: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector?.getAllAndOverride<boolean>(PUBLIC_ROUTE, [
+      executionContext.getHandler(),
+      executionContext.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const request = executionContext.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = bearerToken(request.headers.authorization);
 

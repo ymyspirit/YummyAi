@@ -1,5 +1,10 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { CaptureDraftSchema, createEntityId, type CaptureDraft, type TenantContext } from "@yummyai/contracts";
+import {
+  CaptureDraftSchema,
+  createEntityId,
+  type CaptureDraft,
+  type TenantContext,
+} from "@yummyai/contracts";
 import {
   captureMedia,
   captureSnapshots,
@@ -19,7 +24,13 @@ export interface CaptureReceipt {
 }
 
 export interface CaptureMediaEnqueuer {
-  enqueue(input: { mediaId: string; snapshotId: string; tenantId: string; sourceUrl: string; requestedBy: string }): Promise<void>;
+  enqueue(input: {
+    mediaId: string;
+    snapshotId: string;
+    tenantId: string;
+    sourceUrl: string;
+    requestedBy: string;
+  }): Promise<void>;
 }
 
 @Injectable()
@@ -37,7 +48,12 @@ export class CaptureService {
       const [existing] = await tx
         .select()
         .from(researchItems)
-        .where(and(eq(researchItems.tenantId, context.tenantId), eq(researchItems.normalizedUrl, normalizedUrl)))
+        .where(
+          and(
+            eq(researchItems.tenantId, context.tenantId),
+            eq(researchItems.normalizedUrl, normalizedUrl),
+          ),
+        )
         .limit(1);
       const itemId = existing?.id ?? createEntityId();
       if (!existing) {
@@ -54,11 +70,14 @@ export class CaptureService {
           lastCapturedAt: new Date(draft.capturedAt),
         });
       } else {
-        await tx.update(researchItems).set({
-          latestTitle: draft.title,
-          latestStatus: "normalizing",
-          lastCapturedAt: new Date(draft.capturedAt),
-        }).where(eq(researchItems.id, itemId));
+        await tx
+          .update(researchItems)
+          .set({
+            latestTitle: draft.title,
+            latestStatus: "normalizing",
+            lastCapturedAt: new Date(draft.capturedAt),
+          })
+          .where(eq(researchItems.id, itemId));
       }
 
       const snapshotId = createEntityId();
@@ -102,17 +121,27 @@ export class CaptureService {
       } catch (error) {
         failed += 1;
         await withTenant(this.database.db, context, (tx) =>
-          tx.update(captureMedia).set({
-            status: "failed",
-            failureReason: error instanceof Error ? error.message.slice(0, 500) : "Media enqueue failed",
-          }).where(eq(captureMedia.id, media.id)),
+          tx
+            .update(captureMedia)
+            .set({
+              status: "failed",
+              failureReason:
+                error instanceof Error ? error.message.slice(0, 500) : "Media enqueue failed",
+            })
+            .where(eq(captureMedia.id, media.id)),
         );
       }
     }
-    const status = failed > 0 ? "partial" : "complete";
+    const status = failed > 0 || draft.captureStatus !== "complete" ? "partial" : "complete";
     await withTenant(this.database.db, context, async (tx) => {
-      await tx.update(captureSnapshots).set({ status }).where(eq(captureSnapshots.id, created.snapshotId));
-      await tx.update(researchItems).set({ latestStatus: status }).where(eq(researchItems.id, created.itemId));
+      await tx
+        .update(captureSnapshots)
+        .set({ status })
+        .where(eq(captureSnapshots.id, created.snapshotId));
+      await tx
+        .update(researchItems)
+        .set({ latestStatus: status })
+        .where(eq(researchItems.id, created.itemId));
     });
     await this.audit.record(context, {
       action: "capture.snapshot.create",
