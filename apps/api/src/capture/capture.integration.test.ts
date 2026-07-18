@@ -57,6 +57,22 @@ describe("capture ingestion and research library", () => {
       draft({
         sourceUrl: "https://www.amazon.com/dp/B000000001?ref=tracking#details",
         title: "Updated title",
+        shop: {
+          platform: "amazon",
+          externalId: "sample-studio",
+          name: "Sample Studio",
+          sourceUrl: "https://www.amazon.com/sp?seller=sample-studio",
+          location: null,
+          ownerName: null,
+          rating: 4.8,
+          reviewCount: 320,
+          salesCount: null,
+          activeListingCount: null,
+          admirerCount: null,
+          openedYear: null,
+          yearsOnPlatform: null,
+          badges: [],
+        },
         capturedAt: new Date(Date.now() + 1_000).toISOString(),
       }),
     );
@@ -69,6 +85,9 @@ describe("capture ingestion and research library", () => {
       "Updated title",
       "Personalized Sample Product",
     ]);
+    expect(timeline[0]?.draft.shop?.name).toBe("Sample Studio");
+    const library = await repository.list(context, { limit: 100 });
+    expect(library.items.find((item) => item.id === first.researchItemId)?.shopName).toBe("Sample Studio");
   });
 
   it("records partial success when one included media job fails", async () => {

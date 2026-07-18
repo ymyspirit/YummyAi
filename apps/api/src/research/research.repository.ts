@@ -1,6 +1,6 @@
 import type { TenantContext } from "@yummyai/contracts";
 import { captureSnapshots, researchItems, type DatabaseConnection, withTenant } from "@yummyai/database";
-import { and, desc, eq, gte, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, lte, sql, type SQL } from "drizzle-orm";
 import { Inject, Injectable } from "@nestjs/common";
 
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
@@ -45,7 +45,25 @@ export class ResearchRepository {
     );
     const hasNext = rows.length > limit;
     const items = hasNext ? rows.slice(0, limit) : rows;
-    return { items, nextCursor: hasNext ? items.at(-1)?.lastCapturedAt.toISOString() : null };
+    const latestSnapshots = items.length
+      ? await withTenant(this.database.db, context, (tx) =>
+          tx
+            .selectDistinctOn([captureSnapshots.researchItemId], {
+              draft: captureSnapshots.draft,
+              researchItemId: captureSnapshots.researchItemId,
+            })
+            .from(captureSnapshots)
+            .where(inArray(captureSnapshots.researchItemId, items.map((item) => item.id)))
+            .orderBy(captureSnapshots.researchItemId, desc(captureSnapshots.capturedAt)),
+        )
+      : [];
+    const shopNames = new Map(
+      latestSnapshots.map((snapshot) => [snapshot.researchItemId, snapshot.draft.shop?.name ?? null]),
+    );
+    return {
+      items: items.map((item) => ({ ...item, shopName: shopNames.get(item.id) ?? null })),
+      nextCursor: hasNext ? items.at(-1)?.lastCapturedAt.toISOString() : null,
+    };
   }
 
   async timeline(context: TenantContext, researchItemId: string) {

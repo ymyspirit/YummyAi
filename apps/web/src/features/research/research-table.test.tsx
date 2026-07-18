@@ -14,6 +14,7 @@ describe("ResearchTable", () => {
           marketplace: "amazon.com",
           normalizedUrl: "https://amazon.com/dp/B000000001",
           latestTitle: "Personalized Sample Product",
+          shopName: "Sample Studio",
           latestStatus: "partial",
           lastCapturedAt: "2026-07-18T00:00:00.000Z",
           snapshots: [
@@ -26,6 +27,7 @@ describe("ResearchTable", () => {
     );
 
     expect(html).toContain("Personalized Sample Product");
+    expect(html).toContain("Sample Studio");
     expect(html).toContain("查看详情");
     expect(html).not.toContain("Updated product");
     expect(html).not.toContain("Original product");

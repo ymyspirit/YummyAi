@@ -7,7 +7,7 @@ import {
   type ColumnDef,
   type Row,
 } from "@tanstack/react-table";
-import { ChevronDown, ExternalLink, LoaderCircle, PackageSearch } from "lucide-react";
+import { ChevronDown, ExternalLink, LoaderCircle, PackageSearch, Store } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 
 import {
@@ -23,6 +23,7 @@ export interface ResearchItemView {
   marketplace: string;
   normalizedUrl: string;
   platform: "amazon" | "etsy";
+  shopName?: string | null;
   snapshots?: ResearchSnapshotView[];
 }
 
@@ -44,6 +45,16 @@ export function ResearchTable({ items, nextCursor }: { items: ResearchItemView[]
             <ExternalLink size={10} aria-hidden="true" />
           </a>
         </div>
+      ),
+    },
+    {
+      accessorKey: "shopName",
+      header: "店铺名",
+      cell: ({ row }) => (
+        <span className={row.original.shopName ? "shop-name-cell" : "shop-name-cell is-empty"}>
+          <Store size={13} aria-hidden="true" />
+          <span>{row.original.shopName ?? "未识别店铺"}</span>
+        </span>
       ),
     },
     {
@@ -80,6 +91,7 @@ export function ResearchTable({ items, nextCursor }: { items: ResearchItemView[]
           <colgroup>
             <col className="column-platform" />
             <col className="column-item" />
+            <col className="column-shop" />
             <col className="column-marketplace" />
             <col className="column-captured" />
             <col className="column-status" />
@@ -159,7 +171,7 @@ function ResearchTableRow({ row }: { row: Row<ResearchItemView> }) {
       </tr>
       {open ? (
         <tr className="research-detail-row" id={detailId}>
-          <td colSpan={6}>
+          <td colSpan={7}>
             <ResearchProductDossier
               item={row.original}
               snapshots={snapshots}
