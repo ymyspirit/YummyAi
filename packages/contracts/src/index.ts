@@ -74,3 +74,17 @@ export {
   TenantContextSchema,
   type TenantContext,
 } from "./tenant/tenant-context.js";
+export {
+  ExportFileSchema,
+  ExportManifestSchema,
+  ReviewDecisionInputSchema,
+  ReviewRecordSchema,
+  ReviewStatusSchema,
+  SubmitReviewInputSchema,
+  type ExportFile,
+  type ExportManifest,
+  type ReviewDecisionInput,
+  type ReviewRecord,
+  type ReviewStatus,
+  type SubmitReviewInput,
+} from "./review/review.js";

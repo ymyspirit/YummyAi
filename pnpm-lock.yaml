@@ -17,6 +17,9 @@ importers:
       eslint:
         specifier: ^9.0.0
         version: 9.39.5(jiti@2.7.0)
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       prettier:
         specifier: ^3.6.0
         version: 3.9.5
@@ -185,6 +188,9 @@ importers:
       bullmq:
         specifier: ^5.60.0
         version: 5.80.5
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       zod:
         specifier: ^4.0.0
         version: 4.4.3

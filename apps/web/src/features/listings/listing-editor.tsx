@@ -1,10 +1,11 @@
 "use client";
 
 import type { ListingDraft, ListingValidation } from "@yummyai/platform-rules";
-import { Archive, BadgeCheck, Boxes, CircleDot, FileClock, Image, ListTree, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { Archive, BadgeCheck, Boxes, CircleDot, FileClock, Image, ListTree, Save, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { ValidationPanel } from "./validation-panel";
+import { ReviewDrawer, type ReviewDrawerView } from "../reviews/review-drawer";
 
 export interface ListingEditorView {
   id: string; platform: "amazon" | "etsy"; locale: string; status: "draft" | "in_review" | "approved" | "archived";
@@ -16,17 +17,18 @@ export interface ListingEditorView {
 const tabs = ["Content", "Media", "Variants", "Attributes", "Compliance", "History"] as const;
 type Tab = typeof tabs[number];
 
-export function ListingEditor({ listing }: { listing: ListingEditorView }) {
+export function ListingEditor({ listing, review }: { listing: ListingEditorView; review?: ReviewDrawerView }) {
   const [tab, setTab] = useState<Tab>("Content");
   const [title, setTitle] = useState(listing.content.title);
   const [dirty, setDirty] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   return (
     <div className="listing-workbench">
       <header className="listing-header">
         <div><p className="kicker">{listing.platform.toUpperCase()} / LISTING CONTROL</p><h1>{listing.spuCode}</h1><p>平台内容、媒体、变体映射与合规校验固定在同一版本中。</p></div>
         <div className="channel-stamp"><strong>{listing.platform === "amazon" ? "AMZ" : "ETSY"}</strong><span>{listing.locale}</span><b>{statusLabel(listing.status)}</b></div>
       </header>
-      <div className="listing-toolbar"><div><span className="mono">VERSION {String(listing.versionNumber).padStart(2, "0")}</span><b>{listing.source === "ai" ? <Sparkles size={13} /> : <CircleDot size={13} />}{listing.source === "ai" ? "AI 草稿" : "人工草稿"}</b>{dirty && <em>● 未保存</em>}</div><button type="button"><Save size={16} />保存为新版本</button></div>
+      <div className="listing-toolbar"><div><span className="mono">VERSION {String(listing.versionNumber).padStart(2, "0")}</span><b>{listing.source === "ai" ? <Sparkles size={13} /> : <CircleDot size={13} />}{listing.source === "ai" ? "AI 草稿" : "人工草稿"}</b>{dirty && <em>● 未保存</em>}</div><div className="listing-toolbar-actions"><button type="button"><Save size={16} />保存为新版本</button>{review && <button type="button" className="review-open" onClick={() => setReviewOpen(true)}><Send size={16} />查看审核</button>}</div></div>
       <nav className="listing-tabs" aria-label="刊登编辑区">{tabs.map((item) => <button key={item} type="button" aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>{tabIcon(item)}{item}</button>)}</nav>
       <div className="listing-layout">
         <main className="listing-canvas">
@@ -39,6 +41,7 @@ export function ListingEditor({ listing }: { listing: ListingEditorView }) {
         </main>
         <ValidationPanel validation={listing.validation} ruleVersion={listing.ruleVersion} />
       </div>
+      {reviewOpen && review && <div className="review-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}><ReviewDrawer review={review} onClose={() => setReviewOpen(false)} /></div>}
     </div>
   );
 }

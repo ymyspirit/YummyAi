@@ -1,11 +1,15 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { listingVersions, listings, type DatabaseConnection, withTenant } from "@yummyai/database";
 import { amazonRules, etsyRules, validateListing, type ListingDraft, type ListingPlatform, type ListingValidation } from "@yummyai/platform-rules";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { DATABASE_CONNECTION, LISTING_REPOSITORY } from "../platform.tokens.js";
+import { DATABASE_CONNECTION, LISTING_REPOSITORY, REVIEW_APPROVAL_INVALIDATOR } from "../platform.tokens.js";
+
+export interface ListingApprovalInvalidator {
+  invalidateListingApprovals(context: TenantContext, listingId: string, replacingVersionId: string): Promise<void>;
+}
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
 export const ListingDraftSchema = z.object({
@@ -39,7 +43,10 @@ export interface ListingRepository {
 
 @Injectable()
 export class ListingService {
-  constructor(@Inject(LISTING_REPOSITORY) private readonly repository: ListingRepository) {}
+  constructor(
+    @Inject(LISTING_REPOSITORY) private readonly repository: ListingRepository,
+    @Optional() @Inject(REVIEW_APPROVAL_INVALIDATOR) private readonly approvalInvalidator?: ListingApprovalInvalidator,
+  ) {}
 
   async create(context: TenantContext, input: { spuId: string; platform: ListingPlatform; locale: string; content: ListingDraft }) {
     const content = ListingDraftSchema.parse(input.content) as ListingDraft;
@@ -66,7 +73,9 @@ export class ListingService {
     const content = ListingDraftSchema.parse(rawContent) as ListingDraft;
     assertChannel(listing.platform, listing.locale, content);
     const rules = rulesFor(listing.platform);
-    return this.repository.createVersion(context, listingId, { content, validation: validateListing(rules, content), ruleVersion: rules.version, source });
+    const version = await this.repository.createVersion(context, listingId, { content, validation: validateListing(rules, content), ruleVersion: rules.version, source });
+    await this.approvalInvalidator?.invalidateListingApprovals(context, listingId, version.id);
+    return version;
   }
 
   applyAiSuggestion(context: TenantContext, listingId: string, content: ListingDraft) {

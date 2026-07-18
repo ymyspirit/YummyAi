@@ -1,17 +1,18 @@
 import { Archive, Boxes, FileText, Palette, ScanSearch } from "lucide-react";
 
 import { ListingEditor, type ListingEditorView } from "../../../../features/listings/listing-editor";
+import type { ReviewDrawerView } from "../../../../features/reviews/review-drawer";
 
 export const dynamic = "force-dynamic";
 
 export default async function ListingPage({ params }: { params: Promise<{ listingId: string }> }) {
   const { listingId } = await params;
   const result = await loadListing(listingId);
-  return <div className="research-shell listing-shell"><aside className="side-rail"><div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>LISTING OPS</span></div></div><nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a href="/products"><Boxes size={16} />产品开发</a><a href="/design"><Palette size={16} />设计校样</a><a className="active" href={`/listings/${listingId}`}><FileText size={16} />刊登控制台</a></nav><p className="rail-note">字段来源、平台规则、变体映射和历史版本一起锁定，审批不会被 AI 建议覆盖。</p></aside><main className="research-main listing-main">{result.listing ? <ListingEditor listing={result.listing} /> : <section className="analysis-error" role="alert"><FileText size={28} /><h1>未找到刊登</h1><p>{result.error ?? "请先为 SPU 创建平台刊登。"}</p><a href="/products">返回产品开发</a></section>}</main></div>;
+  return <div className="research-shell listing-shell"><aside className="side-rail"><div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>LISTING OPS</span></div></div><nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a href="/products"><Boxes size={16} />产品开发</a><a href="/design"><Palette size={16} />设计校样</a><a className="active" href={`/listings/${listingId}`}><FileText size={16} />刊登控制台</a></nav><p className="rail-note">字段来源、平台规则、变体映射和历史版本一起锁定，审批不会被 AI 建议覆盖。</p></aside><main className="research-main listing-main">{result.listing ? <ListingEditor listing={result.listing} review={result.review} /> : <section className="analysis-error" role="alert"><FileText size={28} /><h1>未找到刊登</h1><p>{result.error ?? "请先为 SPU 创建平台刊登。"}</p><a href="/products">返回产品开发</a></section>}</main></div>;
 }
 
-async function loadListing(id: string): Promise<{ listing?: ListingEditorView; error?: string }> {
-  if (process.env.LISTING_DEMO_MODE === "1") return { listing: demoListing(id) };
+async function loadListing(id: string): Promise<{ listing?: ListingEditorView; review?: ReviewDrawerView; error?: string }> {
+  if (process.env.LISTING_DEMO_MODE === "1") { const listing = demoListing(id); return { listing, review: demoReview(listing) }; }
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置刊登 API。请设置 API_BASE_URL 后重试。" };
   const headers: Record<string, string> = process.env.API_ACCESS_TOKEN ? { authorization: `Bearer ${process.env.API_ACCESS_TOKEN}` } : {};
@@ -23,6 +24,10 @@ async function loadListing(id: string): Promise<{ listing?: ListingEditorView; e
   } catch (error) {
     return { error: error instanceof Error ? error.message : "刊登读取失败" };
   }
+}
+
+function demoReview(listing: ListingEditorView): ReviewDrawerView {
+  return { id: "0198fbef-4a10-7000-8000-000000000710", listingVersion: listing.versionNumber, listingVersionId: "0198fbef-4a10-7000-8000-000000000704", platform: listing.platform, locale: listing.locale, status: "pending", submittedBy: "Lin Q.", submittedAt: "2026-07-18T04:10:00.000Z", assets: listing.content.mediaAssetIds.map((_id, index) => ({ id: `0198fbef-4a10-7000-8000-0000000007${20 + index}`, fileName: index === 0 ? "mug-main-hero.png" : `mug-media-${index + 1}.png`, version: index === 0 ? 3 : 1, authorized: true, rightsApproved: true })), blockers: listing.validation.blockers.length, warnings: listing.validation.warnings.length };
 }
 
 function demoListing(id: string): ListingEditorView {
