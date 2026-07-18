@@ -5,15 +5,22 @@ import type {
   EtsyCaptureDraft,
 } from "@yummyai/contracts";
 
-import { numberFromText, parsePrice, PublicPageReader, type MarketplaceParser } from "./parser.js";
+import {
+  numberFromText,
+  parsePrice,
+  PublicPageReader,
+  type MarketplaceParser,
+  type ParserOptions,
+} from "./parser.js";
 
 export const etsyParser: MarketplaceParser = {
   supports(url) {
     return /(^|\.)etsy\.com$/i.test(url.hostname) && /^\/listing\/\d+/i.test(url.pathname);
   },
 
-  parse(document, url): EtsyCaptureDraft {
+  parse(document, url, options: ParserOptions = {}): EtsyCaptureDraft {
     const reader = new PublicPageReader(document);
+    const includeReviews = options.includeReviews ?? true;
     const externalId =
       url.pathname.match(/^\/listing\/(\d+)/i)?.[1] ??
       reader.attribute("externalId", ['input[name="listing_id"]'], "value") ??
@@ -43,10 +50,12 @@ export const etsyParser: MarketplaceParser = {
       "personalization",
       "[data-personalization-wrapper]",
     );
-    const reviews = reader.contentBlocks("review", [
-      '#reviews [data-review-region="review"]',
-      "[data-review-text]",
-    ]);
+    const reviews = includeReviews
+      ? reader.contentBlocks("review", [
+          '#reviews [data-review-region="review"]',
+          "[data-review-text]",
+        ])
+      : [];
     const bullets = reader.texts("bullets", [
       "#product_details ul.show-icons > li",
       '#product_details [data-id="highlights"] li',
@@ -60,8 +69,8 @@ export const etsyParser: MarketplaceParser = {
     const favoriteCount = extractFavoriteCount(document);
     if (!listingPublishedAt) reader.missing("listingPublishedAt");
     if (favoriteCount === null) reader.missing("favoriteCount");
-    const capturedReviews = extractEtsyReviews(document);
-    const reviewSummary = extractEtsyReviewSummary(document);
+    const capturedReviews = includeReviews ? extractEtsyReviews(document) : [];
+    const reviewSummary = includeReviews ? extractEtsyReviewSummary(document) : null;
 
     return reader.build({
       platform: "etsy",

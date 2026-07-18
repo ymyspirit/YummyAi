@@ -1,6 +1,12 @@
 import type { AmazonCaptureDraft } from "@yummyai/contracts";
 
-import { numberFromText, parsePrice, PublicPageReader, type MarketplaceParser } from "./parser.js";
+import {
+  numberFromText,
+  parsePrice,
+  PublicPageReader,
+  type MarketplaceParser,
+  type ParserOptions,
+} from "./parser.js";
 
 export const amazonParser: MarketplaceParser = {
   supports(url) {
@@ -10,8 +16,9 @@ export const amazonParser: MarketplaceParser = {
     );
   },
 
-  parse(document, url): AmazonCaptureDraft {
+  parse(document, url, options: ParserOptions = {}): AmazonCaptureDraft {
     const reader = new PublicPageReader(document);
+    const includeReviews = options.includeReviews ?? true;
     const externalId =
       reader.attribute("externalId", ["#ASIN", 'input[name="ASIN"]'], "value") ??
       url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1] ??
@@ -32,10 +39,21 @@ export const amazonParser: MarketplaceParser = {
       ".a-carousel img",
     ]);
     const aplus = reader.contentBlock("aplus", "#aplus");
-    const reviews = reader.contentBlocks("review", [
-      '#cm-cr-dp-review-list [data-hook="review"]',
-      '[data-hook="review-collapsed"]',
-    ]);
+    const reviews = includeReviews
+      ? reader.contentBlocks("review", [
+          '#cm-cr-dp-review-list [data-hook="review"]',
+          '[data-hook="review-collapsed"]',
+        ])
+      : [];
+    const rating = includeReviews
+      ? numberFromText(
+          reader.attribute("rating", ["#acrPopover"], "title") ??
+            reader.text("rating", ["#acrPopover .a-icon-alt"]),
+        )
+      : null;
+    const reviewCount = includeReviews
+      ? numberFromText(reader.text("reviewCount", ["#acrCustomerReviewText"]))
+      : null;
     const shippingText = reader.text("shipping", [
       "#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE",
       "#deliveryBlockMessage",
@@ -58,11 +76,8 @@ export const amazonParser: MarketplaceParser = {
       title,
       domain: "research",
       price: parsePrice(priceRaw, currency),
-      rating: numberFromText(
-        reader.attribute("rating", ["#acrPopover"], "title") ??
-          reader.text("rating", ["#acrPopover .a-icon-alt"]),
-      ),
-      reviewCount: numberFromText(reader.text("reviewCount", ["#acrCustomerReviewText"])),
+      rating,
+      reviewCount,
       taxonomy: [
         ...document.querySelectorAll<HTMLAnchorElement>("#wayfinding-breadcrumbs_feature_div a"),
       ]
@@ -109,7 +124,7 @@ export const amazonParser: MarketplaceParser = {
       reviews: [],
       reviewCollection: {
         collectedCount: 0,
-        reportedTotal: numberFromText(reader.text("reviewCount", ["#acrCustomerReviewText"])),
+        reportedTotal: reviewCount,
         pageCount: 0,
         status: "visible",
         updatedAt: new Date().toISOString(),

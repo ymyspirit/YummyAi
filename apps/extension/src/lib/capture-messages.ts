@@ -40,7 +40,7 @@ export function capturePublicPage(
       };
     }
     const parsedDraft = CaptureDraftSchema.parse({
-      ...parserFor(url, document).parse(document, url),
+      ...parserFor(url, document).parse(document, url, options),
       extensionVersion,
     });
     const draft =

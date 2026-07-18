@@ -5,7 +5,11 @@ import { etsyParser } from "./etsy.js";
 
 export interface MarketplaceParser {
   supports(url: URL, document: Document): boolean;
-  parse(document: Document, url: URL): CaptureDraft;
+  parse(document: Document, url: URL, options?: ParserOptions): CaptureDraft;
+}
+
+export interface ParserOptions {
+  includeReviews?: boolean;
 }
 
 export class UnsupportedMarketplacePageError extends Error {
