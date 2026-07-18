@@ -57,6 +57,13 @@
       "when": 1784908800000,
       "tag": "0008_listings",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784995200000,
+      "tag": "0009_operations",
+      "breakpoints": true
     }
   ]
 }

@@ -5,4 +5,5 @@ export * from "./capture.js";
 export * from "./catalog.js";
 export * from "./design.js";
 export * from "./listing.js";
+export * from "./operations.js";
 export * from "./identity.js";
