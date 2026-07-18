@@ -44,6 +44,18 @@ test("P0 pages expose headings and keyboard focus", async ({ page }) => {
   expect(await page.locator("h1").count()).toBe(1);
 });
 
+test("primary navigation stays complete across ERP pages", async ({ page }) => {
+  await page.goto("/");
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  const labels = ["运营总览", "研究资料库", "产品开发", "设计校样", "刊登控制台"];
+
+  for (const label of labels.slice(1)) {
+    await expect(navigation.getByRole("link")).toHaveCount(5);
+    await navigation.getByRole("link", { name: label }).click();
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(5);
+  }
+});
+
 async function buildAndVerifyExport() {
   const bytes = new TextEncoder().encode("authorized asset"); const id = createEntityId(); const sha256 = createHash("sha256").update(bytes).digest("hex");
   const manifest = ExportManifestSchema.parse({ exportId: id, tenantId: id, platform: "amazon", listingId: id, listingVersionId: id, ruleVersion: "amazon-us-2026-07", files: [{ path: "media/main.png", sha256, assetId: id, assetVersion: 1 }], createdBy: id, createdAt: "2026-07-18T04:00:00.000Z" });

@@ -1,12 +1,13 @@
-import { Archive, Boxes, FileText, Gauge, Palette, ScanSearch } from "lucide-react";
+import { Gauge } from "lucide-react";
 
 import { OperationsDashboard, type OperationsDashboardView } from "../../features/dashboard/operations-dashboard";
+import { ErpSidebar } from "../../features/navigation/erp-sidebar";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const result = await loadDashboard();
-  return <div className="research-shell ops-shell"><aside className="side-rail"><div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>OPERATIONS</span></div></div><nav className="rail-nav analysis-nav" aria-label="主导航"><a className="active" href="/"><Gauge size={16} />运营总览</a><a href="/research"><Archive size={16} />研究资料库</a><a href="/products"><Boxes size={16} />产品开发</a><a href="/design"><Palette size={16} />设计校样</a><a href="/listings/demo"><FileText size={16} />刊登控制台</a></nav><p className="rail-note">当前阶段仅跟踪抓取、AI、产品、设计、刊登与审核。订单和销售将在交易能力上线后启用。</p></aside><main className="research-main ops-main">{result.data ? <OperationsDashboard data={result.data} /> : <section className="analysis-error" role="alert"><Gauge size={28} /><h1>运营数据暂不可用</h1><p>{result.error ?? "请配置仪表盘 API 后重试。"}</p><a href="/research">前往研究资料库</a></section>}</main></div>;
+  return <div className="research-shell ops-shell"><ErpSidebar active="dashboard" contextLabel="OPERATIONS" note="当前阶段仅跟踪抓取、AI、产品、设计、刊登与审核。订单和销售将在交易能力上线后启用。" /><main className="research-main ops-main">{result.data ? <OperationsDashboard data={result.data} /> : <section className="analysis-error" role="alert"><Gauge size={28} /><h1>运营数据暂不可用</h1><p>{result.error ?? "请配置仪表盘 API 后重试。"}</p><a href="/research">前往研究资料库</a></section>}</main></div>;
 }
 
 async function loadDashboard(): Promise<{ data?: OperationsDashboardView; error?: string }> {

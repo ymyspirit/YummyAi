@@ -1,7 +1,8 @@
 import type { AnalysisReport } from "@yummyai/contracts";
-import { Archive, FileSearch2, ScanSearch } from "lucide-react";
+import { FileSearch2 } from "lucide-react";
 
 import { AnalysisReportView } from "../../../../features/analysis/analysis-report-view";
+import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +11,7 @@ export default async function AnalysisReportPage({ params }: { params: Promise<{
   const result = await loadAnalysis(reportId);
   return (
     <div className="research-shell analysis-shell">
-      <aside className="side-rail">
-        <div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>EVIDENCE ERP</span></div></div>
-        <nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a className="active" href={`/analysis/${reportId}`}><FileSearch2 size={16} />分析报告</a></nav>
-        <p className="rail-note">每条事实保留快照和字段路径；推断与建议单独标记，方便人工审阅。</p>
-      </aside>
+      <ErpSidebar active="research" contextLabel="EVIDENCE ERP" note="每条事实保留快照和字段路径；推断与建议单独标记，方便人工审阅。" />
       <main className="research-main analysis-main">
         {result.error && <section className="analysis-error" role="alert"><FileSearch2 size={28} /><h1>报告暂不可用</h1><p>{result.error}</p><a href="/research">返回研究资料库</a></section>}
         {result.report && <AnalysisReportView report={result.report} versions={result.versions} />}

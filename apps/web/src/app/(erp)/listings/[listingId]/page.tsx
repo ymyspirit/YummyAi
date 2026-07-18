@@ -1,6 +1,7 @@
-import { Archive, Boxes, FileText, Palette, ScanSearch } from "lucide-react";
+import { FileText } from "lucide-react";
 
 import { ListingEditor, type ListingEditorView } from "../../../../features/listings/listing-editor";
+import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import type { ReviewDrawerView } from "../../../../features/reviews/review-drawer";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function ListingPage({ params }: { params: Promise<{ listingId: string }> }) {
   const { listingId } = await params;
   const result = await loadListing(listingId);
-  return <div className="research-shell listing-shell"><aside className="side-rail"><div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>LISTING OPS</span></div></div><nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a href="/products"><Boxes size={16} />产品开发</a><a href="/design"><Palette size={16} />设计校样</a><a className="active" href={`/listings/${listingId}`}><FileText size={16} />刊登控制台</a></nav><p className="rail-note">字段来源、平台规则、变体映射和历史版本一起锁定，审批不会被 AI 建议覆盖。</p></aside><main className="research-main listing-main">{result.listing ? <ListingEditor listing={result.listing} review={result.review} /> : <section className="analysis-error" role="alert"><FileText size={28} /><h1>未找到刊登</h1><p>{result.error ?? "请先为 SPU 创建平台刊登。"}</p><a href="/products">返回产品开发</a></section>}</main></div>;
+  return <div className="research-shell listing-shell"><ErpSidebar active="listings" contextLabel="LISTING OPS" listingHref={`/listings/${listingId}`} note="字段来源、平台规则、变体映射和历史版本一起锁定，审批不会被 AI 建议覆盖。" /><main className="research-main listing-main">{result.listing ? <ListingEditor listing={result.listing} review={result.review} /> : <section className="analysis-error" role="alert"><FileText size={28} /><h1>未找到刊登</h1><p>{result.error ?? "请先为 SPU 创建平台刊登。"}</p><a href="/products">返回产品开发</a></section>}</main></div>;
 }
 
 async function loadListing(id: string): Promise<{ listing?: ListingEditorView; review?: ReviewDrawerView; error?: string }> {

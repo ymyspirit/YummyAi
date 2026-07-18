@@ -1,6 +1,7 @@
-import { Archive, Boxes, Palette, ScanSearch } from "lucide-react";
+import { Palette } from "lucide-react";
 
 import { DesignTask, type DesignTaskView } from "../../../features/design/design-task";
+import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 
 export const dynamic = "force-dynamic";
 
@@ -8,11 +9,7 @@ export default async function DesignPage() {
   const result = await loadDesignTask();
   return (
     <div className="research-shell design-shell">
-      <aside className="side-rail">
-        <div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>DESIGN OPS</span></div></div>
-        <nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a href="/products"><Boxes size={16} />产品开发</a><a className="active" href="/design"><Palette size={16} />设计校样</a></nav>
-        <p className="rail-note">每个校样版本固定文件校验值、权利来源和评审结论；生产访问只使用授权域签名链接。</p>
-      </aside>
+      <ErpSidebar active="design" contextLabel="DESIGN OPS" note="每个校样版本固定文件校验值、权利来源和评审结论；生产访问只使用授权域签名链接。" />
       <main className="research-main design-main">
         {result.task ? <DesignTask task={result.task} /> : <section className="analysis-error" role="alert"><Palette size={28} /><h1>暂无设计任务</h1><p>{result.error ?? "为已创建的 SKU 建立第一个设计任务。"}</p><a href="/products">返回产品开发</a></section>}
       </main>

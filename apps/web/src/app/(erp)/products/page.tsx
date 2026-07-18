@@ -1,5 +1,6 @@
-import { Archive, Boxes, ScanSearch } from "lucide-react";
+import { Boxes } from "lucide-react";
 
+import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { ProductEditor, type ProductPlanView } from "../../../features/products/product-editor";
 
 export const dynamic = "force-dynamic";
@@ -8,11 +9,7 @@ export default async function ProductsPage() {
   const result = await loadProductPlan();
   return (
     <div className="research-shell product-shell">
-      <aside className="side-rail">
-        <div className="rail-brand"><span className="rail-mark"><ScanSearch size={20} /></span><div><strong>YummyAI</strong><span>PRODUCT ERP</span></div></div>
-        <nav className="rail-nav analysis-nav" aria-label="主导航"><a href="/research"><Archive size={16} />研究资料库</a><a className="active" href="/products"><Boxes size={16} />产品开发</a></nav>
-        <p className="rail-note">证据审批、产品状态、定制 Schema、成本与供应商候选在同一开发档案中留痕。</p>
-      </aside>
+      <ErpSidebar active="products" contextLabel="PRODUCT ERP" note="证据审批、产品状态、定制 Schema、成本与供应商候选在同一开发档案中留痕。" />
       <main className="research-main product-main">
         {result.plan ? <ProductEditor initialPlan={result.plan} /> : <section className="analysis-error" role="alert"><Boxes size={28} /><h1>暂无产品计划</h1><p>{result.error ?? "从已审批的分析报告创建第一个产品计划。"}</p><a href="/research">返回研究资料库</a></section>}
       </main>
