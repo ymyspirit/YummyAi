@@ -10,10 +10,60 @@
     <h1 data-buy-box-listing-title>Custom Botanical Recipe Journal</h1>
     <div data-buy-box-region="price"><p>$42.00</p></div>
     <input name="listing_id" value="1729000001" />
-    <div data-carousel-container>
-      <img data-carousel-image alt="Journal cover" src="https://images.example.test/etsy/cover.jpg" />
-      <img data-carousel-image alt="Journal pages" src="https://images.example.test/etsy/pages.jpg" />
-      <img data-carousel-image alt="Gift wrap" src="https://images.example.test/etsy/wrap.jpg" />
+    <div data-component="listing-page-image-carousel" data-carousel-container>
+      <div class="carousel-pane" data-index="0">
+        <img
+          class="carousel-image"
+          data-carousel-image
+          alt="Journal cover"
+          src="https://i.etsystatic.com/123/r/il/cover/100/il_794xN.100_cover.jpg"
+        />
+      </div>
+      <div class="carousel-pane" data-index="1">
+        <video>
+          <source
+            src="https://v.etsystatic.com/video/upload/journal-preview.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </div>
+      <div class="carousel-pane" data-index="2">
+        <img
+          class="carousel-image"
+          data-carousel-image
+          alt="Journal pages"
+          src="https://i.etsystatic.com/123/r/il/pages/200/il_794xN.200_pages.jpg"
+        />
+      </div>
+      <div class="carousel-pane" data-index="3">
+        <img
+          class="carousel-image"
+          data-carousel-image
+          alt="Gift wrap"
+          src="https://i.etsystatic.com/123/r/il/wrap/300/il_794xN.300_wrap.jpg"
+        />
+      </div>
+      <div class="carousel-pagination-item-v2" data-index="0">
+        <img
+          alt="Journal cover"
+          src="https://i.etsystatic.com/123/r/il/cover/100/il_75x75.100_cover.jpg"
+        />
+      </div>
+      <div class="carousel-pagination-item-v2" data-index="1">
+        <img alt="Product video" src="https://v.etsystatic.com/video/upload/journal-preview.jpg" />
+      </div>
+      <div class="carousel-pagination-item-v2" data-index="2">
+        <img
+          alt="Journal pages"
+          src="https://i.etsystatic.com/123/r/il/pages/200/il_75x75.200_pages.jpg"
+        />
+      </div>
+      <div class="carousel-pagination-item-v2" data-index="3">
+        <img
+          alt="Gift wrap"
+          src="https://i.etsystatic.com/123/r/il/wrap/300/il_75x75.300_wrap.jpg"
+        />
+      </div>
     </div>
     <div data-selector="listing-page-variations">
       <label for="variation-material">Cover material</label>
@@ -26,11 +76,17 @@
       <label for="personalization-input">Add the name for the cover</label>
       <textarea id="personalization-input" maxlength="24"></textarea>
     </div>
-    <div id="listing-page-cart">
+    <div id="product_details">
+      <ul class="show-icons">
+        <li>Designed by BotanicalBookCo</li>
+        <li>Materials: Natural linen and recycled paper</li>
+      </ul>
       <div data-id="description-text"><p>A keepsake journal with refillable recipe pages.</p></div>
     </div>
     <section id="reviews">
-      <article data-review-region="review">The linen cover and custom name were exactly as previewed.</article>
+      <article data-review-region="review">
+        The linen cover and custom name were exactly as previewed.
+      </article>
     </section>
   </body>
 </html>

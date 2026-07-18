@@ -1,7 +1,4 @@
-import {
-  CaptureDraftSchema,
-  type CaptureDraft,
-} from "@yummyai/contracts";
+import { CaptureDraftSchema, type CaptureDraft } from "@yummyai/contracts";
 
 import { amazonParser } from "./amazon.js";
 import { etsyParser } from "./etsy.js";
@@ -28,6 +25,10 @@ type Diagnostic = CaptureDraft["diagnostics"][number];
 type Media = CaptureDraft["media"][number];
 type Variant = CaptureDraft["variants"][number];
 type ContentBlock = CaptureDraft["contentBlocks"][number];
+
+interface MediaOptions {
+  identity?: (sourceUrl: string) => string;
+}
 
 export class PublicPageReader {
   readonly diagnostics: Diagnostic[] = [];
@@ -79,7 +80,7 @@ export class PublicPageReader {
     return [];
   }
 
-  media(selectors: readonly string[]): Media[] {
+  media(selectors: readonly string[], options: MediaOptions = {}): Media[] {
     const results: Media[] = [];
     for (const selector of selectors) {
       try {
@@ -90,7 +91,10 @@ export class PublicPageReader {
             node.getAttribute("data-old-hires") ??
             node.getAttribute("data-src-zoom-image") ??
             (node.currentSrc || null) ??
-            node.getAttribute("src");
+            node.getAttribute("src") ??
+            (node.tagName === "VIDEO"
+              ? node.querySelector("source[src]")?.getAttribute("src")
+              : null);
           if (!rawUrl) continue;
           try {
             const sourceUrl = new URL(rawUrl, this.document.baseURI).href;
@@ -117,7 +121,12 @@ export class PublicPageReader {
         this.selectorError("media", selector);
       }
     }
-    const uniqueMedia = [...new Map(results.map((item) => [item.sourceUrl, item])).values()];
+    const uniqueByIdentity = new Map<string, Media>();
+    for (const item of results) {
+      const identity = options.identity?.(item.sourceUrl) ?? item.sourceUrl;
+      if (!uniqueByIdentity.has(identity)) uniqueByIdentity.set(identity, item);
+    }
+    const uniqueMedia = [...uniqueByIdentity.values()];
     if (uniqueMedia.length === 0) this.missing("media");
     return uniqueMedia;
   }
@@ -138,7 +147,8 @@ export class PublicPageReader {
                 ? [...this.document.querySelectorAll<HTMLLabelElement>("label")].find(
                     (candidate) => candidate.htmlFor === select.id,
                   )
-                : undefined)?.textContent,
+                : undefined
+              )?.textContent,
             ) ??
             normalizeText(container.querySelector("label")?.textContent) ??
             select.getAttribute("aria-label")?.trim() ??
@@ -187,7 +197,9 @@ export class PublicPageReader {
     return [];
   }
 
-  build(draft: Omit<CaptureDraft, "diagnostics" | "missingFields" | "captureStatus">): CaptureDraft {
+  build(
+    draft: Omit<CaptureDraft, "diagnostics" | "missingFields" | "captureStatus">,
+  ): CaptureDraft {
     const missingFields = unique(
       this.diagnostics.filter((item) => item.code === "missing").map((item) => item.field),
     );
@@ -222,7 +234,10 @@ export class PublicPageReader {
 
 export function parsePrice(raw: string | null, currency: string | null) {
   if (!raw) return null;
-  const numeric = raw.replace(/[^\d.,]/g, "").replace(/,(?=\d{3}(?:\D|$))/g, "").replace(",", ".");
+  const numeric = raw
+    .replace(/[^\d.,]/g, "")
+    .replace(/,(?=\d{3}(?:\D|$))/g, "")
+    .replace(",", ".");
   const amount = Number.parseFloat(numeric);
   return {
     raw,
