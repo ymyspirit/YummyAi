@@ -223,7 +223,59 @@ section { margin: 0 16px; }
   font-size: 11px;
 }
 
+.review-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+.review-choice.selected {
+  border-color: color-mix(in srgb, var(--blue), transparent 38%);
+  background: color-mix(in srgb, var(--blue), transparent 95%);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.review-choice input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+.review-choice span,
+.review-choice strong,
+.review-choice small {
+  display: block;
+}
+.review-choice strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+.review-choice small {
+  margin-top: 3px;
+  font-size: 8px;
+  line-height: 1.4;
+}
+.review-choice > b {
+  padding: 4px 6px;
+  border-radius: 999px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue), transparent 90%);
+  font: 700 8px/1 "Cascadia Mono", monospace;
+}
+.review-choice-note {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
 .review-summary-copy {
+  margin-top: 10px;
   padding: 10px 11px;
   border-left: 3px solid var(--amber);
   background: color-mix(in srgb, var(--amber), transparent 93%);

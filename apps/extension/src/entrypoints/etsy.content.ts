@@ -1,10 +1,13 @@
 import { browser } from "wxt/browser";
 import { defineContentScript } from "wxt/utils/define-content-script";
 
-import { CAPTURE_PAGE_MESSAGE, capturePublicPage } from "../lib/capture-messages.js";
+import {
+  CAPTURE_PAGE_MESSAGE,
+  capturePublicPage,
+  type CapturePageRequest,
+} from "../lib/capture-messages.js";
 import {
   COLLECT_ALL_REVIEWS_MESSAGE,
-  captureVisibleEtsyReviews,
   mergeStoredEtsyReviews,
   startEtsyReviewCollection,
 } from "../lib/etsy-review-collector.js";
@@ -13,29 +16,15 @@ export default defineContentScript({
   matches: ["https://*.etsy.com/listing/*", "https://*.etsy.com/shop/*"],
   main() {
     const pageUrl = () => new URL(window.location.href);
-    let observationTimer: number | undefined;
-    const observeReviews = () => {
-      window.clearTimeout(observationTimer);
-      observationTimer = window.setTimeout(() => {
-        void captureVisibleEtsyReviews(document, pageUrl());
-      }, 800);
-    };
-    if (/^\/listing\//i.test(pageUrl().pathname)) {
-      void captureVisibleEtsyReviews(document, pageUrl());
-      new MutationObserver(observeReviews).observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-      });
-    }
-
     browser.runtime.onMessage.addListener(async (message: unknown) => {
       if (isCaptureMessage(message)) {
         const response = capturePublicPage(
           document,
           pageUrl(),
           browser.runtime.getManifest().version,
+          { includeReviews: message.includeReviews },
         );
-        if (!response.ok || response.kind === "shop") return response;
+        if (!response.ok || response.kind === "shop" || !message.includeReviews) return response;
         return { ...response, draft: await mergeStoredEtsyReviews(response.draft) };
       }
       if (isReviewCollectionMessage(message)) {
@@ -46,12 +35,14 @@ export default defineContentScript({
   },
 });
 
-function isCaptureMessage(message: unknown): boolean {
+function isCaptureMessage(message: unknown): message is CapturePageRequest {
   return (
     typeof message === "object" &&
     message !== null &&
     "type" in message &&
-    message.type === CAPTURE_PAGE_MESSAGE
+    message.type === CAPTURE_PAGE_MESSAGE &&
+    "includeReviews" in message &&
+    typeof message.includeReviews === "boolean"
   );
 }
 

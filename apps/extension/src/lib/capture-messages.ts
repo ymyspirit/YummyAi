@@ -10,6 +10,15 @@ import { parserFor } from "../parsers/parser.js";
 
 export const CAPTURE_PAGE_MESSAGE = "yummyai:capture-page";
 
+export interface CapturePageRequest {
+  type: typeof CAPTURE_PAGE_MESSAGE;
+  includeReviews: boolean;
+}
+
+export interface CapturePageOptions {
+  includeReviews?: boolean;
+}
+
 export type CapturePageResponse =
   | { ok: true; kind: "product"; draft: CaptureDraft }
   | { ok: true; kind: "shop"; draft: CompetitorShopDraft }
@@ -19,6 +28,7 @@ export function capturePublicPage(
   document: Document,
   url: URL,
   extensionVersion = "development",
+  options: CapturePageOptions = {},
 ): CapturePageResponse {
   try {
     if (etsyShopParser.supports(url)) {
@@ -29,11 +39,16 @@ export function capturePublicPage(
         draft: CompetitorShopDraftSchema.parse({ ...shop, extensionVersion }),
       };
     }
-    const draft = parserFor(url, document).parse(document, url);
+    const parsedDraft = CaptureDraftSchema.parse({
+      ...parserFor(url, document).parse(document, url),
+      extensionVersion,
+    });
+    const draft =
+      options.includeReviews === false ? withoutReviewEvidence(parsedDraft) : parsedDraft;
     return {
       ok: true,
       kind: "product",
-      draft: CaptureDraftSchema.parse({ ...draft, extensionVersion }),
+      draft,
     };
   } catch (error) {
     return {
@@ -41,4 +56,22 @@ export function capturePublicPage(
       error: error instanceof Error ? error.message : "This page could not be captured.",
     };
   }
+}
+
+export function withoutReviewEvidence(draft: CaptureDraft): CaptureDraft {
+  return CaptureDraftSchema.parse({
+    ...draft,
+    rating: null,
+    reviewCount: null,
+    reviewSummary: null,
+    reviews: [],
+    reviewCollection: {
+      collectedCount: 0,
+      reportedTotal: null,
+      pageCount: 0,
+      status: "visible",
+      updatedAt: draft.capturedAt,
+    },
+    contentBlocks: draft.contentBlocks.filter((block) => block.kind !== "review"),
+  });
 }

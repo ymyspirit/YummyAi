@@ -23,7 +23,7 @@ describe("etsyParser", () => {
     expect(result.platform).toBe("etsy");
     expect(result.externalId).toBe("1729000001");
     expect(result.title).toBe("Custom Botanical Recipe Journal");
-    expect(result.parserVersion).toBe("etsy@1.2.0");
+    expect(result.parserVersion).toBe("etsy@1.3.0");
     expect(result.media).toHaveLength(4);
     expect(result.media.filter((item) => item.kind === "image")).toHaveLength(3);
     expect(result.media.filter((item) => item.kind === "video")).toHaveLength(1);
@@ -57,6 +57,8 @@ describe("etsyParser", () => {
       "Home Decor",
       "Throw Pillows",
     ]);
+    expect(result.listingPublishedAt).toBe("Jul 18, 2026");
+    expect(result.favoriteCount).toBe(4034);
     expect(result.reviewSummary).toMatchObject({
       tags: [{ label: "Great quality", category: "Quality" }],
       itemAverage: 4.8,
@@ -64,7 +66,7 @@ describe("etsyParser", () => {
       reviewCount: 12,
     });
     expect(result.reviews).toHaveLength(1);
-    expect(result.missingFields).toEqual(
+    expect(result.missingFields).not.toEqual(
       expect.arrayContaining(["listingPublishedAt", "favoriteCount"]),
     );
   });

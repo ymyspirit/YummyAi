@@ -26,6 +26,7 @@ import {
   uploadCompetitorShop,
   type CaptureProgressState,
 } from "../../lib/capture-client.js";
+import { withoutReviewEvidence } from "../../lib/capture-messages.js";
 
 const stateLabel: Record<CaptureProgressState, string> = {
   pending: "待采集",
@@ -52,14 +53,15 @@ export function App() {
   );
   const [error, setError] = useState<string | null>(null);
   const [reviewPageDelayMs, setReviewPageDelayMs] = useState(4_000);
+  const [includeReviews, setIncludeReviews] = useState(false);
   const [reviewCollectorActive, setReviewCollectorActive] = useState(false);
   const abortController = useRef<AbortController | null>(null);
 
-  const loadPage = useCallback(async () => {
+  const loadPage = useCallback(async (withReviews: boolean) => {
     setState("parsing");
     setError(null);
     try {
-      const evidence = await readActiveEvidence();
+      const evidence = await readActiveEvidence({ includeReviews: withReviews });
       if (evidence.kind === "product") {
         setDraft(evidence.draft);
         setShopDraft(null);
@@ -80,7 +82,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void loadPage();
+    void loadPage(false);
     return () => abortController.current?.abort();
   }, [loadPage]);
 
@@ -119,6 +121,7 @@ export function App() {
           includeTitle: includedFields.has("title"),
           includePrice: includedFields.has("price"),
           includeBullets: includedFields.has("bullets"),
+          includeReviews,
           includedMediaIds: includedMedia,
         });
         await uploadCapture(prepared, options);
@@ -134,7 +137,7 @@ export function App() {
   }
 
   async function collectAllReviews() {
-    if (!draft || draft.platform !== "etsy") return;
+    if (!draft || draft.platform !== "etsy" || !includeReviews) return;
     setReviewCollectorActive(true);
     setError(null);
     try {
@@ -159,6 +162,15 @@ export function App() {
 
   function toggleField(field: FieldSelection) {
     setIncludedFields((current) => toggled(current, field));
+  }
+
+  async function toggleReviewInclusion(checked: boolean) {
+    setIncludeReviews(checked);
+    if (!checked) {
+      setDraft((current) => (current ? withoutReviewEvidence(current) : current));
+      return;
+    }
+    await loadPage(true);
   }
 
   function toggleMedia(id: string) {
@@ -192,7 +204,11 @@ export function App() {
         />
       ) : error && !draft && !shopDraft ? (
         <EmptyState icon={<AlertCircle />} title="无法生成预览" detail={error}>
-          <button className="secondary-button" type="button" onClick={() => void loadPage()}>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void loadPage(includeReviews)}
+          >
             <RefreshCw size={16} />
             重新读取
           </button>
@@ -304,57 +320,75 @@ export function App() {
                 </div>
                 <MessageSquareText size={18} aria-hidden="true" />
               </div>
-              {draft.reviewSummary && (
-                <div className="review-summary-copy">
-                  <strong>What buyers say, summarized by AI:</strong>
-                  <div>
-                    {draft.reviewSummary.tags.map((tag) => (
-                      <span key={`${tag.category}-${tag.label}`}>{tag.label}</span>
-                    ))}
+              <label className={`review-choice ${includeReviews ? "selected" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={includeReviews}
+                  onChange={(event) => void toggleReviewInclusion(event.target.checked)}
+                />
+                <span>
+                  <strong>获取评论</strong>
+                  <small>默认关闭；开启后读取评价摘要和当前可见评论。</small>
+                </span>
+                <b>{includeReviews ? "已开启" : "可选"}</b>
+              </label>
+              {!includeReviews ? (
+                <p className="review-choice-note">本次不会读取或上传评论数据。</p>
+              ) : (
+                <>
+                  {draft.reviewSummary && (
+                    <div className="review-summary-copy">
+                      <strong>What buyers say, summarized by AI:</strong>
+                      <div>
+                        {draft.reviewSummary.tags.map((tag) => (
+                          <span key={`${tag.category}-${tag.label}`}>{tag.label}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="review-collection-meter">
+                    <span>
+                      已保存 <b>{draft.reviewCollection.collectedCount}</b> /{" "}
+                      {draft.reviewCollection.reportedTotal ?? "?"} 条
+                    </span>
+                    <span>
+                      {draft.reviewCollection.pageCount} 页 ·{" "}
+                      {reviewStatusLabel(draft.reviewCollection.status)}
+                    </span>
                   </div>
-                </div>
+                  {draft.platform === "etsy" && draft.reviewCollection.status !== "complete" && (
+                    <div className="review-speed-control">
+                      <label>
+                        翻页间隔
+                        <select
+                          value={reviewPageDelayMs}
+                          onChange={(event) => setReviewPageDelayMs(Number(event.target.value))}
+                        >
+                          <option value={2000}>2 秒</option>
+                          <option value={4000}>4 秒</option>
+                          <option value={8000}>8 秒</option>
+                          <option value={12000}>12 秒</option>
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        disabled={reviewCollectorActive}
+                        onClick={() => void collectAllReviews()}
+                      >
+                        {reviewCollectorActive ? (
+                          <LoaderCircle className="spin" size={15} />
+                        ) : (
+                          <Play size={15} />
+                        )}
+                        {reviewCollectorActive ? "正在逐页采集" : "采集全部评论"}
+                      </button>
+                    </div>
+                  )}
+                  <p className="collector-note">
+                    仅操作 Etsy 当前公开评论弹层；遇到安全验证自动暂停并保留进度。
+                  </p>
+                </>
               )}
-              <div className="review-collection-meter">
-                <span>
-                  已保存 <b>{draft.reviewCollection.collectedCount}</b> /{" "}
-                  {draft.reviewCollection.reportedTotal ?? "?"} 条
-                </span>
-                <span>
-                  {draft.reviewCollection.pageCount} 页 ·{" "}
-                  {reviewStatusLabel(draft.reviewCollection.status)}
-                </span>
-              </div>
-              {draft.platform === "etsy" && draft.reviewCollection.status !== "complete" && (
-                <div className="review-speed-control">
-                  <label>
-                    翻页间隔
-                    <select
-                      value={reviewPageDelayMs}
-                      onChange={(event) => setReviewPageDelayMs(Number(event.target.value))}
-                    >
-                      <option value={2000}>2 秒</option>
-                      <option value={4000}>4 秒</option>
-                      <option value={8000}>8 秒</option>
-                      <option value={12000}>12 秒</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    disabled={reviewCollectorActive}
-                    onClick={() => void collectAllReviews()}
-                  >
-                    {reviewCollectorActive ? (
-                      <LoaderCircle className="spin" size={15} />
-                    ) : (
-                      <Play size={15} />
-                    )}
-                    {reviewCollectorActive ? "正在逐页采集" : "采集全部评论"}
-                  </button>
-                </div>
-              )}
-              <p className="collector-note">
-                仅操作 Etsy 当前公开评论弹层；遇到安全验证自动暂停并保留进度。
-              </p>
             </section>
           )}
 
@@ -577,7 +611,11 @@ export function App() {
             取消
           </button>
         ) : state === "complete" || state === "partial" ? (
-          <button className="primary-button success" type="button" onClick={() => void loadPage()}>
+          <button
+            className="primary-button success"
+            type="button"
+            onClick={() => void loadPage(includeReviews)}
+          >
             <Check size={17} />
             {stateLabel[state]}
           </button>

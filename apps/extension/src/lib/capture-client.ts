@@ -7,7 +7,11 @@ import {
 } from "@yummyai/contracts";
 import { browser } from "wxt/browser";
 
-import { CAPTURE_PAGE_MESSAGE, type CapturePageResponse } from "./capture-messages.js";
+import {
+  CAPTURE_PAGE_MESSAGE,
+  withoutReviewEvidence,
+  type CapturePageResponse,
+} from "./capture-messages.js";
 import { COLLECT_ALL_REVIEWS_MESSAGE } from "./etsy-review-collector.js";
 
 export type CaptureProgressState =
@@ -26,6 +30,7 @@ export interface CaptureRedaction {
   includeTitle: boolean;
   includePrice: boolean;
   includeBullets: boolean;
+  includeReviews: boolean;
   includedMediaIds: ReadonlySet<string>;
 }
 
@@ -38,12 +43,15 @@ export interface CaptureUploadResult {
 export type ActiveEvidence =
   { kind: "product"; draft: CaptureDraft } | { kind: "shop"; draft: CompetitorShopDraft };
 
-export async function readActiveEvidence(): Promise<ActiveEvidence> {
+export async function readActiveEvidence(
+  options: { includeReviews?: boolean } = {},
+): Promise<ActiveEvidence> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("请先打开 Amazon、Etsy 商品页或 Etsy 店铺页。");
 
   const response = (await browser.tabs.sendMessage(tab.id, {
     type: CAPTURE_PAGE_MESSAGE,
+    includeReviews: options.includeReviews ?? false,
   })) as CapturePageResponse | undefined;
   if (!response) throw new Error("YummyAI 未连接当前页面，请刷新页面后重试。");
   if (!response.ok) throw new Error(response.error);
@@ -69,7 +77,7 @@ export async function startActiveReviewCollection(pageDelayMs: number): Promise<
 }
 
 export function redactCaptureDraft(draft: CaptureDraft, redaction: CaptureRedaction): CaptureDraft {
-  return CaptureDraftSchema.parse({
+  const redacted = CaptureDraftSchema.parse({
     ...draft,
     domain: redaction.domain,
     title: redaction.includeTitle ? draft.title : null,
@@ -80,6 +88,7 @@ export function redactCaptureDraft(draft: CaptureDraft, redaction: CaptureRedact
       included: redaction.includedMediaIds.has(item.id),
     })),
   });
+  return redaction.includeReviews ? redacted : withoutReviewEvidence(redacted);
 }
 
 export async function uploadCapture(

@@ -65,7 +65,7 @@ export const etsyParser: MarketplaceParser = {
 
     return reader.build({
       platform: "etsy",
-      parserVersion: "etsy@1.2.0",
+      parserVersion: "etsy@1.3.0",
       extensionVersion: "0.0.0",
       marketplace: url.hostname.toLowerCase(),
       sourceUrl: url.href,
@@ -199,6 +199,11 @@ function extractListingPublishedAt(document: Document): string | null {
     )
     ?.getAttribute("datetime");
   if (dateTime) return dateTime;
+  const metadataText = extractListingMetadataText(document);
+  const metadataDate = metadataText
+    .match(/Listed on\s+(.+?)(?=\s+[\d,.]+\s+favou?rites?\b|$)/i)?.[1]
+    ?.trim();
+  if (metadataDate) return metadataDate;
   const details = normalizeText(document.querySelector("#product_details")?.textContent);
   return (
     details.match(/Listed on\s+([^|]+?)(?=\s+(?:Ships from|Favorites|$))/i)?.[1]?.trim() ?? null
@@ -206,8 +211,28 @@ function extractListingPublishedAt(document: Document): string | null {
 }
 
 function extractFavoriteCount(document: Document): number | null {
+  const favoriteLink = document.querySelector<HTMLAnchorElement>('main a[href*="/favoriters"]');
+  const linkedCount = numberFromText(normalizeText(favoriteLink?.textContent));
+  if (linkedCount !== null) return linkedCount;
+  const metadataText = extractListingMetadataText(document);
+  const metadataCount = numberFromText(
+    metadataText.match(/([\d,.]+)\s+favou?rites?/i)?.[1] ?? null,
+  );
+  if (metadataCount !== null) return metadataCount;
   const details = normalizeText(document.querySelector("#product_details")?.textContent);
   return numberFromText(details.match(/([\d,.]+)\s+(?:favorites|favourites)/i)?.[1] ?? null);
+}
+
+function extractListingMetadataText(document: Document): string {
+  const favoriteLink = document.querySelector<HTMLAnchorElement>('main a[href*="/favoriters"]');
+  const linkedContainer = favoriteLink?.parentElement?.parentElement;
+  const linkedText = normalizeText(linkedContainer?.textContent);
+  if (/Listed on/i.test(linkedText)) return linkedText;
+
+  const dateNode = [...document.querySelectorAll<HTMLElement>("main .wt-text-caption")].find(
+    (node) => /^Listed on\s+/i.test(normalizeText(node.textContent)),
+  );
+  return normalizeText(dateNode?.textContent);
 }
 
 function metricFromText(text: string, label: string): number | null {
