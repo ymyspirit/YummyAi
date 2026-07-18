@@ -53,6 +53,9 @@ importers:
       '@yummyai/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@yummyai/platform-rules':
+        specifier: workspace:*
+        version: link:../../packages/platform-rules
       '@yummyai/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -133,6 +136,9 @@ importers:
       '@yummyai/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@yummyai/platform-rules':
+        specifier: workspace:*
+        version: link:../../packages/platform-rules
       geist:
         specifier: ^1.7.2
         version: 1.7.2(next@16.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
@@ -243,6 +249,9 @@ importers:
       '@yummyai/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yummyai/platform-rules':
+        specifier: workspace:*
+        version: link:../platform-rules
       dotenv:
         specifier: ^17.0.0
         version: 17.4.2
@@ -287,6 +296,15 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(jiti@2.7.0)(jsdom@29.1.1)(tsx@4.23.1)
+
+  packages/platform-rules:
+    devDependencies:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

@@ -50,6 +50,13 @@
       "when": 1784822400000,
       "tag": "0007_design_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784908800000,
+      "tag": "0008_listings",
+      "breakpoints": true
     }
   ]
 }
