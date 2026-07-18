@@ -10,6 +10,7 @@
   "dependencies": {
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
+    "@yummyai/ai-core": "workspace:*",
     "@yummyai/authz": "workspace:*",
     "@yummyai/contracts": "workspace:*",
     "@yummyai/database": "workspace:*",
@@ -17,7 +18,8 @@
     "drizzle-orm": "^0.44.0",
     "jose": "^6.0.0",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.0"
+    "rxjs": "^7.8.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
