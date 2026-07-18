@@ -17,6 +17,8 @@ import { RedisMediaEnqueuer } from "./capture/redis-media-enqueuer.js";
 import { CaptureService } from "./capture/capture.service.js";
 import { ProductController } from "./catalog/product.controller.js";
 import { DrizzleCatalogRepository, ProductService } from "./catalog/product.service.js";
+import { CompetitorShopController } from "./competitors/competitor-shop.controller.js";
+import { CompetitorShopService } from "./competitors/competitor-shop.service.js";
 import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { DashboardService, DrizzleDashboardRepository } from "./dashboard/dashboard.service.js";
 import { DesignController } from "./design/design.controller.js";
@@ -46,6 +48,7 @@ import { ResearchRepository } from "./research/research.repository.js";
   controllers: [
     AssetsController,
     CaptureController,
+    CompetitorShopController,
     DashboardController,
     DesignController,
     HealthController,
@@ -86,6 +89,7 @@ import { ResearchRepository } from "./research/research.repository.js";
     { provide: NOTIFICATION_REPOSITORY, useClass: DrizzleNotificationRepository },
     AuditService,
     CaptureService,
+    CompetitorShopService,
     DashboardService,
     DesignService,
     ListingService,

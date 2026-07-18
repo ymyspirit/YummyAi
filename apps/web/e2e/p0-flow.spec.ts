@@ -39,7 +39,8 @@ test("capture to reviewed export", async ({ page }) => {
 });
 
 test("P0 pages expose headings and keyboard focus", async ({ page }) => {
-  await page.goto("/"); await page.keyboard.press("Tab");
+  await page.goto("/");
+  await page.keyboard.press("Tab");
   await expect(page.locator(":focus")).toBeVisible();
   expect(await page.locator("h1").count()).toBe(1);
 });
@@ -47,18 +48,41 @@ test("P0 pages expose headings and keyboard focus", async ({ page }) => {
 test("primary navigation stays complete across ERP pages", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "主导航" });
-  const labels = ["运营总览", "研究资料库", "产品开发", "设计校样", "刊登控制台"];
+  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "刊登控制台"];
 
   for (const label of labels.slice(1)) {
-    await expect(navigation.getByRole("link")).toHaveCount(5);
+    await expect(navigation.getByRole("link")).toHaveCount(labels.length);
     await navigation.getByRole("link", { name: label }).click();
-    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(5);
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(
+      labels.length,
+    );
   }
 });
 
 async function buildAndVerifyExport() {
-  const bytes = new TextEncoder().encode("authorized asset"); const id = createEntityId(); const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const manifest = ExportManifestSchema.parse({ exportId: id, tenantId: id, platform: "amazon", listingId: id, listingVersionId: id, ruleVersion: "amazon-us-2026-07", files: [{ path: "media/main.png", sha256, assetId: id, assetVersion: 1 }], createdBy: id, createdAt: "2026-07-18T04:00:00.000Z" });
-  const zip = new JSZip(); zip.file("manifest.json", JSON.stringify(manifest)); zip.file("media/main.png", bytes); const archive = await zip.generateAsync({ type: "uint8array" }); const loaded = await JSZip.loadAsync(archive); const restored = JSON.parse(await loaded.file("manifest.json")!.async("string")); const restoredBytes = await loaded.file(restored.files[0].path)!.async("uint8array");
-  return ExportManifestSchema.safeParse(restored).success && createHash("sha256").update(restoredBytes).digest("hex") === restored.files[0].sha256;
+  const bytes = new TextEncoder().encode("authorized asset");
+  const id = createEntityId();
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const manifest = ExportManifestSchema.parse({
+    exportId: id,
+    tenantId: id,
+    platform: "amazon",
+    listingId: id,
+    listingVersionId: id,
+    ruleVersion: "amazon-us-2026-07",
+    files: [{ path: "media/main.png", sha256, assetId: id, assetVersion: 1 }],
+    createdBy: id,
+    createdAt: "2026-07-18T04:00:00.000Z",
+  });
+  const zip = new JSZip();
+  zip.file("manifest.json", JSON.stringify(manifest));
+  zip.file("media/main.png", bytes);
+  const archive = await zip.generateAsync({ type: "uint8array" });
+  const loaded = await JSZip.loadAsync(archive);
+  const restored = JSON.parse(await loaded.file("manifest.json")!.async("string"));
+  const restoredBytes = await loaded.file(restored.files[0].path)!.async("uint8array");
+  return (
+    ExportManifestSchema.safeParse(restored).success &&
+    createHash("sha256").update(restoredBytes).digest("hex") === restored.files[0].sha256
+  );
 }

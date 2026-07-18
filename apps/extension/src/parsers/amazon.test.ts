@@ -27,7 +27,7 @@ describe("amazonParser", () => {
     );
     expect(result.contentBlocks.some((block) => block.kind === "aplus")).toBe(true);
     expect(result.contentBlocks.filter((block) => block.kind === "review")).toHaveLength(2);
-    expect(result.parserVersion).toBe("amazon@1.0.0");
+    expect(result.parserVersion).toBe("amazon@1.1.0");
   });
 
   it("reports missing fields explicitly instead of throwing", () => {

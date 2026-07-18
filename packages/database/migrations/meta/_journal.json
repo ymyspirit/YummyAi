@@ -64,6 +64,13 @@
       "when": 1784995200000,
       "tag": "0009_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785081600000,
+      "tag": "0010_competitor_shops",
+      "breakpoints": true
     }
   ]
 }

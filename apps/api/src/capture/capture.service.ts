@@ -15,6 +15,7 @@ import {
 import { and, eq } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
+import { persistCompetitorShopSnapshot } from "../competitors/competitor-shop.service.js";
 import { CAPTURE_MEDIA_ENQUEUER, DATABASE_CONNECTION } from "../platform.tokens.js";
 
 export interface CaptureReceipt {
@@ -96,6 +97,17 @@ export class CaptureService {
         draft,
         capturedAt: new Date(draft.capturedAt),
       });
+      const competitor = draft.shop
+        ? await persistCompetitorShopSnapshot(tx, context, draft.shop, {
+            capturedAt: new Date(draft.capturedAt),
+            capturedBy: context.userId,
+            marketplace: draft.marketplace,
+            snapshotKind: "listing",
+            sourceCaptureSnapshotId: snapshotId,
+            sourceResearchItemId: itemId,
+            status: "partial",
+          })
+        : null;
       const media = draft.media.map((entry) => ({
         id: createEntityId(),
         tenantId: context.tenantId,
@@ -105,7 +117,7 @@ export class CaptureService {
         status: entry.included ? ("queued" as const) : ("excluded" as const),
       }));
       if (media.length) await tx.insert(captureMedia).values(media);
-      return { itemId, snapshotId, media };
+      return { itemId, snapshotId, media, competitorShopId: competitor?.competitorShopId };
     });
 
     let failed = 0;
@@ -148,7 +160,12 @@ export class CaptureService {
       resourceType: "capture_snapshot",
       resourceId: created.snapshotId,
       result: "success",
-      metadata: { researchItemId: created.itemId, status, failedMedia: failed },
+      metadata: {
+        researchItemId: created.itemId,
+        status,
+        failedMedia: failed,
+        competitorShopId: created.competitorShopId,
+      },
     });
     return { researchItemId: created.itemId, snapshotId: created.snapshotId, status };
   }

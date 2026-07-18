@@ -23,7 +23,7 @@ describe("etsyParser", () => {
     expect(result.platform).toBe("etsy");
     expect(result.externalId).toBe("1729000001");
     expect(result.title).toBe("Custom Botanical Recipe Journal");
-    expect(result.parserVersion).toBe("etsy@1.1.0");
+    expect(result.parserVersion).toBe("etsy@1.2.0");
     expect(result.media).toHaveLength(4);
     expect(result.media.filter((item) => item.kind === "image")).toHaveLength(3);
     expect(result.media.filter((item) => item.kind === "video")).toHaveLength(1);
@@ -38,6 +38,34 @@ describe("etsyParser", () => {
     );
     expect(result.contentBlocks).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "review" })]),
+    );
+    expect(result.shipping).toEqual({
+      estimatedDelivery: "Aug 6-17",
+      processingTime: null,
+      cost: { raw: "$5.99", amount: 5.99, currency: "USD" },
+      shipsFrom: "Troy, MI",
+      destination: "United States, 90060",
+      sourceSelector: "#shipping-and-returns-div",
+    });
+    expect(result.shop).toMatchObject({
+      externalId: "BotanicalBookCo",
+      name: "BotanicalBookCo",
+      ownerName: "Lin",
+    });
+    expect(result.taxonomy.map((node) => node.label)).toEqual([
+      "Home & Living",
+      "Home Decor",
+      "Throw Pillows",
+    ]);
+    expect(result.reviewSummary).toMatchObject({
+      tags: [{ label: "Great quality", category: "Quality" }],
+      itemAverage: 4.8,
+      recommendPercent: 95,
+      reviewCount: 12,
+    });
+    expect(result.reviews).toHaveLength(1);
+    expect(result.missingFields).toEqual(
+      expect.arrayContaining(["listingPublishedAt", "favoriteCount"]),
     );
   });
 
