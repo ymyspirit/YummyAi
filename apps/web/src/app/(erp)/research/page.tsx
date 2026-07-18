@@ -1,4 +1,5 @@
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
+import { DateFilter } from "../../../features/research/date-filter";
 import { ResearchTable, type ResearchItemView } from "../../../features/research/research-table";
 
 export const dynamic = "force-dynamic";
@@ -29,8 +30,8 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
             <label>标签<input name="tags" defaultValue={stringValue(params.tags)} placeholder="gift, seasonal" /></label>
             <label>项目 ID<input name="project" defaultValue={stringValue(params.project)} /></label>
             <label>负责人 ID<input name="owner" defaultValue={stringValue(params.owner)} /></label>
-            <label>开始日期<input name="dateFrom" type="date" defaultValue={stringValue(params.dateFrom)} /></label>
-            <label>结束日期<input name="dateTo" type="date" defaultValue={stringValue(params.dateTo)} /></label>
+            <DateFilter label="开始日期" name="dateFrom" defaultValue={stringValue(params.dateFrom)} />
+            <DateFilter label="结束日期" name="dateTo" defaultValue={stringValue(params.dateTo)} />
             <button className="filter-button" type="submit">应用筛选</button>
           </form>
         </section>

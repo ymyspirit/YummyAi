@@ -45,6 +45,13 @@ button, a, label, select { cursor: pointer; }
 .filter-panel form { display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)) auto; gap:10px; align-items:end; }
 .filter-panel label { display:grid; gap:5px; color:var(--muted-ink); font-size:10px; }
 .filter-panel input, .filter-panel select { min-height:38px; width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); color:var(--ink); background:var(--paper); }
+.date-filter { display:grid; gap:5px; color:var(--muted-ink); font-size:10px; }
+.date-filter > label { display:block; }
+.date-filter-control { position:relative; display:block; }
+.date-filter-control input { padding-right:43px; cursor:text; }
+.date-filter-control input::-webkit-calendar-picker-indicator { opacity:0; pointer-events:none; }
+.date-filter-control button { position:absolute; top:1px; right:1px; bottom:1px; width:37px; display:grid; place-items:center; padding:0; border:0; border-left:1px solid var(--line); border-radius:0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0; color:var(--muted-ink); background:color-mix(in srgb,var(--surface-muted),transparent 38%); }
+.date-filter-control button:hover { color:var(--blue); background:var(--surface-muted); }
 .filter-button { min-height:38px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 14px; border:1px solid var(--blue); border-radius:var(--radius-sm); color:#fff; background:var(--blue); font-weight:680; }
 .library-frame { border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; background:var(--surface); box-shadow:0 10px 30px rgb(15 23 42 / 7%); }
 .library-heading { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
