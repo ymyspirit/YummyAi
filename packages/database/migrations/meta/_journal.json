@@ -43,6 +43,13 @@
       "when": 1784736000000,
       "tag": "0006_product_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784822400000,
+      "tag": "0007_design_assets",
+      "breakpoints": true
     }
   ]
 }

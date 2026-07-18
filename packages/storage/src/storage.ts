@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   CreateBucketCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -28,6 +29,12 @@ export interface PutPrivateResult {
   checksumSha256: string;
   deduplicated: boolean;
   objectKey: string;
+}
+
+export interface PromotePrivateInput extends StoredAsset {
+  checksumSha256: string;
+  fileName: string;
+  mediaType: string;
 }
 
 export class Storage {
@@ -75,6 +82,32 @@ export class Storage {
       }),
     );
     return { checksumSha256: checksum, deduplicated: false, objectKey: key };
+  }
+
+  async promoteToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
+    assertAssetAccess(context, input, "research");
+    const key = objectKey({
+      tenantId: context.tenantId,
+      domain: "authorized",
+      sha256: input.checksumSha256,
+      fileName: input.fileName,
+    });
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return { checksumSha256: input.checksumSha256, deduplicated: true, objectKey: key };
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+    const encodedSource = `${this.bucket}/${input.objectKey.split("/").map(encodeURIComponent).join("/")}`;
+    await this.client.send(new CopyObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      CopySource: encodedSource,
+      ContentType: input.mediaType,
+      MetadataDirective: "REPLACE",
+      Metadata: { "asset-domain": "authorized", "sha256": input.checksumSha256, "tenant-id": context.tenantId },
+    }));
+    return { checksumSha256: input.checksumSha256, deduplicated: false, objectKey: key };
   }
 
   async signRead(

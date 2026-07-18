@@ -9,6 +9,7 @@ export { checksumSha256 } from "./checksum.js";
 export {
   createStorageFromEnvironment,
   Storage,
+  type PromotePrivateInput,
   type PutPrivateInput,
   type PutPrivateResult,
 } from "./storage.js";

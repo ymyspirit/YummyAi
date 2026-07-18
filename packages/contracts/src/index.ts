@@ -34,6 +34,24 @@ export {
   type EvidenceRef,
   type GeneratedImageProvenance,
 } from "./ai/report.js";
+export {
+  ApproveAssetRightsInputSchema,
+  CreateDesignTaskInputSchema,
+  DesignFileRoleSchema,
+  DesignTaskStatusSchema,
+  DesignVersionStatusSchema,
+  ReviewDesignVersionInputSchema,
+  RightsSourceSchema,
+  UploadDesignVersionInputSchema,
+  type ApproveAssetRightsInput,
+  type CreateDesignTaskInput,
+  type DesignFileRole,
+  type DesignTaskStatus,
+  type DesignVersionStatus,
+  type ReviewDesignVersionInput,
+  type RightsSource,
+  type UploadDesignVersionInput,
+} from "./design/design.js";
 export { PageRequestSchema, PageResultSchema } from "./common/pagination.js";
 export { ProblemDetailsSchema } from "./common/problem-details.js";
 export {
