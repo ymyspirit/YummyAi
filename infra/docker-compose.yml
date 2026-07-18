@@ -73,6 +73,34 @@ services:
       retries: 15
       start_period: 30s
 
+  otel-collector:
+    build:
+      context: ./otel
+      dockerfile: Dockerfile
+    image: yummyai/otel-collector:local
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  minio-client:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    profiles: ["tools"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      S3_PRIVATE_BUCKET: ${S3_PRIVATE_BUCKET:-yummyai-private}
+    entrypoint: ["/bin/sh", "-c"]
+
 volumes:
   postgres-data:
   redis-data:

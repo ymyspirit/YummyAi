@@ -1,7 +1,7 @@
 import { createEntityId } from "@yummyai/contracts";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { createQueue, enqueueJob, QueueName } from "./index.js";
+import { createQueue, createTraceId, enqueueJob, QueueName } from "./index.js";
 
 describe("job queue", () => {
   const queue = createQueue(QueueName.Media);
@@ -16,6 +16,7 @@ describe("job queue", () => {
       jobId: createEntityId(),
       tenantId: createEntityId(),
       requestedBy: createEntityId(),
+      traceId: createTraceId(),
       correlationId: createEntityId(),
       idempotencyKey,
       requestedAt: new Date().toISOString(),

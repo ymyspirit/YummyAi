@@ -56,7 +56,7 @@ function processor(snapshot: ApprovedExportSnapshot, store: ExportPackageStore =
   return new ExportProcessor(repository, store);
 }
 
-function envelope(): JobEnvelope { return { jobId: ids.job, tenantId: ids.tenant, requestedBy: ids.user, correlationId: ids.correlation, idempotencyKey: ids.idempotency, requestedAt: "2026-07-18T04:00:00.000Z", attempt: 0, maxAttempts: 3, payload: { exportId: ids.export, reviewId: ids.review, listingId: ids.listing, listingVersionId: ids.version } }; }
+function envelope(): JobEnvelope { return { jobId: ids.job, tenantId: ids.tenant, requestedBy: ids.user, traceId: "23456789abcdef0123456789abcdef01", correlationId: ids.correlation, idempotencyKey: ids.idempotency, requestedAt: "2026-07-18T04:00:00.000Z", attempt: 0, maxAttempts: 3, payload: { exportId: ids.export, reviewId: ids.review, listingId: ids.listing, listingVersionId: ids.version } }; }
 
 function validSnapshot(): ApprovedExportSnapshot & { assets: Array<ApprovedExportSnapshot["assets"][number]> } {
   const bytes = new TextEncoder().encode("approved image bytes");

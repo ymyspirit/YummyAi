@@ -8,7 +8,7 @@ import {
   type TenantContext,
 } from "@yummyai/contracts";
 import { analysisReports, type DatabaseConnection, withTenant } from "@yummyai/database";
-import type { JobEnvelope } from "@yummyai/jobs";
+import { createTraceId, type JobEnvelope } from "@yummyai/jobs";
 import { and, asc, desc, eq } from "drizzle-orm";
 
 import { ANALYSIS_JOB_ENQUEUER, DATABASE_CONNECTION } from "../platform.tokens.js";
@@ -32,6 +32,7 @@ export class AnalysisService {
       jobId,
       tenantId: context.tenantId,
       requestedBy: context.userId,
+      traceId: createTraceId(),
       correlationId: createEntityId(),
       idempotencyKey: createEntityId(),
       requestedAt: new Date().toISOString(),

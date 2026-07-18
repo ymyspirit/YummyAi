@@ -2,7 +2,9 @@
   "name": "yummyai-erp",
   "private": true,
   "packageManager": "pnpm@11.10.0",
-  "engines": { "node": ">=24.17 <25" },
+  "engines": {
+    "node": ">=24.17 <25"
+  },
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
@@ -10,10 +12,11 @@
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "test:integration": "turbo test:integration",
-    "test:e2e": "turbo test:e2e"
+    "test:e2e": "node tools/scripts/run-e2e.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "1.61.1",
     "eslint": "^9.0.0",
     "jszip": "^3.10.1",
     "prettier": "^3.6.0",

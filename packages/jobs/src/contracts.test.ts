@@ -11,13 +11,14 @@ describe("job contracts", () => {
         jobId: id,
         tenantId: id,
         requestedBy: id,
+        traceId: "0123456789abcdef0123456789abcdef",
         correlationId: id,
         idempotencyKey: id,
         attempt: 1,
         maxAttempts: 3,
         payload: { assetId: id },
       }),
-    ).toMatchObject({ attempt: 1, maxAttempts: 3 });
+    ).toMatchObject({ traceId: "0123456789abcdef0123456789abcdef", attempt: 1, maxAttempts: 3 });
   });
 
   it("rejects a retry attempt beyond the configured maximum", () => {
@@ -26,6 +27,7 @@ describe("job contracts", () => {
         jobId: id,
         tenantId: id,
         requestedBy: id,
+        traceId: "0123456789abcdef0123456789abcdef",
         correlationId: id,
         idempotencyKey: id,
         attempt: 4,
@@ -33,6 +35,11 @@ describe("job contracts", () => {
         payload: {},
       }).success,
     ).toBe(false);
+  });
+
+  it("creates a W3C-compatible trace ID when an enqueue boundary omits one", () => {
+    const parsed = JobEnvelopeSchema.parse({ jobId: id, tenantId: id, requestedBy: id, correlationId: id, idempotencyKey: id, payload: {} });
+    expect(parsed.traceId).toMatch(/^[a-f0-9]{32}$/);
   });
 
   it("exposes stable queue names", () => {
