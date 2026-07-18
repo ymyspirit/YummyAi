@@ -23,7 +23,7 @@ describe("etsyParser", () => {
     expect(result.platform).toBe("etsy");
     expect(result.externalId).toBe("1729000001");
     expect(result.title).toBe("Custom Botanical Recipe Journal");
-    expect(result.parserVersion).toBe("etsy@1.3.0");
+    expect(result.parserVersion).toBe("etsy@1.4.0");
     expect(result.media).toHaveLength(4);
     expect(result.media.filter((item) => item.kind === "image")).toHaveLength(3);
     expect(result.media.filter((item) => item.kind === "video")).toHaveLength(1);

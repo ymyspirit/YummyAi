@@ -69,12 +69,21 @@ export const etsyParser: MarketplaceParser = {
     const favoriteCount = extractFavoriteCount(document);
     if (!listingPublishedAt) reader.missing("listingPublishedAt");
     if (favoriteCount === null) reader.missing("favoriteCount");
+    if (!shipping) {
+      reader.missing("shipping");
+    } else {
+      if (!shipping.estimatedDelivery) reader.missing("shipping.estimatedDelivery");
+      if (!shipping.cost) reader.missing("shipping.cost");
+      if (!shipping.shipsFrom) reader.missing("shipping.shipsFrom");
+      if (!shipping.destination) reader.missing("shipping.destination");
+    }
+    if (!shop) reader.missing("shop");
     const capturedReviews = includeReviews ? extractEtsyReviews(document) : [];
     const reviewSummary = includeReviews ? extractEtsyReviewSummary(document) : null;
 
     return reader.build({
       platform: "etsy",
-      parserVersion: "etsy@1.3.0",
+      parserVersion: "etsy@1.4.0",
       extensionVersion: "0.0.0",
       marketplace: url.hostname.toLowerCase(),
       sourceUrl: url.href,
@@ -269,9 +278,13 @@ function extractEtsyShipping(
   document: Document,
   productCurrency: string | null,
 ): CaptureShipping | null {
-  const selector = "#shipping-and-returns-div";
+  const primarySelector = "#shipping-and-returns-div";
+  const shippingHighlights = document.querySelector('[data-selector="shipping-highlights"]');
   const container =
-    document.querySelector(selector) ?? document.querySelector("[data-shipping-and-returns-div]");
+    document.querySelector(primarySelector) ??
+    document.querySelector("[data-shipping-and-returns-div]") ??
+    shippingHighlights?.closest("#shipping_and_returns") ??
+    shippingHighlights;
   if (!container) return null;
 
   const text = normalizeText(container.textContent);
@@ -279,11 +292,9 @@ function extractEtsyShipping(
     normalizeText(
       container.querySelector("[data-shipping-estimated-delivery] strong")?.textContent,
     ) ||
-    text
-      .match(
-        /(?:get by|arrives? by|delivery(?: date)?[:\s]+)\s*([^|]+?)(?=\s+(?:Returns|Cost to ship|Ships from|Deliver to)|$)/i,
-      )?.[1]
-      ?.trim() ||
+    text.match(
+      /(?:get by|arrives? by|delivery(?: date)?[:\s]+)\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:\s*[-–—]\s*(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)?\d{1,2})?(?:,\s*\d{4})?)/i,
+    )?.[1]?.trim() ||
     null;
   const processingTime =
     normalizeText(container.querySelector("[data-processing-time]")?.textContent).replace(
@@ -300,12 +311,22 @@ function extractEtsyShipping(
     .match(/Cost to ship:\s*([^|]+?)(?=\s+Ships from|\s+Deliver to|$)/i)?.[1]
     ?.trim();
   const costRaw = symbol && value ? `${symbol}${value}` : (costMatch ?? null);
-  const shipsFrom = text.match(/Ships from:\s*([^|]+?)(?=\s+Deliver to|$)/i)?.[1]?.trim() ?? null;
+  const shipsFrom =
+    text
+      .match(/Ships from:\s*([^|]+?)(?=\s+(?:Deliver to|There was|Country|Returns)|$)/i)?.[1]
+      ?.trim() ?? null;
   const destination =
     normalizeText(
       container.querySelector("[data-calculate-shipping-cost] button")?.textContent,
     ).replace(/^Deliver to\s*/i, "") ||
-    text.match(/Deliver to\s+(.+)$/i)?.[1]?.trim() ||
+    normalizeText(
+      container.querySelector(
+        '[data-content-toggle-uid="data-estimated-shipping-form-fields"]',
+      )?.textContent,
+    ).replace(/^Deliver to\s*/i, "") ||
+    text
+      .match(/Deliver to\s+(.+?)(?=\s+(?:There was|Country|Zip code|Submit|Loading)|$)/i)?.[1]
+      ?.trim() ||
     null;
 
   return {
@@ -314,13 +335,24 @@ function extractEtsyShipping(
     cost: parsePrice(costRaw, productCurrency ?? currencyFromSymbol(symbol)),
     shipsFrom,
     destination,
-    sourceSelector: selector,
+    sourceSelector: container.id ? `#${container.id}` : '[data-selector="shipping-highlights"]',
   };
 }
 
 function extractEtsyShopSummary(document: Document, pageUrl: URL): CapturedShopSummary | null {
   const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/shop/"]')];
-  const link = links.find((candidate) => normalizeText(candidate.textContent)) ?? links[0];
+  const link =
+    links.find(
+      (candidate) =>
+        /[?&]ref=shop-header-name(?:&|$)/i.test(candidate.href) &&
+        normalizeText(candidate.textContent),
+    ) ??
+    links.find((candidate) => {
+      const externalId = new URL(candidate.href, pageUrl).pathname.match(/\/shop\/([^/]+)/i)?.[1];
+      return Boolean(externalId && normalizeText(candidate.textContent) === externalId);
+    }) ??
+    links.find((candidate) => normalizeText(candidate.textContent)) ??
+    links[0];
   if (!link) return null;
 
   const sourceUrl = new URL(link.href, pageUrl).href;
@@ -346,7 +378,7 @@ function extractEtsyShopSummary(document: Document, pageUrl: URL): CapturedShopS
   return {
     platform: "etsy",
     externalId,
-    name: normalizeText(link.textContent) ?? externalId ?? "Etsy shop",
+    name: externalId ?? normalizeText(link.textContent) ?? "Etsy shop",
     sourceUrl,
     location,
     ownerName,

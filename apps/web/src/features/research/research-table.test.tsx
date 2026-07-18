@@ -66,7 +66,7 @@ describe("ResearchTable", () => {
           listingPublishedAt: "Jul 18, 2026",
           favoriteCount: 4034,
           shipping: {
-            estimatedDelivery: "Jul 24-29",
+            estimatedDelivery: "Aug 6-17",
             processingTime: "3-5 days",
             cost: { raw: "$5.00", amount: 5, currency: "USD" },
             shipsFrom: "United States",
@@ -122,7 +122,8 @@ describe("ResearchTable", () => {
     expect(html).toContain("https://i.etsystatic.com/sample.jpg");
     expect(html).toContain("Personalized Name Pillow");
     expect(html).toContain("Punch needle embroidery");
-    expect(html).toContain("Jul 24-29");
+    expect(html).toContain("Aug 6-17");
+    expect(html).toContain("Aug 6-17 · 约 18–29 天");
     expect(html).toContain("4,034");
     expect(html.indexOf("Newer evidence")).toBeLessThan(html.indexOf("Older evidence"));
   });

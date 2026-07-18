@@ -155,9 +155,15 @@ export function ResearchProductDossier({
         <aside className="dossier-logistics" aria-label="商品物流与发布信息">
           <p className="section-code">FULFILMENT / LISTING</p>
           <dl>
-            <EvidenceLine icon={<Truck size={15} />} label="预计送达" value={draft?.shipping?.estimatedDelivery} />
+            <EvidenceLine
+              icon={<Truck size={15} />}
+              label="预计送达"
+              value={formatEstimatedDelivery(draft?.shipping?.estimatedDelivery, latestSnapshot.capturedAt)}
+            />
+            <EvidenceLine icon={<CalendarDays size={15} />} label="处理时间" value={draft?.shipping?.processingTime} />
             <EvidenceLine icon={<PackageOpen size={15} />} label="运费" value={draft?.shipping?.cost?.raw} />
             <EvidenceLine icon={<Store size={15} />} label="发货地" value={draft?.shipping?.shipsFrom} />
+            <EvidenceLine icon={<Truck size={15} />} label="配送至" value={draft?.shipping?.destination} />
             <EvidenceLine icon={<CalendarDays size={15} />} label="发布日期" value={draft?.listingPublishedAt} />
           </dl>
           {draft?.taxonomy?.length ? (
@@ -273,6 +279,60 @@ function formatRating(value: number | null | undefined) {
 function formatSnapshotPrice(snapshot: ResearchSnapshotView) {
   if (!snapshot.priceAmount) return "价格未识别";
   return [snapshot.priceCurrency, snapshot.priceAmount].filter(Boolean).join(" ");
+}
+
+function formatEstimatedDelivery(value: string | null | undefined, capturedAt: string) {
+  if (!value) return null;
+  const range = deliveryDayRange(value, capturedAt);
+  if (!range) return value;
+  const days = range.minimum === range.maximum
+    ? `${range.minimum}`
+    : `${range.minimum}–${range.maximum}`;
+  return `${value} · 约 ${days} 天`;
+}
+
+function deliveryDayRange(value: string, capturedAt: string) {
+  const months = "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
+  const match = value.match(
+    new RegExp(
+      `\\b(${months})\\s+(\\d{1,2})(?:,\\s*(\\d{4}))?\\s*[-–—]\\s*(?:(${months})\\s+)?(\\d{1,2})(?:,\\s*(\\d{4}))?`,
+      "i",
+    ),
+  );
+  const captured = new Date(capturedAt);
+  if (!match || Number.isNaN(captured.getTime())) return null;
+
+  const capturedDay = Date.UTC(
+    captured.getUTCFullYear(),
+    captured.getUTCMonth(),
+    captured.getUTCDate(),
+  );
+  let startYear = Number(match[3] ?? captured.getUTCFullYear());
+  const startMonth = monthIndex(match[1]);
+  const endMonth = monthIndex(match[4] ?? match[1]);
+  if (startMonth === null || endMonth === null) return null;
+
+  let start = Date.UTC(startYear, startMonth, Number(match[2]));
+  if (!match[3] && start < capturedDay - 45 * 86_400_000) {
+    startYear += 1;
+    start = Date.UTC(startYear, startMonth, Number(match[2]));
+  }
+  let endYear = Number(match[6] ?? startYear);
+  let end = Date.UTC(endYear, endMonth, Number(match[5]));
+  if (!match[6] && end < start) {
+    endYear += 1;
+    end = Date.UTC(endYear, endMonth, Number(match[5]));
+  }
+  const minimum = Math.ceil((start - capturedDay) / 86_400_000);
+  const maximum = Math.ceil((end - capturedDay) / 86_400_000);
+  if (minimum < 0 || maximum < minimum || maximum > 400) return null;
+  return { minimum, maximum };
+}
+
+function monthIndex(value: string) {
+  const index = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    .indexOf(value.slice(0, 3).toLowerCase());
+  return index < 0 ? null : index;
 }
 
 function timestamp(value: string) {

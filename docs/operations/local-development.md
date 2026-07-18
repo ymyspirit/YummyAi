@@ -40,3 +40,14 @@ pnpm build
 ```
 
 The extension build is in `apps/extension/.output/chrome-mv3`. Run `pnpm --filter @yummyai/extension zip` to produce Chrome and Edge packages.
+
+## Extension smoke test
+
+After changing a marketplace parser, rebuild the extension, click **Reload** for YummyAI Capture on `chrome://extensions`, and refresh the open Amazon or Etsy page before testing:
+
+```powershell
+pnpm --filter @yummyai/extension test
+pnpm --filter @yummyai/extension build
+```
+
+In the popup, **重新读取** only refreshes the local preview. It does not create a research snapshot. Click **发送到研究库** and confirm that the research item gains a new version with the current parser version. For Etsy listing smoke tests, verify the preview includes the shop name, estimated delivery, shipping cost, origin, destination, listing date, and favorite count when those values are visible on the public page.

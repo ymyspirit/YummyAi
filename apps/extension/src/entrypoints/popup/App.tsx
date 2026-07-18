@@ -27,6 +27,7 @@ import {
   type CaptureProgressState,
 } from "../../lib/capture-client.js";
 import { withoutReviewEvidence } from "../../lib/capture-messages.js";
+import { MediaPreview } from "./media-preview.js";
 
 const stateLabel: Record<CaptureProgressState, string> = {
   pending: "待采集",
@@ -462,13 +463,7 @@ export function App() {
                       checked={included}
                       onChange={() => toggleMedia(item.id)}
                     />
-                    <img
-                      src={item.sourceUrl}
-                      alt={item.alt ?? `商品媒体 ${index + 1}`}
-                      width="72"
-                      height="72"
-                      loading="lazy"
-                    />
+                    <MediaPreview item={item} index={index} />
                     <span className="media-check" aria-hidden="true">
                       <Check size={13} />
                     </span>
