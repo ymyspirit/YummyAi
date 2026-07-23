@@ -12,7 +12,8 @@
     "./marketplace/platform": "./src/marketplace/platform.ts",
     "./marketplace/store": "./src/marketplace/store.ts",
     "./procurement": "./src/procurement/procurement.ts",
-    "./supplier-performance": "./src/supplier-performance/supplier-performance.ts"
+    "./supplier-performance": "./src/supplier-performance/supplier-performance.ts",
+    "./customer-intelligence": "./src/customer-intelligence/customer-intelligence.ts"
   },
   "scripts": {
     "test": "vitest run",

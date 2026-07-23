@@ -18,6 +18,8 @@ import { RedisMediaEnqueuer } from "./capture/redis-media-enqueuer.js";
 import { CaptureService } from "./capture/capture.service.js";
 import { ChannelInventoryController } from "./channel-inventory/channel-inventory.controller.js";
 import { ChannelInventoryService } from "./channel-inventory/channel-inventory.service.js";
+import { CustomerIntelligenceController } from "./customer-intelligence/customer-intelligence.controller.js";
+import { CustomerIntelligenceService } from "./customer-intelligence/customer-intelligence.service.js";
 import { ProductController } from "./catalog/product.controller.js";
 import { DrizzleCatalogRepository, ProductService } from "./catalog/product.service.js";
 import { CompetitorShopController } from "./competitors/competitor-shop.controller.js";
@@ -102,6 +104,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     AssetsController,
     CaptureController,
     ChannelInventoryController,
+    CustomerIntelligenceController,
     CompetitorShopController,
     DashboardController,
     DesignController,
@@ -171,6 +174,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     AuditService,
     CaptureService,
     ChannelInventoryService,
+    CustomerIntelligenceService,
     CompetitorShopService,
     DashboardService,
     DesignService,

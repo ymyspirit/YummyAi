@@ -61,6 +61,9 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Missing supplier samples silently improve or reduce a score | versioned minimum samples and explicit `exclude`, `zero`, or `incomplete` policy with nullable incomplete totals | missing-policy unit and contract tests |
 | A supplier scorecard changes routing or overwrites history | append-only definition versions/runs/metrics and no operational mutation path from the analytical service | privilege, replay, and routing-isolation tests |
 | Supplier performance evidence crosses tenant or safe-view boundaries | forced RLS, composite tenant foreign keys, authenticated permissions, and redacted workspace contracts | cross-tenant and workspace tests |
+| Customer identity or support text enters analytics | identity-redacted structured facts, checksum-only excerpts, existing-source validation, no raw text or provider payload in safe views | contract and integration tests |
+| Advertising evidence loses currency or attribution context | immutable reports pin source currency, attribution window, period, observation time, and normalized metric lines | report replay and workspace tests |
+| A VOC recommendation changes operational state | immutable analyses and recommendations, append-only review events, and no Listing, campaign, budget, product, or service mutation dependency | service boundary and privilege tests |
 
 ## Abuse cases
 
@@ -98,7 +101,13 @@ Protected assets are tenant records, private files, provider credentials, user s
   New evidence or a new KPI rule creates a new pinned scorecard run.
 - Missing or insufficient supplier evidence follows the definition's explicit
   policy and remains visible in diagnostics; it is never silently imputed.
+- Customer signals must reference existing tenant evidence and carry an allowed
+  consent basis. Identity, raw support text, and unrestricted excerpts do not
+  enter ordinary projections, audit metadata, or Web responses.
+- VOC approval is an analytical review decision only. A separate authorized
+  domain command is required for any Listing, campaign, budget, product, or
+  service change.
 
 ## Residual risks
 
-Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-D has no authorized Amazon/Etsy settlement acceptance evidence; statement facts must remain absent until that gate is run. P3-E can only evaluate the production, quality, procurement, invoice, and capacity evidence currently available; sparse or delayed evidence can make a scorecard incomplete and must not be interpreted as supplier performance. P3-B supplier-order and supplier-invoice provider acceptance also remains pending.
+Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-D has no authorized Amazon/Etsy settlement acceptance evidence; statement facts must remain absent until that gate is run. P3-E can only evaluate the production, quality, procurement, invoice, and capacity evidence currently available; sparse or delayed evidence can make a scorecard incomplete and must not be interpreted as supplier performance. P3-F has no authorized Amazon Ads/Etsy Ads retrieval acceptance evidence; advertising facts must remain absent until supplied by an authorized connector or explicit manual import. P3-B supplier-order and supplier-invoice provider acceptance also remains pending.

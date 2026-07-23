@@ -355,3 +355,20 @@ invent a total. At desktop and 390 px widths, all thirteen navigation items must
 remain present, the document must not overflow horizontally, and wide scorecard
 tables may scroll only inside their containers. A scorecard must not update
 supplier routing, capacity, procurement, or production state.
+
+## P3-F advertising and VOC
+
+Migration `0034_p3_customer_intelligence` adds immutable advertising reports and metric lines, identity-redacted customer signal facts, versioned VOC definitions, immutable analyses and theme metrics, and review-only recommendations:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- customer-intelligence.test.ts
+pnpm --filter @yummyai/api test:integration -- customer-intelligence.integration.test.ts
+pnpm --filter @yummyai/web test -- customer-intelligence-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart API and Web after migration and permission refresh, then open `http://localhost:3000/customer-intelligence`. The local administrator receives `customer_intelligence:read`, `customer_intelligence:write`, and `customer_intelligence:review`; production roles must receive them explicitly.
+
+Populate the workspace only through authenticated advertising and customer-intelligence routes. Verify source currency, attribution window, metric totals, source evidence, consent basis, redaction, definition version, analysis window, signal IDs, and review events. At desktop and 390 px widths, all fourteen navigation items must remain present and document overflow must remain absent; wide tables may scroll only inside their containers.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A inventory, P3-B procurement/replenishment, P3-C channel inventory/allocation, P3-D finance/profit, and P3-E supplier performance are locally implemented. P3-E current-worktree full local gates and populated desktop/390 px browser evidence have passed; P3-F and P3-G are not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A through P3-F are locally implemented. P3-F current-worktree full local gates and populated desktop/390 px browser evidence have passed. P3-G is not started. Exact-candidate CI, outstanding P1/P2 gates, and real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -164,6 +164,22 @@ Current local implementation evidence on 2026-07-23:
 - Add an operating cockpit with metric definitions, freshness, completeness, drill-through, and reconciliation queues.
 - Provide scoped API clients, signed Webhooks, replay protection, delivery attempts, dead letters, and manual replay.
 - Run projection rebuild, backup/restore, tenant, concurrency, load, retention, provider-failure, and real authorized end-to-end drills on the exact clean candidate.
+
+## P3-F implementation ledger
+
+- [x] Strict advertising report, metric line, customer signal, VOC definition, analysis, theme, recommendation, and workspace contracts.
+- [x] Tenant-scoped schema and migration `0034_p3_customer_intelligence` with forced RLS and append-only evidence grants.
+- [x] Existing-source validation and identity-redacted structured signal boundary.
+- [x] Idempotent advertising reports, signals, definitions, analyses, and recommendation reviews.
+- [x] Pinned source currency, attribution window, analysis window, evidence cutoff, definition version, and signal IDs.
+- [x] Review-only recommendations with no Listing, budget, campaign, product, or service mutation path.
+- [x] Authenticated API and real-API Web workspace with fourteen stable navigation items.
+- [x] ADR, integration guide, local runbook, and threat-model updates.
+- [x] Focused contract, database integration, Web render, navigation, and type checks.
+- [x] Full-worktree lint, unit, integration, E2E, build, and migration gates.
+- [x] Populated desktop and 390 px browser verification.
+- [ ] Exact-candidate clean commit, push, and CI.
+- [ ] Authorized Amazon Ads/Etsy Ads retrieval acceptance evidence.
 
 ## P3-A implementation ledger
 

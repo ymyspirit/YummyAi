@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ErpSidebar, type ErpSection } from "./erp-sidebar";
 
 describe("ErpSidebar", () => {
-  it.each<ErpSection>(["dashboard", "research", "competitors", "products", "design", "stores", "listings", "orders", "inventory", "procurement", "supplier-performance", "channel-inventory", "finance"])(
+  it.each<ErpSection>(["dashboard", "research", "competitors", "products", "design", "stores", "listings", "orders", "inventory", "procurement", "supplier-performance", "channel-inventory", "finance", "customer-intelligence"])(
     "keeps every primary destination visible when %s is active",
     (active) => {
       const html = renderToStaticMarkup(

@@ -232,6 +232,13 @@
       "when": 1787068800000,
       "tag": "0033_p3_supplier_performance",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787155200000,
+      "tag": "0034_p3_customer_intelligence",
+      "breakpoints": true
     }
   ]
 }
