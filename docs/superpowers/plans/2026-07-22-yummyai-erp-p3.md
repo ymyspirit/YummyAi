@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A inventory kernel is locally complete on `codex/p3-inventory-kernel`; P3-B onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A inventory and P3-B procurement/replenishment are locally complete; P3-C onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -125,6 +125,43 @@ Local implementation evidence on 2026-07-23:
 - The inventory integration suite covers replay, changed-payload conflict, unit mismatch, negative availability, 12 concurrent reservations against 10 available units, release replay, paired transfer movements, cancellation, append-only grants, cross-tenant IDs, and projection rebuild equivalence.
 - `/inventory` consumes `/v1/inventory/workspace` through the local OIDC service identity. Empty and populated states were checked at 1280 px and 390 px; the page has no document-level horizontal overflow and mobile table overflow remains scoped to its table container.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production build, project-rule, migration, and documentation checks pass locally. This is not exact-candidate CI evidence and does not close any deferred provider gate.
+
+## P3-B implementation ledger
+
+- [x] Procurement permissions and strict shared contracts.
+- [x] Tenant-scoped requisition, RFQ, supplier quote, inventory purchase-order,
+  approval, receipt, invoice, policy, and suggestion schema.
+- [x] Migration, forced RLS, composite tenant foreign keys, and append-only
+  application grants.
+- [x] Idempotent versioned service and authenticated `/v1/procurement` API.
+- [x] Atomic receipt-to-lot/movement posting through the inventory service.
+- [x] Receipt, rejection, invoice, replay, optimistic-version, cross-tenant,
+  immutability, and no-auto-order integration coverage.
+- [x] Real-API procurement workspace with explicit operational states and
+  responsive browser evidence.
+- [x] Procurement ADR, integration guide, local runbook, and threat-model
+  updates.
+- [x] Root lint, typecheck, unit, integration, E2E, build, migration, rule, and
+  diff checks.
+
+Local implementation evidence on 2026-07-23:
+
+- Migration `0030_p3_procurement_replenishment` applies under PostgreSQL 17 and
+  passes `drizzle-kit check`.
+- The procurement integration suite covers the full
+  requisition/RFQ/quote/order/approval/receipt/invoice path, idempotent replay,
+  immutable revisions, accepted stock posting, receipt and invoice variance,
+  versioned replenishment policies, suggestions without order creation,
+  cross-tenant isolation, and append-only privileges.
+- `/procurement` consumes `/v1/procurement/workspace` through the local OIDC
+  service identity. A populated reconciliation path was checked at 1440 px and
+  390 px; the page has ten navigation items, no document-level horizontal
+  overflow, table overflow is scoped to its container, and a fresh browser tab
+  reports no console errors.
+- Root lint, typecheck, unit, integration, Web and extension E2E, production
+  build, project-rule, migration, and diff checks pass locally. This is not
+  exact-candidate CI evidence and does not close P1/P2 provider authorization or
+  future P3-C provider inventory gates.
 
 ## P3 acceptance matrix
 

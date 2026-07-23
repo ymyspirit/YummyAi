@@ -88,6 +88,8 @@ import {
 } from "./platform.tokens.js";
 import { ResearchController } from "./research/research.controller.js";
 import { ResearchRepository } from "./research/research.repository.js";
+import { ProcurementController } from "./procurement/procurement.controller.js";
+import { ProcurementService } from "./procurement/procurement.service.js";
 
 @Module({
   controllers: [
@@ -112,6 +114,7 @@ import { ResearchRepository } from "./research/research.repository.js";
     OrderProductionCommandController,
     OrderShipmentController,
     OrderShipmentCommandController,
+    ProcurementController,
     ProductController,
     ResearchController,
     SupplierRoutingController,
@@ -179,6 +182,7 @@ import { ResearchRepository } from "./research/research.repository.js";
     OrderShipmentService,
     OrderRoutingService,
     OrderSyncCoordinator,
+    ProcurementService,
     ProductService,
     ResearchRepository,
     { provide: APP_GUARD, useClass: TenantContextGuard },

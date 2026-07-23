@@ -220,3 +220,38 @@ Restart `pnpm dev` after adding the migration or permissions, then open `http://
 Verify both an empty tenant and a populated tenant. The populated path must use authenticated `/v1/inventory` commands rather than UI demo data. At desktop width, balances and recent movements should fit without document or table overflow. At 390 px, the page and navigation must remain within the viewport while wide tables scroll only inside their table containers.
 
 Projection rebuild is an administrative repair command, not a periodic stock mutation. Before using it, retain the movement/reservation evidence and use a unique idempotency key. A rebuild that detects negative physical, in-transit, provider, or virtual stock, or physical below active reservations, fails closed for reconciliation.
+
+## P3-B procurement and replenishment
+
+Migration `0030_p3_procurement_replenishment` adds inventory procurement
+requisitions, RFQs, supplier quote versions, versioned inventory purchase orders,
+approval events, receipts/rejections, supplier invoices, replenishment policy
+versions, and suggestions:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- procurement.test.ts
+pnpm --filter @yummyai/api test:integration -- procurement.integration.test.ts
+pnpm --filter @yummyai/database test:integration -- tenant-isolation.integration.test.ts
+pnpm --filter @yummyai/web test -- procurement-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart the API and Web processes after applying the migration and refreshing
+local permissions, then open `http://localhost:3000/procurement`. The local
+administrator receives `procurement:read`, `procurement:write`, and
+`procurement:approve`; ordinary production roles must receive them explicitly.
+
+Populate the page only through authenticated `/v1/inventory`, `/v1/sourcing`,
+and `/v1/procurement` routes. Verify a complete requisition, RFQ, quote,
+purchase-order approval, receipt, invoice, policy, and suggestion chain. Include
+one receipt or invoice variance and confirm it remains
+`reconciliation_required`. Confirm that accepted receipt quantity creates an
+inventory lot and movement, while a replenishment suggestion does not create or
+approve a purchase order.
+
+At desktop and 390 px widths, the ten navigation items must remain present, the
+document must not overflow horizontally, and the purchase-order table may scroll
+only inside its table container. Verify explicit empty, unauthorized, forbidden,
+failed, and populated states without procurement demo data.

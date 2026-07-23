@@ -1,8 +1,8 @@
-import { Archive, Boxes, Cable, ClipboardList, FileText, Gauge, PackageSearch, Palette, ScanSearch, Store } from "lucide-react";
+import { Archive, Boxes, Cable, ClipboardList, FileText, Gauge, PackageSearch, Palette, ScanSearch, ShoppingCart, Store } from "lucide-react";
 import Link from "next/link";
 
 export type ErpSection =
-  "dashboard" | "research" | "competitors" | "products" | "design" | "stores" | "listings" | "orders" | "inventory";
+  "dashboard" | "research" | "competitors" | "products" | "design" | "stores" | "listings" | "orders" | "inventory" | "procurement";
 
 interface ErpSidebarProps {
   active: ErpSection;
@@ -27,6 +27,7 @@ export function ErpSidebar({
     { id: "listings", href: listingHref, label: "刊登控制台", icon: FileText },
     { id: "orders", href: "/orders", label: "订单履约", icon: ClipboardList },
     { id: "inventory", href: "/inventory", label: "库存台账", icon: PackageSearch },
+    { id: "procurement", href: "/procurement", label: "采购补货", icon: ShoppingCart },
   ] as const;
 
   return (

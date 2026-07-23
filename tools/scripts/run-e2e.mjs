@@ -9,7 +9,7 @@ const filters = process.argv.slice(2).filter((value) => value !== "--");
 const joined = filters.join(" ");
 const configs = joined.includes("capture")
   ? ["apps/extension/playwright.config.ts"]
-  : joined.includes("p0-flow") || joined.includes("tenant-isolation") || joined.includes("inventory")
+  : joined.includes("p0-flow") || joined.includes("tenant-isolation") || joined.includes("inventory") || joined.includes("procurement")
     ? ["apps/web/playwright.config.ts"]
     : ["apps/web/playwright.config.ts", "apps/extension/playwright.config.ts"];
 

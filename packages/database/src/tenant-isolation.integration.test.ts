@@ -228,6 +228,16 @@ describe("tenant isolation", () => {
         ,has_table_privilege(current_user, 'fulfillment_automation_policies', 'UPDATE') as fulfillment_automation_policy_update
         ,has_table_privilege(current_user, 'fulfillment_automation_tasks', 'UPDATE') as fulfillment_automation_task_update
         ,has_table_privilege(current_user, 'fulfillment_automation_events', 'UPDATE') as fulfillment_automation_event_update
+        ,has_table_privilege(current_user, 'inventory_procurement_requisition_versions', 'UPDATE') as procurement_requisition_version_update
+        ,has_table_privilege(current_user, 'inventory_supplier_quote_versions', 'UPDATE') as procurement_quote_version_update
+        ,has_table_privilege(current_user, 'inventory_purchase_orders', 'UPDATE') as inventory_purchase_order_update
+        ,has_table_privilege(current_user, 'inventory_purchase_order_versions', 'UPDATE') as inventory_purchase_order_version_update
+        ,has_table_privilege(current_user, 'inventory_purchase_order_events', 'DELETE') as inventory_purchase_order_event_delete
+        ,has_table_privilege(current_user, 'inventory_procurement_receipts', 'UPDATE') as procurement_receipt_update
+        ,has_table_privilege(current_user, 'inventory_supplier_invoices', 'DELETE') as procurement_invoice_delete
+        ,has_table_privilege(current_user, 'inventory_replenishment_policies', 'UPDATE') as replenishment_policy_update
+        ,has_table_privilege(current_user, 'inventory_replenishment_policy_versions', 'UPDATE') as replenishment_policy_version_update
+        ,has_table_privilege(current_user, 'inventory_replenishment_suggestions', 'UPDATE') as replenishment_suggestion_update
     `));
     expect(privileges).toMatchObject({
       automation_rule_update: true,
@@ -237,6 +247,16 @@ describe("tenant isolation", () => {
       fulfillment_automation_policy_update: true,
       fulfillment_automation_task_update: true,
       fulfillment_automation_event_update: false,
+      procurement_requisition_version_update: false,
+      procurement_quote_version_update: false,
+      inventory_purchase_order_update: true,
+      inventory_purchase_order_version_update: false,
+      inventory_purchase_order_event_delete: false,
+      procurement_receipt_update: false,
+      procurement_invoice_delete: false,
+      replenishment_policy_update: true,
+      replenishment_policy_version_update: false,
+      replenishment_suggestion_update: false,
       customization_file_update: true,
       customization_requirement_update: true,
       customization_scan_update: false,

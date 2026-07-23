@@ -45,6 +45,10 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Concurrent reservations oversell physical availability | tenant/dimension advisory lock, physical-minus-reserved check, non-negative database constraints | concurrent reservation integration test |
 | A transfer records only one side or is replayed twice | paired debit/credit movement IDs, optimistic transfer version, lifecycle idempotency key | transfer pairing and replay integration tests |
 | Inventory data or internal command keys cross tenant/UI boundaries | forced RLS, composite tenant foreign keys, safe workspace contract without tenant/actor/idempotency fields | cross-tenant API and workspace contract tests |
+| Procurement overwrites a reviewed commercial decision | immutable requisition/quote/order versions, append-only approval events, optimistic expected version | procurement revision and stale-review integration tests |
+| Receipt stock is posted without matching receipt evidence | one tenant transaction through the inventory service creates receipt lines, lots, and immutable movements | receipt-to-ledger integration test |
+| Quantity, rejection, price, or currency variance is hidden | three-way comparison with explicit `reconciliation_required` state and immutable source evidence | receipt and invoice variance integration tests |
+| A replenishment recommendation places an unapproved order | suggestion pins policy and stock inputs but has no purchase-order creation or approval side effect | replenishment no-order integration test |
 
 ## Abuse cases
 
@@ -62,7 +66,12 @@ Protected assets are tenant records, private files, provider credentials, user s
 - Inventory balance rows are projections, never acceptable audit evidence. Operators cannot update lots, movements, reservation events, transfer events, or rebuild records through the application role.
 - Reusing an inventory idempotency key with changed quantity, unit, dimension, or source must return a conflict; clients must not generate a silent replacement command.
 - Provider and virtual inventory cannot be inferred from physical stock. Missing provider facts remain explicit until the authorized P3-C connector path supplies evidence.
+- Procurement receipts and invoices remain recorded when they disagree. Operators
+  must reconcile with new evidence instead of editing accepted versions or
+  repeating the external action.
+- A replenishment suggestion is analytical evidence only. It cannot create,
+  approve, or submit an inventory purchase order.
 
 ## Residual risks
 
-Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-A has no authorized FBA, 3PL, supplier, or channel-inventory connector evidence; those quantities must remain absent until P3-C live acceptance.
+Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-A/P3-B have no authorized FBA, 3PL, supplier-order, supplier-invoice, or channel-inventory connector evidence; those facts must remain absent until the relevant live acceptance gate.

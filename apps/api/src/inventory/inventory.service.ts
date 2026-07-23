@@ -61,6 +61,20 @@ import { DATABASE_CONNECTION } from "../platform.tokens.js";
 type BalanceRow = typeof inventoryBalances.$inferSelect;
 type MovementRow = typeof inventoryMovements.$inferSelect;
 
+export interface ReceiveProcurementStockInput {
+  receiptId: string;
+  stockItemId: string;
+  locationId: string;
+  lotCode: string;
+  quantity: number;
+  unit: InventoryUnit;
+  unitCostMinor: number;
+  currency: string;
+  receivedAt: string;
+  expiresAt: string | null;
+  idempotencyKey: string;
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -194,6 +208,49 @@ export class InventoryService {
   listLots(context: TenantContext) {
     return withTenant(this.database.db, context, (tx) =>
       tx.select().from(inventoryLots).orderBy(desc(inventoryLots.createdAt)));
+  }
+
+  async receiveProcurementStock(
+    tx: TenantTransaction,
+    context: TenantContext,
+    input: ReceiveProcurementStockInput,
+  ) {
+    await requireDimension(tx, input.stockItemId, input.locationId, null, input.unit);
+    await lock(tx, `inventory-lot-code:${context.tenantId}:${input.stockItemId}:${input.lotCode}`);
+    const [existingLot] = await tx.select({ id: inventoryLots.id }).from(inventoryLots)
+      .where(and(
+        eq(inventoryLots.stockItemId, input.stockItemId),
+        eq(inventoryLots.code, input.lotCode),
+      )).limit(1);
+    if (existingLot) throw new ConflictException("Procurement lot code already exists for this stock item");
+    const [lot] = await tx.insert(inventoryLots).values({
+      id: createEntityId(),
+      tenantId: context.tenantId,
+      stockItemId: input.stockItemId,
+      code: input.lotCode,
+      sourceType: "receipt",
+      sourceId: input.receiptId,
+      unitCostMinor: input.unitCostMinor,
+      unitCostCurrency: input.currency,
+      receivedAt: new Date(input.receivedAt),
+      expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      createdBy: context.userId,
+    }).returning();
+    const result = await applyMovement(tx, context, {
+      stockItemId: input.stockItemId,
+      locationId: input.locationId,
+      lotId: lot!.id,
+      bucket: "physical",
+      type: "receipt",
+      quantityDelta: input.quantity,
+      unit: input.unit,
+      sourceType: "receipt",
+      sourceId: input.receiptId,
+      reasonCode: "PROCUREMENT_RECEIPT",
+      occurredAt: input.receivedAt,
+      idempotencyKey: input.idempotencyKey,
+    });
+    return { lot: lot!, movement: result.movement, balance: toBalanceView(result.balance) };
   }
 
   async recordMovement(context: TenantContext, rawInput: RecordInventoryMovementInput) {
