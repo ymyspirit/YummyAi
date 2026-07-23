@@ -11,7 +11,8 @@
     "./inventory": "./src/inventory/inventory.ts",
     "./marketplace/platform": "./src/marketplace/platform.ts",
     "./marketplace/store": "./src/marketplace/store.ts",
-    "./procurement": "./src/procurement/procurement.ts"
+    "./procurement": "./src/procurement/procurement.ts",
+    "./supplier-performance": "./src/supplier-performance/supplier-performance.ts"
   },
   "scripts": {
     "test": "vitest run",

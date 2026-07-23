@@ -251,7 +251,7 @@ one receipt or invoice variance and confirm it remains
 inventory lot and movement, while a replenishment suggestion does not create or
 approve a purchase order.
 
-At desktop and 390 px widths, the twelve navigation items must remain present, the
+At desktop and 390 px widths, the thirteen navigation items must remain present, the
 document must not overflow horizontally, and the purchase-order table may scroll
 only inside its table container. Verify explicit empty, unauthorized, forbidden,
 failed, and populated states without procurement demo data.
@@ -284,7 +284,7 @@ virtual quantities. After each new snapshot or policy version, run the current
 allocation policy before requesting a Listing inventory push. A stale
 projection is expected to fail closed.
 
-At desktop and 390 px widths, all twelve navigation items must remain present
+At desktop and 390 px widths, all thirteen navigation items must remain present
 and the document must not overflow horizontally. The evidence and projection
 tables may scroll only within their table containers. Verify empty,
 unauthorized, forbidden, failed, populated, and open-reconciliation states.
@@ -316,7 +316,42 @@ missing-fact, missing-FX, and unclassified-fact runs. Complete values must match
 the pinned statement and FX evidence exactly; incomplete totals must display as
 missing, never zero.
 
-At desktop and 390 px widths, all twelve navigation items must remain present
+At desktop and 390 px widths, all thirteen navigation items must remain present
 and the document must not overflow horizontally. Wide finance tables may scroll
 only inside their table containers. Real Amazon/Etsy settlement retrieval is a
 separate authorized-provider acceptance gate.
+
+## P3-E supplier performance
+
+Migration `0033_p3_supplier_performance` adds versioned KPI definitions,
+immutable scorecard runs, and one immutable evidence row for each of the seven
+supplier KPIs:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- supplier-performance.test.ts
+pnpm --filter @yummyai/api test -- supplier-performance.service.test.ts
+pnpm --filter @yummyai/api test:integration -- supplier-performance.integration.test.ts
+pnpm --filter @yummyai/web test -- supplier-performance-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart API and Web after migration and permission refresh, then open
+`http://localhost:3000/supplier-performance`. The local administrator receives
+`supplier_performance:read` and `supplier_performance:review`; production roles
+must receive them explicitly.
+
+Populate the workspace through authenticated production, quality, procurement,
+invoice, capacity, and supplier-performance routes. Create a versioned
+definition before calculating a scorecard. Verify the evaluation window,
+evidence cutoff, raw numerator/denominator, sample count, evidence references,
+and input checksum remain pinned. Repeating the same idempotency key with changed
+content must conflict.
+
+Verify `exclude`, `zero`, and `incomplete` missing-data policies with insufficient
+samples. The interface must display missing evidence explicitly and must not
+invent a total. At desktop and 390 px widths, all thirteen navigation items must
+remain present, the document must not overflow horizontally, and wide scorecard
+tables may scroll only inside their containers. A scorecard must not update
+supplier routing, capacity, procurement, or production state.

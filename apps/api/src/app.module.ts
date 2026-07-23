@@ -94,6 +94,8 @@ import { ResearchController } from "./research/research.controller.js";
 import { ResearchRepository } from "./research/research.repository.js";
 import { ProcurementController } from "./procurement/procurement.controller.js";
 import { ProcurementService } from "./procurement/procurement.service.js";
+import { SupplierPerformanceController } from "./supplier-performance/supplier-performance.controller.js";
+import { SupplierPerformanceService } from "./supplier-performance/supplier-performance.service.js";
 
 @Module({
   controllers: [
@@ -121,6 +123,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
     OrderShipmentController,
     OrderShipmentCommandController,
     ProcurementController,
+    SupplierPerformanceController,
     ProductController,
     ResearchController,
     SupplierRoutingController,
@@ -191,6 +194,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
     OrderRoutingService,
     OrderSyncCoordinator,
     ProcurementService,
+    SupplierPerformanceService,
     ProductService,
     ResearchRepository,
     { provide: APP_GUARD, useClass: TenantContextGuard },

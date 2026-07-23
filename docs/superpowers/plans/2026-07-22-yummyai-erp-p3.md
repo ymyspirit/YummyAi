@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A inventory, P3-B procurement/replenishment, P3-C channel inventory/allocation, and P3-D finance/profit are locally implemented; P3-E onward is not started. P3-D full-worktree gates and populated desktop/390 px browser evidence have passed. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A inventory, P3-B procurement/replenishment, P3-C channel inventory/allocation, P3-D finance/profit, and P3-E supplier performance are locally implemented. P3-E current-worktree full local gates and populated desktop/390 px browser evidence have passed; P3-F and P3-G are not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -96,6 +96,47 @@ Starting P3 does not waive these gates and does not make the incomplete fulfillm
 - Pin KPI definitions, windows, weighting, minimum sample, and missing-data policy.
 - Scorecards are analytical output only; routing-policy changes require a separately approved version.
 
+## P3-E implementation ledger
+
+- [x] Strict seven-KPI definition, scorecard, metric, diagnostic, and workspace
+  contracts.
+- [x] Tenant-scoped definition identity/version, immutable run, and immutable
+  metric schema and migration.
+- [x] Forced RLS, composite tenant foreign keys, and append-only application
+  grants.
+- [x] Idempotent definition versioning and scorecard API with changed-payload
+  conflicts.
+- [x] KPI derivation from production, QC, capacity, RFQ/quote, receipt, purchase
+  order, and supplier-invoice evidence.
+- [x] Explicit `exclude`, `zero`, and `incomplete` missing-data policies with
+  pinned raw numerator/denominator, sample count, references, cutoff, and input
+  checksum.
+- [x] Cross-tenant, replay, changed-payload, seven-KPI reproduction, missing
+  sample, and privilege coverage.
+- [x] Real-API supplier-performance workspace with explicit empty,
+  unauthorized, forbidden, failed, complete, and incomplete states.
+- [x] ADR, integration guide, local runbook, and threat-model updates.
+- [x] Applied local migration and refreshed local permissions.
+- [x] Populated desktop and 390 px browser evidence.
+- [x] Current-worktree full local gates.
+- [ ] Exact-candidate clean commit, push, and CI.
+
+Current local implementation evidence on 2026-07-23:
+
+- Migration `0033_p3_supplier_performance` applies under PostgreSQL 17 and
+  passes `drizzle-kit check`.
+- The integration suite reproduces all seven KPIs from production, QC,
+  capacity, RFQ/quote, receipt, purchase-order, and invoice evidence. It also
+  covers exact replay, changed-payload conflict, cross-tenant isolation, and
+  append-only privileges.
+- `/supplier-performance` consumes the authenticated workspace API. Two real
+  API-created incomplete scorecards pin the local definition, evaluation
+  window, evidence cutoff, raw values, samples, and evidence references.
+- The populated page was checked at 1280 px and 390 px. All thirteen navigation
+  items remain present, document-level horizontal overflow is absent, table and
+  navigation overflow stays inside their containers, and the browser console
+  reports no warnings or errors.
+
 ## P3-D implementation ledger
 
 - [x] Strict statement, fact, correction, FX, metric, run, contribution, diagnostic, and workspace contracts.
@@ -170,7 +211,7 @@ Local implementation evidence on 2026-07-23:
   cross-tenant isolation, and append-only privileges.
 - `/procurement` consumes `/v1/procurement/workspace` through the local OIDC
   service identity. A populated reconciliation path was checked at 1440 px and
-  390 px; the page now shares twelve navigation items, no document-level horizontal
+  390 px; the page now shares thirteen navigation items, no document-level horizontal
   overflow, table overflow is scoped to its container, and a fresh browser tab
   reports no console errors.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production
@@ -191,7 +232,7 @@ Local implementation evidence on 2026-07-23:
 - [x] Stale projection rejection after new evidence or policy revision.
 - [x] Interrupted/uncertain Listing mutations create append-only reconciliation.
 - [x] Real-API channel inventory workspace with explicit operational states and
-  stable twelve-item navigation.
+  stable thirteen-item navigation.
 - [x] Current-worktree full local gates plus populated desktop and 390 px
   browser/E2E evidence.
 - [ ] Exact-candidate clean commit, push, and CI.

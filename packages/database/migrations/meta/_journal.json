@@ -225,6 +225,13 @@
       "when": 1786982400000,
       "tag": "0032_p3_finance_profit",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787068800000,
+      "tag": "0033_p3_supplier_performance",
+      "breakpoints": true
     }
   ]
 }

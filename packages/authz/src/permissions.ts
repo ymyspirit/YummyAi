@@ -38,6 +38,8 @@ export const Permission = {
   StoreAuthorize: "store:authorize",
   StoreManage: "store:manage",
   StoreRead: "store:read",
+  SupplierPerformanceRead: "supplier_performance:read",
+  SupplierPerformanceReview: "supplier_performance:review",
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
