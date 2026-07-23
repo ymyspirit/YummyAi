@@ -1,4 +1,5 @@
 import { FileText } from "lucide-react";
+import type { ListingReplicationView, MarketplaceAccountView, MarketplaceAutomationRuleView, MarketplaceAutomationRunView, MarketplaceListingSyncRequestView, MarketplacePublicationRequestView } from "@yummyai/contracts";
 
 import {
   ListingEditor,
@@ -6,6 +7,8 @@ import {
 } from "../../../../features/listings/listing-editor";
 import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import type { ReviewDrawerView } from "../../../../features/reviews/review-drawer";
+import type { PublicationWorkspaceView } from "../../../../features/marketplaces/publication-panel";
+import type { AutomationWorkspaceView } from "../../../../features/marketplaces/listing-channel-operations";
 import { apiFetch } from "../../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +26,7 @@ export default async function ListingPage({ params }: { params: Promise<{ listin
       />
       <main className="research-main listing-main">
         {result.listing ? (
-          <ListingEditor listing={result.listing} review={result.review} />
+          <ListingEditor accounts={result.accounts} automations={result.automations} listing={result.listing} operationsError={result.operationsError} publicationError={result.publicationError} publications={result.publications} replications={result.replications} review={result.review} syncs={result.syncs} />
         ) : (
           <section className="analysis-error" role="alert">
             <FileText size={28} />
@@ -39,27 +42,35 @@ export default async function ListingPage({ params }: { params: Promise<{ listin
 
 async function loadListing(
   id: string,
-): Promise<{ listing?: ListingEditorView; review?: ReviewDrawerView; error?: string }> {
+): Promise<{ accounts?: MarketplaceAccountView[]; automations?: AutomationWorkspaceView[]; listing?: ListingEditorView; operationsError?: string; publicationError?: string; publications?: PublicationWorkspaceView[]; replications?: ListingReplicationView[]; review?: ReviewDrawerView; syncs?: MarketplaceListingSyncRequestView[]; error?: string }> {
   if (process.env.LISTING_DEMO_MODE === "1") {
     const listing = demoListing(id);
-    return { listing, review: demoReview(listing) };
+    return { accounts: [], automations: [], listing, publications: [], replications: [], review: demoReview(listing), syncs: [] };
   }
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置刊登 API。请设置 API_BASE_URL 后重试。" };
   try {
-    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/listings/${id}`, {
-      cache: "no-store",
-    });
+    const base = apiBase.replace(/\/$/, "");
+    const [response, accountsResponse, publicationsResponse, replicationsResponse, syncsResponse, automationsResponse] = await Promise.all([
+      apiFetch(`${base}/v1/listings/${id}`, { cache: "no-store" }),
+      apiFetch(`${base}/v1/marketplace-accounts`, { cache: "no-store" }),
+      apiFetch(`${base}/v1/marketplace-publications?listingId=${encodeURIComponent(id)}&limit=50`, { cache: "no-store" }),
+      apiFetch(`${base}/v1/listings/${id}/replications`, { cache: "no-store" }),
+      apiFetch(`${base}/v1/marketplace-listing-syncs?listingId=${encodeURIComponent(id)}&limit=50`, { cache: "no-store" }),
+      apiFetch(`${base}/v1/marketplace-automation-rules`, { cache: "no-store" }),
+    ]);
     if (!response.ok) throw new Error(`刊登读取失败 (${response.status})`);
     const payload = (await response.json()) as {
       listing: {
         id: string;
         platform: "amazon" | "etsy";
+        marketplaceId?: string;
         locale: string;
         status: ListingEditorView["status"];
         spuId: string;
       };
       version: {
+        id: string;
         versionNumber: number;
         ruleVersion: string;
         source: "human" | "ai";
@@ -69,10 +80,28 @@ async function loadListing(
       };
       history: ListingEditorView["history"];
     };
+    const accounts = accountsResponse.ok ? await accountsResponse.json() as MarketplaceAccountView[] : [];
+    const publicationRequests = publicationsResponse.ok
+      ? await publicationsResponse.json() as MarketplacePublicationRequestView[]
+      : [];
+    const publications = await Promise.all(publicationRequests.map(async (publication) => {
+      const eventsResponse = await apiFetch(`${base}/v1/marketplace-publications/${publication.id}/events`, { cache: "no-store" });
+      return {
+        ...publication,
+        events: eventsResponse.ok ? await eventsResponse.json() as PublicationWorkspaceView["events"] : [publication.current],
+      };
+    }));
+    const automationRules = automationsResponse.ok ? await automationsResponse.json() as MarketplaceAutomationRuleView[] : [];
+    const automations = await Promise.all(automationRules.map(async (rule) => {
+      const runsResponse = await apiFetch(`${base}/v1/marketplace-automation-rules/${rule.id}/runs`, { cache: "no-store" });
+      return { ...rule, runs: runsResponse.ok ? await runsResponse.json() as MarketplaceAutomationRunView[] : [] };
+    }));
     return {
+      accounts,
       listing: {
         ...payload.listing,
         spuCode: payload.listing.spuId.slice(0, 12),
+        versionId: payload.version.id,
         versionNumber: payload.version.versionNumber,
         ruleVersion: payload.version.ruleVersion,
         source: payload.version.source,
@@ -81,6 +110,20 @@ async function loadListing(
         validation: payload.version.validation,
         history: payload.history,
       },
+      publicationError: !accountsResponse.ok
+        ? `店铺连接读取失败 (${accountsResponse.status})`
+        : !publicationsResponse.ok
+          ? `发布记录读取失败 (${publicationsResponse.status})`
+          : undefined,
+      publications,
+      replications: replicationsResponse.ok ? await replicationsResponse.json() as ListingReplicationView[] : [],
+      syncs: syncsResponse.ok ? await syncsResponse.json() as MarketplaceListingSyncRequestView[] : [],
+      automations,
+      operationsError: !replicationsResponse.ok
+        ? `站点复制记录读取失败 (${replicationsResponse.status})`
+        : !syncsResponse.ok
+          ? `在线同步记录读取失败 (${syncsResponse.status})`
+          : !automationsResponse.ok ? `自动化规则读取失败 (${automationsResponse.status})` : undefined,
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "刊登读取失败" };
@@ -138,6 +181,7 @@ function demoListing(id: string): ListingEditorView {
     locale: "en-US",
     status: "draft",
     spuCode: "TRAVEL-MUG-GIFT",
+    versionId: "0198fbef-4a10-7000-8000-000000000704",
     versionNumber: 4,
     ruleVersion: "amazon-2026.07",
     source: "human",

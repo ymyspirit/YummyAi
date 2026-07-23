@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
+import { CreateListingReplicationInputSchema } from "@yummyai/contracts";
 import type { ListingDraft, ListingPlatform } from "@yummyai/platform-rules";
 import { z } from "zod";
 
@@ -23,7 +24,7 @@ export class ListingController {
   @RequiresPermission(Permission.ListingWrite)
   create(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
     const context = requireContext(request); authorize(context, Permission.ListingWrite);
-    const input = z.object({ spuId: z.uuidv7(), platform: z.enum(["amazon", "etsy"]), locale: z.string(), content: ListingDraftSchema }).parse(body);
+    const input = z.object({ spuId: z.uuidv7(), platform: z.enum(["amazon", "etsy"]), marketplaceId: z.string().trim().min(1).max(80).optional(), locale: z.string(), content: ListingDraftSchema }).parse(body);
     return this.service.create(context, { ...input, platform: input.platform as ListingPlatform, content: input.content as ListingDraft });
   }
 
@@ -42,6 +43,14 @@ export class ListingController {
   @Post(":id/versions/:versionId/approve")
   @RequiresPermission(Permission.ListingReview)
   approve(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("versionId") versionId: string) { const context = requireContext(request); authorize(context, Permission.ListingReview); return this.service.approveVersion(context, z.uuidv7().parse(id), z.uuidv7().parse(versionId)); }
+
+  @Get(":id/replications")
+  @RequiresPermission(Permission.ListingRead)
+  replications(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.listReplications(context, z.uuidv7().parse(id)); }
+
+  @Post(":id/replications")
+  @RequiresPermission(Permission.ListingWrite)
+  replicate(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.replicate(context, z.uuidv7().parse(id), CreateListingReplicationInputSchema.parse(body)); }
 }
 
 function requireContext(request: AuthenticatedRequest) { if (!request.tenantContext) throw new Error("Tenant context is required"); return request.tenantContext; }

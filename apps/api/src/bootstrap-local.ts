@@ -5,6 +5,14 @@ const TENANT_ID = "019f7600-0000-7000-8000-000000000001";
 const USER_ID = "019f7600-0000-7000-8000-000000000002";
 const MEMBERSHIP_ID = "019f7600-0000-7000-8000-000000000003";
 const ROLE_ID = "019f7600-0000-7000-8000-000000000004";
+const EXTENSION_USER_ID = "019f7600-0000-7000-8000-000000000005";
+const EXTENSION_MEMBERSHIP_ID = "019f7600-0000-7000-8000-000000000006";
+const LOCAL_EXTENSION_ID = "pbfkpadkdjbjgmibceaelflmgjhclnhl";
+const LEGACY_LOCAL_EXTENSION_ID = "kjknajpgoodonofageomfdenlhmmkmjb";
+const LOCAL_EXTENSION_REDIRECT_URIS = [
+  `https://${LOCAL_EXTENSION_ID}.chromiumapp.org/oidc`,
+  `https://${LEGACY_LOCAL_EXTENSION_ID}.chromiumapp.org/oidc`,
+];
 
 async function main() {
   const issuer = required("OIDC_ISSUER");
@@ -92,6 +100,9 @@ async function main() {
   }
   if (!internalClientId) throw new Error("Keycloak did not return the local client ID");
 
+  await ensureExtensionClientRedirectUris(adminBase, headers);
+  const extensionUser = await ensureLocalExtensionUser(adminBase, headers);
+
   const serviceAccount = await json<{ id: string }>(
     `${adminBase}/clients/${internalClientId}/service-account-user`,
     { headers },
@@ -132,14 +143,101 @@ async function main() {
          on conflict do nothing`,
         [TENANT_ID, MEMBERSHIP_ID, ROLE_ID],
       );
+      await transaction.unsafe(
+        `insert into app_users (id, oidc_subject, email, display_name)
+         values ($1, $2, $3, 'YummyAI Browser Extension')
+         on conflict (id) do update
+         set oidc_subject = excluded.oidc_subject, email = excluded.email,
+             display_name = excluded.display_name, updated_at = now()`,
+        [EXTENSION_USER_ID, extensionUser.id, extensionUser.email],
+      );
+      await transaction.unsafe(
+        `insert into memberships (id, tenant_id, user_id, status)
+         values ($1, $2, $3, 'active')
+         on conflict (tenant_id, user_id) do update set status = 'active', updated_at = now()`,
+        [EXTENSION_MEMBERSHIP_ID, TENANT_ID, EXTENSION_USER_ID],
+      );
+      await transaction.unsafe(
+        `insert into membership_roles (tenant_id, membership_id, role_id)
+         values ($1, $2, $3)
+         on conflict do nothing`,
+        [TENANT_ID, EXTENSION_MEMBERSHIP_ID, ROLE_ID],
+      );
     });
   } finally {
     await database.client.end();
   }
 
   process.stdout.write(
-    `${JSON.stringify({ clientId, serviceAccountSubject: serviceAccount.id, tenantId: TENANT_ID })}\n`,
+    `${JSON.stringify({ clientId, extensionUser: extensionUser.username, serviceAccountSubject: serviceAccount.id, tenantId: TENANT_ID })}\n`,
   );
+}
+
+async function ensureExtensionClientRedirectUris(
+  adminBase: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  const clients = await json<Array<{ id: string }>>(
+    `${adminBase}/clients?clientId=yummyai-extension`,
+    { headers },
+  );
+  const id = clients[0]?.id;
+  if (!id) throw new Error("Keycloak yummyai-extension client is missing");
+  const current = await json<Record<string, unknown>>(`${adminBase}/clients/${id}`, { headers });
+  await ok(`${adminBase}/clients/${id}`, {
+    body: JSON.stringify({
+      ...current,
+      redirectUris: LOCAL_EXTENSION_REDIRECT_URIS,
+    }),
+    headers: { ...headers, "content-type": "application/json" },
+    method: "PUT",
+  });
+}
+
+async function ensureLocalExtensionUser(
+  adminBase: string,
+  headers: Record<string, string>,
+): Promise<{ id: string; username: string; email: string }> {
+  const username = process.env.LOCAL_EXTENSION_USER ?? "yummyai-local";
+  const email = process.env.LOCAL_EXTENSION_USER_EMAIL ?? "yummyai-extension@yummyai.local";
+  const password = process.env.LOCAL_EXTENSION_USER_PASSWORD ?? "yummyai-local-2026";
+  const existing = await json<Array<{ id: string }>>(
+    `${adminBase}/users?username=${encodeURIComponent(username)}&exact=true`,
+    { headers },
+  );
+  const user = {
+    username,
+    email,
+    enabled: true,
+    emailVerified: true,
+    attributes: { tenant_id: [TENANT_ID] },
+  };
+  let id = existing[0]?.id;
+  if (id) {
+    await ok(`${adminBase}/users/${id}`, {
+      body: JSON.stringify(user),
+      headers: { ...headers, "content-type": "application/json" },
+      method: "PUT",
+    });
+  } else {
+    const response = await ok(`${adminBase}/users`, {
+      body: JSON.stringify({
+        ...user,
+        credentials: [{ type: "password", value: password, temporary: false }],
+      }),
+      headers: { ...headers, "content-type": "application/json" },
+      method: "POST",
+    });
+    const locationId = response.headers.get("location")?.split("/").at(-1);
+    if (locationId) id = locationId;
+  }
+  if (!id) throw new Error("Keycloak did not return the local extension user ID");
+  await ok(`${adminBase}/users/${id}/reset-password`, {
+    body: JSON.stringify({ type: "password", value: password, temporary: false }),
+    headers: { ...headers, "content-type": "application/json" },
+    method: "PUT",
+  });
+  return { id, username, email };
 }
 
 async function form<T>(url: string, values: Record<string, string>): Promise<T> {

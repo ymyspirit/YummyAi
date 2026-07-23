@@ -19,6 +19,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browser } from "wxt/browser";
 
 import {
+  authenticateExtension,
+  exchangeExtensionCode,
+  refreshExtensionAccessToken,
+  type ExtensionAccessToken,
+} from "../../lib/auth.js";
+import {
   readActiveEvidence,
   redactCaptureDraft,
   startActiveReviewCollection,
@@ -107,10 +113,13 @@ export function App() {
     setError(null);
 
     try {
-      const token = await getSessionAccessToken();
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
+      const isLocalProxy = apiBaseUrl.replace(/\/$/, "") === "http://localhost:3000";
+      const token = isLocalProxy ? undefined : await getSessionAccessToken();
       const options = {
-        apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000",
+        apiBaseUrl,
         ...(token ? { accessToken: token } : {}),
+        ...(isLocalProxy ? { extensionId: browser.runtime.id } : {}),
         signal: controller.signal,
         onProgress: setState,
       };
@@ -709,7 +718,56 @@ function messageFrom(error: unknown): string {
 }
 
 async function getSessionAccessToken(): Promise<string | undefined> {
-  const result = await browser.storage.session.get("yummyai.accessToken");
-  const token = result["yummyai.accessToken"];
-  return typeof token === "string" && token.length > 0 ? token : undefined;
+  const issuer = import.meta.env.VITE_OIDC_ISSUER ?? "http://localhost:8081/realms/yummyai";
+  const tokenEndpoint = `${issuer.replace(/\/$/, "")}/protocol/openid-connect/token`;
+  const authorizationEndpoint = `${issuer.replace(/\/$/, "")}/protocol/openid-connect/auth`;
+  const stored = await browser.storage.session.get([
+    "yummyai.accessToken",
+    "yummyai.accessTokenExpiresAt",
+    "yummyai.refreshToken",
+  ]);
+  const accessToken = stored["yummyai.accessToken"];
+  const expiresAt = stored["yummyai.accessTokenExpiresAt"];
+  if (
+    typeof accessToken === "string" &&
+    accessToken.length > 0 &&
+    typeof expiresAt === "number" &&
+    expiresAt > Date.now() + 30_000
+  ) {
+    return accessToken;
+  }
+
+  const refreshToken = stored["yummyai.refreshToken"];
+  if (typeof refreshToken === "string" && refreshToken.length > 0) {
+    try {
+      const refreshed = await refreshExtensionAccessToken(refreshToken, { tokenEndpoint });
+      await storeSessionAccessToken(refreshed);
+      return refreshed.accessToken;
+    } catch {
+      await browser.storage.session.remove([
+        "yummyai.accessToken",
+        "yummyai.accessTokenExpiresAt",
+        "yummyai.refreshToken",
+      ]);
+    }
+  }
+
+  const auth = await authenticateExtension(browser.identity, {
+    authorizationEndpoint,
+    clientId: "yummyai-extension",
+  });
+  const token = await exchangeExtensionCode(auth, {
+    tokenEndpoint,
+    clientId: "yummyai-extension",
+  });
+  await storeSessionAccessToken(token);
+  return token.accessToken;
+}
+
+async function storeSessionAccessToken(token: ExtensionAccessToken): Promise<void> {
+  await browser.storage.session.set({
+    "yummyai.accessToken": token.accessToken,
+    "yummyai.accessTokenExpiresAt": token.expiresAt,
+    ...(token.refreshToken ? { "yummyai.refreshToken": token.refreshToken } : {}),
+  });
 }

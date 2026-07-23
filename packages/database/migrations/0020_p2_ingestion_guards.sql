@@ -1,0 +1,3 @@
+ALTER TABLE "order_events" DROP CONSTRAINT "order_events_type_check";--> statement-breakpoint
+CREATE UNIQUE INDEX "order_ingestion_runs_active_stream_unique" ON "order_ingestion_runs" USING btree ("tenant_id","account_id","platform","stream") WHERE "order_ingestion_runs"."status" = 'running';--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_type_check" CHECK ("order_events"."type" in ('order_ingested','provider_update_received','workflow_transitioned','side_state_changed','exception_opened','exception_resolved','protected_details_accessed','protected_details_anonymized'));

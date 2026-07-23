@@ -1,7 +1,7 @@
 import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 
-export type AssetDomain = "research" | "authorized";
+export type AssetDomain = "research" | "quarantine" | "authorized";
 
 export interface StoredAsset {
   id: string;

@@ -3,6 +3,20 @@
   "tasks": {
     "dev": {
       "cache": false,
+      "env": [
+        "ANALYSIS_DEMO_MODE",
+        "API_ACCESS_TOKEN",
+        "API_BASE_URL",
+        "DASHBOARD_DEMO_MODE",
+        "DESIGN_DEMO_MODE",
+        "LISTING_DEMO_MODE",
+        "LOCAL_OIDC_CLIENT_ID",
+        "LOCAL_OIDC_CLIENT_SECRET",
+        "OIDC_ISSUER",
+        "OIDC_WEB_CLIENT_ID",
+        "OIDC_WEB_REDIRECT_URI",
+        "PRODUCT_DEMO_MODE"
+      ],
       "persistent": true
     },
     "build": {

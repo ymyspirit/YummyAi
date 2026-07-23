@@ -59,7 +59,10 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["https://*.chromiumapp.org/oidc"],
+      "redirectUris": [
+        "https://pbfkpadkdjbjgmibceaelflmgjhclnhl.chromiumapp.org/oidc",
+        "https://kjknajpgoodonofageomfdenlhmmkmjb.chromiumapp.org/oidc"
+      ],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256"

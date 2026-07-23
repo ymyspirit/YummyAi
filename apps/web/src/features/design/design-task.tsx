@@ -79,7 +79,7 @@ function roleLabel(role: DesignFileRole) { return ({ source: "源文件", effect
 function roleCode(role: DesignFileRole) { return ({ source: "SOURCE / EDITABLE", effect: "EFFECT / PREVIEW", production: "PRODUCTION / READY" })[role]; }
 function roleIcon(role: DesignFileRole) { return role === "production" ? <Box size={18} /> : role === "effect" ? <FileImage size={18} /> : <FileType2 size={18} />; }
 function fileIcon(mediaType: string) { return mediaType.includes("image") ? <FileImage size={22} /> : <FileArchive size={22} />; }
-function rightsLabel(source?: RightsSource) { return source ? ({ owned: "自有版权", licensed: "许可使用", commissioned: "委托创作", ai_generated: "AI 生成", competitor: "竞品参考" })[source.kind] : "权利未核验"; }
+function rightsLabel(source?: RightsSource) { return source ? ({ owned: "自有版权", licensed: "许可使用", commissioned: "委托创作", ai_generated: "AI 生成", customer_provided: "客户提供", competitor: "竞品参考" })[source.kind] : "权利未核验"; }
 function taskStatusLabel(status: DesignTaskStatus) { return ({ open: "进行中", in_review: "评审中", approved: "已完成", archived: "已归档" })[status]; }
 function versionStatusLabel(status: DesignVersionStatus) { return ({ pending_review: "待评审", approved: "已审批", rejected: "已驳回" })[status]; }
 function formatBytes(value: number) { return value < 1_000_000 ? `${Math.round(value / 1000)} KB` : `${(value / 1_000_000).toFixed(1)} MB`; }

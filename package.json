@@ -6,11 +6,12 @@
     "node": ">=24.17 <25"
   },
   "scripts": {
-    "dev": "turbo dev",
+    "dev": "node --env-file=.env node_modules/turbo/bin/turbo dev",
     "build": "turbo build",
+    "check:rules": "node --test tools/tests/project-rules.test.mjs",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "turbo typecheck",
-    "test": "turbo test",
+    "test": "pnpm check:rules && turbo test",
     "test:integration": "turbo test:integration",
     "test:e2e": "node tools/scripts/run-e2e.mjs"
   },

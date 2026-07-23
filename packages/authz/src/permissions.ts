@@ -11,14 +11,22 @@ export const Permission = {
   ListingRead: "listing:read",
   ListingReview: "listing:review",
   ListingWrite: "listing:write",
+  ListingPublish: "listing:publish",
   JobRead: "job:read",
   MembershipManage: "membership:manage",
   ModelConfigure: "model:configure",
   NotificationRead: "notification:read",
+  OrderPiiRead: "order:pii:read",
+  OrderPiiAnonymize: "order:pii:anonymize",
+  OrderRead: "order:read",
+  OrderWrite: "order:write",
   ProductRead: "product:read",
   ProductWrite: "product:write",
   ResearchRead: "research:read",
   ResearchWrite: "research:write",
+  StoreAuthorize: "store:authorize",
+  StoreManage: "store:manage",
+  StoreRead: "store:read",
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];

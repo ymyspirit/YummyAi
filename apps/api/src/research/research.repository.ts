@@ -49,8 +49,8 @@ export class ResearchRepository {
       ? await withTenant(this.database.db, context, (tx) =>
           tx
             .selectDistinctOn([captureSnapshots.researchItemId], {
-              draft: captureSnapshots.draft,
               researchItemId: captureSnapshots.researchItemId,
+              shopName: sql<string | null>`${captureSnapshots.draft} #>> '{shop,name}'`,
             })
             .from(captureSnapshots)
             .where(inArray(captureSnapshots.researchItemId, items.map((item) => item.id)))
@@ -58,7 +58,7 @@ export class ResearchRepository {
         )
       : [];
     const shopNames = new Map(
-      latestSnapshots.map((snapshot) => [snapshot.researchItemId, snapshot.draft.shop?.name ?? null]),
+      latestSnapshots.map((snapshot) => [snapshot.researchItemId, snapshot.shopName ?? null]),
     );
     return {
       items: items.map((item) => ({ ...item, shopName: shopNames.get(item.id) ?? null })),

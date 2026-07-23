@@ -1,4 +1,4 @@
-import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { createEntityId, type ListingReplicationView, type TenantContext } from "@yummyai/contracts";
 import { describe, expect, it } from "vitest";
 
 import { ListingService, type ListingRecord, type ListingRepository, type ListingVersionRecord } from "../listings/listing.service.js";
@@ -26,8 +26,8 @@ describe("review-export integration", () => {
 class MemoryListings implements ListingRepository {
   listings: ListingRecord[] = []; versions: ListingVersionRecord[] = [];
   constructor(private readonly bridge: MemoryIntegrationRepository) {}
-  async create(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
-    const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, locale: input.locale, status: "draft" };
+  async create(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
+    const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.marketplaceId, locale: input.locale, status: "draft" };
     const version = this.makeVersion(listing.id, input.content, input.validation, input.ruleVersion); this.listings.push(listing); this.versions.push(version); return { listing, version };
   }
   async get(_context: TenantContext, id: string) { return this.listings.find((row) => row.id === id); }
@@ -37,6 +37,9 @@ class MemoryListings implements ListingRepository {
     const version = this.makeVersion(listingId, input.content, input.validation, input.ruleVersion, input.source); this.versions.push(version); this.bridge.attach(this.listings[0]!, version); return version;
   }
   async approveVersion(_context: TenantContext, _listingId: string, versionId: string) { const version = this.versions.find((row) => row.id === versionId)!; version.status = "approved"; return version; }
+  async findChannel() { return undefined; }
+  async createReplica(): Promise<ListingReplicationView> { throw new Error("Not used in review integration test"); }
+  async listReplications(): Promise<ListingReplicationView[]> { return []; }
   private makeVersion(listingId: string, content: ListingDraft, validation: ListingValidation, ruleVersion: string, source: "human" | "ai" = "human"): ListingVersionRecord {
     return { id: createEntityId(), tenantId: context.tenantId, listingId, versionNumber: this.versions.length + 1, ruleVersion, status: "draft", source, content, validation, createdAt: new Date() };
   }

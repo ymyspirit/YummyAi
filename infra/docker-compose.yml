@@ -73,6 +73,15 @@ services:
       retries: 15
       start_period: 30s
 
+  clamav:
+    image: clamav/clamav:1.4_base
+    environment:
+      CLAMD_STARTUP_TIMEOUT: "1800"
+    ports:
+      - "127.0.0.1:${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - clamav-data:/var/lib/clamav
+
   otel-collector:
     build:
       context: ./otel
@@ -106,3 +115,4 @@ volumes:
   redis-data:
   minio-data:
   keycloak-data:
+  clamav-data:

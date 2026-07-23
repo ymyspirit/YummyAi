@@ -65,10 +65,25 @@ describe("etsyParser", () => {
       recommendPercent: 95,
       reviewCount: 12,
     });
+    expect(result.rating).toBe(4.8);
+    expect(result.reviewCount).toBe(12);
     expect(result.reviews).toHaveLength(1);
     expect(result.missingFields).not.toEqual(
       expect.arrayContaining(["listingPublishedAt", "favoriteCount"]),
     );
+  });
+
+  it("keeps public rating and review totals when full review collection is disabled", () => {
+    const result = etsyParser.parse(
+      loadFixture(),
+      new URL("https://www.etsy.com/listing/1729000001/custom-botanical-recipe-journal"),
+      { includeReviews: false },
+    );
+
+    expect(result.rating).toBe(4.8);
+    expect(result.reviewCount).toBe(12);
+    expect(result.reviewCollection).toMatchObject({ collectedCount: 0, reportedTotal: 12 });
+    expect(result.reviews).toHaveLength(0);
   });
 
   it("only supports public Etsy listing pages", () => {

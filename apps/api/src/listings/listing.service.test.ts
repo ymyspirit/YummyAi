@@ -1,7 +1,7 @@
 import { ConflictException } from "@nestjs/common";
-import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { createEntityId, type ListingReplicationView, type TenantContext } from "@yummyai/contracts";
 import type { ListingDraft, ListingPlatform, ListingValidation } from "@yummyai/platform-rules";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ListingService, type ListingRecord, type ListingRepository, type ListingVersionRecord } from "./listing.service.js";
 
@@ -40,12 +40,32 @@ describe("listing service", () => {
     expect(created.version.validation.completeness).toBe(100);
     expect(created.version.content.variants[0]).toMatchObject({ skuCode: "MUG-NVY", optionValues: { color: "navy" } });
   });
+
+  it("replicates only the current approved version into a new draft channel", async () => {
+    const repository = new MemoryListingRepository(); const service = new ListingService(repository);
+    const created = await service.create(context, { spuId: createEntityId(), platform: "amazon", marketplaceId: "A1", locale: "en-US", content: amazon({}) });
+    await service.approveVersion(context, created.listing.id, created.version.id);
+    const replica = await service.replicate(context, created.listing.id, { sourceVersionId: created.version.id, targetMarketplaceId: "A2", targetLocale: "en-GB", overrides: { title: "UK travel mug" } });
+    expect(replica).toMatchObject({ sourceVersionId: created.version.id, targetMarketplaceId: "A2", targetLocale: "en-GB" });
+    expect(repository.listings.find((listing) => listing.id === replica.targetListingId)).toMatchObject({ status: "draft", marketplaceId: "A2", locale: "en-GB" });
+    expect(repository.versions.find((version) => version.id === replica.targetVersionId)).toMatchObject({ status: "draft", content: { title: "UK travel mug", locale: "en-GB" } });
+  });
+
+  it("dispatches approval automation without rolling back an approved version when a rule fails", async () => {
+    const repository = new MemoryListingRepository();
+    const dispatchListingApproved = vi.fn(async () => { throw new Error("Rule preflight failed"); });
+    const service = new ListingService(repository, undefined, { dispatchListingApproved });
+    const created = await service.create(context, { spuId: createEntityId(), platform: "amazon", marketplaceId: "A1", locale: "en-US", content: amazon({}) });
+    await expect(service.approveVersion(context, created.listing.id, created.version.id)).resolves.toMatchObject({ status: "approved" });
+    expect(dispatchListingApproved).toHaveBeenCalledWith(context, created.listing.id, created.version.id);
+    expect(repository.listings[0]).toMatchObject({ status: "approved", primaryVersionId: created.version.id });
+  });
 });
 
 class MemoryListingRepository implements ListingRepository {
-  listings: ListingRecord[] = []; versions: ListingVersionRecord[] = [];
-  async create(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
-    const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, locale: input.locale, status: "draft" };
+  listings: ListingRecord[] = []; versions: ListingVersionRecord[] = []; replications: ListingReplicationView[] = [];
+  async create(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
+    const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.marketplaceId, locale: input.locale, status: "draft" };
     const version = this.version(listing.id, input.content, input.validation, input.ruleVersion, "human");
     this.listings.push(listing); this.versions.push(version); return { listing, version };
   }
@@ -59,6 +79,14 @@ class MemoryListingRepository implements ListingRepository {
     const version = this.versions.find((candidate) => candidate.id === versionId)!; version.status = "approved";
     const listing = this.listings.find((candidate) => candidate.id === listingId)!; listing.status = "approved"; listing.primaryVersionId = versionId; return version;
   }
+  async findChannel(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId: string; locale: string }) { return this.listings.find((listing) => listing.spuId === input.spuId && listing.platform === input.platform && listing.marketplaceId === input.marketplaceId && listing.locale === input.locale); }
+  async createReplica(_context: TenantContext, input: { sourceListingId: string; sourceVersionId: string; spuId: string; platform: ListingPlatform; targetMarketplaceId: string; targetLocale: string; overrides: Record<string, unknown>; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
+    const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.targetMarketplaceId, locale: input.targetLocale, status: "draft" };
+    const version = this.version(listing.id, input.content, input.validation, input.ruleVersion, "human");
+    const replication: ListingReplicationView = { id: createEntityId(), sourceListingId: input.sourceListingId, sourceVersionId: input.sourceVersionId, targetListingId: listing.id, targetVersionId: version.id, platform: input.platform, targetMarketplaceId: input.targetMarketplaceId, targetLocale: input.targetLocale, overrides: input.overrides, createdBy: context.userId, createdAt: new Date().toISOString() } as ListingReplicationView;
+    this.listings.push(listing); this.versions.push(version); this.replications.push(replication); return replication;
+  }
+  async listReplications(_context: TenantContext, listingId: string) { return this.replications.filter((replication) => replication.sourceListingId === listingId); }
   private version(listingId: string, content: ListingDraft, validation: ListingValidation, ruleVersion: string, source: "human" | "ai"): ListingVersionRecord {
     return { id: createEntityId(), tenantId: context.tenantId, listingId, versionNumber: this.versions.filter((version) => version.listingId === listingId).length + 1, ruleVersion, status: "draft", source, content: structuredClone(content), validation, createdAt: new Date() };
   }

@@ -79,7 +79,9 @@ export const etsyParser: MarketplaceParser = {
     }
     if (!shop) reader.missing("shop");
     const capturedReviews = includeReviews ? extractEtsyReviews(document) : [];
-    const reviewSummary = includeReviews ? extractEtsyReviewSummary(document) : null;
+    const reviewSummary = extractEtsyReviewSummary(document);
+    const rating = reviewSummary?.itemAverage ?? shop?.rating ?? null;
+    const reviewCount = reviewSummary?.reviewCount ?? shop?.reviewCount ?? null;
 
     return reader.build({
       platform: "etsy",
@@ -91,8 +93,8 @@ export const etsyParser: MarketplaceParser = {
       title,
       domain: "research",
       price: parsePrice(priceRaw, currency),
-      rating: null,
-      reviewCount: null,
+      rating,
+      reviewCount,
       taxonomy,
       listingPublishedAt,
       favoriteCount,
@@ -102,7 +104,7 @@ export const etsyParser: MarketplaceParser = {
       reviews: capturedReviews,
       reviewCollection: {
         collectedCount: capturedReviews.length,
-        reportedTotal: reviewSummary?.reviewCount ?? null,
+        reportedTotal: reviewCount,
         pageCount: capturedReviews.length > 0 ? 1 : 0,
         status: "visible",
         updatedAt: new Date().toISOString(),
@@ -180,16 +182,16 @@ export function extractEtsyReviews(document: Document): CapturedReview[] {
 function extractEtsyReviewSummary(document: Document) {
   const container = document.querySelector<HTMLElement>("[data-reviews-feature-tags]");
   const reviewsRoot = document.querySelector<HTMLElement>("#reviews");
-  if (!container || !reviewsRoot) return null;
+  if (!reviewsRoot) return null;
   const rootText = normalizeText(reviewsRoot.innerText || reviewsRoot.textContent);
-  const tags = [...container.querySelectorAll<HTMLElement>("[data-tag]")]
+  const tags = [...(container?.querySelectorAll<HTMLElement>("[data-tag]") ?? [])]
     .map((tag) => ({
       label: tag.getAttribute("data-tag")?.trim() || normalizeText(tag.textContent),
       category: tag.getAttribute("data-tag-type")?.trim() || null,
     }))
     .filter((tag) => tag.label);
   return {
-    label: "What buyers say, summarized by AI",
+    label: container ? "What buyers say, summarized by AI" : "Public review summary",
     tags,
     itemAverage: metricFromText(rootText, "Item average"),
     itemQuality: metricFromText(rootText, "Item quality"),
@@ -197,7 +199,7 @@ function extractEtsyReviewSummary(document: Document) {
     customerService: metricFromText(rootText, "Customer service"),
     recommendPercent: numberBeforeLabel(rootText, "Buyers recommend"),
     reviewCount: numberFromText(rootText.match(/\(([\d,.]+)\s+reviews?\)/i)?.[1] ?? null),
-    sourceSelector: "[data-reviews-feature-tags]",
+    sourceSelector: container ? "[data-reviews-feature-tags]" : "#reviews",
   };
 }
 

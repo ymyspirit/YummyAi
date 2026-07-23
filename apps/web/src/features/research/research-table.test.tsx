@@ -57,7 +57,7 @@ describe("ResearchTable", () => {
           title: "Personalized Name Pillow",
           domain: "research",
           price: { raw: "$16.00+", amount: 16, currency: "USD" },
-          rating: 4.9,
+          rating: null,
           reviewCount: 128,
           taxonomy: [
             { label: "Home & Living", url: "https://www.etsy.com/c/home-and-living" },
@@ -73,7 +73,22 @@ describe("ResearchTable", () => {
             destination: "China",
             sourceSelector: "#shipping",
           },
-          shop: null,
+          shop: {
+            platform: "etsy",
+            externalId: "sample-studio",
+            name: "Sample Studio",
+            sourceUrl: "https://www.etsy.com/shop/SampleStudio",
+            location: null,
+            ownerName: null,
+            rating: 4.8,
+            reviewCount: null,
+            salesCount: null,
+            activeListingCount: null,
+            admirerCount: null,
+            openedYear: null,
+            yearsOnPlatform: null,
+            badges: [],
+          },
           reviewSummary: null,
           reviews: [],
           reviewCollection: {
@@ -91,10 +106,10 @@ describe("ResearchTable", () => {
             alt: "Pink personalized pillow",
             included: true,
           }],
-          variants: [{ label: "Size", options: [{ label: "16 × 16" }, { label: "18 × 18" }] }],
+          variants: [{ label: "Size", options: [{ label: "Select an option" }, { label: "16 × 16" }, { label: "18 × 18" }] }],
           contentBlocks: [{
             kind: "description",
-            text: "A custom pillow cover for nursery and dorm rooms.",
+            text: "A custom pillow cover for nursery and dorm rooms. CARE INSTRUCTIONS Spot clean only. Please Select a size.",
             sourceSelector: "#description",
           }],
           missingFields: [],
@@ -125,6 +140,12 @@ describe("ResearchTable", () => {
     expect(html).toContain("Aug 6-17");
     expect(html).toContain("Aug 6-17 · 约 18–29 天");
     expect(html).toContain("4,034");
+    expect(html).toContain(">4.8<");
+    expect(html).toContain(">CARE INSTRUCTIONS Spot clean only.<");
+    expect(html).toContain("2 OPTIONS");
+    expect(html).toContain('aria-label="Size选项"');
+    expect(html).not.toContain("Select an option");
+    expect(html).not.toContain("处理时间");
     expect(html.indexOf("Newer evidence")).toBeLessThan(html.indexOf("Older evidence"));
   });
 });

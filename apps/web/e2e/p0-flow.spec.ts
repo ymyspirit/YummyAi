@@ -27,9 +27,21 @@ test("capture to reviewed export", async ({ page }) => {
   await expect(page.getByText("审批版本已锁定", { exact: true })).toBeVisible();
   await expect(page.getByText("授权域", { exact: true }).first()).toBeVisible();
 
+  await page.goto("/stores");
+  await expect(page.getByRole("heading", { name: "店铺连接" })).toBeVisible();
+
   const listingId = createEntityId();
   await page.goto(`/listings/${listingId}`);
   await expect(page.getByRole("heading", { name: "TRAVEL-MUG-GIFT" })).toBeVisible();
+  await page.getByRole("button", { name: "Publish" }).click();
+  await expect(page.getByRole("heading", { name: "发布控制" })).toBeVisible();
+  await expect(page.getByText("当前 Listing 版本尚未审批。")).toBeVisible();
+  await page.getByRole("button", { name: "Channels" }).click();
+  await expect(page.getByRole("heading", { name: "站点与在线 Listing 编排" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "多站点复制" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "价格与库存同步" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "自动化规则" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "创建站点草稿" })).toBeDisabled();
   await page.getByRole("button", { name: "查看审核" }).click();
   await expect(page.getByRole("heading", { name: /审核凭证/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "批准此版本" })).toBeDisabled();
@@ -48,7 +60,7 @@ test("P0 pages expose headings and keyboard focus", async ({ page }) => {
 test("primary navigation stays complete across ERP pages", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "主导航" });
-  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "刊登控制台"];
+  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "店铺连接", "刊登控制台", "订单履约"];
 
   for (const label of labels.slice(1)) {
     await expect(navigation.getByRole("link")).toHaveCount(labels.length);
@@ -57,6 +69,13 @@ test("primary navigation stays complete across ERP pages", async ({ page }) => {
       labels.length,
     );
   }
+});
+
+test("P2 order inbox uses the real public projection", async ({ page }) => {
+  await page.goto("/orders");
+  await expect(page.getByRole("heading", { name: "订单履约" })).toBeVisible();
+  await expect(page.getByText("订单流水线")).toBeVisible();
+  await expect(page.getByText(/买家姓名|详细地址|电子邮箱/)).toHaveCount(0);
 });
 
 async function buildAndVerifyExport() {

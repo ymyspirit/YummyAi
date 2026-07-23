@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
 
@@ -14,7 +14,21 @@ const configs = joined.includes("capture")
     : ["apps/web/playwright.config.ts", "apps/extension/playwright.config.ts"];
 
 for (const config of configs) {
-  const result = spawnSync(process.execPath, [playwrightCli, "test", "-c", config, ...filters], { cwd: process.cwd(), env: process.env, stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  const status = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [playwrightCli, "test", "-c", config, ...filters], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: "inherit",
+      windowsHide: true,
+    });
+
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+
+  if (status.signal) {
+    process.stderr.write(`Playwright exited after receiving ${status.signal}.\n`);
+    process.exit(1);
+  }
+  if (status.code !== 0) process.exit(status.code ?? 1);
 }

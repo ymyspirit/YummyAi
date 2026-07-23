@@ -1,0 +1,133 @@
+# YummyAI P3 implementation plan
+
+**Date:** 2026-07-22
+
+**Status:** P3 planning exists, but implementation is paused until P2 release closure. P2-E/P2-F and the implementable P2-G slices are locally complete; current-worktree backup/restore, PII retention, concurrency/failure, E2E, and build drills pass. Exact-candidate/CI and all real-provider acceptance gates remain deferred rather than complete.
+
+**Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
+
+**Boundary:** P3 consumes approved catalog, Listing, order, supplier, production, shipment, and after-sales facts. It does not infer stock, settlement, advertising cost, exchange rates, tax, or profit when source evidence is missing. External writes use supported APIs, immutable commands, explicit authorization, and reconciliation for uncertain outcomes.
+
+## P2 deferral ledger
+
+- P2-E production-batch lifecycle and append-only recovery close/cancel evidence have passed local gates; authorized supplier acknowledgement remains an online acceptance item.
+- P2-F shipment, tracking, and marketplace writeback have passed local gates; authorized marketplace/carrier acceptance remains pending.
+- P2-G after-sales, operational workspaces, and scheduled automation recovery have passed local gates; release drills and real end-to-end provider acceptance remain pending.
+- P1/P2 authorized Amazon, Etsy, Printify, Printful, and carrier smoke evidence remains pending.
+
+Starting P3 does not waive these gates and does not make the incomplete fulfillment path a release candidate.
+
+## Cross-module invariants
+
+1. Every warehouse, stock item, lot, ledger entry, reservation, transfer, purchase, receipt, settlement, cost, advertisement, forecast, and metric fact is tenant scoped under forced PostgreSQL RLS.
+2. Inventory quantity is derived from an append-only ledger. Balance rows are rebuildable projections and are never accepted as source evidence.
+3. One stock movement uses integer base units, an explicit unit of measure, one event time, one recorded time, and a deterministic idempotency key.
+4. Reservations cannot make available stock negative unless an explicitly versioned virtual-stock policy allows it. Virtual stock remains distinguishable from physical, in-transit, and provider-owned stock.
+5. Lots preserve source, receipt, expiry where applicable, unit cost, currency, and immutable movement lineage.
+6. Transfers use paired outbound/in-transit/inbound facts; losing one side creates reconciliation rather than silently changing balances.
+7. Procurement versions, receipts, supplier invoices, marketplace settlements, fees, advertising spend, exchange rates, and taxes are immutable financial evidence.
+8. Profit is calculated from pinned revenue and cost facts with a named metric version. Missing facts produce incomplete status, never zero-cost profit.
+9. Forecasts pin input windows, model/rule version, horizon, generated time, and accuracy evidence. Forecast output never directly mutates stock or purchasing.
+10. External API keys, provider payloads, bank data, customer PII, and unrestricted free text are excluded from ordinary projections, jobs, logs, and analytical exports.
+
+## Delivery phases
+
+| Phase | Scope | Local gate |
+| --- | --- | --- |
+| P3-A | Inventory kernel, warehouses, lots, ledger, balances, reservations, transfers | Replayed movements are idempotent; tenant isolation and non-negative availability hold under concurrency |
+| P3-B | Procurement, receipts, replenishment, supplier invoices | One approved purchase version reconciles ordered, received, rejected, and invoiced quantities without rewriting history |
+| P3-C | FBA, FBM, overseas, in-transit, virtual inventory, channel allocation | Every channel availability value is traceable to physical/provider/virtual facts and a policy version |
+| P3-D | Settlements, commissions, ads, fulfillment/logistics cost, FX, tax, profit | Order/SKU profit is reproducible from pinned facts and incomplete inputs remain explicit |
+| P3-E | Supplier quality, delivery, price, response, and capacity performance | Supplier scorecards reproduce from order/receipt/QC evidence and versioned KPI definitions |
+| P3-F | Ads, keywords, reviews, VOC, and customer service | Spend and customer signals retain source/version/consent boundaries and cannot change Listing facts directly |
+| P3-G | Forecasting, operating cockpit, open API/Webhook, automation, and release | Forecasts and dashboards reconcile to facts; outbound integrations are signed/idempotent; exact-candidate drills pass |
+
+## Phase P3-A: inventory kernel
+
+### Contracts
+
+- Define warehouse type (`owned`, `third_party`, `fba`, `supplier`, `virtual`), location, stock item, unit, lot, movement, reservation, transfer, and balance views.
+- Movement types cover opening, receipt, allocation, release, pick, ship, return, adjustment, transfer outbound/inbound, damage, and reconciliation.
+- Require source type/ID, idempotency key, occurred time, and reason code. Free-text reason/evidence uses the protected operational boundary.
+
+### Database
+
+- Add tenant-scoped warehouse/location/stock-item/lot identities.
+- Add append-only inventory ledger and reservation events plus rebuildable balance/reservation projections.
+- Add transfer identity and immutable transfer events. Enforce composite tenant foreign keys, UUIDv7 checks, forced RLS, and append-only application grants.
+- Use transaction advisory locks per stock-item/location/lot balance and database checks to prevent invalid unit or negative physical availability.
+
+### API and service
+
+- Create/list warehouses, locations, and stock items through authenticated tenant context.
+- Record idempotent movements and reservations inside one tenant transaction; update projections only after immutable evidence inserts.
+- Start/dispatch/receive/cancel transfers with optimistic versions and paired inventory facts.
+- Provide safe balance and ledger reads with explicit physical, reserved, available, in-transit, provider, and virtual quantities.
+
+### Tests and UI
+
+- Cover duplicate movements, concurrent reservations, insufficient availability, transfer pairing, lot isolation, unit mismatch, cross-tenant IDs, immutable grants, and projection rebuild equivalence.
+- Add a dense inventory workspace only after real API empty/error/unauthorized states exist; verify desktop and 390 px widths with frontend skills.
+
+## Phase P3-B: procurement and replenishment
+
+- Separate inventory procurement from P2 customer-fulfillment purchase orders while linking compatible supplier identities.
+- Version requisitions, requests for quote, purchase orders, approvals, expected arrivals, receipts, rejections, and supplier invoices.
+- Receipts create inventory lots and ledger entries; over-receipt, price variance, and invoice mismatch enter reconciliation.
+- Version reorder point, safety stock, MOQ, lead time, service level, and review-calendar policies. Suggested replenishment never self-approves.
+
+## Phase P3-C: fulfillment network and channel availability
+
+- Model FBA, FBM, owned, overseas/3PL, supplier, in-transit, quarantine, damaged, and virtual stock as distinct ownership/availability dimensions.
+- Normalize supported provider inventory reports and events behind connector contracts with checkpoints and immutable snapshots.
+- Allocate channel availability through versioned policies, caps, buffers, and priority. Unknown provider mutations enter reconciliation.
+- Prevent marketplace Listing inventory sync from exceeding the channel allocation projection.
+
+## Phase P3-D: finance and profit
+
+- Ingest marketplace settlements, commissions, advertising fees, FBA/storage fees, refunds, chargebacks, procurement, production, freight, carrier, FX, and tax facts.
+- Keep provider statements and normalized lines immutable; corrections use reversal/replacement facts.
+- Version exchange rates by source, pair, effective time, and retrieval time. Never silently use the latest rate for historical profit.
+- Produce contribution margin and profit by order, line, SKU, Listing, store, platform, supplier, and period with completeness diagnostics.
+
+## Phase P3-E: supplier performance
+
+- Derive quality, on-time delivery, price variance, response time, acceptance, cancellation, and capacity adherence from P2/P3 evidence.
+- Pin KPI definitions, windows, weighting, minimum sample, and missing-data policy.
+- Scorecards are analytical output only; routing-policy changes require a separately approved version.
+
+## Phase P3-F: advertising, VOC, and service
+
+- Normalize authorized advertising campaign/ad-group/keyword/search-term metrics and costs with source currencies and attribution windows.
+- Link reviews, return reasons, support contacts, quality defects, and keyword evidence into versioned VOC themes without exposing customer identity.
+- Keep advertising and content recommendations reviewable; they cannot directly edit approved Listings or budgets.
+
+## Phase P3-G: forecasting, open integration, and release
+
+- Pin sales/inventory/profit forecast inputs, horizons, model versions, quantiles, accuracy, and override evidence.
+- Add an operating cockpit with metric definitions, freshness, completeness, drill-through, and reconciliation queues.
+- Provide scoped API clients, signed Webhooks, replay protection, delivery attempts, dead letters, and manual replay.
+- Run projection rebuild, backup/restore, tenant, concurrency, load, retention, provider-failure, and real authorized end-to-end drills on the exact clean candidate.
+
+## P3-A implementation ledger
+
+- [ ] Inventory contracts and invariant tests.
+- [ ] Warehouse, location, stock-item, lot, ledger, reservation, balance, and transfer schema.
+- [ ] Migration, forced RLS, append-only grants, and projection privilege coverage.
+- [ ] Idempotent movement/reservation/transfer service and API.
+- [ ] Concurrency, cross-tenant, immutability, and projection-rebuild integration tests.
+- [ ] Real-API inventory workspace with explicit operational states and responsive browser evidence.
+- [ ] Root lint, typecheck, unit, integration, E2E, build, migration, and documentation gates.
+
+## P3 acceptance matrix
+
+1. Tenant A cannot observe or mutate Tenant B inventory or financial facts.
+2. Replaying the same source event cannot double stock, reservations, receipts, costs, revenue, spend, or Webhook delivery.
+3. Physical, reserved, available, in-transit, provider, and virtual quantities reconcile by stock item, location, lot, and event cut-off.
+4. Concurrent reservations cannot oversell policy-constrained availability.
+5. Transfers, receipts, shipments, returns, damage, and adjustments retain paired source lineage.
+6. Profit and supplier KPIs reproduce from immutable facts and named versions; missing facts are explicit.
+7. Forecasts and recommendations never directly mutate inventory, purchasing, Listing, advertising, or finance state.
+8. Unknown external mutation outcomes remain in reconciliation and are never blindly repeated.
+9. Projection rebuild and backup/restore reproduce balances, financial summaries, and audit links.
+10. P3 release requires the outstanding P1/P2 live acceptance gates plus authorized inventory/settlement/advertising evidence.

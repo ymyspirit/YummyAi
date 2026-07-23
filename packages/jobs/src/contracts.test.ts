@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { JobEnvelopeSchema, QueueName } from "./index.js";
+import { CustomizationFileScanJobPayloadSchema, FulfillmentAutomationJobPayloadSchema, JobEnvelopeSchema, OrderIngestionJobPayloadSchema, QueueName, ShipmentWritebackJobPayloadSchema } from "./index.js";
 
 const id = "019b0000-0000-7000-8000-000000000001";
 
@@ -45,5 +45,30 @@ describe("job contracts", () => {
   it("exposes stable queue names", () => {
     expect(QueueName.Capture).toBe("capture");
     expect(QueueName.AiAnalysis).toBe("ai-analysis");
+    expect(QueueName.Publication).toBe("publication");
+    expect(QueueName.OrderIngestion).toBe("order-ingestion");
+    expect(QueueName.CustomizationFileScan).toBe("customization-file-scan");
+    expect(QueueName.ShipmentWriteback).toBe("shipment-writeback");
+    expect(QueueName.FulfillmentAutomation).toBe("fulfillment-automation");
+  });
+
+  it("keeps order ingestion jobs identifier-only", () => {
+    expect(OrderIngestionJobPayloadSchema.safeParse({ snapshotId: id, accountId: id }).success).toBe(true);
+    expect(OrderIngestionJobPayloadSchema.safeParse({ snapshotId: id, accountId: id, buyer: { email: "buyer@example.test" }, shippingAddress: "secret" }).success).toBe(false);
+  });
+
+  it("keeps customization scan jobs identifier-only", () => {
+    expect(CustomizationFileScanJobPayloadSchema.safeParse({ intakeId: id }).success).toBe(true);
+    expect(CustomizationFileScanJobPayloadSchema.safeParse({ intakeId: id, objectKey: "private/key", fileName: "buyer.png" }).success).toBe(false);
+  });
+
+  it("keeps shipment writeback jobs identifier-only", () => {
+    expect(ShipmentWritebackJobPayloadSchema.safeParse({ writebackRequestId: id }).success).toBe(true);
+    expect(ShipmentWritebackJobPayloadSchema.safeParse({ writebackRequestId: id, trackingNumber: "secret" }).success).toBe(false);
+  });
+
+  it("keeps fulfillment automation jobs identifier-only", () => {
+    expect(FulfillmentAutomationJobPayloadSchema.safeParse({ taskId: id }).success).toBe(true);
+    expect(FulfillmentAutomationJobPayloadSchema.safeParse({ taskId: id, reason: "private customer message" }).success).toBe(false);
   });
 });

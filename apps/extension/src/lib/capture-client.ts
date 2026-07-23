@@ -96,6 +96,7 @@ export async function uploadCapture(
   options: {
     apiBaseUrl: string;
     accessToken?: string;
+    extensionId?: string;
     signal?: AbortSignal;
     onProgress?: (state: CaptureProgressState) => void;
   },
@@ -106,6 +107,7 @@ export async function uploadCapture(
     headers: {
       "content-type": "application/json",
       ...(options.accessToken ? { authorization: `Bearer ${options.accessToken}` } : {}),
+      ...(options.extensionId ? { "x-yummyai-extension-id": options.extensionId } : {}),
     },
     body: JSON.stringify(draft),
     signal: options.signal,
@@ -137,6 +139,7 @@ export async function uploadCompetitorShop(
   options: {
     apiBaseUrl: string;
     accessToken?: string;
+    extensionId?: string;
     signal?: AbortSignal;
     onProgress?: (state: CaptureProgressState) => void;
   },
@@ -149,6 +152,7 @@ export async function uploadCompetitorShop(
       headers: {
         "content-type": "application/json",
         ...(options.accessToken ? { authorization: `Bearer ${options.accessToken}` } : {}),
+        ...(options.extensionId ? { "x-yummyai-extension-id": options.extensionId } : {}),
       },
       body: JSON.stringify(CompetitorShopDraftSchema.parse(draft)),
       signal: options.signal,

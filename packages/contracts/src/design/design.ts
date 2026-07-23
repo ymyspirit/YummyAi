@@ -7,7 +7,7 @@ export const DesignVersionStatusSchema = z.enum(["pending_review", "approved", "
 export const DesignFileRoleSchema = z.enum(["source", "effect", "production"]);
 
 export const RightsSourceSchema = z.object({
-  kind: z.enum(["owned", "licensed", "commissioned", "ai_generated", "competitor"]),
+  kind: z.enum(["owned", "licensed", "commissioned", "ai_generated", "customer_provided", "competitor"]),
   reference: z.string().min(1).max(500),
   licenseExpiresAt: z.iso.datetime().optional(),
 });

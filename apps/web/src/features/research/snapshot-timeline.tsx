@@ -54,7 +54,10 @@ export function ResearchProductDossier({
   )?.text;
   const sourceUrl = draft?.sourceUrl ?? latestSnapshot?.sourceUrl ?? item.normalizedUrl;
   const title = draft?.title ?? latestSnapshot?.title ?? item.latestTitle ?? "未识别标题";
-  const reviewCount = draft?.reviewCollection?.reportedTotal ?? draft?.reviewCount;
+  const productRating = draft?.rating ?? draft?.shop?.rating;
+  const reviewCount =
+    draft?.reviewCollection?.reportedTotal ?? draft?.reviewCount ?? draft?.shop?.reviewCount;
+  const descriptionBlocks = splitProductDetails(description);
 
   if (loading) {
     return (
@@ -160,7 +163,6 @@ export function ResearchProductDossier({
               label="预计送达"
               value={formatEstimatedDelivery(draft?.shipping?.estimatedDelivery, latestSnapshot.capturedAt)}
             />
-            <EvidenceLine icon={<CalendarDays size={15} />} label="处理时间" value={draft?.shipping?.processingTime} />
             <EvidenceLine icon={<PackageOpen size={15} />} label="运费" value={draft?.shipping?.cost?.raw} />
             <EvidenceLine icon={<Store size={15} />} label="发货地" value={draft?.shipping?.shipsFrom} />
             <EvidenceLine icon={<Truck size={15} />} label="配送至" value={draft?.shipping?.destination} />
@@ -181,7 +183,7 @@ export function ResearchProductDossier({
 
       <dl className="dossier-signal-rail">
         <Signal icon={<Heart size={14} />} label="收藏" value={formatCount(draft?.favoriteCount)} />
-        <Signal icon={<Star size={14} />} label="评分" value={formatRating(draft?.rating)} />
+        <Signal icon={<Star size={14} />} label="评分" value={formatRating(productRating)} />
         <Signal icon={<MessageSquareText size={14} />} label="评论" value={formatCount(reviewCount)} />
         <Signal icon={<ImageIcon size={14} />} label="媒体" value={`${includedImages.length || (mainImage ? 1 : 0)} 张`} />
         <Signal icon={<PackageOpen size={14} />} label="规格" value={`${draft?.variants?.length ?? 0} 组`} />
@@ -191,15 +193,31 @@ export function ResearchProductDossier({
         <section className="dossier-description">
           <p className="section-code">PRODUCT DETAILS</p>
           <h4>商品详情</h4>
-          {description ? <p>{description}</p> : <p className="dossier-muted-note">本次采集未识别到商品描述。</p>}
+          {descriptionBlocks.length ? (
+            <div className="dossier-description-copy">
+              {descriptionBlocks.map((block, index) => <p key={`${index}-${block}`}>{block}</p>)}
+            </div>
+          ) : <p className="dossier-muted-note">本次采集未识别到商品描述。</p>}
           {draft?.variants?.length ? (
             <dl className="dossier-variants">
-              {draft.variants.map((variant) => (
-                <div key={variant.label}>
-                  <dt>{variant.label}</dt>
-                  <dd>{variant.options.map((option) => option.label).join(" · ")}</dd>
-                </div>
-              ))}
+              {draft.variants.map((variant) => {
+                const options = variant.options.filter((option) => !isVariantPlaceholder(option.label));
+                return (
+                  <div key={variant.label}>
+                    <dt>
+                      <span>{variant.label}</span>
+                      <small>{options.length} OPTIONS</small>
+                    </dt>
+                    <dd>
+                      <ul className="dossier-variant-options" aria-label={`${variant.label}选项`}>
+                        {options.map((option, index) => (
+                          <li key={option.externalId ?? `${index}-${option.label}`}>{option.label}</li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                );
+              })}
             </dl>
           ) : null}
         </section>
@@ -279,6 +297,22 @@ function formatRating(value: number | null | undefined) {
 function formatSnapshotPrice(snapshot: ResearchSnapshotView) {
   if (!snapshot.priceAmount) return "价格未识别";
   return [snapshot.priceCurrency, snapshot.priceAmount].filter(Boolean).join(" ");
+}
+
+function splitProductDetails(value: string | undefined): string[] {
+  if (!value) return [];
+  const normalized = value
+    .replace(/(?=(?:Details of Listed Design|Fabric Frontside|FabricBackside|Size-|Font-|Yarn Colors-|EMBROIDERY|D E T A I L S|CARE INSTRUCTIONS|DESIGN PROOF(?:\s*&\s*CUSTOMIZATIONS)?|NOTE:|IMPORTANT))/gi, "\n")
+    .replace(/(?=(?:Please Select|Please note|Please mention|Please read))/gi, "\n")
+    .replace(/\s*[—–]\s*/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  const blocks = normalized.split(/\n+/).map((block) => block.trim()).filter(Boolean);
+  return blocks.length ? blocks : [value.trim()];
+}
+
+function isVariantPlaceholder(value: string) {
+  return /^(?:select|choose)\b.*\boption\b$/i.test(value.trim());
 }
 
 function formatEstimatedDelivery(value: string | null | undefined, capturedAt: string) {

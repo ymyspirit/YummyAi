@@ -1,0 +1,176 @@
+import { sql } from "drizzle-orm";
+import { bigint, boolean, check, foreignKey, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+
+import { assetFiles } from "./assets.js";
+import { organizations, users } from "./identity.js";
+import { orders } from "./order.js";
+
+export const afterSalesCases = pgTable("after_sales_cases", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull(),
+  type: text("type").notNull(),
+  status: text("status").default("open").notNull(),
+  reasonCode: text("reason_code").notNull(),
+  encryptedSummary: text("encrypted_summary").notNull(),
+  summaryChecksum: text("summary_checksum").notNull(),
+  currentDecisionVersion: integer("current_decision_version").default(0).notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("after_sales_cases_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("after_sales_cases_type_check", sql`${table.type} in ('customer_contact','refund_request','return_request','replacement_request','delivery_issue','quality_issue')`),
+  check("after_sales_cases_status_check", sql`${table.status} in ('open','awaiting_customer','awaiting_internal','approved','rejected','resolved','cancelled')`),
+  check("after_sales_cases_checksum_check", sql`${table.summaryChecksum} ~ '^[0-9a-f]{64}$'`),
+  check("after_sales_cases_version_check", sql`${table.currentDecisionVersion} >= 0`),
+  foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "after_sales_cases_order_fk" }).onDelete("restrict"),
+  uniqueIndex("after_sales_cases_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("after_sales_cases_idempotency_unique").on(table.tenantId, table.orderId, table.idempotencyKey),
+  index("after_sales_cases_queue_idx").on(table.tenantId, table.status, table.updatedAt),
+]);
+
+export const customerContactRecords = pgTable("customer_contact_records", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id").notNull(),
+  orderId: uuid("order_id").notNull(),
+  channel: text("channel").notNull(),
+  direction: text("direction").notNull(),
+  encryptedBody: text("encrypted_body").notNull(),
+  bodyChecksum: text("body_checksum").notNull(),
+  externalMessageId: text("external_message_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+  recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("customer_contact_records_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("customer_contact_records_channel_check", sql`${table.channel} in ('marketplace','email','phone','internal')`),
+  check("customer_contact_records_direction_check", sql`${table.direction} in ('inbound','outbound','internal')`),
+  check("customer_contact_records_checksum_check", sql`${table.bodyChecksum} ~ '^[0-9a-f]{64}$'`),
+  foreignKey({ columns: [table.tenantId, table.caseId], foreignColumns: [afterSalesCases.tenantId, afterSalesCases.id], name: "customer_contact_records_case_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "customer_contact_records_order_fk" }).onDelete("restrict"),
+  uniqueIndex("customer_contact_records_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("customer_contact_records_idempotency_unique").on(table.tenantId, table.caseId, table.idempotencyKey),
+  uniqueIndex("customer_contact_records_external_unique").on(table.tenantId, table.channel, table.externalMessageId),
+  index("customer_contact_records_timeline_idx").on(table.tenantId, table.caseId, table.occurredAt),
+]);
+
+export const afterSalesDecisions = pgTable("after_sales_decisions", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  resolution: text("resolution").notNull(),
+  refundAmountMinor: bigint("refund_amount_minor", { mode: "number" }),
+  refundCurrency: text("refund_currency"),
+  returnRequired: boolean("return_required").notNull(),
+  responsibilityParty: text("responsibility_party").notNull(),
+  reasonCode: text("reason_code").notNull(),
+  encryptedReason: text("encrypted_reason").notNull(),
+  reasonChecksum: text("reason_checksum").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("after_sales_decisions_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("after_sales_decisions_version_check", sql`${table.versionNumber} > 0`),
+  check("after_sales_decisions_resolution_check", sql`${table.resolution} in ('no_action','full_refund','partial_refund','return_and_refund','replacement')`),
+  check("after_sales_decisions_money_check", sql`(${table.refundAmountMinor} is null and ${table.refundCurrency} is null) or (${table.refundAmountMinor} >= 0 and ${table.refundCurrency} ~ '^[A-Z]{3}$')`),
+  check("after_sales_decisions_party_check", sql`${table.responsibilityParty} in ('customer','marketplace','carrier','supplier','internal','undetermined')`),
+  check("after_sales_decisions_checksum_check", sql`${table.reasonChecksum} ~ '^[0-9a-f]{64}$'`),
+  foreignKey({ columns: [table.tenantId, table.caseId], foreignColumns: [afterSalesCases.tenantId, afterSalesCases.id], name: "after_sales_decisions_case_fk" }).onDelete("restrict"),
+  uniqueIndex("after_sales_decisions_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("after_sales_decisions_version_unique").on(table.tenantId, table.caseId, table.versionNumber),
+  uniqueIndex("after_sales_decisions_idempotency_unique").on(table.tenantId, table.caseId, table.idempotencyKey),
+]);
+
+export const returnShipments = pgTable("return_shipments", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id").notNull(),
+  orderId: uuid("order_id").notNull(),
+  carrierCode: text("carrier_code").notNull(),
+  trackingNumber: text("tracking_number").notNull(),
+  status: text("status").default("label_created").notNull(),
+  labelAssetId: uuid("label_asset_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("return_shipments_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("return_shipments_status_check", sql`${table.status} in ('label_created','in_transit','delivered','lost','cancelled')`),
+  foreignKey({ columns: [table.tenantId, table.caseId], foreignColumns: [afterSalesCases.tenantId, afterSalesCases.id], name: "return_shipments_case_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "return_shipments_order_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.labelAssetId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "return_shipments_label_asset_fk" }).onDelete("restrict"),
+  uniqueIndex("return_shipments_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("return_shipments_idempotency_unique").on(table.tenantId, table.caseId, table.idempotencyKey),
+  index("return_shipments_tracking_idx").on(table.tenantId, table.carrierCode, table.trackingNumber),
+]);
+
+export const returnTrackingEvents = pgTable("return_tracking_events", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  returnShipmentId: uuid("return_shipment_id").notNull(),
+  status: text("status").notNull(),
+  provider: text("provider").notNull(),
+  externalEventId: text("external_event_id").notNull(),
+  detailCode: text("detail_code").notNull(),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+  recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("return_tracking_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("return_tracking_events_status_check", sql`${table.status} in ('label_created','in_transit','delivered','lost','cancelled')`),
+  foreignKey({ columns: [table.tenantId, table.returnShipmentId], foreignColumns: [returnShipments.tenantId, returnShipments.id], name: "return_tracking_events_shipment_fk" }).onDelete("restrict"),
+  uniqueIndex("return_tracking_events_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("return_tracking_events_external_unique").on(table.tenantId, table.provider, table.externalEventId),
+  index("return_tracking_events_timeline_idx").on(table.tenantId, table.returnShipmentId, table.occurredAt),
+]);
+
+export const replacementOrderLinks = pgTable("replacement_order_links", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id").notNull(),
+  sourceOrderId: uuid("source_order_id").notNull(),
+  replacementOrderId: uuid("replacement_order_id").notNull(),
+  encryptedReason: text("encrypted_reason").notNull(),
+  reasonChecksum: text("reason_checksum").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("replacement_order_links_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("replacement_order_links_distinct_check", sql`${table.sourceOrderId} <> ${table.replacementOrderId}`),
+  check("replacement_order_links_checksum_check", sql`${table.reasonChecksum} ~ '^[0-9a-f]{64}$'`),
+  foreignKey({ columns: [table.tenantId, table.caseId], foreignColumns: [afterSalesCases.tenantId, afterSalesCases.id], name: "replacement_order_links_case_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.sourceOrderId], foreignColumns: [orders.tenantId, orders.id], name: "replacement_order_links_source_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.replacementOrderId], foreignColumns: [orders.tenantId, orders.id], name: "replacement_order_links_replacement_fk" }).onDelete("restrict"),
+  uniqueIndex("replacement_order_links_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("replacement_order_links_replacement_unique").on(table.tenantId, table.replacementOrderId),
+  uniqueIndex("replacement_order_links_idempotency_unique").on(table.tenantId, table.caseId, table.idempotencyKey),
+]);
+
+export const afterSalesResponsibilityEvidence = pgTable("after_sales_responsibility_evidence", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id").notNull(),
+  party: text("party").notNull(),
+  code: text("code").notNull(),
+  encryptedDetail: text("encrypted_detail").notNull(),
+  detailChecksum: text("detail_checksum").notNull(),
+  assetId: uuid("asset_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  recordedBy: uuid("recorded_by").references(() => users.id, { onDelete: "set null" }),
+  recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("after_sales_responsibility_evidence_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("after_sales_responsibility_evidence_party_check", sql`${table.party} in ('customer','marketplace','carrier','supplier','internal','undetermined')`),
+  check("after_sales_responsibility_evidence_checksum_check", sql`${table.detailChecksum} ~ '^[0-9a-f]{64}$'`),
+  foreignKey({ columns: [table.tenantId, table.caseId], foreignColumns: [afterSalesCases.tenantId, afterSalesCases.id], name: "after_sales_responsibility_evidence_case_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.assetId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "after_sales_responsibility_evidence_asset_fk" }).onDelete("restrict"),
+  uniqueIndex("after_sales_responsibility_evidence_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("after_sales_responsibility_evidence_idempotency_unique").on(table.tenantId, table.caseId, table.idempotencyKey),
+]);

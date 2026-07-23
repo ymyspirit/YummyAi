@@ -20,6 +20,7 @@
     "@yummyai/contracts": "workspace:*",
     "@yummyai/database": "workspace:*",
     "@yummyai/jobs": "workspace:*",
+    "@yummyai/marketplace-connectors": "workspace:*",
     "@yummyai/platform-rules": "workspace:*",
     "@yummyai/storage": "workspace:*",
     "drizzle-orm": "^0.44.0",

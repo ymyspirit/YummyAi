@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { Queue, type ConnectionOptions } from "bullmq";
+import { Queue, type ConnectionOptions, type JobsOptions } from "bullmq";
 import { config } from "dotenv";
 
 import { JobEnvelopeSchema, type JobEnvelope } from "./contracts.js";
@@ -25,10 +25,12 @@ export async function enqueueJob(
   queue: Queue,
   name: string,
   envelope: JobEnvelope,
+  options: Pick<JobsOptions, "backoff" | "delay"> = {},
 ) {
   const validated = JobEnvelopeSchema.parse(envelope);
   return queue.add(name, validated, {
     attempts: validated.maxAttempts - validated.attempt,
+    ...options,
     jobId: validated.idempotencyKey,
     removeOnComplete: { age: 86_400, count: 1_000 },
     removeOnFail: { age: 604_800, count: 5_000 },

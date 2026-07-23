@@ -71,6 +71,132 @@
       "when": 1785081600000,
       "tag": "0010_competitor_shops",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785168000000,
+      "tag": "0011_p1_marketplace_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785254400000,
+      "tag": "0012_p1_marketplace_authorization",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785340800000,
+      "tag": "0013_p1_marketplace_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785427200000,
+      "tag": "0014_p1_marketplace_publications",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785513600000,
+      "tag": "0015_p1_marketplace_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0016_p1_marketplace_configuration",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785686400000,
+      "tag": "0017_p1_listing_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785772800000,
+      "tag": "0018_p2_order_kernel",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785859200000,
+      "tag": "0019_p2_order_ingestion",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785945600000,
+      "tag": "0020_p2_ingestion_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786032000000,
+      "tag": "0021_p2_customization_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786118400000,
+      "tag": "0022_p2_supplier_routing",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786204800000,
+      "tag": "0023_p2_production_quality",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786291200000,
+      "tag": "0024_p2_production_batch_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786377600000,
+      "tag": "0025_p2_shipment_writeback",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786464000000,
+      "tag": "0026_p2_after_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786550400000,
+      "tag": "0027_p2_fulfillment_automation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786636800000,
+      "tag": "0028_p2_order_pii_anonymization",
+      "breakpoints": true
     }
   ]
 }

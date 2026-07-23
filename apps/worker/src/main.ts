@@ -13,7 +13,10 @@ export function createWorker(
   processor: EnvelopeProcessor,
   redisUrl = required("REDIS_URL"),
 ): Worker {
-  const wrapped: Processor = async (job) => processor(JobEnvelopeSchema.parse(job.data));
+  const wrapped: Processor = async (job) => {
+    const envelope = JobEnvelopeSchema.parse(job.data);
+    return processor(JobEnvelopeSchema.parse({ ...envelope, attempt: job.attemptsMade }));
+  };
   return new Worker(queueName, wrapped, {
     connection: redisConnection(redisUrl),
   });

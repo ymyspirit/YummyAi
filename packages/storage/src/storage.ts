@@ -86,6 +86,15 @@ export class Storage {
 
   async promoteToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
     assertAssetAccess(context, input, "research");
+    return this.copyToAuthorized(context, input);
+  }
+
+  async promoteQuarantineToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
+    assertAssetAccess(context, input, "quarantine");
+    return this.copyToAuthorized(context, input);
+  }
+
+  private async copyToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
     const key = objectKey({
       tenantId: context.tenantId,
       domain: "authorized",
@@ -126,6 +135,17 @@ export class Storage {
       new GetObjectCommand({ Bucket: this.bucket, Key: asset.objectKey }),
       { expiresIn },
     );
+  }
+
+  async readPrivate(
+    context: TenantContext,
+    asset: StoredAsset,
+    options: { requiredDomain: AssetDomain },
+  ): Promise<Uint8Array> {
+    assertAssetAccess(context, asset, options.requiredDomain);
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: asset.objectKey }));
+    if (!response.Body) throw new Error("Private asset body is unavailable");
+    return Uint8Array.from(await response.Body.transformToByteArray());
   }
 }
 
