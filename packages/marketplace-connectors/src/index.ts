@@ -65,6 +65,20 @@ export {
   type AmazonOrderChangeReference,
 } from "./provider-orders.js";
 export {
+  NormalizedProviderInventoryLineSchema,
+  NormalizedProviderInventoryReportSchema,
+  ProviderInventoryCheckpointSchema,
+  ProviderInventoryReportSchema,
+  ProviderInventoryRequestSchema,
+  normalizeProviderInventoryReport,
+  type MarketplaceInventoryConnector,
+  type NormalizedProviderInventoryLine,
+  type NormalizedProviderInventoryReport,
+  type ProviderInventoryCheckpoint,
+  type ProviderInventoryReport,
+  type ProviderInventoryRequest,
+} from "./inventory.js";
+export {
   AmazonShipmentWritebackConnector,
   EtsyShipmentWritebackConnector,
   type MarketplaceShipmentWritebackConnector,

@@ -251,7 +251,40 @@ one receipt or invoice variance and confirm it remains
 inventory lot and movement, while a replenishment suggestion does not create or
 approve a purchase order.
 
-At desktop and 390 px widths, the ten navigation items must remain present, the
+At desktop and 390 px widths, the eleven navigation items must remain present, the
 document must not overflow horizontally, and the purchase-order table may scroll
 only inside its table container. Verify explicit empty, unauthorized, forbidden,
 failed, and populated states without procurement demo data.
+
+## P3-C channel inventory and allocation
+
+Migration `0031_p3_channel_inventory` adds immutable provider snapshots and
+checkpoints, versioned allocation policies, immutable allocation runs and
+channel projections, and append-only external-mutation reconciliation:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check --config drizzle.config.ts
+pnpm --filter @yummyai/contracts test -- channel-inventory.test.ts
+pnpm --filter @yummyai/marketplace-connectors test -- inventory.test.ts
+pnpm --filter @yummyai/api exec vitest run --config vitest.integration.config.ts src/channel-inventory/channel-inventory.integration.test.ts
+pnpm --filter @yummyai/worker test -- marketplace-listing-sync.processor.test.ts
+pnpm --filter @yummyai/web test -- channel-inventory-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart API, Worker, and Web after applying the migration and refreshing the
+local role, then open `http://localhost:3000/channel-inventory`. The local
+administrator receives `channel_inventory:read`, `channel_inventory:write`, and
+`channel_inventory:reconcile`. Production roles must receive them explicitly.
+
+Use authenticated provider connector jobs or `/v1/channel-inventory/snapshots`
+with normalized evidence. Do not enter guessed FBA, FBM, 3PL, supplier, or
+virtual quantities. After each new snapshot or policy version, run the current
+allocation policy before requesting a Listing inventory push. A stale
+projection is expected to fail closed.
+
+At desktop and 390 px widths, all eleven navigation items must remain present
+and the document must not overflow horizontally. The evidence and projection
+tables may scroll only within their table containers. Verify empty,
+unauthorized, forbidden, failed, populated, and open-reconciliation states.

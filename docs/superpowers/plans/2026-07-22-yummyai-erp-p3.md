@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A inventory and P3-B procurement/replenishment are locally complete; P3-C onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A inventory, P3-B procurement/replenishment, and P3-C channel inventory/allocation are locally complete; P3-D onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -155,13 +155,48 @@ Local implementation evidence on 2026-07-23:
   cross-tenant isolation, and append-only privileges.
 - `/procurement` consumes `/v1/procurement/workspace` through the local OIDC
   service identity. A populated reconciliation path was checked at 1440 px and
-  390 px; the page has ten navigation items, no document-level horizontal
+  390 px; the page now shares eleven navigation items, no document-level horizontal
   overflow, table overflow is scoped to its container, and a fresh browser tab
   reports no console errors.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production
   build, project-rule, migration, and diff checks pass locally. This is not
   exact-candidate CI evidence and does not close P1/P2 provider authorization or
   future P3-C provider inventory gates.
+
+## P3-C implementation ledger
+
+- [x] Strict network inventory, checkpoint, policy, run, projection, and
+  reconciliation contracts.
+- [x] Amazon, Etsy, and third-party inventory report normalization boundary.
+- [x] Tenant-scoped immutable snapshots/lines/checkpoints and forced RLS.
+- [x] Versioned allocation policies with source eligibility, virtual opt-in,
+  safety buffers, channel caps, buffers, and priority.
+- [x] Immutable traceable allocation runs and per-channel projections.
+- [x] Approved Listing SKU mapping and current-projection quantity enforcement.
+- [x] Stale projection rejection after new evidence or policy revision.
+- [x] Interrupted/uncertain Listing mutations create append-only reconciliation.
+- [x] Real-API channel inventory workspace with explicit operational states and
+  stable eleven-item navigation.
+- [x] Current-worktree full local gates plus populated desktop and 390 px
+  browser/E2E evidence.
+- [ ] Exact-candidate clean commit, push, and CI.
+- [ ] Authorized Amazon/Etsy/3PL inventory-report acceptance evidence.
+
+Current local implementation evidence on 2026-07-23:
+
+- Migration `0031_p3_channel_inventory` passes `drizzle-kit check` and applies
+  forced RLS with append-only application grants.
+- The channel inventory integration suite covers replay conflict, monotonic
+  checkpoints, source/condition separation, policy versions, caps, buffers,
+  priority, no oversubscription, virtual opt-in, stale projection rejection,
+  cross-tenant references, immutable grants, and reconciliation events.
+- Connector tests normalize FBA/FBM ownership separately from sellable,
+  quarantine, and damaged condition. Provider retrieval itself remains an
+  authorized online acceptance gate.
+- `/channel-inventory` consumes the authenticated workspace API and does not
+  contain demo data. The populated local workspace was checked at 1440 px and
+  the real API route passed a 390 px document-overflow assertion. Exact-candidate
+  CI and authorized provider evidence remain pending.
 
 ## P3 acceptance matrix
 

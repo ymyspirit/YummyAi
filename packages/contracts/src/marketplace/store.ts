@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 import { EntityIdSchema } from "../common/ids.js";
+export { MarketplacePlatformSchema, type MarketplacePlatform } from "./platform.js";
+import { MarketplacePlatformSchema } from "./platform.js";
 
-export const MarketplacePlatformSchema = z.enum(["amazon", "etsy"]);
 export const MarketplaceAuthorizationModeSchema = z.enum([
   "amazon_private",
   "amazon_public",
@@ -138,7 +139,6 @@ export const MarketplaceAccountViewSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
-export type MarketplacePlatform = z.infer<typeof MarketplacePlatformSchema>;
 export type MarketplaceAuthorizationMode = z.infer<typeof MarketplaceAuthorizationModeSchema>;
 export type MarketplaceRegion = z.infer<typeof MarketplaceRegionSchema>;
 export type MarketplaceAccountStatus = z.infer<typeof MarketplaceAccountStatusSchema>;

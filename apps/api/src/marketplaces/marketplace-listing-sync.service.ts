@@ -29,6 +29,7 @@ import type { ListingDraft } from "@yummyai/platform-rules";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
+import { ChannelInventoryService } from "../channel-inventory/channel-inventory.service.js";
 import { DATABASE_CONNECTION, MARKETPLACE_LISTING_SYNC_ENQUEUER } from "../platform.tokens.js";
 
 export interface MarketplaceListingSyncEnqueuer {
@@ -41,6 +42,7 @@ export class MarketplaceListingSyncService {
     @Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection,
     @Inject(MARKETPLACE_LISTING_SYNC_ENQUEUER) private readonly enqueuer: MarketplaceListingSyncEnqueuer,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(ChannelInventoryService) private readonly channelInventory: ChannelInventoryService,
   ) {}
 
   async create(context: TenantContext, input: CreateMarketplaceListingSyncInput): Promise<MarketplaceListingSyncRequestView> {
@@ -124,6 +126,15 @@ export class MarketplaceListingSyncService {
       if (listing.status !== "approved" || version.status !== "approved" || listing.primaryVersionId !== version.id || version.validation.blockers.length) throw new ConflictException("Online Listing sync requires the current approved Listing version");
       const sourcePayload = MarketplacePublicationPayloadSchema.parse(source.payload);
       const payload = buildSyncPayload(version.content, sourcePayload);
+      if (input.action === "push_price_inventory") {
+        await this.channelInventory.assertMarketplaceAllocations(tx, {
+          accountId: account.id,
+          platform: payload.platform,
+          marketplaceId: payload.marketplaceId,
+          listingId: listing.id,
+          desired: desiredInventoryTargets(version.content, payload),
+        });
+      }
       const desired = desiredOnlineListingState(payload) as Record<string, unknown>;
       return { desiredChecksum: checksum(desired), desiredState: { ...desired, payload }, externalListingId, payload };
     });
@@ -164,6 +175,36 @@ function buildSyncPayload(content: ListingDraft, source: MarketplacePublicationP
   if (source.platform === "amazon" && content.publication.platform === "amazon") return MarketplacePublicationPayloadSchema.parse({ ...source, productType: content.publication.productType, attributes: content.publication.attributes });
   if (source.platform === "etsy" && content.publication.platform === "etsy") return MarketplacePublicationPayloadSchema.parse({ ...source, price: content.publication.price, quantity: content.publication.quantity, inventory: content.publication.inventory });
   throw new UnprocessableEntityException("Approved Listing version does not match the published channel");
+}
+
+function desiredInventoryTargets(
+  content: ListingDraft,
+  payload: MarketplacePublicationPayload,
+): Array<{ skuCode: string; quantity: number }> {
+  if (payload.platform === "amazon") {
+    const inventory = payload.attributes.fulfillment_availability;
+    if (!Array.isArray(inventory)) return [];
+    const quantity = inventory.reduce((total, entry) => {
+      if (!entry || typeof entry !== "object") return total;
+      const value = (entry as Record<string, unknown>).quantity;
+      return total + (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0);
+    }, 0);
+    return [{ skuCode: payload.sku, quantity }];
+  }
+  if (payload.inventory) {
+    return payload.inventory.products.map((product) => ({
+      skuCode: product.sku,
+      quantity: Math.max(
+        0,
+        ...product.offerings
+          .filter((offering) => offering.isEnabled)
+          .map((offering) => offering.quantity),
+      ),
+    }));
+  }
+  const variant = content.variants[0];
+  if (!variant) throw new UnprocessableEntityException("Etsy inventory sync requires a Listing variant");
+  return [{ skuCode: variant.skuCode, quantity: payload.quantity }];
 }
 
 function toRequestView(request: RequestRow, current: MarketplaceListingSyncEventView): MarketplaceListingSyncRequestView { return MarketplaceListingSyncRequestViewSchema.parse({ id: request.id, accountId: request.accountId, sourcePublicationRequestId: request.sourcePublicationRequestId, listingId: request.listingId, listingVersionId: request.listingVersionId, platform: request.platform, marketplaceId: request.marketplaceId, externalListingId: request.externalListingId, action: request.action, idempotencyKey: request.idempotencyKey, desiredChecksum: request.desiredChecksum, createdBy: request.createdBy, createdAt: request.createdAt.toISOString(), current }); }

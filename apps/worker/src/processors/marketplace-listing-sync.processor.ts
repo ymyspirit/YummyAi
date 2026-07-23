@@ -34,6 +34,8 @@ import {
 import { desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import type { ChannelMutationReconciliationWriter } from "./channel-inventory-reconciliation.repository.js";
+
 export interface ListingSyncExecutionSnapshot {
   requestId: string;
   accountId: string;
@@ -82,7 +84,11 @@ export class MarketplaceListingSyncProcessor {
 }
 
 export class DrizzleListingSyncExecutionRepository implements ListingSyncExecutionRepository {
-  constructor(private readonly database: DatabaseConnection, private readonly secrets: SecretVault) {}
+  constructor(
+    private readonly database: DatabaseConnection,
+    private readonly secrets: SecretVault,
+    private readonly channelReconciliations: ChannelMutationReconciliationWriter,
+  ) {}
 
   async claim(context: TenantContext, requestId: string, attempt: number): Promise<ListingSyncExecutionSnapshot | undefined> {
     return withTenant(this.database.db, context, async (tx) => {
@@ -92,7 +98,18 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
       const [latest] = await tx.select().from(marketplaceListingSyncEvents).where(eq(marketplaceListingSyncEvents.requestId, requestId)).orderBy(desc(marketplaceListingSyncEvents.sequence)).limit(1);
       if (!latest || terminalStatuses.has(latest.status as MarketplaceListingSyncStatus)) return undefined;
       if (attempt > 0 && request.action === "push_price_inventory" && latest.status === "processing") {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, { status: "reconciliation_required", code: "LISTING_SYNC_INTERRUPTED_OUTCOME_UNKNOWN", message: "A previous price/inventory mutation did not record a conclusive result; automatic retry is blocked", retryable: false });
+        const code = "LISTING_SYNC_INTERRUPTED_OUTCOME_UNKNOWN";
+        const message = "A previous price/inventory mutation did not record a conclusive result; automatic retry is blocked";
+        await insertEvent(tx, context, requestId, latest.sequence + 1, { status: "reconciliation_required", code, message, retryable: false });
+        await this.channelReconciliations.ensure(tx, context, {
+          accountId: request.accountId,
+          listingId: request.listingId,
+          syncRequestId: request.id,
+          platform: MarketplacePlatformSchema.parse(request.platform),
+          externalListingId: request.externalListingId,
+          reasonCode: code,
+          message,
+        });
         return undefined;
       }
       const [[account], [listing], [version]] = await Promise.all([
@@ -158,6 +175,17 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
       const [latest] = await tx.select().from(marketplaceListingSyncEvents).where(eq(marketplaceListingSyncEvents.requestId, requestId)).orderBy(desc(marketplaceListingSyncEvents.sequence)).limit(1);
       if (!request || !latest || terminalStatuses.has(latest.status as MarketplaceListingSyncStatus)) return;
       await insertEvent(tx, context, requestId, latest.sequence + 1, event);
+      if (event.status === "reconciliation_required" && request.action === "push_price_inventory") {
+        await this.channelReconciliations.ensure(tx, context, {
+          accountId: request.accountId,
+          listingId: request.listingId,
+          syncRequestId: request.id,
+          platform: MarketplacePlatformSchema.parse(request.platform),
+          externalListingId: request.externalListingId,
+          reasonCode: event.code,
+          message: event.message,
+        });
+      }
       if (event.revokeAccount) await tx.update(marketplaceAccounts).set({ status: "revoked", credentialStatus: "revoked", healthStatus: "unauthorized", lastHealthAt: new Date(), lastErrorCode: event.code, updatedAt: new Date() }).where(eq(marketplaceAccounts.id, request.accountId));
     });
   }

@@ -49,6 +49,10 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Receipt stock is posted without matching receipt evidence | one tenant transaction through the inventory service creates receipt lines, lots, and immutable movements | receipt-to-ledger integration test |
 | Quantity, rejection, price, or currency variance is hidden | three-way comparison with explicit `reconciliation_required` state and immutable source evidence | receipt and invoice variance integration tests |
 | A replenishment recommendation places an unapproved order | suggestion pins policy and stock inputs but has no purchase-order creation or approval side effect | replenishment no-order integration test |
+| Provider inventory collapses ownership or condition into one mutable number | normalized source/condition dimensions, monotonic checkpoints, immutable snapshots and lines | connector normalization and snapshot integration tests |
+| Channel policies oversubscribe shared stock | one active policy per stock item, serialized versioned calculation, ordered caps/buffers, database quantity checks | allocation priority and no-oversubscription integration tests |
+| A caller bypasses allocation with its own Listing quantity limit | approved Listing SKU-to-stock mapping and server-derived current projection; missing or stale evidence fails closed | Listing allocation guard integration test |
+| An uncertain marketplace inventory mutation is repeated | processing-before-call evidence, open channel reconciliation event, no automatic mutation replay | Worker processor and reconciliation integration tests |
 
 ## Abuse cases
 
@@ -71,7 +75,14 @@ Protected assets are tenant records, private files, provider credentials, user s
   repeating the external action.
 - A replenishment suggestion is analytical evidence only. It cannot create,
   approve, or submit an inventory purchase order.
+- Quarantine and damaged provider stock never become channel availability.
+  In-transit, supplier, and virtual stock require explicit versioned policy
+  inclusion; virtual stock also requires its dedicated opt-in flag.
+- A new provider snapshot or policy version makes the previous channel
+  projection ineligible for Listing inventory writes until allocation is rerun.
+- Provider cursors, raw reports, credentials, and errors do not enter the safe
+  Web workspace, audit metadata, or identifier-only queue payloads.
 
 ## Residual risks
 
-Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-A/P3-B have no authorized FBA, 3PL, supplier-order, supplier-invoice, or channel-inventory connector evidence; those facts must remain absent until the relevant live acceptance gate.
+Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-B supplier-order and supplier-invoice provider acceptance also remains pending.

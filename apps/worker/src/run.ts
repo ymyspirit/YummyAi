@@ -13,6 +13,7 @@ import {
   DrizzleListingSyncExecutionRepository,
   MarketplaceListingSyncProcessor,
 } from "./processors/marketplace-listing-sync.processor.js";
+import { DrizzleChannelMutationReconciliationWriter } from "./processors/channel-inventory-reconciliation.repository.js";
 import {
   DrizzlePublicationExecutionRepository,
   MarketplacePublicationProcessor,
@@ -33,7 +34,11 @@ const processor = new MarketplacePublicationProcessor(
 );
 const worker = createWorker(QueueName.Publication, (envelope) => processor.process(envelope));
 const listingSyncProcessor = new MarketplaceListingSyncProcessor(
-  new DrizzleListingSyncExecutionRepository(database, createMarketplaceSecretVault()),
+  new DrizzleListingSyncExecutionRepository(
+    database,
+    createMarketplaceSecretVault(),
+    new DrizzleChannelMutationReconciliationWriter(),
+  ),
   new HttpMarketplaceDraftGateway(),
 );
 const listingSyncWorker = createWorker(QueueName.ListingSync, (envelope) => listingSyncProcessor.process(envelope));

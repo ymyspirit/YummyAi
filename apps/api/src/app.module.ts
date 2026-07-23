@@ -16,6 +16,8 @@ import { PermissionsGuard } from "./auth/permissions.guard.js";
 import { CaptureController } from "./capture/capture.controller.js";
 import { RedisMediaEnqueuer } from "./capture/redis-media-enqueuer.js";
 import { CaptureService } from "./capture/capture.service.js";
+import { ChannelInventoryController } from "./channel-inventory/channel-inventory.controller.js";
+import { ChannelInventoryService } from "./channel-inventory/channel-inventory.service.js";
 import { ProductController } from "./catalog/product.controller.js";
 import { DrizzleCatalogRepository, ProductService } from "./catalog/product.service.js";
 import { CompetitorShopController } from "./competitors/competitor-shop.controller.js";
@@ -95,6 +97,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
   controllers: [
     AssetsController,
     CaptureController,
+    ChannelInventoryController,
     CompetitorShopController,
     DashboardController,
     DesignController,
@@ -161,6 +164,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
     { provide: SHIPMENT_WRITEBACK_ENQUEUER, useClass: RedisShipmentWritebackEnqueuer },
     AuditService,
     CaptureService,
+    ChannelInventoryService,
     CompetitorShopService,
     DashboardService,
     DesignService,
