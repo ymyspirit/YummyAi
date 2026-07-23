@@ -8,6 +8,8 @@ export const Permission = {
   DesignRead: "design:read",
   DesignReview: "design:review",
   DesignWrite: "design:write",
+  InventoryRead: "inventory:read",
+  InventoryWrite: "inventory:write",
   ListingRead: "listing:read",
   ListingReview: "listing:review",
   ListingWrite: "listing:write",

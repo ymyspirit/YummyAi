@@ -41,6 +41,10 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Return or replacement closes without evidence | approved-current-decision gate, valid return tracking state machine, delivered resolution, acyclic replacement lineage | return/replacement integration and RLS tests |
 | Runaway fulfillment automation exhausts workers/providers | tenant hourly quota, bounded attempts, delayed backoff, identifier-only jobs, database claim gate | scheduling, quota, cancellation, and Worker tests |
 | Failed or uncertain automation is silently repeated | persisted attempt counter, dead-letter state, reconciliation-required state, operator notification, optimistic manual reconciliation | failure/retry/dead-letter integration tests |
+| A mutable balance or caller-provided quantity replaces inventory evidence | append-only movement ledger, rebuildable balance projection, explicit source/reason/time/unit fields | inventory replay and projection-rebuild integration tests |
+| Concurrent reservations oversell physical availability | tenant/dimension advisory lock, physical-minus-reserved check, non-negative database constraints | concurrent reservation integration test |
+| A transfer records only one side or is replayed twice | paired debit/credit movement IDs, optimistic transfer version, lifecycle idempotency key | transfer pairing and replay integration tests |
+| Inventory data or internal command keys cross tenant/UI boundaries | forced RLS, composite tenant foreign keys, safe workspace contract without tenant/actor/idempotency fields | cross-tenant API and workspace contract tests |
 
 ## Abuse cases
 
@@ -55,7 +59,10 @@ Protected assets are tenant records, private files, provider credentials, user s
 - Customer-provided filenames, file references, and customization values are excluded from queue payloads and ordinary order/customization projections.
 - `clamd` TCP is bound to loopback/private infrastructure only; it has no transport authentication and is not an Internet-facing service.
 - Printify/Printful draft creation never implies human approval or production submission. The charge/production endpoint is a separate explicit action owned by production orchestration.
+- Inventory balance rows are projections, never acceptable audit evidence. Operators cannot update lots, movements, reservation events, transfer events, or rebuild records through the application role.
+- Reusing an inventory idempotency key with changed quantity, unit, dimension, or source must return a conflict; clients must not generate a silent replacement command.
+- Provider and virtual inventory cannot be inferred from physical stock. Missing provider facts remain explicit until the authorized P3-C connector path supplies evidence.
 
 ## Residual risks
 
-Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated.
+Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-A has no authorized FBA, 3PL, supplier, or channel-inventory connector evidence; those quantities must remain absent until P3-C live acceptance.

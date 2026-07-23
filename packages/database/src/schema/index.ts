@@ -5,6 +5,7 @@ export * from "./capture.js";
 export * from "./competitors.js";
 export * from "./catalog.js";
 export * from "./design.js";
+export * from "./inventory.js";
 export * from "./listing.js";
 export * from "./marketplace.js";
 export * from "./operations.js";

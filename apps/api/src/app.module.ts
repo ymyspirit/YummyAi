@@ -25,6 +25,8 @@ import { DashboardService, DrizzleDashboardRepository } from "./dashboard/dashbo
 import { DesignController } from "./design/design.controller.js";
 import { DesignService, DrizzleDesignRepository } from "./design/design.service.js";
 import { HealthController } from "./health.controller.js";
+import { InventoryController } from "./inventory/inventory.controller.js";
+import { InventoryService } from "./inventory/inventory.service.js";
 import { ListingController } from "./listings/listing.controller.js";
 import { DrizzleListingRepository, ListingService } from "./listings/listing.service.js";
 import { MarketplaceAccountController } from "./marketplaces/marketplace-account.controller.js";
@@ -95,6 +97,7 @@ import { ResearchRepository } from "./research/research.repository.js";
     DashboardController,
     DesignController,
     HealthController,
+    InventoryController,
     ListingController,
     MarketplaceAccountController,
     MarketplaceAutomationController,
@@ -168,6 +171,7 @@ import { ResearchRepository } from "./research/research.repository.js";
     NotificationService,
     OrderService,
     FulfillmentAutomationService,
+    InventoryService,
     OrderAfterSalesService,
     OrderCustomizationService,
     OrderIngestionService,

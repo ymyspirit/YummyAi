@@ -60,7 +60,7 @@ test("P0 pages expose headings and keyboard focus", async ({ page }) => {
 test("primary navigation stays complete across ERP pages", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "主导航" });
-  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "店铺连接", "刊登控制台", "订单履约"];
+  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "店铺连接", "刊登控制台", "订单履约", "库存台账"];
 
   for (const label of labels.slice(1)) {
     await expect(navigation.getByRole("link")).toHaveCount(labels.length);
@@ -76,6 +76,16 @@ test("P2 order inbox uses the real public projection", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "订单履约" })).toBeVisible();
   await expect(page.getByText("订单流水线")).toBeVisible();
   await expect(page.getByText(/买家姓名|详细地址|电子邮箱/)).toHaveCount(0);
+});
+
+test("P3 inventory workspace uses the real projection", async ({ page }) => {
+  await page.goto("/inventory");
+  await expect(page.getByRole("heading", { name: "库存台账" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(9);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByLabel("库存桶汇总").or(page.getByText("还没有库存事实", { exact: true })),
+  ).toBeVisible();
 });
 
 async function buildAndVerifyExport() {

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ErpSidebar, type ErpSection } from "./erp-sidebar";
 
 describe("ErpSidebar", () => {
-  it.each<ErpSection>(["dashboard", "research", "competitors", "products", "design", "stores", "listings", "orders"])(
+  it.each<ErpSection>(["dashboard", "research", "competitors", "products", "design", "stores", "listings", "orders", "inventory"])(
     "keeps every primary destination visible when %s is active",
     (active) => {
       const html = renderToStaticMarkup(
@@ -20,6 +20,7 @@ describe("ErpSidebar", () => {
         "店铺连接",
         "刊登控制台",
         "订单履约",
+        "库存台账",
       ]) {
         expect(html).toContain(label);
       }

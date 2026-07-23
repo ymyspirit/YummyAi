@@ -201,3 +201,22 @@ pnpm --filter @yummyai/database test:integration -- tenant-isolation.integration
 Keep Redis running before scheduling a task. Cancellation changes the database projection; a delayed BullMQ delivery that later wakes will be ignored because only `scheduled` tasks can be claimed. `reconciliation_required` and `dead_letter` tasks are not automatically repeated. Use the manual reconciliation route after checking provider/local evidence; rescheduling resets the persisted attempt counter and creates a fresh delayed delivery.
 
 The automation integration suite includes a 25-way concurrent scheduling drill against a quota of 10 and a queue-admission failure drill. It must admit exactly 10 tasks, reject the remainder with the quota response, move the failed admission to `dead_letter`, emit one notification, and never enqueue an automatic replay. These are local deterministic gates; repeat them with the full suite on the exact clean release candidate.
+
+## P3-A inventory kernel
+
+Migration `0029_p3_inventory_kernel` adds warehouses, locations, stock items, lots, append-only movements, rebuildable balances, reservation/event projections, transfer/event projections, and immutable rebuild evidence:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- inventory.test.ts
+pnpm --filter @yummyai/api test:integration -- inventory.integration.test.ts
+pnpm --filter @yummyai/web test -- inventory-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart `pnpm dev` after adding the migration or permissions, then open `http://localhost:3000/inventory`. The local administrator role is refreshed from `Object.values(Permission)` by `bootstrap:local`, so it receives `inventory:read` and `inventory:write`.
+
+Verify both an empty tenant and a populated tenant. The populated path must use authenticated `/v1/inventory` commands rather than UI demo data. At desktop width, balances and recent movements should fit without document or table overflow. At 390 px, the page and navigation must remain within the viewport while wide tables scroll only inside their table containers.
+
+Projection rebuild is an administrative repair command, not a periodic stock mutation. Before using it, retain the movement/reservation evidence and use a unique idempotency key. A rebuild that detects negative physical, in-transit, provider, or virtual stock, or physical below active reservations, fails closed for reconciliation.

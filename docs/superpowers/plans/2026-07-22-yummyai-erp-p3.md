@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3 planning exists, but implementation is paused until P2 release closure. P2-E/P2-F and the implementable P2-G slices are locally complete; current-worktree backup/restore, PII retention, concurrency/failure, E2E, and build drills pass. Exact-candidate/CI and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A inventory kernel is locally complete on `codex/p3-inventory-kernel`; P3-B onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -111,13 +111,20 @@ Starting P3 does not waive these gates and does not make the incomplete fulfillm
 
 ## P3-A implementation ledger
 
-- [ ] Inventory contracts and invariant tests.
-- [ ] Warehouse, location, stock-item, lot, ledger, reservation, balance, and transfer schema.
-- [ ] Migration, forced RLS, append-only grants, and projection privilege coverage.
-- [ ] Idempotent movement/reservation/transfer service and API.
-- [ ] Concurrency, cross-tenant, immutability, and projection-rebuild integration tests.
-- [ ] Real-API inventory workspace with explicit operational states and responsive browser evidence.
-- [ ] Root lint, typecheck, unit, integration, E2E, build, migration, and documentation gates.
+- [x] Inventory contracts and invariant tests.
+- [x] Warehouse, location, stock-item, lot, ledger, reservation, balance, and transfer schema.
+- [x] Migration, forced RLS, append-only grants, and projection privilege coverage.
+- [x] Idempotent movement/reservation/transfer service and API.
+- [x] Concurrency, cross-tenant, immutability, and projection-rebuild integration tests.
+- [x] Real-API inventory workspace with explicit operational states and responsive browser evidence.
+- [x] Root lint, typecheck, unit, integration, E2E, build, migration, and documentation gates.
+
+Local implementation evidence on 2026-07-23:
+
+- Migration `0029_p3_inventory_kernel` applies under PostgreSQL 17 and passes `drizzle-kit check`.
+- The inventory integration suite covers replay, changed-payload conflict, unit mismatch, negative availability, 12 concurrent reservations against 10 available units, release replay, paired transfer movements, cancellation, append-only grants, cross-tenant IDs, and projection rebuild equivalence.
+- `/inventory` consumes `/v1/inventory/workspace` through the local OIDC service identity. Empty and populated states were checked at 1280 px and 390 px; the page has no document-level horizontal overflow and mobile table overflow remains scoped to its table container.
+- Root lint, typecheck, unit, integration, Web and extension E2E, production build, project-rule, migration, and documentation checks pass locally. This is not exact-candidate CI evidence and does not close any deferred provider gate.
 
 ## P3 acceptance matrix
 
