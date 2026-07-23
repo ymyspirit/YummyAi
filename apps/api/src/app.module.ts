@@ -26,6 +26,8 @@ import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { DashboardService, DrizzleDashboardRepository } from "./dashboard/dashboard.service.js";
 import { DesignController } from "./design/design.controller.js";
 import { DesignService, DrizzleDesignRepository } from "./design/design.service.js";
+import { FinanceController } from "./finance/finance.controller.js";
+import { FinanceService } from "./finance/finance.service.js";
 import { HealthController } from "./health.controller.js";
 import { InventoryController } from "./inventory/inventory.controller.js";
 import { InventoryService } from "./inventory/inventory.service.js";
@@ -101,6 +103,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
     CompetitorShopController,
     DashboardController,
     DesignController,
+    FinanceController,
     HealthController,
     InventoryController,
     ListingController,
@@ -168,6 +171,7 @@ import { ProcurementService } from "./procurement/procurement.service.js";
     CompetitorShopService,
     DashboardService,
     DesignService,
+    FinanceService,
     ListingService,
     MarketplaceAccountService,
     MarketplaceAuthorizationService,

@@ -53,6 +53,10 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Channel policies oversubscribe shared stock | one active policy per stock item, serialized versioned calculation, ordered caps/buffers, database quantity checks | allocation priority and no-oversubscription integration tests |
 | A caller bypasses allocation with its own Listing quantity limit | approved Listing SKU-to-stock mapping and server-derived current projection; missing or stale evidence fails closed | Listing allocation guard integration test |
 | An uncertain marketplace inventory mutation is repeated | processing-before-call evidence, open channel reconciliation event, no automatic mutation replay | Worker processor and reconciliation integration tests |
+| Missing financial evidence is treated as zero profit cost | required fact classifications, explicit missing-FX/unclassified diagnostics, nullable totals on incomplete runs | finance calculation integration tests |
+| Historical profit changes when a new FX rate arrives | calculation accepts an explicit rate set and pins selected immutable rational-rate IDs | exact conversion and replay integration tests |
+| A settlement or correction overwrites prior financial evidence | append-only statements/facts, exact reversal plus compatible replacement, application-role grant restrictions | correction and privilege integration tests |
+| Financial facts or profit cross tenant boundaries | forced RLS, composite tenant foreign keys, authenticated membership permissions, safe workspace contract | cross-tenant finance integration tests |
 
 ## Abuse cases
 
@@ -82,7 +86,11 @@ Protected assets are tenant records, private files, provider credentials, user s
   projection ineligible for Listing inventory writes until allocation is rerun.
 - Provider cursors, raw reports, credentials, and errors do not enter the safe
   Web workspace, audit metadata, or identifier-only queue payloads.
+- Missing settlement, cost, tax, or FX evidence never becomes a zero-valued
+  finance fact. Incomplete runs retain diagnostics and null aggregate totals.
+- A correction cannot edit or delete the original fact. It appends an exact
+  reversal before an optional compatible replacement.
 
 ## Residual risks
 
-Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-B supplier-order and supplier-invoice provider acceptance also remains pending.
+Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-D has no authorized Amazon/Etsy settlement acceptance evidence; statement facts must remain absent until that gate is run. P3-B supplier-order and supplier-invoice provider acceptance also remains pending.

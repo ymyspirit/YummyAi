@@ -218,6 +218,13 @@
       "when": 1786896000000,
       "tag": "0031_p3_channel_inventory",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786982400000,
+      "tag": "0032_p3_finance_profit",
+      "breakpoints": true
     }
   ]
 }

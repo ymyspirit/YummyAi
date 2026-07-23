@@ -79,6 +79,12 @@ export {
   type ProviderInventoryRequest,
 } from "./inventory.js";
 export {
+  NormalizeProviderFinanceStatementInputSchema,
+  ProviderFinanceStatementSchema,
+  normalizeProviderFinanceStatement,
+  type ProviderFinanceStatement,
+} from "./finance.js";
+export {
   AmazonShipmentWritebackConnector,
   EtsyShipmentWritebackConnector,
   type MarketplaceShipmentWritebackConnector,

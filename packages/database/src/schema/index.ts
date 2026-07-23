@@ -6,6 +6,7 @@ export * from "./channel-inventory.js";
 export * from "./competitors.js";
 export * from "./catalog.js";
 export * from "./design.js";
+export * from "./finance.js";
 export * from "./inventory.js";
 export * from "./inventory-procurement.js";
 export * from "./listing.js";

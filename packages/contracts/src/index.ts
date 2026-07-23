@@ -1,4 +1,5 @@
 export { createEntityId, EntityIdSchema } from "./common/ids.js";
+export * from "./finance/finance.js";
 export {
   ChannelAllocationPolicyViewSchema,
   ChannelAllocationRunViewSchema,

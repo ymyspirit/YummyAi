@@ -251,7 +251,7 @@ one receipt or invoice variance and confirm it remains
 inventory lot and movement, while a replenishment suggestion does not create or
 approve a purchase order.
 
-At desktop and 390 px widths, the eleven navigation items must remain present, the
+At desktop and 390 px widths, the twelve navigation items must remain present, the
 document must not overflow horizontally, and the purchase-order table may scroll
 only inside its table container. Verify explicit empty, unauthorized, forbidden,
 failed, and populated states without procurement demo data.
@@ -284,7 +284,39 @@ virtual quantities. After each new snapshot or policy version, run the current
 allocation policy before requesting a Listing inventory push. A stale
 projection is expected to fail closed.
 
-At desktop and 390 px widths, all eleven navigation items must remain present
+At desktop and 390 px widths, all twelve navigation items must remain present
 and the document must not overflow horizontally. The evidence and projection
 tables may scroll only within their table containers. Verify empty,
 unauthorized, forbidden, failed, populated, and open-reconciliation states.
+
+## P3-D finance and profit
+
+Migration `0032_p3_finance_profit` adds immutable statements, normalized facts,
+historical FX, versioned profit definitions, immutable runs, and per-fact
+contributions:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- finance.test.ts
+pnpm --filter @yummyai/marketplace-connectors test -- finance.test.ts
+pnpm --filter @yummyai/api test:integration -- finance.integration.test.ts
+pnpm --filter @yummyai/web test -- finance-workspace.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart API and Web after migration and permission refresh, then open
+`http://localhost:3000/finance`. The local administrator receives
+`finance:read`, `finance:write`, and `finance:review`; production roles must
+receive them explicitly.
+
+Populate the workspace through authenticated finance routes or authorized
+provider ingestion. Verify one complete multi-currency calculation and separate
+missing-fact, missing-FX, and unclassified-fact runs. Complete values must match
+the pinned statement and FX evidence exactly; incomplete totals must display as
+missing, never zero.
+
+At desktop and 390 px widths, all twelve navigation items must remain present
+and the document must not overflow horizontally. Wide finance tables may scroll
+only inside their table containers. Real Amazon/Etsy settlement retrieval is a
+separate authorized-provider acceptance gate.

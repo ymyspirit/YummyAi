@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A inventory, P3-B procurement/replenishment, and P3-C channel inventory/allocation are locally complete; P3-D onward is not started. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A inventory, P3-B procurement/replenishment, P3-C channel inventory/allocation, and P3-D finance/profit are locally implemented; P3-E onward is not started. P3-D full-worktree gates and populated desktop/390 px browser evidence have passed. Exact-candidate CI, the outstanding P1/P2 gates, and all real-provider acceptance gates remain deferred rather than complete.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -96,6 +96,21 @@ Starting P3 does not waive these gates and does not make the incomplete fulfillm
 - Pin KPI definitions, windows, weighting, minimum sample, and missing-data policy.
 - Scorecards are analytical output only; routing-policy changes require a separately approved version.
 
+## P3-D implementation ledger
+
+- [x] Strict statement, fact, correction, FX, metric, run, contribution, diagnostic, and workspace contracts.
+- [x] Amazon and Etsy settlement normalization boundary using supported provider data shapes.
+- [x] Tenant-scoped statement/fact/FX/metric/run/contribution schema and migration.
+- [x] Forced RLS, composite tenant foreign keys, and append-only application grants.
+- [x] Idempotent statement, FX, metric-version, and profit-calculation API.
+- [x] Exact reversal/replacement correction chain and deterministic rational FX conversion.
+- [x] Complete and incomplete profit with order, line, SKU, Listing, store, platform, supplier, and period breakdowns.
+- [x] Cross-tenant, replay, changed-payload, correction, exact-FX, completeness, and privilege integration coverage.
+- [x] Real-API finance workspace with explicit empty, unauthorized, forbidden, failed, and incomplete states.
+- [x] Current-worktree full gates plus populated desktop and 390 px browser evidence.
+- [ ] Exact-candidate clean commit, push, and CI.
+- [ ] Authorized Amazon/Etsy settlement retrieval acceptance evidence.
+
 ## Phase P3-F: advertising, VOC, and service
 
 - Normalize authorized advertising campaign/ad-group/keyword/search-term metrics and costs with source currencies and attribution windows.
@@ -155,7 +170,7 @@ Local implementation evidence on 2026-07-23:
   cross-tenant isolation, and append-only privileges.
 - `/procurement` consumes `/v1/procurement/workspace` through the local OIDC
   service identity. A populated reconciliation path was checked at 1440 px and
-  390 px; the page now shares eleven navigation items, no document-level horizontal
+  390 px; the page now shares twelve navigation items, no document-level horizontal
   overflow, table overflow is scoped to its container, and a fresh browser tab
   reports no console errors.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production
@@ -176,7 +191,7 @@ Local implementation evidence on 2026-07-23:
 - [x] Stale projection rejection after new evidence or policy revision.
 - [x] Interrupted/uncertain Listing mutations create append-only reconciliation.
 - [x] Real-API channel inventory workspace with explicit operational states and
-  stable eleven-item navigation.
+  stable twelve-item navigation.
 - [x] Current-worktree full local gates plus populated desktop and 390 px
   browser/E2E evidence.
 - [ ] Exact-candidate clean commit, push, and CI.
