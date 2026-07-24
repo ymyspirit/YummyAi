@@ -68,7 +68,8 @@ jobs:
           exit 1
       - run: pnpm --filter @yummyai/database db:migrate
       - name: Bootstrap CI service identity
-        run: pnpm --filter @yummyai/api bootstrap:local
+        working-directory: apps/api
+        run: node --import tsx src/bootstrap-local.ts
       - run: pnpm --filter @yummyai/database exec drizzle-kit check
       - run: pnpm lint
       - run: pnpm typecheck
