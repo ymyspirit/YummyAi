@@ -67,6 +67,8 @@ jobs:
           docker compose -f infra/docker-compose.yml ps
           exit 1
       - run: pnpm --filter @yummyai/database db:migrate
+      - name: Bootstrap CI service identity
+        run: pnpm --filter @yummyai/api bootstrap:local
       - run: pnpm --filter @yummyai/database exec drizzle-kit check
       - run: pnpm lint
       - run: pnpm typecheck
