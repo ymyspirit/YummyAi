@@ -1,8 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
-loadEnvFile(fileURLToPath(new URL("../../.env", import.meta.url)));
+const localEnvPath = fileURLToPath(new URL("../../.env", import.meta.url));
+if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
 
 export default defineConfig({
   testDir: "./e2e",
