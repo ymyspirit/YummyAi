@@ -24,6 +24,8 @@ const context: TenantContext = {
   dataScope: "tenant",
 };
 
+const apiClientToken = (secret: string) => `yai_${context.tenantId}.${secret}`;
+
 class FakeVerifier extends TokenVerifier {
   verify = vi.fn<(_token: string) => Promise<OidcClaims>>();
 }
@@ -102,13 +104,15 @@ describe("authentication and permission guards", () => {
     const verifier = new FakeVerifier();
     const apiClients = new FakeApiClients();
     apiClients.load.mockResolvedValue(context);
+    const token = apiClientToken("secret");
     const request: AuthenticatedRequest = {
-      headers: { authorization: "Bearer yai_019b0000-0000-7000-8000-000000000001.secret" },
+      headers: { authorization: `Bearer ${token}` },
     };
     const guard = new TenantContextGuard(verifier, new FakeMemberships(), apiClients);
 
     await expect(guard.canActivate(executionContext(request))).resolves.toBe(true);
     expect(request.tenantContext).toEqual(context);
+    expect(apiClients.load).toHaveBeenCalledWith(token);
     expect(verifier.verify).not.toHaveBeenCalled();
   });
 
@@ -116,10 +120,12 @@ describe("authentication and permission guards", () => {
     const apiClients = new FakeApiClients();
     apiClients.load.mockResolvedValue(null);
     const guard = new TenantContextGuard(new FakeVerifier(), new FakeMemberships(), apiClients);
+    const token = apiClientToken("wrong");
 
     await expect(guard.canActivate(executionContext({
-      headers: { authorization: "Bearer yai_019b0000-0000-7000-8000-000000000001.wrong" },
+      headers: { authorization: `Bearer ${token}` },
     }))).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(apiClients.load).toHaveBeenCalledWith(token);
   });
 
   it("rejects a missing permission", () => {
