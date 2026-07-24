@@ -1,6 +1,7 @@
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { connectDatabase, migrateDatabase } from "@yummyai/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import { DrizzlePublicationExecutionRepository } from "./marketplace-publication.processor.js";
 
@@ -11,6 +12,7 @@ describe("marketplace publication account lease", () => {
   const accountId = createEntityId();
   const firstRequestId = createEntityId();
   const secondRequestId = createEntityId();
+  const scheduledRequestId = createEntityId();
   const context: TenantContext = {
     tenantId,
     userId,
@@ -74,6 +76,10 @@ describe("marketplace publication account lease", () => {
         '{"completeness":100,"blockers":[],"warnings":[]}'::jsonb, $4, $4, now())`,
       [listingVersionId, tenantId, listingId, userId],
     );
+    await database.client.unsafe(
+      `update listings set primary_version_id = $1 where id = $2`,
+      [listingVersionId, listingId],
+    );
     for (const [requestId, key] of [[firstRequestId, "a"], [secondRequestId, "b"]] as const) {
       await database.client.unsafe(
         `insert into marketplace_publication_requests
@@ -84,6 +90,30 @@ describe("marketplace publication account lease", () => {
         [requestId, tenantId, accountId, capabilityId, listingId, listingVersionId, key.repeat(64), key.repeat(64), userId],
       );
     }
+    const scheduledPayload = {
+      attributes: {},
+      locale: "en-US",
+      marketplaceId: "ATVPDKIKX0DER",
+      platform: "amazon",
+      productType: "HOME",
+      sku: "SCHEDULED-SKU",
+    } as const;
+    const payloadText = JSON.stringify(scheduledPayload);
+    const payloadChecksum = createHash("sha256").update(payloadText).digest("hex");
+    await database.client.unsafe(
+      `insert into marketplace_publication_requests
+       (id, tenant_id, account_id, capability_snapshot_id, listing_id, listing_version_id, platform,
+        marketplace_id, action, idempotency_key, payload, payload_checksum, asset_manifest, scheduled_for, created_by)
+       values ($1, $2, $3, $4, $5, $6, 'amazon', 'ATVPDKIKX0DER', 'amazon_validation_preview',
+        $7, $8::jsonb, $9, '[]'::jsonb, now() + interval '1 minute', $10)`,
+      [scheduledRequestId, tenantId, accountId, capabilityId, listingId, listingVersionId, "c".repeat(64), payloadText, payloadChecksum, userId],
+    );
+    await database.client.unsafe(
+      `insert into marketplace_publication_events
+       (id, tenant_id, request_id, sequence, status, actor_user_id)
+       values ($1, $2, $3, 1, 'scheduled', $4)`,
+      [createEntityId(), tenantId, scheduledRequestId, userId],
+    );
   });
 
   afterAll(async () => {
@@ -113,5 +143,17 @@ describe("marketplace publication account lease", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(order).toEqual(["first:start", "first:end", "second:start"]);
+  });
+
+  it("records queued before processing when a scheduled job starts", async () => {
+    await expect(repository.claim(context, scheduledRequestId, 0)).resolves.toMatchObject({
+      requestId: scheduledRequestId,
+    });
+
+    const events = await database.client.unsafe<{ status: string }[]>(
+      `select status from marketplace_publication_events where request_id = $1 order by sequence`,
+      [scheduledRequestId],
+    );
+    expect(events.map((event) => event.status)).toEqual(["scheduled", "queued", "processing"]);
   });
 });

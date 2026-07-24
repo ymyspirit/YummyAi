@@ -293,6 +293,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .orderBy(desc(marketplacePublicationEvents.sequence))
         .limit(1);
       if (!latest || isTerminal(latest.status)) return undefined;
+      let nextSequence = latest.sequence + 1;
       const [progress] = await tx.select().from(marketplacePublicationEvents)
         .where(and(
           eq(marketplacePublicationEvents.requestId, requestId),
@@ -308,13 +309,23 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .limit(1);
       const resumeStatus = progress ? MarketplacePublicationStatusSchema.parse(progress.status) : undefined;
       if (attempt > 0 && interruptedMutationIsUncertain(request.action, latest.status, resumeStatus)) {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, {
+        await insertEvent(tx, context, requestId, nextSequence, {
           status: "reconciliation_required",
           code: "PUBLICATION_INTERRUPTED_OUTCOME_UNKNOWN",
           message: "A previous marketplace mutation did not record a conclusive result; automatic retry is blocked",
           retryable: false,
         });
         return undefined;
+      }
+
+      if (latest.status === "scheduled") {
+        await insertEvent(tx, context, requestId, nextSequence, {
+          status: "queued",
+          code: null,
+          message: null,
+          retryable: false,
+        });
+        nextSequence += 1;
       }
 
       const [[account], [capability], [listing], [version]] = await Promise.all([
@@ -324,12 +335,12 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         tx.select().from(listingVersions).where(eq(listingVersions.id, request.listingVersionId)).limit(1),
       ]);
       if (!account || !capability || !listing || !version) {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, terminalFailure("PUBLICATION_SNAPSHOT_MISSING", "Pinned publication snapshot is incomplete"));
+        await insertEvent(tx, context, requestId, nextSequence, terminalFailure("PUBLICATION_SNAPSHOT_MISSING", "Pinned publication snapshot is incomplete"));
         return undefined;
       }
       const runtimeFailure = validateRuntime(request, account, capability, listing, version);
       if (runtimeFailure) {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, runtimeFailure);
+        await insertEvent(tx, context, requestId, nextSequence, runtimeFailure);
         return undefined;
       }
       const assetIds = request.assetManifest.map((asset) => asset.assetId);
@@ -338,15 +349,15 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         : await tx.select().from(assetFiles).where(and(inArray(assetFiles.id, assetIds), isNull(assetFiles.deletedAt)));
       const assetFailure = validatePinnedAssets(request.assetManifest, assets);
       if (assetFailure) {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, assetFailure);
+        await insertEvent(tx, context, requestId, nextSequence, assetFailure);
         return undefined;
       }
       const parsedPayload = MarketplacePublicationPayloadSchema.safeParse(request.payload);
       if (!parsedPayload.success || checksum(request.payload) !== request.payloadChecksum) {
-        await insertEvent(tx, context, requestId, latest.sequence + 1, terminalFailure("PUBLICATION_PAYLOAD_MISMATCH", "Pinned publication payload is invalid"));
+        await insertEvent(tx, context, requestId, nextSequence, terminalFailure("PUBLICATION_PAYLOAD_MISMATCH", "Pinned publication payload is invalid"));
         return undefined;
       }
-      await insertEvent(tx, context, requestId, latest.sequence + 1, {
+      await insertEvent(tx, context, requestId, nextSequence, {
         status: "processing",
         code: null,
         message: null,

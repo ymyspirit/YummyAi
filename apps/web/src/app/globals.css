@@ -3420,3 +3420,77 @@ button, a, label, select { cursor: pointer; }
   color: #66788b;
   background: #e9edf1;
 }
+
+.publication-launch {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.publication-launch > button {
+  min-height: 40px;
+}
+
+.publication-launch input {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #b9c8d7;
+  border-radius: 5px;
+  color: #14304d;
+  background: #fbfcfd;
+}
+
+.publication-cancel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.publication-cancel input {
+  width: min(220px, 34vw);
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #b9c8d7;
+  border-radius: 5px;
+  color: #14304d;
+  background: #fff;
+}
+
+.publication-cancel button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid #9b3333;
+  border-radius: 5px;
+  color: #9b3333;
+  background: #fff;
+  font-size: .67rem;
+  font-weight: 740;
+}
+
+.event-dot.scheduled {
+  background: #985b0d;
+}
+
+.event-dot.cancelled {
+  background: #66788b;
+}
+
+@media (max-width: 720px) {
+  .publication-launch {
+    grid-template-columns: 1fr;
+  }
+
+  .publication-cancel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .publication-cancel input {
+    width: 100%;
+  }
+}

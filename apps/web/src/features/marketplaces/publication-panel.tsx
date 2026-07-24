@@ -8,6 +8,7 @@ import type {
 import type { ListingVariant } from "@yummyai/platform-rules";
 import {
   BadgeCheck,
+  Ban,
   CircleAlert,
   Clock3,
   LoaderCircle,
@@ -20,6 +21,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
+  cancelMarketplacePublication,
   continueMarketplacePublication,
   createMarketplacePublication,
   type MarketplaceActionState,
@@ -65,6 +67,7 @@ export function PublicationPanel({
   const [accountId, setAccountId] = useState(eligibleAccounts[0]?.id ?? "");
   const selectedAccount = eligibleAccounts.find((account) => account.id === accountId) ?? eligibleAccounts[0];
   const [marketplaceId, setMarketplaceId] = useState(selectedAccount?.marketplaceIds[0] ?? "");
+  const [scheduledFor, setScheduledFor] = useState("");
   const [state, action] = useActionState(
     createMarketplacePublication.bind(null, listing.id, listing.versionId, listing.platform),
     initialState,
@@ -126,7 +129,16 @@ export function PublicationPanel({
             </select>
           </label>
         )}
-        <PublishSubmit disabled={Boolean(lockedReason)} platform={listing.platform} />
+        <label>
+          <span>计划时间（可选）</span>
+          <input
+            disabled={Boolean(lockedReason)}
+            onInput={(event) => setScheduledFor(event.currentTarget.value ? new Date(event.currentTarget.value).toISOString() : "")}
+            type="datetime-local"
+          />
+          <input name="scheduledFor" type="hidden" value={scheduledFor} />
+        </label>
+        <PublishSubmit disabled={Boolean(lockedReason)} platform={listing.platform} scheduled={Boolean(scheduledFor)} />
       </form>
       {(lockedReason || error) && <p className="publication-lock"><CircleAlert size={14} />{error ?? lockedReason}</p>}
       <ActionNotice state={state} />
@@ -167,6 +179,7 @@ function PublicationRecord({
     (publication.action === "amazon_validation_preview" && publication.current.status === "validation_passed") ||
     (publication.action === "etsy_create_draft" && publication.current.status === "draft_created")
   );
+  const canCancel = ["scheduled", "queued", "retry_pending"].includes(publication.current.status);
   return (
     <article className="publication-record">
       <header>
@@ -178,7 +191,10 @@ function PublicationRecord({
         <Fact label="请求 ID" value={publication.id.slice(0, 13)} />
         <Fact label="外部 Listing" value={publication.current.externalListingId ?? publication.sourceExternalListingId ?? "—"} />
         <Fact label="外部状态" value={publication.current.externalState ?? "—"} />
-        <Fact label="提交时间" value={formatDate(publication.createdAt)} />
+        <Fact
+          label={publication.scheduledFor ? "计划时间" : "创建时间"}
+          value={formatDate(publication.scheduledFor ?? publication.createdAt)}
+        />
       </dl>
       <div className="publication-record-footer">
         <details>
@@ -190,9 +206,28 @@ function PublicationRecord({
           </ol>
         </details>
         {canContinue && <ContinuePublication listingId={listingId} publication={publication} />}
+        {canCancel && <CancelPublication listingId={listingId} publication={publication} />}
       </div>
       {publication.current.message && <p className="publication-diagnostic"><CircleAlert size={14} />{publication.current.message}</p>}
     </article>
+  );
+}
+
+function CancelPublication({ listingId, publication }: { listingId: string; publication: PublicationWorkspaceView }) {
+  const router = useRouter();
+  const [state, action] = useActionState(
+    cancelMarketplacePublication.bind(null, listingId, publication.id),
+    initialState,
+  );
+  useEffect(() => {
+    if (state.status === "success") router.refresh();
+  }, [router, state.status]);
+  return (
+    <form action={action} className="publication-cancel">
+      <ActionNotice state={state} />
+      <input aria-label="取消原因" maxLength={500} name="reason" placeholder="取消原因" required />
+      <CancelSubmit />
+    </form>
   );
 }
 
@@ -227,9 +262,17 @@ function PublicationTrack({ publication }: { publication: PublicationWorkspaceVi
   );
 }
 
-function PublishSubmit({ disabled, platform }: { disabled: boolean; platform: "amazon" | "etsy" }) {
+function PublishSubmit({ disabled, platform, scheduled }: { disabled: boolean; platform: "amazon" | "etsy"; scheduled: boolean }) {
   const { pending } = useFormStatus();
-  return <button disabled={disabled || pending} type="submit">{pending ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}{platform === "amazon" ? "运行校验预览" : "创建 Etsy 草稿"}</button>;
+  const label = platform === "amazon"
+    ? scheduled ? "计划校验预览" : "运行校验预览"
+    : scheduled ? "计划创建草稿" : "创建 Etsy 草稿";
+  return <button disabled={disabled || pending} type="submit">{pending ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}{label}</button>;
+}
+
+function CancelSubmit() {
+  const { pending } = useFormStatus();
+  return <button disabled={pending} type="submit">{pending ? <LoaderCircle className="spin" size={15} /> : <Ban size={15} />}取消任务</button>;
 }
 
 function ContinueSubmit({ platform }: { platform: "amazon" | "etsy" }) {
@@ -258,16 +301,16 @@ function milestones(action: MarketplacePublicationRequestView["action"]): Array<
   statuses: MarketplacePublicationEventView["status"][];
 }> {
   if (action === "amazon_validation_preview") return [
-    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "校验", statuses: ["processing", "retry_pending"] }, { label: "结果", statuses: ["validation_passed", "validation_failed"] },
+    { label: "排队", statuses: ["queued"] }, { label: "校验", statuses: ["processing", "retry_pending"] }, { label: "结果", statuses: ["validation_passed", "validation_failed"] },
   ];
   if (action === "amazon_submit") return [
-    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "提交", statuses: ["submission_accepted"] }, { label: "同步", statuses: ["sync_pending"] }, { label: "发布", statuses: ["published"] },
+    { label: "排队", statuses: ["queued"] }, { label: "提交", statuses: ["submission_accepted"] }, { label: "同步", statuses: ["sync_pending"] }, { label: "发布", statuses: ["published"] },
   ];
   if (action === "etsy_create_draft") return [
-    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "创建", statuses: ["processing", "retry_pending"] }, { label: "草稿", statuses: ["draft_created"] },
+    { label: "排队", statuses: ["queued"] }, { label: "创建", statuses: ["processing", "retry_pending"] }, { label: "草稿", statuses: ["draft_created"] },
   ];
   return [
-    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "配置", statuses: ["configuration_applied"] }, { label: "媒体", statuses: ["media_uploaded"] }, { label: "激活", statuses: ["activation_accepted"] }, { label: "发布", statuses: ["published"] },
+    { label: "排队", statuses: ["queued"] }, { label: "配置", statuses: ["configuration_applied"] }, { label: "媒体", statuses: ["media_uploaded"] }, { label: "激活", statuses: ["activation_accepted"] }, { label: "发布", statuses: ["published"] },
   ];
 }
 

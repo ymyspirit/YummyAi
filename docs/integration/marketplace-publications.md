@@ -28,6 +28,8 @@ Refresh capabilities before approving the Listing so the version references curr
 
 `variantSkuId` is required for Amazon and rejected for Etsy draft creation. `scheduledFor` is optional, must be a future timestamp no more than 90 days away, and creates a BullMQ delayed job. Repeating the same account, Listing version, marketplace, and action returns the same request; it cannot create a second external action or change its immutable schedule.
 
+When a delayed job becomes runnable, the Worker appends `queued` after the original `scheduled` event before runtime validation and `processing`. This preserves the distinction between work that is waiting for its planned time and work that has entered the execution queue.
+
 - `GET /v1/marketplace-publications?listingId={id}&accountId={id}&limit={1..100}` requires `listing:read` and returns tenant-scoped requests with their latest event projection. Filters are optional and support the Listing publication ledger and store diagnostics without exposing event payload internals.
 - `POST /v1/marketplace-publications/:id/continue` requires `listing:publish`. It is accepted only for an Amazon `validation_passed` request or an Etsy `draft_created` request with a recorded external Listing ID. The response is an idempotent child request for `amazon_submit` or `etsy_activate`; the P1-D parent remains immutable.
 - `POST /v1/marketplace-publications/:id/cancel` requires `listing:publish` and a non-empty `reason`. It appends `cancelled` only while the request is `scheduled`, `queued`, or `retry_pending`; processing or externally accepted work cannot be presented as cancelled. Queue cleanup is best effort because the Worker independently treats the appended cancellation as terminal before connector execution.

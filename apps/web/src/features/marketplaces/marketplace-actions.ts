@@ -154,6 +154,7 @@ export async function createMarketplacePublication(
   formData: FormData,
 ): Promise<MarketplaceActionState> {
   void _previous;
+  const scheduledFor = value(formData, "scheduledFor");
   const response = await marketplaceRequest<MarketplacePublicationRequestView>(
     "/v1/marketplace-publications",
     {
@@ -163,6 +164,7 @@ export async function createMarketplacePublication(
         listingVersionId,
         marketplaceId: value(formData, "marketplaceId"),
         ...(platform === "amazon" ? { variantSkuId: value(formData, "variantSkuId") } : {}),
+        ...(scheduledFor ? { scheduledFor } : {}),
       }),
       headers: { "content-type": "application/json" },
       method: "POST",
@@ -170,7 +172,28 @@ export async function createMarketplacePublication(
   );
   if (!response.ok) return failure(response.message);
   revalidatePath(`/listings/${listingId}`);
+  if (scheduledFor) return success("发布任务已按计划时间创建。");
   return success(platform === "amazon" ? "Amazon 校验预览已排队。" : "Etsy 草稿创建已排队。");
+}
+
+export async function cancelMarketplacePublication(
+  listingId: string,
+  requestId: string,
+  _previous: MarketplaceActionState,
+  formData: FormData,
+): Promise<MarketplaceActionState> {
+  void _previous;
+  const response = await marketplaceRequest<MarketplacePublicationRequestView>(
+    `/v1/marketplace-publications/${requestId}/cancel`,
+    {
+      body: JSON.stringify({ reason: value(formData, "reason") }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (!response.ok) return failure(response.message);
+  revalidatePath(`/listings/${listingId}`);
+  return success("发布任务已取消。");
 }
 
 export async function continueMarketplacePublication(
