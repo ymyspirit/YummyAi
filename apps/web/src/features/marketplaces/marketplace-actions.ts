@@ -1,11 +1,13 @@
 "use server";
 
 import type {
+  CreateMarketplacePublicationBatchInput,
   MarketplaceAccountView,
   MarketplaceAutomationRuleView,
   MarketplaceListingSyncAction,
   MarketplaceListingSyncRequestView,
   MarketplaceOAuthStartView,
+  MarketplacePublicationBatchView,
   MarketplacePublicationRequestView,
 } from "@yummyai/contracts";
 import { revalidatePath } from "next/cache";
@@ -219,6 +221,75 @@ export async function continueMarketplacePublication(
   if (!response.ok) return failure(response.message);
   revalidatePath(`/listings/${listingId}`);
   return success("下一发布动作已排队。 ");
+}
+
+export async function createMarketplacePublicationBatch(
+  _previous: MarketplaceActionState,
+  formData: FormData,
+): Promise<MarketplaceActionState> {
+  void _previous;
+  try {
+    const scheduledFor = value(formData, "scheduledFor");
+    const items = formData.getAll("selectedItems").map((entry) => {
+      if (typeof entry !== "string") throw new Error("批次项目格式无效。");
+      return JSON.parse(entry) as CreateMarketplacePublicationBatchInput["items"][number];
+    });
+    if (items.length < 2 || items.length > 100) throw new Error("请选择 2–100 个发布目标。");
+    const input: CreateMarketplacePublicationBatchInput = {
+      accountId: value(formData, "accountId"),
+      marketplaceId: value(formData, "marketplaceId"),
+      items,
+      ...(scheduledFor ? { scheduledFor } : {}),
+    };
+    const response = await marketplaceRequest<MarketplacePublicationBatchView>(
+      "/v1/marketplace-publication-batches",
+      {
+        body: JSON.stringify(input),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    );
+    if (!response.ok) return failure(response.message);
+    revalidatePath("/listings");
+    return success(scheduledFor ? "批量发布已按计划时间创建。" : "批量发布预检已排队。");
+  } catch (error) {
+    return failure(error instanceof Error ? error.message : "批次参数无效。");
+  }
+}
+
+export async function continueMarketplacePublicationBatch(
+  batchId: string,
+  _previous: MarketplaceActionState,
+  _formData: FormData,
+): Promise<MarketplaceActionState> {
+  void _previous;
+  void _formData;
+  const response = await marketplaceRequest<MarketplacePublicationBatchView>(
+    `/v1/marketplace-publication-batches/${batchId}/continue`,
+    { method: "POST" },
+  );
+  if (!response.ok) return failure(response.message);
+  revalidatePath("/listings");
+  return success("批次下一发布动作已排队。");
+}
+
+export async function cancelMarketplacePublicationBatch(
+  batchId: string,
+  _previous: MarketplaceActionState,
+  formData: FormData,
+): Promise<MarketplaceActionState> {
+  void _previous;
+  const response = await marketplaceRequest<MarketplacePublicationBatchView>(
+    `/v1/marketplace-publication-batches/${batchId}/cancel`,
+    {
+      body: JSON.stringify({ reason: value(formData, "reason") }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (!response.ok) return failure(response.message);
+  revalidatePath("/listings");
+  return success("批次已取消。");
 }
 
 export async function createListingReplication(

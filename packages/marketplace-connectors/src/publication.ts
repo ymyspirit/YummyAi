@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib";
+
 import type {
   MarketplaceAuthorizationMode,
   MarketplaceListingSyncAction,
@@ -121,6 +123,47 @@ export interface MarketplaceOnlineListingResult {
   snapshot: MarketplaceOnlineListingSnapshot;
 }
 
+export interface AmazonListingsFeedMessage {
+  attributes: Record<string, unknown>;
+  messageId: number;
+  productType: string;
+  sku: string;
+}
+
+export interface AmazonListingsFeedSubmission {
+  feedDocumentId: string;
+  feedId: string;
+  quota?: MarketplaceQuotaTelemetry;
+}
+
+export interface AmazonListingsFeedIssue {
+  issue: MarketplacePublicationIssue;
+  messageId: number | null;
+}
+
+export interface AmazonListingsFeedResult {
+  feedId: string;
+  issues: AmazonListingsFeedIssue[];
+  processingStatus: "CANCELLED" | "DONE" | "FATAL" | "IN_PROGRESS" | "IN_QUEUE";
+  quota?: MarketplaceQuotaTelemetry;
+  resultFeedDocumentId?: string;
+  summary?: { errors: number; messagesAccepted: number; messagesProcessed: number; warnings: number };
+}
+
+export interface MarketplaceFeedGateway {
+  submitAmazonListingsFeed(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    marketplaceId: string,
+    messages: AmazonListingsFeedMessage[],
+  ): Promise<AmazonListingsFeedSubmission>;
+  getAmazonListingsFeed(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    feedId: string,
+  ): Promise<AmazonListingsFeedResult>;
+}
+
 export interface MarketplaceDraftGateway {
   create(
     account: PublicationAccountContext,
@@ -175,7 +218,7 @@ export interface MarketplaceDraftGateway {
   ): Promise<MarketplaceOnlineListingResult>;
 }
 
-export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
+export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, MarketplaceFeedGateway {
   constructor(
     private readonly request: typeof fetch = globalThis.fetch,
     private readonly environment: NodeJS.ProcessEnv = process.env,
@@ -301,6 +344,138 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     return payload.platform === "amazon"
       ? this.updateAmazonContent(account, credential, payload, externalListingId)
       : this.updateEtsyContent(account, credential, payload, externalListingId);
+  }
+
+  async submitAmazonListingsFeed(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    marketplaceId: string,
+    messages: AmazonListingsFeedMessage[],
+  ): Promise<AmazonListingsFeedSubmission> {
+    assertAmazonFeedContext(account, credential, marketplaceId, messages);
+    const sellerId = requireCredential(credential, "sellingPartnerId", "amazon");
+    const accessToken = await this.amazonAccessToken(account, credential);
+    const endpoint = amazonEndpoint(account.region, this.environment);
+    const contentType = "application/json; charset=UTF-8";
+    const { data: document } = await this.requestJson(
+      new URL("/feeds/2021-06-30/documents", `${endpoint}/`).toString(),
+      {
+        method: "POST",
+        headers: { ...amazonHeaders(accessToken), "content-type": "application/json" },
+        body: JSON.stringify({ contentType }),
+      },
+      AmazonFeedDocumentResponseSchema,
+      "amazon",
+      false,
+    );
+    const feedBody = JSON.stringify({
+      header: { sellerId, version: "2.0", issueLocale: "en_US" },
+      messages: messages.map((message) => ({
+        messageId: message.messageId,
+        sku: message.sku,
+        operationType: "UPDATE",
+        productType: message.productType,
+        requirements: "LISTING",
+        attributes: message.attributes,
+      })),
+    });
+    const uploaded = await this.request(document.url, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body: feedBody,
+    });
+    if (!uploaded.ok) {
+      const retryable = uploaded.status === 429 || uploaded.status >= 500;
+      throw new MarketplaceConnectorError(
+        "amazon",
+        uploaded.status === 429 ? "rate_limited" : retryable ? "upstream_retryable" : "upstream_terminal",
+        `Amazon feed document upload failed with status ${uploaded.status}`,
+        parseRetryAfter(uploaded.headers.get("retry-after")),
+      );
+    }
+    const { data: feed, quota } = await this.requestJson(
+      new URL("/feeds/2021-06-30/feeds", `${endpoint}/`).toString(),
+      {
+        method: "POST",
+        headers: { ...amazonHeaders(accessToken), "content-type": "application/json" },
+        body: JSON.stringify({
+          feedType: "JSON_LISTINGS_FEED",
+          marketplaceIds: [marketplaceId],
+          inputFeedDocumentId: document.feedDocumentId,
+        }),
+      },
+      AmazonCreateFeedResponseSchema,
+      "amazon",
+      true,
+    );
+    return { feedDocumentId: document.feedDocumentId, feedId: feed.feedId, ...(quota ? { quota } : {}) };
+  }
+
+  async getAmazonListingsFeed(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    feedId: string,
+  ): Promise<AmazonListingsFeedResult> {
+    if (account.platform !== "amazon") throw new MarketplaceConnectorError("amazon", "validation", "Amazon feed status requires an Amazon account");
+    const sellerId = requireCredential(credential, "sellingPartnerId", "amazon");
+    if (sellerId !== account.externalAccountId) throw new MarketplaceConnectorError("amazon", "authorization", "Amazon seller identity changed");
+    const accessToken = await this.amazonAccessToken(account, credential);
+    const endpoint = amazonEndpoint(account.region, this.environment);
+    const { data: feed, quota } = await this.requestJson(
+      new URL(`/feeds/2021-06-30/feeds/${encodeURIComponent(feedId)}`, `${endpoint}/`).toString(),
+      { headers: amazonHeaders(accessToken) },
+      AmazonFeedStatusResponseSchema,
+      "amazon",
+      false,
+    );
+    if (feed.processingStatus !== "DONE" || !feed.resultFeedDocumentId) {
+      return {
+        feedId,
+        processingStatus: feed.processingStatus,
+        issues: [],
+        ...(feed.resultFeedDocumentId ? { resultFeedDocumentId: feed.resultFeedDocumentId } : {}),
+        ...(quota ? { quota } : {}),
+      };
+    }
+    const { data: document } = await this.requestJson(
+      new URL(`/feeds/2021-06-30/documents/${encodeURIComponent(feed.resultFeedDocumentId)}`, `${endpoint}/`).toString(),
+      { headers: amazonHeaders(accessToken) },
+      AmazonFeedDocumentResponseSchema,
+      "amazon",
+      false,
+    );
+    const downloaded = await this.request(document.url);
+    if (!downloaded.ok) {
+      const retryable = downloaded.status === 429 || downloaded.status >= 500;
+      throw new MarketplaceConnectorError(
+        "amazon",
+        downloaded.status === 429 ? "rate_limited" : retryable ? "upstream_retryable" : "upstream_terminal",
+        `Amazon feed result download failed with status ${downloaded.status}`,
+        parseRetryAfter(downloaded.headers.get("retry-after")),
+      );
+    }
+    const bytes = new Uint8Array(await downloaded.arrayBuffer());
+    const text = document.compressionAlgorithm === "GZIP"
+      ? gunzipSync(bytes).toString("utf8")
+      : new TextDecoder().decode(bytes);
+    let reportValue: unknown;
+    try {
+      reportValue = JSON.parse(text);
+    } catch {
+      throw new MarketplaceConnectorError("amazon", "upstream_terminal", "Amazon feed processing report is not valid JSON");
+    }
+    const report = AmazonFeedProcessingReportSchema.parse(reportValue);
+    return {
+      feedId,
+      processingStatus: "DONE",
+      resultFeedDocumentId: feed.resultFeedDocumentId,
+      issues: report.issues.map((issue) => ({
+        messageId: issue.messageId ?? null,
+        issue: normalizeAmazonIssue(issue),
+      })),
+      summary: report.summary,
+      ...(quota ? { quota } : {}),
+    };
   }
 
   private async previewAmazon(
@@ -1120,6 +1295,26 @@ const AmazonIssueSchema = z.object({
   severity: z.string().optional(),
   attributeNames: z.array(z.string()).optional(),
 }).passthrough();
+const AmazonFeedDocumentResponseSchema = z.object({
+  feedDocumentId: z.string().min(1),
+  url: z.url(),
+  compressionAlgorithm: z.enum(["GZIP"]).optional(),
+}).passthrough();
+const AmazonCreateFeedResponseSchema = z.object({ feedId: z.string().min(1) }).passthrough();
+const AmazonFeedStatusResponseSchema = z.object({
+  feedId: z.string().optional(),
+  processingStatus: z.enum(["CANCELLED", "DONE", "FATAL", "IN_PROGRESS", "IN_QUEUE"]),
+  resultFeedDocumentId: z.string().min(1).optional(),
+}).passthrough();
+const AmazonFeedProcessingReportSchema = z.object({
+  issues: z.array(AmazonIssueSchema.extend({ messageId: z.coerce.number().int().positive().optional() })).default([]),
+  summary: z.object({
+    errors: z.number().int().nonnegative().default(0),
+    warnings: z.number().int().nonnegative().default(0),
+    messagesAccepted: z.number().int().nonnegative().default(0),
+    messagesProcessed: z.number().int().nonnegative().default(0),
+  }).default({ errors: 0, warnings: 0, messagesAccepted: 0, messagesProcessed: 0 }),
+}).passthrough();
 const AmazonListingResponseSchema = z.object({
   sku: z.string().optional(),
   status: z.string().min(1),
@@ -1369,6 +1564,33 @@ function normalizeAmazonFulfillmentAvailability(value: unknown): unknown | null 
 
 function etsyInventoryUrl(externalListingId: string): string {
   return `https://openapi.etsy.com/v3/application/listings/${encodeURIComponent(externalListingId)}/inventory?legacy=true`;
+}
+
+function assertAmazonFeedContext(
+  account: PublicationAccountContext,
+  credential: Readonly<Record<string, string>>,
+  marketplaceId: string,
+  messages: AmazonListingsFeedMessage[],
+): void {
+  if (account.platform !== "amazon") throw new MarketplaceConnectorError("amazon", "validation", "JSON Listings Feed requires an Amazon account");
+  if (!marketplaceId.trim()) throw new MarketplaceConnectorError("amazon", "validation", "Amazon feed marketplace is required");
+  const sellerId = requireCredential(credential, "sellingPartnerId", "amazon");
+  if (sellerId !== account.externalAccountId) throw new MarketplaceConnectorError("amazon", "authorization", "Amazon seller identity changed");
+  if (messages.length < 2 || messages.length > 100) {
+    throw new MarketplaceConnectorError("amazon", "validation", "Amazon JSON Listings Feed requires between 2 and 100 messages");
+  }
+  const ids = new Set<number>();
+  const skus = new Set<string>();
+  for (const message of messages) {
+    if (!Number.isInteger(message.messageId) || message.messageId <= 0 || ids.has(message.messageId)) {
+      throw new MarketplaceConnectorError("amazon", "validation", "Amazon feed message IDs must be unique positive integers");
+    }
+    if (!message.sku || !message.productType || skus.has(message.sku)) {
+      throw new MarketplaceConnectorError("amazon", "validation", "Amazon feed SKUs and product types must be non-empty and SKUs unique");
+    }
+    ids.add(message.messageId);
+    skus.add(message.sku);
+  }
 }
 
 function amazonEndpoint(region: MarketplaceRegion, environment: NodeJS.ProcessEnv): string {

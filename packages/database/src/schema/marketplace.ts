@@ -102,6 +102,41 @@ export const marketplaceCapabilitySnapshots = pgTable(
   ],
 );
 
+export const marketplacePublicationBatches = pgTable(
+  "marketplace_publication_batches",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id").notNull(),
+    capabilitySnapshotId: uuid("capability_snapshot_id").notNull(),
+    platform: text("platform").notNull(),
+    marketplaceId: text("marketplace_id").notNull(),
+    action: text("action").notNull(),
+    parentBatchId: uuid("parent_batch_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    itemCount: integer("item_count").notNull(),
+    scheduledFor: timestamp("scheduled_for", { mode: "date", withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("marketplace_publication_batches_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+    check("marketplace_publication_batches_platform_check", sql`${table.platform} in ('amazon','etsy')`),
+    check("marketplace_publication_batches_action_check", sql`${table.action} in ('initial','continue')`),
+    check("marketplace_publication_batches_parent_check", sql`(${table.action} = 'initial' and ${table.parentBatchId} is null) or (${table.action} = 'continue' and ${table.parentBatchId} is not null)`),
+    check("marketplace_publication_batches_item_count_check", sql`${table.itemCount} between 2 and 100`),
+    check("marketplace_publication_batches_idempotency_check", sql`${table.idempotencyKey} ~ '^[0-9a-f]{64}$'`),
+    foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "marketplace_publication_batches_account_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.tenantId, table.capabilitySnapshotId], foreignColumns: [marketplaceCapabilitySnapshots.tenantId, marketplaceCapabilitySnapshots.id], name: "marketplace_publication_batches_capability_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.tenantId, table.parentBatchId], foreignColumns: [table.tenantId, table.id], name: "marketplace_publication_batches_parent_fk" }).onDelete("restrict"),
+    uniqueIndex("marketplace_publication_batches_tenant_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("marketplace_publication_batches_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    index("marketplace_publication_batches_account_idx").on(table.tenantId, table.accountId, table.createdAt),
+    index("marketplace_publication_batches_parent_idx").on(table.tenantId, table.parentBatchId),
+    index("marketplace_publication_batches_schedule_idx").on(table.tenantId, table.accountId, table.scheduledFor),
+  ],
+);
+
 export const marketplacePublicationRequests = pgTable(
   "marketplace_publication_requests",
   {
@@ -114,6 +149,7 @@ export const marketplacePublicationRequests = pgTable(
     platform: text("platform").notNull(),
     marketplaceId: text("marketplace_id").notNull(),
     action: text("action").notNull(),
+    batchId: uuid("batch_id"),
     parentRequestId: uuid("parent_request_id"),
     sourceExternalListingId: text("source_external_listing_id"),
     idempotencyKey: text("idempotency_key").notNull(),
@@ -127,9 +163,9 @@ export const marketplacePublicationRequests = pgTable(
   (table) => [
     check("marketplace_publication_requests_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("marketplace_publication_requests_platform_check", sql`${table.platform} in ('amazon', 'etsy')`),
-    check("marketplace_publication_requests_action_check", sql`${table.action} in ('amazon_validation_preview', 'amazon_submit', 'etsy_create_draft', 'etsy_activate')`),
-    check("marketplace_publication_requests_platform_action_check", sql`(${table.platform} = 'amazon' and ${table.action} in ('amazon_validation_preview', 'amazon_submit')) or (${table.platform} = 'etsy' and ${table.action} in ('etsy_create_draft', 'etsy_activate'))`),
-    check("marketplace_publication_requests_followup_check", sql`(${table.action} in ('amazon_validation_preview', 'etsy_create_draft') and ${table.parentRequestId} is null and ${table.sourceExternalListingId} is null) or (${table.action} = 'amazon_submit' and ${table.parentRequestId} is not null and ${table.sourceExternalListingId} is null) or (${table.action} = 'etsy_activate' and ${table.parentRequestId} is not null and ${table.sourceExternalListingId} is not null)`),
+    check("marketplace_publication_requests_action_check", sql`${table.action} in ('amazon_validation_preview', 'amazon_submit', 'amazon_feed_submit', 'etsy_create_draft', 'etsy_activate')`),
+    check("marketplace_publication_requests_platform_action_check", sql`(${table.platform} = 'amazon' and ${table.action} in ('amazon_validation_preview', 'amazon_submit', 'amazon_feed_submit')) or (${table.platform} = 'etsy' and ${table.action} in ('etsy_create_draft', 'etsy_activate'))`),
+    check("marketplace_publication_requests_followup_check", sql`(${table.action} in ('amazon_validation_preview', 'etsy_create_draft') and ${table.parentRequestId} is null and ${table.sourceExternalListingId} is null) or (${table.action} = 'amazon_submit' and ${table.parentRequestId} is not null and ${table.sourceExternalListingId} is null and ${table.batchId} is null) or (${table.action} = 'amazon_feed_submit' and ${table.parentRequestId} is not null and ${table.sourceExternalListingId} is null and ${table.batchId} is not null) or (${table.action} = 'etsy_activate' and ${table.parentRequestId} is not null and ${table.sourceExternalListingId} is not null)`),
     check("marketplace_publication_requests_idempotency_check", sql`${table.idempotencyKey} ~ '^[0-9a-f]{64}$'`),
     check("marketplace_publication_requests_payload_checksum_check", sql`${table.payloadChecksum} ~ '^[0-9a-f]{64}$'`),
     foreignKey({
@@ -141,6 +177,11 @@ export const marketplacePublicationRequests = pgTable(
       columns: [table.tenantId, table.parentRequestId],
       foreignColumns: [table.tenantId, table.id],
       name: "marketplace_publication_requests_parent_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.batchId],
+      foreignColumns: [marketplacePublicationBatches.tenantId, marketplacePublicationBatches.id],
+      name: "marketplace_publication_requests_batch_fk",
     }).onDelete("restrict"),
     foreignKey({
       columns: [table.tenantId, table.capabilitySnapshotId],
@@ -163,6 +204,7 @@ export const marketplacePublicationRequests = pgTable(
     index("marketplace_publication_requests_account_idx").on(table.tenantId, table.accountId, table.createdAt),
     index("marketplace_publication_requests_schedule_idx").on(table.tenantId, table.accountId, table.scheduledFor),
     index("marketplace_publication_requests_parent_idx").on(table.tenantId, table.parentRequestId),
+    index("marketplace_publication_requests_batch_idx").on(table.tenantId, table.batchId, table.createdAt),
   ],
 );
 
@@ -273,6 +315,7 @@ export const marketplaceQuotaSnapshots = pgTable(
     accountId: uuid("account_id").notNull(),
     platform: text("platform").notNull(),
     operation: text("operation").notNull(),
+    publicationBatchId: uuid("publication_batch_id"),
     publicationRequestId: uuid("publication_request_id"),
     listingSyncRequestId: uuid("listing_sync_request_id"),
     windows: jsonb("windows").$type<MarketplaceQuotaWindow[]>().notNull(),
@@ -283,12 +326,14 @@ export const marketplaceQuotaSnapshots = pgTable(
     check("marketplace_quota_snapshots_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("marketplace_quota_snapshots_platform_check", sql`${table.platform} in ('amazon','etsy')`),
     check("marketplace_quota_snapshots_operation_check", sql`${table.operation} ~ '^[a-z][a-z0-9_]{0,79}$'`),
-    check("marketplace_quota_snapshots_source_check", sql`(${table.publicationRequestId} is null) <> (${table.listingSyncRequestId} is null)`),
+    check("marketplace_quota_snapshots_source_check", sql`num_nonnulls(${table.publicationBatchId}, ${table.publicationRequestId}, ${table.listingSyncRequestId}) = 1`),
     foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "marketplace_quota_snapshots_account_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.tenantId, table.publicationBatchId], foreignColumns: [marketplacePublicationBatches.tenantId, marketplacePublicationBatches.id], name: "marketplace_quota_snapshots_publication_batch_fk" }).onDelete("restrict"),
     foreignKey({ columns: [table.tenantId, table.publicationRequestId], foreignColumns: [marketplacePublicationRequests.tenantId, marketplacePublicationRequests.id], name: "marketplace_quota_snapshots_publication_fk" }).onDelete("restrict"),
     foreignKey({ columns: [table.tenantId, table.listingSyncRequestId], foreignColumns: [marketplaceListingSyncRequests.tenantId, marketplaceListingSyncRequests.id], name: "marketplace_quota_snapshots_listing_sync_fk" }).onDelete("restrict"),
     uniqueIndex("marketplace_quota_snapshots_tenant_id_unique").on(table.tenantId, table.id),
     uniqueIndex("marketplace_quota_snapshots_publication_unique").on(table.tenantId, table.publicationRequestId, table.operation, table.observedAt),
+    uniqueIndex("marketplace_quota_snapshots_publication_batch_unique").on(table.tenantId, table.publicationBatchId, table.operation, table.observedAt),
     uniqueIndex("marketplace_quota_snapshots_listing_sync_unique").on(table.tenantId, table.listingSyncRequestId, table.operation, table.observedAt),
     index("marketplace_quota_snapshots_account_idx").on(table.tenantId, table.accountId, table.observedAt),
   ],

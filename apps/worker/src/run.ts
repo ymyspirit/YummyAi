@@ -19,6 +19,10 @@ import {
   MarketplacePublicationProcessor,
 } from "./processors/marketplace-publication.processor.js";
 import {
+  DrizzlePublicationBatchExecutionRepository,
+  MarketplacePublicationBatchProcessor,
+} from "./processors/marketplace-publication-batch.processor.js";
+import {
   MarketplacePublicationReconciliationProcessor,
   RedisMarketplacePublicationReconciliationScheduler,
 } from "./processors/marketplace-publication-reconciliation.processor.js";
@@ -55,6 +59,15 @@ const publicationReconciliationWorker = createWorker(
   QueueName.PublicationReconciliation,
   (envelope) => publicationReconciliationProcessor.process(envelope),
 );
+const publicationBatchProcessor = new MarketplacePublicationBatchProcessor(
+  new DrizzlePublicationBatchExecutionRepository(database, createMarketplaceSecretVault()),
+  publicationGateway,
+  publicationReconciliationScheduler,
+);
+const publicationBatchWorker = createWorker(
+  QueueName.PublicationBatch,
+  (envelope) => publicationBatchProcessor.process(envelope),
+);
 const listingSyncProcessor = new MarketplaceListingSyncProcessor(
   new DrizzleListingSyncExecutionRepository(
     database,
@@ -90,6 +103,8 @@ listingSyncWorker.on("completed", (job) => { process.stdout.write(`Listing sync 
 listingSyncWorker.on("failed", (job, error) => { process.stderr.write(`Listing sync job failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 publicationReconciliationWorker.on("completed", (job) => { process.stdout.write(`Publication reconciliation completed: ${job.id ?? "unknown"}\n`); });
 publicationReconciliationWorker.on("failed", (job, error) => { process.stderr.write(`Publication reconciliation failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+publicationBatchWorker.on("completed", (job) => { process.stdout.write(`Publication batch completed: ${job.id ?? "unknown"}\n`); });
+publicationBatchWorker.on("failed", (job, error) => { process.stderr.write(`Publication batch failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 customizationFileScanWorker.on("completed", (job) => { process.stdout.write(`Customization file scan completed: ${job.id ?? "unknown"}\n`); });
 customizationFileScanWorker.on("failed", (job, error) => { process.stderr.write(`Customization file scan failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 shipmentWritebackWorker.on("completed", (job) => { process.stdout.write(`Shipment writeback completed: ${job.id ?? "unknown"}\n`); });
@@ -103,6 +118,7 @@ async function shutdown() {
   await worker.close();
   await listingSyncWorker.close();
   await publicationReconciliationWorker.close();
+  await publicationBatchWorker.close();
   await publicationReconciliationScheduler.close();
   await customizationFileScanWorker.close();
   await shipmentWritebackWorker.close();

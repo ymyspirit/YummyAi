@@ -9,6 +9,10 @@ export {
   type MarketplacePublicationJobPayload,
 } from "./publication.js";
 export {
+  MarketplacePublicationBatchJobPayloadSchema,
+  type MarketplacePublicationBatchJobPayload,
+} from "./publication-batch.js";
+export {
   MarketplacePublicationReconciliationJobPayloadSchema,
   type MarketplacePublicationReconciliationJobPayload,
 } from "./publication-reconciliation.js";

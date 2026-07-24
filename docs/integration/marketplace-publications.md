@@ -38,9 +38,36 @@ When a delayed job becomes runnable, the Worker appends `queued` after the origi
 
 Responses expose parent/source linkage, request IDs, checksums, asset counts, normalized issues, and external Listing/submission/media identifiers. They never expose provider payloads, object keys, authorization headers, tokens, or encrypted credential envelopes.
 
+### Batch publication API
+
+`POST /v1/marketplace-publication-batches` requires `listing:publish` and accepts 2–100 unique targets for one account and marketplace:
+
+```json
+{
+  "accountId": "019...",
+  "marketplaceId": "ATVPDKIKX0DER",
+  "items": [
+    { "listingId": "019...", "listingVersionId": "019...", "variantSkuId": "019..." },
+    { "listingId": "019...", "listingVersionId": "019...", "variantSkuId": "019..." }
+  ],
+  "scheduledFor": "2026-07-26T08:00:00.000Z"
+}
+```
+
+Amazon items require distinct approved variants; Etsy items omit `variantSkuId`. The API validates every item in one tenant transaction, then creates the immutable batch, child requests, and initial events atomically. A validation failure creates nothing. The normalized account, marketplace, and item set form the idempotency identity: the first accepted item order and optional schedule are immutable, and repeating the same set returns that existing batch rather than changing either value.
+
+- `GET /v1/marketplace-publication-batches?accountId={id}&limit={1..100}` requires `listing:read` and returns newest-first batch projections. The account filter is optional.
+- `GET /v1/marketplace-publication-batches/:id` requires `listing:read` and returns aggregate status, counts, and ordered child requests.
+- `POST /v1/marketplace-publication-batches/:id/continue` requires `listing:publish`. Every initial item must be `validation_passed` for Amazon or `draft_created` for Etsy. It returns one deterministic immutable continuation batch.
+- `POST /v1/marketplace-publication-batches/:id/cancel` requires `listing:publish` and the same bounded reason body as single-request cancellation. It succeeds only while every child remains in a waiting state and appends cancellation events without updating or deleting requests.
+
+Initial batches reuse ordinary per-item preview/draft jobs. An Amazon continuation uses one `publication-batch` job and one JSON Listings Feed for the whole batch; it never loops through the single-SKU submit connector. Etsy continuation enqueues the ordinary activation path once per child so inventory, personalization, media, activation, and status recovery retain their existing semantics.
+
 ## Platform semantics
 
 Amazon P1-D calls Listings Items `putListingsItem` with `mode=VALIDATION_PREVIEW`. `validation_passed` means the provider preview did not report a blocker; it does not mean an Amazon Listing or draft exists. P1-E `amazon_submit` performs the real `putListingsItem`, records acceptance, then reads Listings Items summaries/issues. `ACCEPTED` is not shown as published until the read state is buyable or discoverable.
+
+For Amazon batch continuation, the Worker creates a Feed document, uploads a JSON Listings Feed, creates one Feed, polls it, and reads the processing report. Each child keeps the one-based `messageId` assigned from the original batch order; filtering a terminal child never renumbers later items. The report must map only known IDs and account for the original batch item count. Successful child items continue through the ordinary identifier-only status reconciliation queue before they become `published`.
 
 Etsy P1-D calls `createDraftListing` with the current `readiness_state_id`. A successful event is `draft_created` and contains the Etsy Listing ID. P1-E configures full inventory and the current personalization endpoint when present, reads only private authorized assets, verifies pinned SHA-256 checksums, uploads one to twenty images in the approved main/media order, activates the draft, and confirms the resulting state.
 
@@ -53,16 +80,18 @@ Every completed external step appends evidence before the next step starts: `con
 - Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. A valid provider `Retry-After` window lengthens the exponential delay up to fifteen minutes; it cannot force a tight retry loop. Exhausted initial status polling remains explicit as `sync_pending` and schedules the identifier-only `publication-reconciliation` queue.
 - Background reconciliation waits fifteen minutes between safe status reads and is bounded to twenty attempts. It reuses the tenant/account execution lease, skips already-recorded submission/activation mutations, and can read an accepted external mutation after the original Listing approval or capability snapshot becomes stale. A conclusive status appends normally; queue admission failure or an exhausted reconciliation window appends `reconciliation_required` for manual handling.
 - A lost Etsy create response, an Etsy `5xx`, an invalid success response, or a failed Etsy external-ID writeback becomes `reconciliation_required`; automatic retry is blocked to prevent duplicate drafts.
+- An unknown Amazon Feed-creation result, failure to persist the returned Feed ID, an unknown report `messageId`, or an incomplete processed-item count becomes `reconciliation_required`. The batch processor does not create a replacement Feed automatically.
+- If a Feed is accepted but one successful child cannot enter the status-reconciliation queue, that child becomes `reconciliation_required` while the remaining mapped results are preserved.
 - Research-domain, deleted, changed, rights-unapproved, or checksum-mismatched assets fail before connector invocation or upload.
 - Scheduled or queued requests can be cancelled without mutating their request row or prior events. Cancellation never rolls back a provider mutation that has already started.
 - Worker replicas serialize connector execution per tenant/account with a database advisory lease acquired before `processing`. Separate accounts remain independent; provider quota windows are applied to retries.
 - Successful publication and online Listing-sync responses normalize supported quota headers into bounded `second`, `day`, or `operation` windows. The Worker appends the snapshot in the same tenant transaction as the result event. Amazon commonly reports only a rate limit; Etsy can report per-second and per-day limit/remaining values. Raw headers and request IDs are discarded.
 
-Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check and an approved Etsy test-shop draft plus configure/upload/activate/status check. CI uses mock connectors and cannot satisfy that release gate.
+Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check, one approved multi-SKU JSON Listings Feed with report/status reconciliation, and an approved Etsy test-shop draft plus configure/upload/activate/status check including a multi-item batch. CI uses mock connectors and cannot satisfy that release gate.
 
 ## Online Listing reconciliation
 
-Online operations must reference a published `amazon_submit` or `etsy_activate` request. The API derives the account, marketplace, external Listing ID, and pinned provider payload from that request; clients cannot supply a raw external target.
+Online operations must reference a published `amazon_submit`, `amazon_feed_submit`, or `etsy_activate` request. The API derives the account, marketplace, external Listing ID, and pinned provider payload from that request; clients cannot supply a raw external target.
 
 - `POST /v1/marketplace-listing-syncs` requires `listing:publish`. It accepts `accountId`, `listingId`, `listingVersionId`, `sourcePublicationRequestId`, and one of four actions: `read`, `read_full_content`, `push_price_inventory`, or `push_full_content`.
 - `GET /v1/marketplace-listing-syncs?listingId={id}&accountId={id}&limit={1..100}` and `GET /:id/events` require `listing:read`.

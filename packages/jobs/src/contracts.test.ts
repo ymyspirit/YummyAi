@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CustomizationFileScanJobPayloadSchema, FulfillmentAutomationJobPayloadSchema, JobEnvelopeSchema, MarketplacePublicationReconciliationJobPayloadSchema, OrderIngestionJobPayloadSchema, QueueName, ShipmentWritebackJobPayloadSchema } from "./index.js";
+import { CustomizationFileScanJobPayloadSchema, FulfillmentAutomationJobPayloadSchema, JobEnvelopeSchema, MarketplacePublicationBatchJobPayloadSchema, MarketplacePublicationReconciliationJobPayloadSchema, OrderIngestionJobPayloadSchema, QueueName, ShipmentWritebackJobPayloadSchema } from "./index.js";
 
 const id = "019b0000-0000-7000-8000-000000000001";
 
@@ -46,6 +46,7 @@ describe("job contracts", () => {
     expect(QueueName.Capture).toBe("capture");
     expect(QueueName.AiAnalysis).toBe("ai-analysis");
     expect(QueueName.Publication).toBe("publication");
+    expect(QueueName.PublicationBatch).toBe("publication-batch");
     expect(QueueName.PublicationReconciliation).toBe("publication-reconciliation");
     expect(QueueName.OrderIngestion).toBe("order-ingestion");
     expect(QueueName.CustomizationFileScan).toBe("customization-file-scan");
@@ -76,5 +77,10 @@ describe("job contracts", () => {
   it("keeps publication reconciliation jobs identifier-only", () => {
     expect(MarketplacePublicationReconciliationJobPayloadSchema.safeParse({ publicationRequestId: id }).success).toBe(true);
     expect(MarketplacePublicationReconciliationJobPayloadSchema.safeParse({ publicationRequestId: id, externalListingId: "secret" }).success).toBe(false);
+  });
+
+  it("keeps publication batch jobs identifier-only", () => {
+    expect(MarketplacePublicationBatchJobPayloadSchema.safeParse({ publicationBatchId: id }).success).toBe(true);
+    expect(MarketplacePublicationBatchJobPayloadSchema.safeParse({ publicationBatchId: id, items: [{ sku: "secret" }] }).success).toBe(false);
   });
 });

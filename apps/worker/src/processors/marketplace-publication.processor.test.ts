@@ -204,6 +204,33 @@ describe("marketplace publication processor", () => {
     );
   });
 
+  it("reconciles an Amazon Feed child by status read without individual submission", async () => {
+    const repository = new FakeRepository();
+    repository.snapshot = {
+      ...repository.snapshot!,
+      action: "amazon_feed_submit",
+      externalListingId: "SKU-1",
+      resumeStatus: "sync_pending",
+    };
+    const gateway = fakeGateway({
+      getStatus: vi.fn(async () => ({
+        ...result("published", "BUYABLE"),
+        externalListingId: "SKU-1",
+      })),
+    });
+
+    await expect(new MarketplacePublicationProcessor(repository, gateway).process(envelope()))
+      .resolves.toMatchObject({ status: "published" });
+
+    expect(gateway.submit).not.toHaveBeenCalled();
+    expect(gateway.getStatus).toHaveBeenCalledWith(
+      repository.snapshot.account,
+      expect.anything(),
+      repository.snapshot.payload,
+      "SKU-1",
+    );
+  });
+
   it("requires manual reconciliation when background queue admission fails", async () => {
     const repository = new FakeRepository();
     repository.snapshot = {

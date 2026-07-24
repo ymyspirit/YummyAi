@@ -119,7 +119,7 @@ export class MarketplaceListingSyncService {
       if (!source || !sourceEvent) throw new NotFoundException("Published marketplace request not found");
       if (!capability) throw new ConflictException("Marketplace capabilities must be synchronized before online Listing sync");
       if (source.accountId !== account.id || source.listingId !== listing.id || source.platform !== account.platform) throw new UnprocessableEntityException("Published marketplace request does not match the sync target");
-      if (!(["amazon_submit", "etsy_activate"] as string[]).includes(source.action) || sourceEvent.status !== "published") throw new ConflictException("Online Listing sync requires a published marketplace request");
+      if (!(["amazon_submit", "amazon_feed_submit", "etsy_activate"] as string[]).includes(source.action) || sourceEvent.status !== "published") throw new ConflictException("Online Listing sync requires a published marketplace request");
       const externalListingId = sourceEvent.externalListingId ?? source.sourceExternalListingId;
       if (!externalListingId) throw new ConflictException("Published marketplace request has no external Listing ID");
       assertSyncAccount(account, capability, input.action, source.marketplaceId);

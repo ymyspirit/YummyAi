@@ -49,9 +49,12 @@ import { MarketplaceAutomationService } from "./marketplaces/marketplace-automat
 import { MarketplaceCapabilityService } from "./marketplaces/marketplace-capability.service.js";
 import { MarketplaceListingSyncController } from "./marketplaces/marketplace-listing-sync.controller.js";
 import { MarketplaceListingSyncService } from "./marketplaces/marketplace-listing-sync.service.js";
+import { MarketplacePublicationBatchController } from "./marketplaces/marketplace-publication-batch.controller.js";
+import { MarketplacePublicationBatchService } from "./marketplaces/marketplace-publication-batch.service.js";
 import { MarketplacePublicationController } from "./marketplaces/marketplace-publication.controller.js";
 import { MarketplacePublicationService } from "./marketplaces/marketplace-publication.service.js";
 import { createMarketplaceSecretVault } from "./marketplaces/marketplace-secret-vault.js";
+import { RedisMarketplacePublicationBatchEnqueuer } from "./marketplaces/redis-marketplace-publication-batch-enqueuer.js";
 import { RedisMarketplacePublicationEnqueuer } from "./marketplaces/redis-marketplace-publication-enqueuer.js";
 import { RedisMarketplaceListingSyncEnqueuer } from "./marketplaces/redis-marketplace-listing-sync-enqueuer.js";
 import { NotificationController } from "./notifications/notification.controller.js";
@@ -92,6 +95,7 @@ import {
   MARKETPLACE_CAPABILITY_GATEWAY,
   MARKETPLACE_LISTING_SYNC_ENQUEUER,
   MARKETPLACE_AUTOMATION_DISPATCHER,
+  MARKETPLACE_PUBLICATION_BATCH_ENQUEUER,
   MARKETPLACE_PUBLICATION_ENQUEUER,
   MARKETPLACE_SECRET_VAULT,
   NOTIFICATION_REPOSITORY,
@@ -126,6 +130,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     MarketplaceAccountController,
     MarketplaceAutomationController,
     MarketplaceListingSyncController,
+    MarketplacePublicationBatchController,
     MarketplacePublicationController,
     NotificationController,
     OrderController,
@@ -185,6 +190,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     { provide: MARKETPLACE_CAPABILITY_GATEWAY, useFactory: () => new HttpMarketplaceCapabilityGateway() },
     { provide: MARKETPLACE_LISTING_SYNC_ENQUEUER, useClass: RedisMarketplaceListingSyncEnqueuer },
     { provide: MARKETPLACE_AUTOMATION_DISPATCHER, useExisting: MarketplaceAutomationService },
+    { provide: MARKETPLACE_PUBLICATION_BATCH_ENQUEUER, useClass: RedisMarketplacePublicationBatchEnqueuer },
     { provide: MARKETPLACE_PUBLICATION_ENQUEUER, useClass: RedisMarketplacePublicationEnqueuer },
     { provide: MARKETPLACE_SECRET_VAULT, useFactory: createMarketplaceSecretVault },
     { provide: NOTIFICATION_REPOSITORY, useClass: DrizzleNotificationRepository },
@@ -204,6 +210,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     MarketplaceAutomationService,
     MarketplaceCapabilityService,
     MarketplaceListingSyncService,
+    MarketplacePublicationBatchService,
     MarketplacePublicationService,
     NotificationService,
     OrderService,

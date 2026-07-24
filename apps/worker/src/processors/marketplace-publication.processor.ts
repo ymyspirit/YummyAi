@@ -129,6 +129,9 @@ export class MarketplacePublicationProcessor {
       if (snapshot.action === "amazon_submit") {
         return this.submitAmazon(context, snapshot, envelope);
       }
+      if (snapshot.action === "amazon_feed_submit") {
+        return this.reconcileAmazonFeedItem(context, snapshot, envelope);
+      }
       return this.activateEtsy(context, snapshot, envelope);
     });
   }
@@ -153,6 +156,29 @@ export class MarketplacePublicationProcessor {
     }
     const synced = await this.execute(context, snapshot, envelope, false, (credential) =>
       this.gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId!),
+    );
+    await retryPendingStatus(synced.result, envelope);
+    if (synced.result?.status === "sync_pending") {
+      return this.scheduleReconciliation(context, snapshot.requestId);
+    }
+    return { requestId: snapshot.requestId, status: synced.status };
+  }
+
+  private async reconcileAmazonFeedItem(
+    context: TenantContext,
+    snapshot: PublicationExecutionSnapshot,
+    envelope: JobEnvelope,
+  ): Promise<{ requestId: string; status: string }> {
+    if (!snapshot.externalListingId || snapshot.payload.platform !== "amazon") {
+      return this.recordTerminal(
+        context,
+        snapshot.requestId,
+        "PUBLICATION_EXTERNAL_ID_MISSING",
+        "Amazon Feed item did not record its SKU",
+      );
+    }
+    const synced = await this.execute(context, snapshot, envelope, false, (credential) =>
+      this.gateway.getStatus(snapshot.account, credential, snapshot.payload, snapshot.externalListingId!),
     );
     await retryPendingStatus(synced.result, envelope);
     if (synced.result?.status === "sync_pending") {
@@ -605,7 +631,7 @@ export function interruptedMutationIsUncertain(
   latestStatus: string,
   resumeStatus: MarketplacePublicationStatus | undefined,
 ): boolean {
-  if (latestStatus === "retry_pending" || action === "amazon_validation_preview") return false;
+  if (latestStatus === "retry_pending" || action === "amazon_validation_preview" || action === "amazon_feed_submit") return false;
   if (action === "etsy_create_draft") return latestStatus === "processing";
   if (action === "amazon_submit") {
     return latestStatus === "processing" && !hasProgress(resumeStatus, ["submission_accepted", "sync_pending"]);
@@ -680,7 +706,7 @@ function isSafeStatusRead(
   action: string,
   resumeStatus: MarketplacePublicationStatus | undefined,
 ): boolean {
-  if (action === "amazon_submit") {
+  if (action === "amazon_submit" || action === "amazon_feed_submit") {
     return hasProgress(resumeStatus, ["submission_accepted", "sync_pending"]);
   }
   if (action === "etsy_activate") {

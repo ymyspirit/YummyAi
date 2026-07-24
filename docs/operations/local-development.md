@@ -78,9 +78,12 @@ pnpm --filter @yummyai/api test:integration -- marketplace-account.integration.t
 pnpm --filter @yummyai/api test:integration -- marketplace-authorization.integration.test.ts
 pnpm --filter @yummyai/api test:integration -- marketplace-capability.integration.test.ts
 pnpm --filter @yummyai/api test:integration -- marketplace-publication.integration.test.ts
+pnpm --filter @yummyai/api test:integration -- marketplace-publication-batch.integration.test.ts
 pnpm --filter @yummyai/api test:integration -- marketplace-listing-sync.integration.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-publication.processor.test.ts
+pnpm --filter @yummyai/worker test -- marketplace-publication-batch.processor.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-listing-sync.processor.test.ts
+pnpm --filter @yummyai/web test -- publication-batch-workspace.test.tsx listing-channel-operations.test.tsx
 pnpm --filter @yummyai/worker test:integration -- marketplace-publication-lease.integration.test.ts
 pnpm --filter @yummyai/database test:integration -- tenant-isolation.integration.test.ts
 pnpm --filter @yummyai/database exec drizzle-kit check
@@ -91,6 +94,8 @@ P1-B authorization requires registered marketplace applications. Configure the v
 The local API can start without marketplace application credentials. Authorization start fails closed with `503` until the relevant platform variables are configured. Production additionally requires an explicit 32-byte `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY`.
 
 P1-D Amazon execution is a non-persisting Listings Items validation preview. Etsy execution creates a real provider draft. P1-E starts only through `POST /v1/marketplace-publications/:id/continue`; it performs a real Amazon submission or configures media/inventory/personalization and activates an Etsy draft. Use only approved non-production stores and test Listing data. Uncertain external mutations are intentionally held for reconciliation instead of retried.
+
+The Listing batch workspace creates 2–100 item immutable batches through `/v1/marketplace-publication-batches`. Initial Amazon items still use individual validation previews; continuing a fully validated Amazon batch creates one JSON Listings Feed. Verify the provider report maps every original item by stable `messageId`, then verify successful items reach published status through background reconciliation and remain available as online Listing-sync sources. Never resubmit a batch whose Feed creation or report mapping is uncertain. Etsy continuation keeps ordinary per-item activation semantics. A P1 release candidate needs authorized multi-item Amazon Feed and Etsy batch evidence in addition to the single-item smoke checks.
 
 If initial status polling ends at `sync_pending`, the Worker automatically creates one `publication-reconciliation` job containing only the publication request ID and tenant correlation fields. Keep Redis and the Worker available for the five-hour bounded window: the first safe read starts after fifteen minutes and subsequent attempts retain that spacing. A published/deactivated/failed Provider result closes normally; queue admission failure or twenty inconclusive attempts appends `reconciliation_required`. Do not manually replay the original mutation job.
 

@@ -43,7 +43,7 @@ export function ListingChannelOperations({ accounts, automations, error, listing
 }) {
   const router = useRouter();
   const platformAccounts = accounts.filter((account) => account.platform === listing.platform && account.status === "active");
-  const published = publications.filter((request) => request.current.status === "published" && ["amazon_submit", "etsy_activate"].includes(request.action));
+  const published = publications.filter((request) => request.current.status === "published" && ["amazon_submit", "amazon_feed_submit", "etsy_activate"].includes(request.action));
   const targetMarketplaces = [...new Set(platformAccounts.flatMap((account) => account.marketplaceIds))];
   const relevantRules = automations.filter((rule) => !rule.conditions.listingId || rule.conditions.listingId === listing.id);
   const [replicationState, replicate] = useActionState(createListingReplication.bind(null, listing.id, listing.versionId), initialState);

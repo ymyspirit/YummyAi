@@ -14,7 +14,7 @@
 - P2-F shipment, tracking, and marketplace writeback have passed local gates; authorized marketplace/carrier acceptance remains pending.
 - P2-G after-sales, operational workspaces, and scheduled automation recovery have passed local gates; release drills and real end-to-end provider acceptance remain pending.
 - P1/P2 authorized Amazon, Etsy, Printify, Printful, and carrier smoke evidence remains pending.
-- P1 online Listing synchronization now has local narrow and full-content actions with immutable reconciliation evidence; media replacement, bulk/JSON feed publishing, notifications, broader automation, and authorized provider acceptance remain pending.
+- P1 online Listing synchronization now has local narrow and full-content actions with immutable reconciliation evidence. Immutable 2–100 item batch publishing and Amazon JSON Listings Feed submission also have local code, migration, API/Worker/UI, and deterministic test coverage. Media replacement, provider notifications, broader automation, and authorized Amazon/Etsy batch acceptance remain pending.
 
 Starting P3 does not waive these gates and does not make the incomplete fulfillment path a release candidate.
 

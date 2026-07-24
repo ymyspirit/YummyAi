@@ -65,7 +65,7 @@ export class MarketplacePublicationService {
     context: TenantContext,
     input: CreateMarketplacePublicationInput,
   ): Promise<MarketplacePublicationRequestView> {
-    const prepared = await this.prepare(context, input);
+    const prepared = await this.prepareForBatch(context, input);
     const scheduledFor = normalizeSchedule(input.scheduledFor);
     const request = await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${prepared.idempotencyKey}, 0))`);
@@ -328,7 +328,7 @@ export class MarketplacePublicationService {
     return events.map(toEventView);
   }
 
-  private async prepare(context: TenantContext, input: CreateMarketplacePublicationInput): Promise<PreparedPublication> {
+  async prepareForBatch(context: TenantContext, input: CreateMarketplacePublicationInput): Promise<PreparedPublication> {
     return withTenant(this.database.db, context, async (tx) => {
       const [[account], [listing], [version], [capability]] = await Promise.all([
         tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1),
@@ -455,7 +455,7 @@ type AssetRow = typeof assetFiles.$inferSelect;
 type RequestRow = typeof marketplacePublicationRequests.$inferSelect;
 type EventRow = typeof marketplacePublicationEvents.$inferSelect;
 
-interface PreparedPublication {
+export interface PreparedPublication {
   assets: MarketplacePublicationAssetPin[];
   capabilitySnapshotId: string;
   idempotencyKey: string;
@@ -717,6 +717,7 @@ function stableStringify(value: unknown): string {
 }
 
 function toRequestView(request: RequestRow, current: MarketplacePublicationEventView): MarketplacePublicationRequestView {
+  const payload = MarketplacePublicationPayloadSchema.safeParse(request.payload);
   return MarketplacePublicationRequestViewSchema.parse({
     id: request.id,
     accountId: request.accountId,
@@ -726,10 +727,14 @@ function toRequestView(request: RequestRow, current: MarketplacePublicationEvent
     platform: request.platform,
     marketplaceId: request.marketplaceId,
     action: request.action,
+    batchId: request.batchId,
     parentRequestId: request.parentRequestId,
     sourceExternalListingId: request.sourceExternalListingId,
     idempotencyKey: request.idempotencyKey,
     payloadChecksum: request.payloadChecksum,
+    targetLabel: payload.success
+      ? payload.data.platform === "amazon" ? payload.data.sku : payload.data.title
+      : null,
     assetCount: request.assetManifest.length,
     scheduledFor: request.scheduledFor?.toISOString() ?? null,
     createdBy: request.createdBy,

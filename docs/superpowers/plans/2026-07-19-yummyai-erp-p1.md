@@ -240,9 +240,13 @@ P1-F implementation status:
 - [x] Store and Listing UI controls for local-time publication scheduling and eligible waiting-state cancellation
 - [x] CI release-candidate artifact automation with commit/migration/toolchain metadata and checksummed Chrome/Edge packages
 - [x] Bounded background publication reconciliation with identifier-only jobs, safe status reads, per-account serialization, and manual-reconciliation exhaustion
+- [x] Immutable 2–100 item publication batches with deterministic idempotency, optional scheduling, waiting-state cancellation, per-item progress, and tenant-isolation coverage
+- [x] Amazon batch continuation through one JSON Listings Feed with stable item ordinals, report completeness checks, per-item issue mapping, and uncertain-outcome reconciliation
+- [x] Etsy batch continuation through ordinary per-item activation requests without bypassing existing media, inventory, personalization, or status checks
+- [x] Responsive Listing batch workspace with real account/approval data, explicit partial/failure states, and published Feed items eligible for later online reconciliation
 - [ ] Real Store Management and publication smoke evidence with approved non-production Amazon/Etsy accounts
 
-The extended P1-F implementation landed on 2026-07-20. P1-G now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, successful-response quota telemetry, bounded background publication reconciliation, commit-bound release-candidate artifact automation, and approved online content/price/inventory synchronization. Real provider smoke evidence remains a P1 release gate. Online media replacement, bulk publishing/JSON Listings Feed, provider notifications, and broader automation triggers/actions remain open.
+The extended P1-F/G implementation now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, successful-response quota telemetry, bounded background publication reconciliation, commit-bound release-candidate artifact automation, approved online content/price/inventory synchronization, immutable batch publishing, and Amazon JSON Listings Feed submission. Real provider smoke evidence remains a P1 release gate. Online media replacement, provider notifications, and broader automation triggers/actions remain open.
 
 Background reconciliation code gate passed on 2026-07-25. The Worker unit suite covers background admission, queue failure, retry-window exhaustion, and conclusive status pass-through. PostgreSQL integration covers safe status resumption after the original capability snapshot expires and the approved Listing changes, while retaining append-only events and the tenant/account execution lease. This evidence is deterministic local coverage and does not replace an authorized Amazon/Etsy status-writeback smoke test.
 
@@ -261,6 +265,8 @@ Background reconciliation code gate passed on 2026-07-25. The Worker unit suite 
 11. A site replica pins the approved source version, creates a distinct draft channel, and cannot inherit approval or overwrite either version.
 12. Online price/inventory reads distinguish `completed` from `drift_detected`; an uncertain mutation becomes `reconciliation_required` and is not retried automatically.
 13. Automation rules cannot bypass approval, authorization, capability, rights, validation, or connector idempotency checks, and every trigger produces one immutable run result.
+14. A batch contains 2–100 unique targets for one account/marketplace; its requests, parent linkage, original item order, schedule, and event history cannot be rewritten.
+15. One Amazon continuation batch creates exactly one JSON Listings Feed. Unknown or incomplete report mappings and uncertain Feed creation/writeback outcomes enter manual reconciliation instead of automatic resubmission.
 
 ## External Readiness Checklist
 

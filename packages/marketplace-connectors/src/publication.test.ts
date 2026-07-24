@@ -393,6 +393,65 @@ describe("marketplace draft gateway", () => {
     });
   });
 
+  it("submits an Amazon JSON Listings Feed and normalizes its processing report", async () => {
+    let uploadedFeed: Record<string, unknown> | undefined;
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("auth/o2/token")) return json({ access_token: "access", expires_in: 3600 });
+      if (url === "https://upload.example.test/feed") {
+        uploadedFeed = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(null, { status: 200 });
+      }
+      if (url === "https://download.example.test/report") {
+        return json({
+          issues: [{ messageId: 2, code: "90220", message: "Brand is required", severity: "ERROR", attributeNames: ["brand"] }],
+          summary: { errors: 1, warnings: 0, messagesAccepted: 2, messagesProcessed: 2 },
+        });
+      }
+      if (url.endsWith("/feeds/2021-06-30/documents") && init?.method === "POST") {
+        return json({ feedDocumentId: "input-doc", url: "https://upload.example.test/feed" });
+      }
+      if (url.endsWith("/feeds/2021-06-30/feeds") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          feedType: "JSON_LISTINGS_FEED",
+          marketplaceIds: ["ATVPDKIKX0DER"],
+          inputFeedDocumentId: "input-doc",
+        });
+        return json({ feedId: "feed-1" }, 200, { "x-amzn-ratelimit-limit": "2" });
+      }
+      if (url.endsWith("/feeds/2021-06-30/feeds/feed-1")) {
+        return json({ feedId: "feed-1", processingStatus: "DONE", resultFeedDocumentId: "result-doc" });
+      }
+      if (url.endsWith("/feeds/2021-06-30/documents/result-doc")) {
+        return json({ feedDocumentId: "result-doc", url: "https://download.example.test/report" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const gateway = new HttpMarketplaceDraftGateway(request as typeof fetch, { AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test" });
+    const account = { authorizationMode: "amazon_private" as const, externalAccountId: "A1SELLER", platform: "amazon" as const, region: "NA" as const };
+    const credential = { clientId: "client", clientSecret: "secret", refreshToken: "refresh", sellingPartnerId: "A1SELLER" };
+    const messages = [
+      { messageId: 1, sku: "SKU-1", productType: "HOME", attributes: { item_name: [{ value: "One" }] } },
+      { messageId: 2, sku: "SKU-2", productType: "HOME", attributes: { item_name: [{ value: "Two" }] } },
+    ];
+
+    await expect(gateway.submitAmazonListingsFeed(account, credential, "ATVPDKIKX0DER", messages)).resolves.toMatchObject({
+      feedDocumentId: "input-doc",
+      feedId: "feed-1",
+      quota: { windows: [{ limit: 2 }] },
+    });
+    expect(uploadedFeed).toMatchObject({
+      header: { sellerId: "A1SELLER", version: "2.0" },
+      messages: [{ messageId: 1, operationType: "UPDATE", sku: "SKU-1" }, { messageId: 2, operationType: "UPDATE", sku: "SKU-2" }],
+    });
+    await expect(gateway.getAmazonListingsFeed(account, credential, "feed-1")).resolves.toMatchObject({
+      processingStatus: "DONE",
+      resultFeedDocumentId: "result-doc",
+      summary: { errors: 1, messagesAccepted: 2, messagesProcessed: 2 },
+      issues: [{ messageId: 2, issue: { code: "90220", path: "brand", severity: "blocker" } }],
+    });
+  });
+
   it("updates Etsy content, inventory, and personalization as one guarded operation", async () => {
     const requests: Array<{ body: unknown; url: string }> = [];
     const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

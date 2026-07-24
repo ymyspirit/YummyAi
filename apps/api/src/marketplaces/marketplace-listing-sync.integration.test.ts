@@ -29,6 +29,9 @@ describe.sequential("marketplace online Listing sync requests", () => {
   const secondVersionId = createEntityId();
   const previewRequestId = createEntityId();
   const publicationRequestId = createEntityId();
+  const initialBatchId = createEntityId();
+  const continuationBatchId = createEntityId();
+  const feedPublicationRequestId = createEntityId();
   const etsyAccountId = createEntityId();
   const etsyCapabilityId = createEntityId();
   const etsyListingId = createEntityId();
@@ -118,6 +121,30 @@ describe.sequential("marketplace online Listing sync requests", () => {
        (id, tenant_id, request_id, sequence, status, external_listing_id, external_state, actor_user_id)
        values ($1,$2,$3,1,'published','SKU-1','BUYABLE',$4)`,
       [createEntityId(), tenantId, publicationRequestId, userId],
+    );
+    await database.client.unsafe(
+      `insert into marketplace_publication_batches
+       (id, tenant_id, account_id, capability_snapshot_id, platform, marketplace_id, action,
+        parent_batch_id, idempotency_key, item_count, created_by)
+       values
+       ($1,$2,$3,$4,'amazon','ATVPDKIKX0DER','initial',null,$5,2,$6),
+       ($7,$2,$3,$4,'amazon','ATVPDKIKX0DER','continue',$1,$8,2,$6)`,
+      [initialBatchId, tenantId, accountId, capabilityId, "9".repeat(64), userId, continuationBatchId, "a".repeat(64)],
+    );
+    await database.client.unsafe(
+      `insert into marketplace_publication_requests
+       (id, tenant_id, account_id, capability_snapshot_id, listing_id, listing_version_id, platform,
+        marketplace_id, action, batch_id, parent_request_id, idempotency_key, payload, payload_checksum,
+        asset_manifest, created_by)
+       values ($1,$2,$3,$4,$5,$6,'amazon','ATVPDKIKX0DER','amazon_feed_submit',$7,$8,$9,$10::jsonb,$11,'[]'::jsonb,$12)`,
+      [feedPublicationRequestId, tenantId, accountId, capabilityId, listingId, firstVersionId,
+        continuationBatchId, previewRequestId, "b".repeat(64), sourcePayload, "c".repeat(64), userId],
+    );
+    await database.client.unsafe(
+      `insert into marketplace_publication_events
+       (id, tenant_id, request_id, sequence, status, external_listing_id, external_state, actor_user_id)
+       values ($1,$2,$3,1,'published','SKU-FEED-1','BUYABLE',$4)`,
+      [createEntityId(), tenantId, feedPublicationRequestId, userId],
     );
     await database.client.unsafe(
       `insert into listings (id, tenant_id, spu_id, platform, marketplace_id, locale, status, created_by)
@@ -210,6 +237,15 @@ describe.sequential("marketplace online Listing sync requests", () => {
       price: [{ currency: "USD" }],
       inventory: [{ fulfillment_channel_code: "DEFAULT", quantity: 7 }],
     });
+
+    const feedSource = await service.create(context, {
+      ...base,
+      sourcePublicationRequestId: feedPublicationRequestId,
+      requestKey: "batch-feed-source",
+      action: "read",
+    });
+    expect(feedSource.sourcePublicationRequestId).toBe(feedPublicationRequestId);
+    expect(feedSource.externalListingId).toBe("SKU-FEED-1");
 
     await insertApprovedVersion(secondVersionId, 2, "Updated pillow");
     const updatedBase = { ...base, listingVersionId: secondVersionId };

@@ -303,7 +303,7 @@ function milestones(action: MarketplacePublicationRequestView["action"]): Array<
   if (action === "amazon_validation_preview") return [
     { label: "排队", statuses: ["queued"] }, { label: "校验", statuses: ["processing", "retry_pending"] }, { label: "结果", statuses: ["validation_passed", "validation_failed"] },
   ];
-  if (action === "amazon_submit") return [
+  if (action === "amazon_submit" || action === "amazon_feed_submit") return [
     { label: "排队", statuses: ["queued"] }, { label: "提交", statuses: ["submission_accepted"] }, { label: "同步", statuses: ["sync_pending"] }, { label: "发布", statuses: ["published"] },
   ];
   if (action === "etsy_create_draft") return [
@@ -315,7 +315,7 @@ function milestones(action: MarketplacePublicationRequestView["action"]): Array<
 }
 
 function actionLabel(action: MarketplacePublicationRequestView["action"]): string {
-  return ({ amazon_submit: "Amazon 正式提交", amazon_validation_preview: "Amazon 校验预览", etsy_activate: "Etsy 配置与激活", etsy_create_draft: "Etsy 草稿创建" })[action];
+  return ({ amazon_feed_submit: "Amazon JSON Feed", amazon_submit: "Amazon 正式提交", amazon_validation_preview: "Amazon 校验预览", etsy_activate: "Etsy 配置与激活", etsy_create_draft: "Etsy 草稿创建" })[action];
 }
 
 function statusLabel(status: MarketplacePublicationEventView["status"]): string {
