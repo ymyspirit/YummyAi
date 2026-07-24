@@ -2,6 +2,8 @@ export { createEntityId, EntityIdSchema } from "./common/ids.js";
 export * from "./finance/finance.js";
 export * from "./supplier-performance/supplier-performance.js";
 export * from "./customer-intelligence/customer-intelligence.js";
+export * from "./planning/planning.js";
+export * from "./integration/integration.js";
 export {
   ChannelAllocationPolicyViewSchema,
   ChannelAllocationRunViewSchema,

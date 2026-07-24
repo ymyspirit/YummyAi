@@ -29,7 +29,7 @@ foreach ($object in @($manifest.objects)) {
 if ($LASTEXITCODE -ne 0) { throw "Could not copy restore dump" }
 & docker compose --env-file $envFile -f $compose exec -T postgres sh -c "dropdb -U `"`$POSTGRES_USER`" --if-exists '$VerificationDatabase' && createdb -U `"`$POSTGRES_USER`" '$VerificationDatabase' && pg_restore -U `"`$POSTGRES_USER`" -d '$VerificationDatabase' --no-owner --no-acl /tmp/yummyai-restore.dump"
 if ($LASTEXITCODE -ne 0) { throw "PostgreSQL restore drill failed" }
-$counts = & docker compose --env-file $envFile -f $compose exec -T postgres sh -c "psql -U `"`$POSTGRES_USER`" -d '$VerificationDatabase' -Atc 'select (select count(*) from organizations),(select count(*) from capture_snapshots),(select count(*) from asset_files),(select count(*) from audit_events)'"
+$counts = & docker compose --env-file $envFile -f $compose exec -T postgres sh -c "psql -U `"`$POSTGRES_USER`" -d '$VerificationDatabase' -Atc 'select (select count(*) from organizations),(select count(*) from capture_snapshots),(select count(*) from asset_files),(select count(*) from inventory_balances),(select count(*) from finance_profit_runs),(select count(*) from forecast_runs),(select count(*) from webhook_delivery_attempts),(select count(*) from audit_events)'"
 if ($LASTEXITCODE -ne 0) { throw "Restored database verification query failed" }
 
 $minioContainer = "yummyai-restore-minio-$VerificationBucket"
@@ -51,7 +51,7 @@ try {
 
 Write-Output "restore drill passed"
 Write-Output "temporary database: $VerificationDatabase"
-Write-Output "core counts (organizations,captures,assets,audits): $counts"
+Write-Output "core counts (organizations,captures,assets,inventory,profit,forecasts,webhook-attempts,audits): $counts"
 Write-Output "temporary bucket: $VerificationBucket"
 Write-Output "restored object count: $objectCount"
 if ($Cleanup) {

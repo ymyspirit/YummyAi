@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PermissionsGuard } from "./permissions.guard.js";
 import { type OidcClaims, TokenVerifier } from "./oidc-jwt.strategy.js";
 import {
+  ApiClientContextLoader,
   type AuthenticatedRequest,
   MembershipContextLoader,
   TenantContextGuard,
@@ -29,6 +30,10 @@ class FakeVerifier extends TokenVerifier {
 
 class FakeMemberships extends MembershipContextLoader {
   load = vi.fn<(_claims: OidcClaims) => Promise<TenantContext | null>>();
+}
+
+class FakeApiClients extends ApiClientContextLoader {
+  load = vi.fn<(_token: string) => Promise<TenantContext | null>>();
 }
 
 function executionContext(request: AuthenticatedRequest): ExecutionContext {
@@ -91,6 +96,30 @@ describe("authentication and permission guards", () => {
 
     await expect(guard.canActivate(executionContext(request))).resolves.toBe(true);
     expect(request.tenantContext).toEqual(context);
+  });
+
+  it("constructs tenant context from a scoped API client without verifying it as a JWT", async () => {
+    const verifier = new FakeVerifier();
+    const apiClients = new FakeApiClients();
+    apiClients.load.mockResolvedValue(context);
+    const request: AuthenticatedRequest = {
+      headers: { authorization: "Bearer yai_019b0000-0000-7000-8000-000000000001.secret" },
+    };
+    const guard = new TenantContextGuard(verifier, new FakeMemberships(), apiClients);
+
+    await expect(guard.canActivate(executionContext(request))).resolves.toBe(true);
+    expect(request.tenantContext).toEqual(context);
+    expect(verifier.verify).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid scoped API client", async () => {
+    const apiClients = new FakeApiClients();
+    apiClients.load.mockResolvedValue(null);
+    const guard = new TenantContextGuard(new FakeVerifier(), new FakeMemberships(), apiClients);
+
+    await expect(guard.canActivate(executionContext({
+      headers: { authorization: "Bearer yai_019b0000-0000-7000-8000-000000000001.wrong" },
+    }))).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it("rejects a missing permission", () => {

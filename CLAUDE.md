@@ -55,6 +55,8 @@ the same change; `pnpm check:rules` enforces equality.
   Production extension requests use OIDC Authorization Code with PKCE.
 - Never commit or log credentials, tokens, cookies, authorization headers, raw
   prompts containing secrets, or production marketplace data.
+- API client and Webhook secrets use a dedicated integration encryption domain;
+  do not reuse marketplace, order-PII, or model-provider keys.
 - Keep object storage private and authorize every signed read by tenant and asset
   domain.
 
@@ -106,6 +108,7 @@ the same change; `pnpm check:rules` enforces equality.
 - P0 implementation baseline: `docs/superpowers/plans/2026-07-17-yummyai-erp-p0.md`
 - P1 implementation plan: `docs/superpowers/plans/2026-07-19-yummyai-erp-p1.md`
 - P2 implementation plan: `docs/superpowers/plans/2026-07-20-yummyai-erp-p2.md`
+- P3 implementation plan: `docs/superpowers/plans/2026-07-22-yummyai-erp-p3.md`
 - Architecture decisions: `docs/architecture/`
 - API and connector integration guides: `docs/integration/`
 - Local, deployment, backup, and restore procedures: `docs/operations/`

@@ -8,6 +8,8 @@ import { AssetsController } from "./assets/assets.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import {
   DatabaseMembershipContextLoader,
+  DatabaseApiClientContextLoader,
+  ApiClientContextLoader,
   MembershipContextLoader,
   TenantContextGuard,
 } from "./auth/tenant-context.guard.js";
@@ -33,6 +35,10 @@ import { FinanceService } from "./finance/finance.service.js";
 import { HealthController } from "./health.controller.js";
 import { InventoryController } from "./inventory/inventory.controller.js";
 import { InventoryService } from "./inventory/inventory.service.js";
+import { IntegrationController } from "./integrations/integration.controller.js";
+import { IntegrationService } from "./integrations/integration.service.js";
+import { createIntegrationSecretVault } from "./integrations/integration-secret-vault.js";
+import { RedisWebhookDeliveryEnqueuer } from "./integrations/redis-webhook-delivery-enqueuer.js";
 import { ListingController } from "./listings/listing.controller.js";
 import { DrizzleListingRepository, ListingService } from "./listings/listing.service.js";
 import { MarketplaceAccountController } from "./marketplaces/marketplace-account.controller.js";
@@ -76,6 +82,7 @@ import {
   CAPTURE_MEDIA_ENQUEUER,
   CUSTOMIZATION_FILE_SCAN_ENQUEUER,
   FULFILLMENT_AUTOMATION_ENQUEUER,
+  INTEGRATION_SECRET_VAULT,
   CATALOG_REPOSITORY,
   DASHBOARD_REPOSITORY,
   DATABASE_CONNECTION,
@@ -90,12 +97,15 @@ import {
   NOTIFICATION_REPOSITORY,
   ORDER_PII_VAULT,
   SHIPMENT_WRITEBACK_ENQUEUER,
+  WEBHOOK_DELIVERY_ENQUEUER,
   PRIVATE_STORAGE,
 } from "./platform.tokens.js";
 import { ResearchController } from "./research/research.controller.js";
 import { ResearchRepository } from "./research/research.repository.js";
 import { ProcurementController } from "./procurement/procurement.controller.js";
 import { ProcurementService } from "./procurement/procurement.service.js";
+import { PlanningController } from "./planning/planning.controller.js";
+import { PlanningService } from "./planning/planning.service.js";
 import { SupplierPerformanceController } from "./supplier-performance/supplier-performance.controller.js";
 import { SupplierPerformanceService } from "./supplier-performance/supplier-performance.service.js";
 
@@ -111,6 +121,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     FinanceController,
     HealthController,
     InventoryController,
+    IntegrationController,
     ListingController,
     MarketplaceAccountController,
     MarketplaceAutomationController,
@@ -126,6 +137,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     OrderShipmentController,
     OrderShipmentCommandController,
     ProcurementController,
+    PlanningController,
     SupplierPerformanceController,
     ProductController,
     ResearchController,
@@ -154,10 +166,17 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
         new DatabaseMembershipContextLoader(database),
       inject: [DATABASE_CONNECTION],
     },
+    {
+      provide: ApiClientContextLoader,
+      useFactory: (database: ReturnType<typeof connectDatabase>) => new DatabaseApiClientContextLoader(database),
+      inject: [DATABASE_CONNECTION],
+    },
     { provide: TokenVerifier, useClass: OidcJwtStrategy },
     { provide: CAPTURE_MEDIA_ENQUEUER, useClass: RedisMediaEnqueuer },
     { provide: CUSTOMIZATION_FILE_SCAN_ENQUEUER, useClass: RedisCustomizationFileScanEnqueuer },
     { provide: FULFILLMENT_AUTOMATION_ENQUEUER, useClass: RedisFulfillmentAutomationEnqueuer },
+    { provide: INTEGRATION_SECRET_VAULT, useFactory: createIntegrationSecretVault },
+    { provide: WEBHOOK_DELIVERY_ENQUEUER, useClass: RedisWebhookDeliveryEnqueuer },
     { provide: CATALOG_REPOSITORY, useClass: DrizzleCatalogRepository },
     { provide: DASHBOARD_REPOSITORY, useClass: DrizzleDashboardRepository },
     { provide: DESIGN_REPOSITORY, useClass: DrizzleDesignRepository },
@@ -190,6 +209,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     OrderService,
     FulfillmentAutomationService,
     InventoryService,
+    IntegrationService,
     OrderAfterSalesService,
     OrderCustomizationService,
     OrderIngestionService,
@@ -198,6 +218,7 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     OrderRoutingService,
     OrderSyncCoordinator,
     ProcurementService,
+    PlanningService,
     SupplierPerformanceService,
     ProductService,
     ResearchRepository,

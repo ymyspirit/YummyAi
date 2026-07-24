@@ -24,12 +24,13 @@
 - `DEBUG` and all `*_DEMO_MODE` flags must be false/unset.
 - Secrets come from the deployment secret manager, never images or GitHub logs.
 - `DATABASE_URL` for the app uses `yummyai_app`; migration/backup credentials are separate.
-- `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY` and `ORDER_PII_ENCRYPTION_KEY` are distinct 32-byte secrets with independent rotation scopes.
+- `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY`, `ORDER_PII_ENCRYPTION_KEY`, and `INTEGRATION_SECRET_ENCRYPTION_KEY` are distinct 32-byte secrets with independent rotation scopes. API and Worker receive the same integration key.
 - `ORDER_PII_RETENTION_DAYS` is reviewed against the tenant retention policy before order ingestion is enabled.
 - S3 buckets are private and CORS is limited to deployed origins.
 - Signed URLs expire in at most 600 seconds.
 - `CLAMAV_HOST` resolves only on the private worker network; TCP `3310` is never Internet-facing, and the deployed scanner image is pinned to a reviewed supported release/digest.
 - Worker memory and restart policy accommodate ClamAV signature reloads; a scanner outage fails closed and alerts on the customization-file scan queue.
+- Webhook egress is restricted to approved HTTPS destinations with DNS/IP egress controls; loopback HTTP is development-only. Monitor retry and dead-letter counts without logging request bodies, tokens, or signing secrets.
 
 ## Rollback
 
@@ -37,4 +38,4 @@ Roll back application images first. Database migrations are forward-only by defa
 
 ## Acceptance evidence
 
-Attach CI URL, commit SHA, migration version, backup manifest/checksum, browser extension versions, smoke-test results, PII retention/anonymization evidence when orders are enabled, ClamAV engine/signature evidence plus clean/infected fixture results, and the approver to the release record.
+Attach CI URL, commit SHA, migration version, backup manifest/checksum, browser extension versions, smoke-test results, PII retention/anonymization evidence when orders are enabled, ClamAV engine/signature evidence plus clean/infected fixture results, forecast/projection rebuild evidence, signed Webhook retry/dead-letter/replay evidence, and the approver to the release record.

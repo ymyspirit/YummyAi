@@ -14,3 +14,4 @@ export {
 } from "./listing-sync.js";
 export { ShipmentWritebackJobPayloadSchema, type ShipmentWritebackJobPayload } from "./shipment-writeback.js";
 export { FulfillmentAutomationJobPayloadSchema, type FulfillmentAutomationJobPayload } from "./fulfillment-automation.js";
+export { WebhookDeliveryJobPayloadSchema, type WebhookDeliveryJobPayload } from "./webhook-delivery.js";

@@ -10,6 +10,7 @@ export const QueueName = {
   Publication: "publication",
   ShipmentWriteback: "shipment-writeback",
   FulfillmentAutomation: "fulfillment-automation",
+  WebhookDelivery: "webhook-delivery",
 } as const;
 
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];

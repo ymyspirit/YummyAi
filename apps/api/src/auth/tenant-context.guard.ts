@@ -8,8 +8,10 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import type { TenantContext } from "@yummyai/contracts";
+import { createHash } from "node:crypto";
+import { IntegrationApiScopeSchema, type TenantContext } from "@yummyai/contracts";
 import type { DatabaseConnection } from "@yummyai/database";
+import { sql } from "drizzle-orm";
 
 import { type OidcClaims, TokenVerifier } from "./oidc-jwt.strategy.js";
 import { PUBLIC_ROUTE } from "./public.decorator.js";
@@ -21,6 +23,35 @@ export interface AuthenticatedRequest {
 
 export abstract class MembershipContextLoader {
   abstract load(claims: OidcClaims): Promise<TenantContext | null>;
+}
+
+export abstract class ApiClientContextLoader {
+  abstract load(token: string): Promise<TenantContext | null>;
+}
+
+export class DatabaseApiClientContextLoader extends ApiClientContextLoader {
+  constructor(private readonly database: DatabaseConnection) { super(); }
+
+  async load(token: string): Promise<TenantContext | null> {
+    const match = /^yai_([0-9a-f-]{36})\.[A-Za-z0-9_-]{40,}$/i.exec(token);
+    if (!match) return null;
+    const digest = createHash("sha256").update(token).digest("hex");
+    const rows = await this.database.db.transaction(async (tx) => {
+      await tx.execute(sql.raw("set local role yummyai_app"));
+      return tx.execute(sql<Record<string, unknown>>`
+        select tenant_id, created_by, scopes
+        from authenticate_integration_api_client(${match[1]}::uuid, ${digest})
+      `);
+    });
+    const client = rows[0];
+    if (!client || typeof client.tenant_id !== "string" || typeof client.created_by !== "string") return null;
+    const scopes = Array.isArray(client.scopes) ? client.scopes.flatMap((scope) => {
+      const parsed = IntegrationApiScopeSchema.safeParse(scope);
+      return parsed.success ? [parsed.data] : [];
+    }) : [];
+    if (!scopes.length) return null;
+    return { tenantId: client.tenant_id, userId: client.created_by, permissions: scopes.sort(), dataScope: "tenant" };
+  }
 }
 
 interface MembershipRow {
@@ -79,6 +110,7 @@ export class TenantContextGuard implements CanActivate {
   constructor(
     @Inject(TokenVerifier) private readonly verifier: TokenVerifier,
     @Inject(MembershipContextLoader) private readonly memberships: MembershipContextLoader,
+    @Optional() @Inject(ApiClientContextLoader) private readonly apiClients?: ApiClientContextLoader,
     @Optional() @Inject(Reflector) private readonly reflector?: Reflector,
   ) {}
 
@@ -94,6 +126,13 @@ export class TenantContextGuard implements CanActivate {
 
     if (!token) {
       throw new UnauthorizedException("A bearer token is required");
+    }
+
+    if (token.startsWith("yai_")) {
+      const tenantContext = await this.apiClients?.load(token);
+      if (!tenantContext) throw new UnauthorizedException("The API client token is invalid, expired, or revoked");
+      request.tenantContext = tenantContext;
+      return true;
     }
 
     let claims: OidcClaims;

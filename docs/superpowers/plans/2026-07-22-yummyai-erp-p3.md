@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A through P3-F are locally implemented. P3-F current-worktree full local gates and populated desktop/390 px browser evidence have passed. P3-G is not started. Exact-candidate CI, outstanding P1/P2 gates, and real-provider acceptance gates remain deferred rather than complete.
+**Status:** P3-A through P3-G are locally implemented and have current-worktree full gates, fresh-database migration, backup/restore, and populated browser evidence. Exact-candidate clean commit and CI, outstanding P1/P2, and real-provider gates remain open until their evidence is recorded.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -132,7 +132,7 @@ Current local implementation evidence on 2026-07-23:
 - `/supplier-performance` consumes the authenticated workspace API. Two real
   API-created incomplete scorecards pin the local definition, evaluation
   window, evidence cutoff, raw values, samples, and evidence references.
-- The populated page was checked at 1280 px and 390 px. All thirteen navigation
+- The populated page was checked at 1280 px and 390 px. All fifteen navigation
   items remain present, document-level horizontal overflow is absent, table and
   navigation overflow stays inside their containers, and the browser console
   reports no warnings or errors.
@@ -165,6 +165,68 @@ Current local implementation evidence on 2026-07-23:
 - Provide scoped API clients, signed Webhooks, replay protection, delivery attempts, dead letters, and manual replay.
 - Run projection rebuild, backup/restore, tenant, concurrency, load, retention, provider-failure, and real authorized end-to-end drills on the exact clean candidate.
 
+## P3-G implementation ledger
+
+- [x] Strict forecast, accuracy, override, metric definition/snapshot,
+  reconciliation, API client, Webhook, delivery, attempt, replay, retention, and
+  workspace contracts.
+- [x] Deterministic moving-average and seasonal-naive forecasts with pinned
+  evidence windows, horizons, model versions, quantiles, checksums, and
+  append-only evaluations/overrides.
+- [x] Tenant-scoped schema and migration `0035_p3_forecasting_operations` with
+  forced RLS, immutable evidence grants, rebuildable projections, and
+  payload-only retention updates.
+- [x] Restricted migration `0036_p3_api_client_authentication` for digest-based
+  tenant/client resolution under the application role.
+- [x] Versioned operating metrics, freshness/completeness state,
+  drill-through, automatic reconciliation, and checksummed projection rebuild.
+- [x] Least-privilege read API clients with one-time token disclosure, expiry,
+  revocation, wrong-secret rejection, and no caller-selected tenant.
+- [x] Encrypted endpoint secrets, canonical HMAC-SHA256 Webhooks, bounded retry,
+  persisted attempts, dead letters, linked manual replay, and payload retention.
+- [x] Real-API `/operating-cockpit` with parallel planning/integration reads,
+  explicit partial states, and fifteen stable navigation items.
+- [x] Focused contract, API guard, tenant/isolation, changed-payload,
+  projection-rebuild, 100-run load, Worker persistence/exhaustion, Web render,
+  navigation, type, lint, and migration checks.
+- [x] ADR, integration guide, local/deployment/backup runbooks, PRD, and threat
+  model aligned with the implementation.
+- [x] Full-worktree unit, integration, E2E, production build, and rule gates.
+- [x] Fresh-database migration plus current-worktree backup/restore and
+  populated desktop/390 px browser evidence.
+- [ ] Exact-candidate clean commit, push, CI, and rerun of release drills.
+- [ ] Outstanding P1/P2 and authorized inventory, settlement, advertising,
+  supplier, carrier, and marketplace acceptance evidence.
+
+Focused implementation evidence on 2026-07-24:
+
+- Planning and integration API integration suites cover immutable source
+  validation, exact replay, changed-payload conflict, cross-tenant isolation,
+  wrong/expired/revoked API credentials, retention, manual replay, privilege
+  restrictions, projection drift repair, and 100 concurrently populated
+  forecast runs.
+- The Worker database integration suite persists retry attempts and converts a
+  retryable upstream failure into a dead letter when its attempt budget is
+  exhausted. Response bodies and signing secrets remain outside safe views.
+- A real local process restart between event persistence and queue admission
+  left one delivery pending. Replaying the exact idempotent publish resubmitted
+  that delivery, BullMQ retained the deterministic delivery job ID, and the
+  Worker recorded two failed network attempts before dead-lettering it.
+- The root lint, typecheck, unit, integration, Web/extension E2E, production
+  build, project-rule, migration, and diff gates passed. A fresh PostgreSQL 17
+  database applied all 36 migrations and exposed the restricted client
+  authentication function. The backup/restore drill restored 44 private
+  objects and verified forecasting and Webhook tables before cleanup.
+- `/operating-cockpit` was checked with real authenticated local data at 1440 px
+  and 390 px. It displayed one forecast, incomplete and unavailable metrics,
+  three reconciliations, a scoped client, an endpoint, and the two-attempt dead
+  letter. Both widths retained fifteen navigation items without document-level
+  overflow or browser console errors; mobile table overflow remained inside
+  each table container.
+- These checks are current-worktree evidence only. They do not satisfy the
+  exact-candidate clean commit/CI or authorized-provider release gates listed
+  above.
+
 ## P3-F implementation ledger
 
 - [x] Strict advertising report, metric line, customer signal, VOC definition, analysis, theme, recommendation, and workspace contracts.
@@ -173,7 +235,7 @@ Current local implementation evidence on 2026-07-23:
 - [x] Idempotent advertising reports, signals, definitions, analyses, and recommendation reviews.
 - [x] Pinned source currency, attribution window, analysis window, evidence cutoff, definition version, and signal IDs.
 - [x] Review-only recommendations with no Listing, budget, campaign, product, or service mutation path.
-- [x] Authenticated API and real-API Web workspace with fourteen stable navigation items.
+- [x] Authenticated API and real-API Web workspace with fifteen stable navigation items.
 - [x] ADR, integration guide, local runbook, and threat-model updates.
 - [x] Focused contract, database integration, Web render, navigation, and type checks.
 - [x] Full-worktree lint, unit, integration, E2E, build, and migration gates.
@@ -227,7 +289,7 @@ Local implementation evidence on 2026-07-23:
   cross-tenant isolation, and append-only privileges.
 - `/procurement` consumes `/v1/procurement/workspace` through the local OIDC
   service identity. A populated reconciliation path was checked at 1440 px and
-  390 px; the page now shares thirteen navigation items, no document-level horizontal
+  390 px; the page now shares fifteen navigation items, no document-level horizontal
   overflow, table overflow is scoped to its container, and a fresh browser tab
   reports no console errors.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production
@@ -248,7 +310,7 @@ Local implementation evidence on 2026-07-23:
 - [x] Stale projection rejection after new evidence or policy revision.
 - [x] Interrupted/uncertain Listing mutations create append-only reconciliation.
 - [x] Real-API channel inventory workspace with explicit operational states and
-  stable thirteen-item navigation.
+  stable fifteen-item navigation.
 - [x] Current-worktree full local gates plus populated desktop and 390 px
   browser/E2E evidence.
 - [ ] Exact-candidate clean commit, push, and CI.

@@ -43,6 +43,14 @@ export const Permission = {
   CustomerIntelligenceRead: "customer_intelligence:read",
   CustomerIntelligenceWrite: "customer_intelligence:write",
   CustomerIntelligenceReview: "customer_intelligence:review",
+  ForecastRead: "forecast:read",
+  ForecastWrite: "forecast:write",
+  ForecastReview: "forecast:review",
+  OperationsRead: "operations:read",
+  OperationsWrite: "operations:write",
+  OperationsReconcile: "operations:reconcile",
+  IntegrationRead: "integration:read",
+  IntegrationManage: "integration:manage",
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];

@@ -433,6 +433,10 @@ P1 在线 Listing 编排遵循以下约束：
 | Review / Comment / AuditLog | 审批、协作和审计 |
 | ExportJob / PublishJob | 导出与 P1 发布任务 |
 | Order / ProductionOrder / Shipment | P2 订单、生产与物流 |
+| Warehouse / InventoryLedger / Balance | P3 仓库、不可变库存事实与可重建投影 |
+| FinancialFact / ProfitRun / SupplierScorecard | P3 财务事实、版本化利润与供应商绩效 |
+| ForecastRun / MetricSnapshot / Reconciliation | 固定输入预测、经营指标快照与对账证据 |
+| ApiClient / WebhookEvent / DeliveryAttempt | 最小权限客户端、签名事件、重试与死信历史 |
 
 所有实体应使用不可跨租户复用的标识；文件访问必须同时校验租户、业务权限和有效期。
 
@@ -447,6 +451,9 @@ P1 在线 Listing 编排遵循以下约束：
 7. 产品、设计或 Listing 归档不删除历史引用。
 8. 供应商停用后不能用于新分单，但历史订单保持可追溯。
 9. 订单主状态与异常状态分离，避免异常处理破坏履约主流程。
+10. 预测、指标快照和经营建议只生成分析证据，不直接修改库存、采购、Listing、广告或财务事实。
+11. 开放 API 客户端只能获得创建者已有的只读权限；租户由凭据记录解析，调用方不能选择。
+12. Webhook 使用租户端点密钥签名，尝试与死信历史不可覆盖；人工重放创建带来源关系的新投递。
 
 ## 14. 非功能需求
 

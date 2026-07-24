@@ -26,7 +26,7 @@ The root `dev` script loads `.env` through Node before starting Turbo. `turbo.js
 pnpm --filter @yummyai/worker start
 ```
 
-The Worker uses `DATABASE_URL`, `REDIS_URL`, the marketplace application variables, the same `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY` as the API, and `CLAMAV_HOST`/`CLAMAV_PORT`/`CLAMAV_TIMEOUT_MS` for quarantined customer-file scanning. The API uses a separate `ORDER_PII_ENCRYPTION_KEY` for protected order details. In non-production local development only, both encryption domains derive separate fallback keys from `LOCAL_OIDC_CLIENT_SECRET`.
+The Worker uses `DATABASE_URL`, `REDIS_URL`, the marketplace application variables, the same `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY` as the API, and `CLAMAV_HOST`/`CLAMAV_PORT`/`CLAMAV_TIMEOUT_MS` for quarantined customer-file scanning. The API uses a separate `ORDER_PII_ENCRYPTION_KEY` for protected order details. API client and Webhook signing secrets use `INTEGRATION_SECRET_ENCRYPTION_KEY` in both the API and Worker. In non-production local development only, each encryption domain derives a distinct fallback key from `LOCAL_OIDC_CLIENT_SECRET`.
 
 Default endpoints are PostgreSQL `5432`, Redis `6379`, MinIO `9000/9001`, Keycloak `8081`, ClamAV `3310` (loopback only), and OTLP `4317/4318`. Change host ports in `.env` when they collide; keep container ports unchanged. ClamAV needs several GiB of RAM while loading and refreshing signatures, so allocate enough Docker Desktop memory before enabling P2-C file scans.
 
@@ -251,7 +251,7 @@ one receipt or invoice variance and confirm it remains
 inventory lot and movement, while a replenishment suggestion does not create or
 approve a purchase order.
 
-At desktop and 390 px widths, the thirteen navigation items must remain present, the
+At desktop and 390 px widths, the fifteen navigation items must remain present, the
 document must not overflow horizontally, and the purchase-order table may scroll
 only inside its table container. Verify explicit empty, unauthorized, forbidden,
 failed, and populated states without procurement demo data.
@@ -284,7 +284,7 @@ virtual quantities. After each new snapshot or policy version, run the current
 allocation policy before requesting a Listing inventory push. A stale
 projection is expected to fail closed.
 
-At desktop and 390 px widths, all thirteen navigation items must remain present
+At desktop and 390 px widths, all fifteen navigation items must remain present
 and the document must not overflow horizontally. The evidence and projection
 tables may scroll only within their table containers. Verify empty,
 unauthorized, forbidden, failed, populated, and open-reconciliation states.
@@ -316,7 +316,7 @@ missing-fact, missing-FX, and unclassified-fact runs. Complete values must match
 the pinned statement and FX evidence exactly; incomplete totals must display as
 missing, never zero.
 
-At desktop and 390 px widths, all thirteen navigation items must remain present
+At desktop and 390 px widths, all fifteen navigation items must remain present
 and the document must not overflow horizontally. Wide finance tables may scroll
 only inside their table containers. Real Amazon/Etsy settlement retrieval is a
 separate authorized-provider acceptance gate.
@@ -351,7 +351,7 @@ content must conflict.
 
 Verify `exclude`, `zero`, and `incomplete` missing-data policies with insufficient
 samples. The interface must display missing evidence explicitly and must not
-invent a total. At desktop and 390 px widths, all thirteen navigation items must
+invent a total. At desktop and 390 px widths, all fifteen navigation items must
 remain present, the document must not overflow horizontally, and wide scorecard
 tables may scroll only inside their containers. A scorecard must not update
 supplier routing, capacity, procurement, or production state.
@@ -371,4 +371,54 @@ pnpm --filter @yummyai/api bootstrap:local
 
 Restart API and Web after migration and permission refresh, then open `http://localhost:3000/customer-intelligence`. The local administrator receives `customer_intelligence:read`, `customer_intelligence:write`, and `customer_intelligence:review`; production roles must receive them explicitly.
 
-Populate the workspace only through authenticated advertising and customer-intelligence routes. Verify source currency, attribution window, metric totals, source evidence, consent basis, redaction, definition version, analysis window, signal IDs, and review events. At desktop and 390 px widths, all fourteen navigation items must remain present and document overflow must remain absent; wide tables may scroll only inside their containers.
+Populate the workspace only through authenticated advertising and customer-intelligence routes. Verify source currency, attribution window, metric totals, source evidence, consent basis, redaction, definition version, analysis window, signal IDs, and review events. At desktop and 390 px widths, all fifteen navigation items must remain present and document overflow must remain absent; wide tables may scroll only inside their containers.
+
+## P3-G forecasting and open integrations
+
+Migrations `0035_p3_forecasting_operations` and
+`0036_p3_api_client_authentication` add pinned forecasts, versioned operating
+metrics, reconciliation, scoped API clients, signed Webhook evidence, and the
+restricted authentication lookup:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm --filter @yummyai/contracts test -- planning.test.ts integration.test.ts
+pnpm --filter @yummyai/api test:integration -- planning.integration.test.ts integration.integration.test.ts
+pnpm --filter @yummyai/worker test:integration
+pnpm --filter @yummyai/web test -- operating-cockpit.test.tsx erp-sidebar.test.tsx
+pnpm --filter @yummyai/api bootstrap:local
+```
+
+Restart API, Worker, and Web, then open
+`http://localhost:3000/operating-cockpit`. The local administrator receives the
+forecast, operations, and integration permissions through the normal local
+bootstrap. Production roles must receive write, review, reconcile, and manage
+permissions explicitly.
+
+`INTEGRATION_SECRET_ENCRYPTION_KEY` is a base64url-encoded 32-byte production
+secret. It must be identical in API and Worker deployments and distinct from
+marketplace, PII, and model-provider keys. Local development may leave it empty
+and use the domain-separated `LOCAL_OIDC_CLIENT_SECRET` fallback. Restart both
+processes after changing it; existing encrypted endpoint secrets require the old
+key until they are explicitly rotated.
+
+Create Webhook endpoints only for HTTPS URLs. `http://localhost`,
+`http://127.0.0.1`, and `http://[::1]` are accepted for local sinks. The
+`webhook-delivery` queue requires Redis and the Worker. Inspect safe delivery
+status through `/v1/integrations/workspace`; response bodies and secrets are
+intentionally absent.
+
+If the API stops after persisting an event but before queue admission, the
+workspace can show an original delivery stuck in `pending` with zero attempts.
+Restart API and Worker, then repeat the exact publish request with the same
+idempotency key and unchanged payload. The API resubmits only pending deliveries
+and BullMQ deduplicates them by delivery ID. Do not use the manual dead-letter
+replay route for this state.
+
+Verify `/operating-cockpit` at desktop and 390 px widths. All fifteen navigation
+items must remain present, document-level horizontal overflow must be absent,
+and forecast/delivery tables may scroll only inside their table containers.
+Before release, run the P3-G API/Worker integration suites, a fresh-database
+migration, the backup/restore drill, and the full root gates on the exact clean
+candidate.
