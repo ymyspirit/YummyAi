@@ -13,6 +13,7 @@
 ## Sequence
 
 1. Confirm CI passes lint, typecheck, unit, integration, E2E, build, and secret scanning.
+   The successful workflow uploads `release-candidate-<commit SHA>` containing the Chrome/Edge extension ZIPs and `release-candidate-manifest.json`. Verify every ZIP checksum against that manifest before distribution.
 2. Run `tools/scripts/backup.ps1` and retain the generated checksums outside the host.
 3. Deploy infrastructure changes, then run database migrations with the migration credential.
 4. Deploy API/worker before web when contracts are backward compatible. Keep old workers draining while new workers start.
@@ -38,4 +39,4 @@ Roll back application images first. Database migrations are forward-only by defa
 
 ## Acceptance evidence
 
-Attach CI URL, commit SHA, migration version, backup manifest/checksum, browser extension versions, smoke-test results, PII retention/anonymization evidence when orders are enabled, ClamAV engine/signature evidence plus clean/infected fixture results, forecast/projection rebuild evidence, signed Webhook retry/dead-letter/replay evidence, and the approver to the release record.
+Attach CI URL, commit SHA, release-candidate manifest/checksums, migration version, backup manifest/checksum, browser extension versions, smoke-test results, PII retention/anonymization evidence when orders are enabled, ClamAV engine/signature evidence plus clean/infected fixture results, forecast/projection rebuild evidence, signed Webhook retry/dead-letter/replay evidence, and the approver to the release record. The CI manifest is deliberately marked `code-verification-only` and `not-recorded-by-ci` for authorized-provider acceptance; it cannot replace the live marketplace gates or authorize a tag.

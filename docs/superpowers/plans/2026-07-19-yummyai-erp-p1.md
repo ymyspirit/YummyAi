@@ -237,9 +237,10 @@ P1-F implementation status:
 - [x] Provider `Retry-After` enforcement through bounded provider-aware BullMQ backoff
 - [x] Successful-response quota telemetry with normalized Amazon/Etsy windows, immutable tenant snapshots, and safe Store Management projection
 - [x] Store and Listing UI controls for local-time publication scheduling and eligible waiting-state cancellation
+- [x] CI release-candidate artifact automation with commit/migration/toolchain metadata and checksummed Chrome/Edge packages
 - [ ] Real Store Management and publication smoke evidence with approved non-production Amazon/Etsy accounts
 
-The extended P1-F implementation landed on 2026-07-20. P1-G now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, and successful-response quota telemetry with contract, migration, API, Worker, Web, and tenant-isolation coverage. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, provider notifications, background reconciliation, broader automation triggers/actions, and release automation remain open.
+The extended P1-F implementation landed on 2026-07-20. P1-G now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, successful-response quota telemetry, and commit-bound release-candidate artifact automation. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, provider notifications, background reconciliation, and broader automation triggers/actions remain open.
 
 ## P1 Acceptance Matrix
 

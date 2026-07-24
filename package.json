@@ -10,9 +10,11 @@
     "build": "turbo build",
     "check:rules": "node --test tools/tests/project-rules.test.mjs",
     "lint": "eslint . --max-warnings=0",
+    "release:manifest": "node tools/scripts/create-release-candidate-manifest.mjs",
     "typecheck": "turbo typecheck",
-    "test": "pnpm check:rules && turbo test",
+    "test": "pnpm check:rules && pnpm test:tools && turbo test",
     "test:integration": "turbo test:integration",
+    "test:tools": "node --test tools/tests/workspace.test.mjs tools/tests/release-candidate-manifest.test.mjs",
     "test:e2e": "node tools/scripts/run-e2e.mjs"
   },
   "devDependencies": {

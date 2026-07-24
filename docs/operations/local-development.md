@@ -427,3 +427,5 @@ and forecast/delivery tables may scroll only inside their table containers.
 Before release, run the P3-G API/Worker integration suites, a fresh-database
 migration, the backup/restore drill, and the full root gates on the exact clean
 candidate.
+
+After committing the exact clean candidate, run `pnpm build`, `pnpm --filter @yummyai/extension zip`, and `pnpm release:manifest` to create `output/release-candidate/release-candidate-manifest.json`. Local generation fails when tracked changes are present or either Chrome/Edge ZIP is missing. The manifest records their SHA-256 checksums, the exact commit, Node/pnpm versions, and latest migration. It is code-verification evidence only; authorized-provider acceptance and backup/restore evidence remain separate release gates.

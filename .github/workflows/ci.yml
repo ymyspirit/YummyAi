@@ -79,6 +79,7 @@ jobs:
       - run: pnpm test:e2e
       - run: pnpm build
       - run: pnpm --filter @yummyai/extension zip
+      - run: pnpm release:manifest
       - name: Verify tracked files contain no local credentials
         run: |
           ! git grep -n -E '(Bearer [A-Za-z0-9._-]{20,}|sk-[A-Za-z0-9]{20,}|BEGIN (RSA |EC )?PRIVATE KEY)' -- ':!pnpm-lock.yaml'
@@ -92,5 +93,13 @@ jobs:
             apps/*/playwright-report
             apps/*/test-results
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            output/release-candidate/release-candidate-manifest.json
+            apps/extension/.output/*.zip
+          if-no-files-found: error
+          retention-days: 14
       - if: always()
         run: docker compose -f infra/docker-compose.yml logs --tail=120
