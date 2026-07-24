@@ -39,6 +39,12 @@ jobs:
       OIDC_AUDIENCE: yummyai-api
       OIDC_WEB_CLIENT_ID: yummyai-web
       OIDC_WEB_REDIRECT_URI: http://localhost:3000/auth/callback
+      LOCAL_OIDC_CLIENT_ID: yummyai-local-web
+      LOCAL_OIDC_CLIENT_SECRET: yummyai_ci_local_oidc_secret
+      LOCAL_EXTENSION_USER: yummyai-local
+      LOCAL_EXTENSION_USER_EMAIL: yummyai-extension@yummyai.local
+      LOCAL_EXTENSION_USER_PASSWORD: yummyai-local-2026
+      API_BASE_URL: http://127.0.0.1:8000
       CI: "true"
     steps:
       - uses: actions/checkout@v4
