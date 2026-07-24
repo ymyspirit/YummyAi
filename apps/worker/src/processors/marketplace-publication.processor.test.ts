@@ -25,6 +25,16 @@ class FakeRepository implements PublicationExecutionRepository {
     mediaType: "image/jpeg",
     rank: 1,
   }]);
+  withAccountLeaseSpy = vi.fn();
+
+  async withAccountLease<T>(
+    context: TenantContext,
+    requestId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.withAccountLeaseSpy(context, requestId, operation);
+    return operation();
+  }
 
   claim(): Promise<PublicationExecutionSnapshot | undefined> {
     return Promise.resolve(this.snapshot);
@@ -56,6 +66,11 @@ describe("marketplace publication processor", () => {
       expect.anything(),
       repository.snapshot!.requestId,
       result,
+    );
+    expect(repository.withAccountLeaseSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.any(Function),
     );
     expect(repository.fail).not.toHaveBeenCalled();
   });

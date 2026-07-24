@@ -58,6 +58,11 @@ export interface PublicationExecutionSnapshot {
 }
 
 export interface PublicationExecutionRepository {
+  withAccountLease<T>(
+    context: TenantContext,
+    requestId: string,
+    operation: () => Promise<T>,
+  ): Promise<T>;
   claim(
     context: TenantContext,
     requestId: string,
@@ -106,18 +111,20 @@ export class MarketplacePublicationProcessor {
       permissions: [],
       dataScope: "tenant",
     };
-    const snapshot = await this.repository.claim(context, payload.publicationRequestId, envelope.attempt);
-    if (!snapshot) return { requestId: payload.publicationRequestId, status: "no_op" };
-    if (snapshot.action === "amazon_validation_preview" || snapshot.action === "etsy_create_draft") {
-      const step = await this.execute(context, snapshot, envelope, snapshot.action === "etsy_create_draft", (credential) =>
-        this.gateway.create(snapshot.account, credential, snapshot.payload),
-      );
-      return { requestId: snapshot.requestId, status: step.status };
-    }
-    if (snapshot.action === "amazon_submit") {
-      return this.submitAmazon(context, snapshot, envelope);
-    }
-    return this.activateEtsy(context, snapshot, envelope);
+    return this.repository.withAccountLease(context, payload.publicationRequestId, async () => {
+      const snapshot = await this.repository.claim(context, payload.publicationRequestId, envelope.attempt);
+      if (!snapshot) return { requestId: payload.publicationRequestId, status: "no_op" };
+      if (snapshot.action === "amazon_validation_preview" || snapshot.action === "etsy_create_draft") {
+        const step = await this.execute(context, snapshot, envelope, snapshot.action === "etsy_create_draft", (credential) =>
+          this.gateway.create(snapshot.account, credential, snapshot.payload),
+        );
+        return { requestId: snapshot.requestId, status: step.status };
+      }
+      if (snapshot.action === "amazon_submit") {
+        return this.submitAmazon(context, snapshot, envelope);
+      }
+      return this.activateEtsy(context, snapshot, envelope);
+    });
   }
 
   private async submitAmazon(
@@ -245,6 +252,30 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
     private readonly secrets: SecretVault,
     private readonly storage: Storage,
   ) {}
+
+  async withAccountLease<T>(
+    context: TenantContext,
+    requestId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const [request] = await withTenant(this.database.db, context, (tx) =>
+      tx.select({ accountId: marketplacePublicationRequests.accountId })
+        .from(marketplacePublicationRequests)
+        .where(eq(marketplacePublicationRequests.id, requestId))
+        .limit(1),
+    );
+    if (!request) return operation();
+
+    const lockKey = `marketplace-publication:${context.tenantId}:${request.accountId}`;
+    const connection = await this.database.client.reserve();
+    try {
+      await connection.unsafe("select pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+      return await operation();
+    } finally {
+      await connection.unsafe("select pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]);
+      await connection.release();
+    }
+  }
 
   async claim(
     context: TenantContext,

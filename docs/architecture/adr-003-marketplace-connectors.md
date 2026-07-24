@@ -19,6 +19,8 @@ Capability synchronization writes immutable versions to `marketplace_capability_
 
 Publication work runs asynchronously in the worker. The API validates permission, account health, approved Listing version, asset rights, and idempotency before enqueueing. Connector errors are normalized into authorization, validation, rate limit, conflict, retryable upstream, and terminal upstream categories.
 
+Worker replicas acquire a PostgreSQL session advisory lock keyed by tenant and marketplace account before claiming a publication. This serializes external mutations for one authorized account across processes without blocking unrelated tenants or accounts. The lock is released in a `finally` block and contains no credentials or provider payload data.
+
 Publication commands are immutable rows in `marketplace_publication_requests`; execution state, external IDs, and normalized issues are append-only `marketplace_publication_events`. An optional immutable `scheduled_for` timestamp becomes a BullMQ delay. User cancellation appends a terminal event and removes the delayed/waiting job when possible; Worker claim still checks the latest event so a queue race cannot reach the connector. Jobs contain only the publication request ID and tenant/user correlation metadata. Amazon P1-D uses `putListingsItem` with `mode=VALIDATION_PREVIEW`, because Amazon has no non-persisting draft equivalent. Etsy P1-D creates a provider draft.
 
 P1-E actions are separate child commands rather than mutations of the P1-D request. Amazon submission runs only after a recorded successful preview. Etsy inventory/personalization configuration, media upload, activation, and status reads run only after a recorded draft ID. Each conclusive external step is appended before the next begins, allowing a Worker retry to resume without duplicating completed mutations. A lost mutation response, an interruption while a mutation is in flight, or a failed mutation-result writeback enters `reconciliation_required` and is never retried automatically.
@@ -49,6 +51,7 @@ Same-platform site/language copies create a new draft Listing/version plus immut
 18. Site replication creates a draft with immutable source/target lineage and never carries approval across channels.
 19. Automation configuration may change, but one rule/version trigger key produces at most one immutable run outcome and actions still pass normal service preflight.
 20. Cancellation is accepted only before connector processing starts and is represented by a new immutable event, never by changing or deleting historical publication evidence.
+21. Only one publication per tenant/account may hold the connector execution lease; the lease is acquired before the request enters `processing`.
 
 ## Consequences
 
