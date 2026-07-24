@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-20
 
-**Status:** P2-B through P2-F and the implementable P2-G local slices are complete. Current-worktree backup/restore, PII anonymization, concurrency/quota, queue-failure, E2E, and build drills pass. P1/P2 release closure remains deferred until a clean candidate, CI, exact-candidate reruns, and real-provider gates exist.
+**Status:** P2-B through P2-F and the implementable P2-G local slices are complete. Exact-candidate backup/restore, PII anonymization, concurrency/quota, queue-failure, E2E, build, and CI gates pass. P1/P2 release closure remains deferred for the open P1-G product scope and real-provider acceptance.
 
 **Goal:** Build a tenant-isolated fulfillment path from a normalized marketplace order through customization, design approval, supplier allocation, production, quality control, shipment, platform writeback, and after-sales evidence.
 
@@ -163,9 +163,22 @@ Provider state is retained separately from normalized workflow state. A provider
 - [x] Dense operational workspaces for customization, production, logistics, and exception/after-sales queues, verified at 1280 px and 390 px without document overflow.
 - [x] Scheduled automation quotas, cancellation, bounded retry/dead-letter handling, requester notification routing, identifier-only delayed jobs, and optimistic manual reconciliation.
 - [x] Explicit expiry-gated PII anonymization with a separate permission, optimistic order/envelope versions, ciphertext removal, checksum-only evidence, replay safety, and cross-tenant tests.
-- [x] Current-worktree backup/restore, PII retention, 25-way quota/concurrency, queue-failure/dead-letter, and E2E drills; exact clean-candidate rerun remains a release gate.
+- [x] Current-worktree backup/restore, PII retention, 25-way quota/concurrency, queue-failure/dead-letter, and E2E drills.
 - [ ] Marketplace refund execution/reconciliation and real authorized Amazon/Etsy order-to-after-sales evidence. Amazon requires a correctly allocated Order Adjustments Feed; Etsy Open API payment/refund operations are read-only, so this cannot be reduced to store authorization alone.
-- [ ] Exact-candidate backup/restore, PII retention/deletion, load/failure, CI, and clean-worktree release gates.
+- [x] Exact-candidate backup/restore, PII retention/deletion, load/failure, CI, and clean-worktree release gates.
+
+Exact-candidate evidence recorded on 2026-07-24:
+
+- Code candidate `5e86e8bf33508f282088d6d98d442068e2eaa181` passed GitHub
+  Actions run `30061088615`; the documentation head `05cd4ed` passed the same
+  complete gate in run `30062021829`.
+- The non-destructive restore drill reproduced organizations, captures, assets,
+  inventory, profit, forecasts, Webhook attempts, and audit history, restored
+  all 46 private objects, and removed its temporary database and bucket.
+- Focused exact-head reruns passed 14 API integration tests for irreversible PII
+  anonymization, replay, cross-tenant access, 25-way quota concurrency, queue
+  failure, and dead-letter recovery, plus 6 Worker tests for bounded automation
+  failure and shipment writeback.
 
 ## First Execution Slice
 
