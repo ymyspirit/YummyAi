@@ -99,6 +99,7 @@ jobs:
           path: |
             output/release-candidate/release-candidate-manifest.json
             apps/extension/.output/*.zip
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
       - if: always()
