@@ -9,6 +9,7 @@ export async function createReleaseCandidateManifest({
   rootDir,
   outputDir = path.join(rootDir, "output", "release-candidate"),
   commitSha,
+  workflowCommitSha = process.env.GITHUB_SHA,
   generatedAt = new Date().toISOString(),
 } = {}) {
   if (!rootDir) throw new Error("rootDir is required");
@@ -18,7 +19,7 @@ export async function createReleaseCandidateManifest({
     readFile(path.join(rootDir, ".nvmrc"), "utf8").then((value) => value.trim()),
     readJson(path.join(rootDir, "packages", "database", "migrations", "meta", "_journal.json")),
   ]);
-  const suppliedCommit = commitSha ?? process.env.GITHUB_SHA;
+  const suppliedCommit = commitSha ?? workflowCommitSha;
   if (!suppliedCommit && trackedChanges(rootDir)) {
     throw new Error(
       "Tracked worktree changes must be committed before creating a release candidate manifest",

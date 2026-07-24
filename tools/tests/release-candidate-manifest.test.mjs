@@ -48,7 +48,7 @@ test("fails closed when local tracked source changes are present", async () => {
   );
 
   await assert.rejects(
-    createReleaseCandidateManifest({ rootDir }),
+    createReleaseCandidateManifest({ rootDir, workflowCommitSha: null }),
     /Tracked worktree changes must be committed/,
   );
 });
