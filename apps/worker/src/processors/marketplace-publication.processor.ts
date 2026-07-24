@@ -90,6 +90,10 @@ export interface PublicationExecutionRepository {
   ): Promise<void>;
 }
 
+export interface MarketplacePublicationReconciliationScheduler {
+  schedule(context: TenantContext, publicationRequestId: string): Promise<void>;
+}
+
 export interface PublicationFailureEvent {
   status: "retry_pending" | "reconciliation_required" | "failed";
   code: string;
@@ -102,6 +106,7 @@ export class MarketplacePublicationProcessor {
   constructor(
     private readonly repository: PublicationExecutionRepository,
     private readonly gateway: MarketplaceDraftGateway,
+    private readonly reconciliationScheduler?: MarketplacePublicationReconciliationScheduler,
   ) {}
 
   async process(envelope: JobEnvelope): Promise<{ requestId: string; status: string }> {
@@ -150,6 +155,9 @@ export class MarketplacePublicationProcessor {
       this.gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId!),
     );
     await retryPendingStatus(synced.result, envelope);
+    if (synced.result?.status === "sync_pending") {
+      return this.scheduleReconciliation(context, snapshot.requestId);
+    }
     return { requestId: snapshot.requestId, status: synced.status };
   }
 
@@ -199,7 +207,29 @@ export class MarketplacePublicationProcessor {
       this.gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId),
     );
     await retryPendingStatus(synced.result, envelope);
+    if (synced.result?.status === "sync_pending") {
+      return this.scheduleReconciliation(context, snapshot.requestId);
+    }
     return { requestId: snapshot.requestId, status: synced.status };
+  }
+
+  private async scheduleReconciliation(
+    context: TenantContext,
+    requestId: string,
+  ): Promise<{ requestId: string; status: string }> {
+    if (!this.reconciliationScheduler) return { requestId, status: "sync_pending" };
+    try {
+      await this.reconciliationScheduler.schedule(context, requestId);
+      return { requestId, status: "sync_pending" };
+    } catch {
+      await this.repository.fail(context, requestId, {
+        status: "reconciliation_required",
+        code: "PUBLICATION_RECONCILIATION_QUEUE_UNAVAILABLE",
+        message: "Background marketplace reconciliation could not be scheduled; manual reconciliation is required",
+        retryable: false,
+      });
+      return { requestId, status: "reconciliation_required" };
+    }
   }
 
   private async execute(
@@ -339,7 +369,8 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         await insertEvent(tx, context, requestId, nextSequence, terminalFailure("PUBLICATION_SNAPSHOT_MISSING", "Pinned publication snapshot is incomplete"));
         return undefined;
       }
-      const runtimeFailure = validateRuntime(request, account, capability, listing, version);
+      const safeStatusRead = isSafeStatusRead(request.action, resumeStatus);
+      const runtimeFailure = validateRuntime(request, account, capability, listing, version, safeStatusRead);
       if (runtimeFailure) {
         await insertEvent(tx, context, requestId, nextSequence, runtimeFailure);
         return undefined;
@@ -348,7 +379,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
       const assets = assetIds.length === 0
         ? []
         : await tx.select().from(assetFiles).where(and(inArray(assetFiles.id, assetIds), isNull(assetFiles.deletedAt)));
-      const assetFailure = validatePinnedAssets(request.assetManifest, assets);
+      const assetFailure = safeStatusRead ? undefined : validatePinnedAssets(request.assetManifest, assets);
       if (assetFailure) {
         await insertEvent(tx, context, requestId, nextSequence, assetFailure);
         return undefined;
@@ -613,19 +644,21 @@ function validateRuntime(
   capability: CapabilityRow,
   listing: ListingRow,
   version: ListingVersionRow,
+  safeStatusRead: boolean,
 ): PublicationFailureEvent | undefined {
   if (account.status !== "active" || account.healthStatus !== "healthy" ||
       (account.credentialStatus !== "valid" && account.credentialStatus !== "expiring")) {
     return terminalFailure("PUBLICATION_ACCOUNT_UNAVAILABLE", "Marketplace account is no longer active and healthy");
   }
-  if (!account.externalAccountId || !account.capabilities.includes("listing_write") ||
+  const requiredCapability = safeStatusRead ? "listing_read" : "listing_write";
+  if (!account.externalAccountId || !account.capabilities.includes(requiredCapability) ||
       !account.marketplaceIds.includes(request.marketplaceId)) {
     return terminalFailure("PUBLICATION_CAPABILITY_REVOKED", "Marketplace account no longer grants the pinned publication target");
   }
-  if (capability.expiresAt.getTime() <= Date.now() || !capability.capabilities.includes("listing_write")) {
+  if (!safeStatusRead && (capability.expiresAt.getTime() <= Date.now() || !capability.capabilities.includes("listing_write"))) {
     return terminalFailure("PUBLICATION_CAPABILITY_STALE", "Pinned marketplace capability snapshot is stale or read-only");
   }
-  if (request.action === "etsy_activate" && (
+  if (!safeStatusRead && request.action === "etsy_activate" && (
     !account.capabilities.includes("media_write") ||
     !account.capabilities.includes("inventory_write") ||
     !capability.capabilities.includes("media_write") ||
@@ -633,14 +666,27 @@ function validateRuntime(
   )) {
     return terminalFailure("PUBLICATION_ETSY_WRITE_CAPABILITY_MISSING", "Etsy activation requires current media and inventory write capabilities");
   }
-  if (listing.status !== "approved" || listing.primaryVersionId !== version.id || version.status !== "approved" ||
-      version.listingId !== listing.id || version.validation.blockers.length > 0) {
+  if (!safeStatusRead && (listing.status !== "approved" || listing.primaryVersionId !== version.id || version.status !== "approved" ||
+      version.listingId !== listing.id || version.validation.blockers.length > 0)) {
     return terminalFailure("PUBLICATION_LISTING_CHANGED", "Pinned Listing version is no longer the current approved version");
   }
   if (request.platform !== account.platform || request.platform !== listing.platform || request.platform !== version.content.platform) {
     return terminalFailure("PUBLICATION_PLATFORM_MISMATCH", "Publication platform does not match its pinned resources");
   }
   return undefined;
+}
+
+function isSafeStatusRead(
+  action: string,
+  resumeStatus: MarketplacePublicationStatus | undefined,
+): boolean {
+  if (action === "amazon_submit") {
+    return hasProgress(resumeStatus, ["submission_accepted", "sync_pending"]);
+  }
+  if (action === "etsy_activate") {
+    return hasProgress(resumeStatus, ["activation_accepted", "sync_pending"]);
+  }
+  return false;
 }
 
 function validatePinnedAssets(

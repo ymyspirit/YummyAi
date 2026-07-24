@@ -13,6 +13,10 @@ describe("marketplace publication account lease", () => {
   const firstRequestId = createEntityId();
   const secondRequestId = createEntityId();
   const scheduledRequestId = createEntityId();
+  const reconciliationRequestId = createEntityId();
+  const listingId = createEntityId();
+  const listingVersionId = createEntityId();
+  const capabilityId = createEntityId();
   const context: TenantContext = {
     tenantId,
     userId,
@@ -25,9 +29,6 @@ describe("marketplace publication account lease", () => {
     await migrateDatabase(database);
     const planId = createEntityId();
     const spuId = createEntityId();
-    const listingId = createEntityId();
-    const listingVersionId = createEntityId();
-    const capabilityId = createEntityId();
     await database.client.unsafe(
       `insert into organizations (id, name, slug) values ($1, 'Publication lease tenant', $2)`,
       [tenantId, `publication-lease-${tenantId}`],
@@ -51,7 +52,7 @@ describe("marketplace publication account lease", () => {
        (id, tenant_id, platform, display_name, external_account_id, region, marketplace_ids, authorization_mode,
         status, requested_scopes, granted_scopes, capabilities, credential_status, health_status, created_by)
        values ($1, $2, 'amazon', 'Lease Amazon', $3, 'NA', '["ATVPDKIKX0DER"]'::jsonb,
-        'amazon_private', 'active', '[]'::jsonb, '[]'::jsonb, '["listing_write"]'::jsonb,
+        'amazon_private', 'active', '[]'::jsonb, '[]'::jsonb, '["listing_read","listing_write"]'::jsonb,
         'valid', 'healthy', $4)`,
       [accountId, tenantId, `SELLER-${accountId}`, userId],
     );
@@ -59,7 +60,7 @@ describe("marketplace publication account lease", () => {
       `insert into marketplace_capability_snapshots
        (id, tenant_id, account_id, version, platform, external_account_id, marketplace_ids, capabilities,
         source_version, source_checksum, data, synced_at, expires_at, created_by)
-       values ($1, $2, $3, 1, 'amazon', $4, '["ATVPDKIKX0DER"]'::jsonb, '["listing_write"]'::jsonb,
+       values ($1, $2, $3, 1, 'amazon', $4, '["ATVPDKIKX0DER"]'::jsonb, '["listing_read","listing_write"]'::jsonb,
         'lease-test', 'lease-checksum', '{}'::jsonb, now(), now() + interval '1 hour', $5)`,
       [capabilityId, tenantId, accountId, `SELLER-${accountId}`, userId],
     );
@@ -113,6 +114,57 @@ describe("marketplace publication account lease", () => {
        (id, tenant_id, request_id, sequence, status, actor_user_id)
        values ($1, $2, $3, 1, 'scheduled', $4)`,
       [createEntityId(), tenantId, scheduledRequestId, userId],
+    );
+    const reconciliationPayload = {
+      attributes: {},
+      locale: "en-US",
+      marketplaceId: "ATVPDKIKX0DER",
+      platform: "amazon",
+      productType: "HOME",
+      sku: "RECONCILE-SKU",
+    } as const;
+    const reconciliationPayloadText = JSON.stringify(reconciliationPayload);
+    const reconciliationPayloadChecksum = createHash("sha256").update(reconciliationPayloadText).digest("hex");
+    const missingAssetId = createEntityId();
+    await database.client.unsafe(
+      `insert into marketplace_publication_requests
+       (id, tenant_id, account_id, capability_snapshot_id, listing_id, listing_version_id, platform,
+        marketplace_id, action, parent_request_id, idempotency_key, payload, payload_checksum, asset_manifest, created_by)
+       values ($1, $2, $3, $4, $5, $6, 'amazon', 'ATVPDKIKX0DER', 'amazon_submit', $7,
+        $8, $9::jsonb, $10, $11::jsonb, $12)`,
+      [
+        reconciliationRequestId,
+        tenantId,
+        accountId,
+        capabilityId,
+        listingId,
+        listingVersionId,
+        firstRequestId,
+        "d".repeat(64),
+        reconciliationPayloadText,
+        reconciliationPayloadChecksum,
+        JSON.stringify([{
+          assetId: missingAssetId,
+          assetVersion: 1,
+          assetDomain: "authorized",
+          rightsStatus: "approved",
+          checksumSha256: "e".repeat(64),
+          objectKey: `tenants/${tenantId}/authorized/missing.jpg`,
+          fileName: "missing.jpg",
+          mediaType: "image/jpeg",
+          publicationRole: "listing_media",
+          rank: 1,
+        }]),
+        userId,
+      ],
+    );
+    await database.client.unsafe(
+      `insert into marketplace_publication_events
+       (id, tenant_id, request_id, sequence, status, external_listing_id, external_state, actor_user_id)
+       values
+        ($1, $2, $3, 1, 'submission_accepted', 'RECONCILE-SKU', 'ACCEPTED', $4),
+        ($5, $2, $3, 2, 'sync_pending', 'RECONCILE-SKU', 'PROCESSING', $4)`,
+      [createEntityId(), tenantId, reconciliationRequestId, userId, createEntityId()],
     );
   });
 
@@ -169,5 +221,33 @@ describe("marketplace publication account lease", () => {
       [scheduledRequestId],
     );
     expect(quota).toEqual({ operation: "validation_passed", platform: "amazon", windows: [{ scope: "second", limit: 5.5 }] });
+  });
+
+  it("keeps an accepted mutation eligible for safe status reconciliation", async () => {
+    await database.client.unsafe(
+      `update marketplace_capability_snapshots
+       set synced_at = now() - interval '2 hours', expires_at = now() - interval '1 hour'
+       where id = $1`,
+      [capabilityId],
+    );
+    await database.client.unsafe(
+      `update listings set status = 'draft' where id = $1`,
+      [listingId],
+    );
+
+    await expect(repository.claim(context, reconciliationRequestId, 1)).resolves.toMatchObject({
+      action: "amazon_submit",
+      externalListingId: "RECONCILE-SKU",
+      resumeStatus: "sync_pending",
+    });
+    const events = await database.client.unsafe<{ status: string }[]>(
+      `select status from marketplace_publication_events where request_id = $1 order by sequence`,
+      [reconciliationRequestId],
+    );
+    expect(events.map((event) => event.status)).toEqual([
+      "submission_accepted",
+      "sync_pending",
+      "processing",
+    ]);
   });
 });

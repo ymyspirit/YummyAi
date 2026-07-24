@@ -18,7 +18,7 @@
 3. Deploy infrastructure changes, then run database migrations with the migration credential.
 4. Deploy API/worker before web when contracts are backward compatible. Keep old workers draining while new workers start.
 5. Run `/`, OIDC login, tenant isolation, capture, AI budget, authorized-file, Listing review, and export checksum smoke checks.
-6. Enable traffic gradually. Watch HTTP error rate, job failure rate, queue latency, PostgreSQL saturation, and OTLP collector health.
+6. Enable traffic gradually. Watch HTTP error rate, job failure rate, queue latency (including `publication-reconciliation`), PostgreSQL saturation, and OTLP collector health.
 
 ## Required environment safety
 

@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   interruptedMutationIsUncertain,
   MarketplacePublicationProcessor,
+  type MarketplacePublicationReconciliationScheduler,
   type PublicationExecutionRepository,
   type PublicationExecutionSnapshot,
 } from "./marketplace-publication.processor.js";
@@ -170,6 +171,64 @@ describe("marketplace publication processor", () => {
     expect(gateway.getStatus).toHaveBeenCalledWith(expect.anything(), expect.anything(), repository.snapshot.payload, "SKU-1");
     expect(repository.complete).toHaveBeenNthCalledWith(1, expect.anything(), repository.snapshot.requestId, submit);
     expect(repository.complete).toHaveBeenNthCalledWith(2, expect.anything(), repository.snapshot.requestId, published);
+  });
+
+  it("schedules bounded background reconciliation after initial status polling is exhausted", async () => {
+    const repository = new FakeRepository();
+    repository.snapshot = {
+      ...repository.snapshot!,
+      action: "amazon_submit",
+      externalListingId: "SKU-1",
+      resumeStatus: "sync_pending",
+    };
+    const scheduler: MarketplacePublicationReconciliationScheduler = {
+      schedule: vi.fn(async () => undefined),
+    };
+    const gateway = fakeGateway({
+      getStatus: vi.fn(async () => ({
+        ...result("sync_pending", "PROCESSING"),
+        externalListingId: "SKU-1",
+      })),
+    });
+    await expect(new MarketplacePublicationProcessor(repository, gateway, scheduler).process(envelope()))
+      .rejects.toThrow("Marketplace publication status is still processing");
+    expect(scheduler.schedule).not.toHaveBeenCalled();
+
+    const finalAttempt = { ...envelope(), attempt: 2, maxAttempts: 3 };
+    await expect(new MarketplacePublicationProcessor(repository, gateway, scheduler).process(finalAttempt))
+      .resolves.toMatchObject({ status: "sync_pending" });
+    expect(gateway.submit).not.toHaveBeenCalled();
+    expect(scheduler.schedule).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: finalAttempt.tenantId, userId: finalAttempt.requestedBy }),
+      repository.snapshot.requestId,
+    );
+  });
+
+  it("requires manual reconciliation when background queue admission fails", async () => {
+    const repository = new FakeRepository();
+    repository.snapshot = {
+      ...repository.snapshot!,
+      action: "amazon_submit",
+      externalListingId: "SKU-1",
+      resumeStatus: "sync_pending",
+    };
+    const gateway = fakeGateway({
+      getStatus: vi.fn(async () => ({
+        ...result("sync_pending", "PROCESSING"),
+        externalListingId: "SKU-1",
+      })),
+    });
+    const scheduler: MarketplacePublicationReconciliationScheduler = {
+      schedule: vi.fn(async () => { throw new Error("redis unavailable"); }),
+    };
+    await expect(new MarketplacePublicationProcessor(repository, gateway, scheduler).process({ ...envelope(), attempt: 2 }))
+      .resolves.toMatchObject({ status: "reconciliation_required" });
+    expect(repository.fail).toHaveBeenCalledWith(expect.anything(), repository.snapshot.requestId, {
+      status: "reconciliation_required",
+      code: "PUBLICATION_RECONCILIATION_QUEUE_UNAVAILABLE",
+      message: "Background marketplace reconciliation could not be scheduled; manual reconciliation is required",
+      retryable: false,
+    });
   });
 
   it("configures, uploads, activates, and reconciles an Etsy draft in order", async () => {

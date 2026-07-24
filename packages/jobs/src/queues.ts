@@ -8,6 +8,7 @@ export const QueueName = {
   OrderIngestion: "order-ingestion",
   ListingSync: "listing-sync",
   Publication: "publication",
+  PublicationReconciliation: "publication-reconciliation",
   ShipmentWriteback: "shipment-writeback",
   FulfillmentAutomation: "fulfillment-automation",
   WebhookDelivery: "webhook-delivery",

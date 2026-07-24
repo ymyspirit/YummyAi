@@ -27,6 +27,8 @@ Publication commands are immutable rows in `marketplace_publication_requests`; e
 
 P1-E actions are separate child commands rather than mutations of the P1-D request. Amazon submission runs only after a recorded successful preview. Etsy inventory/personalization configuration, media upload, activation, and status reads run only after a recorded draft ID. Each conclusive external step is appended before the next begins, allowing a Worker retry to resume without duplicating completed mutations. A lost mutation response, an interruption while a mutation is in flight, or a failed mutation-result writeback enters `reconciliation_required` and is never retried automatically.
 
+When bounded initial status polling ends in `sync_pending`, the Worker schedules one identifier-only `publication-reconciliation` job keyed by the immutable request ID. The job performs up to twenty safe reads at fifteen-minute spacing under the same tenant/account lease. Because the external mutation is already recorded, reconciliation does not repeat submission, configuration, upload, or activation and does not depend on the original Listing remaining approved or its pinned capability snapshot remaining fresh. Current account authorization and `listing_read` capability are still required. Queue admission failure or a non-convergent window appends terminal manual-reconciliation evidence.
+
 Online price/inventory reconciliation uses separate immutable `marketplace_listing_sync_requests` and append-only `marketplace_listing_sync_events`. A request pins the approved Listing version and the published request that owns the account, marketplace, and external Listing ID. Provider reads are normalized to the same writable price/inventory shape as the approved version before checksum comparison. Provider-generated IDs and Money wrappers are not treated as business drift. Mutations with an unknown outcome require reconciliation and cannot be replayed automatically.
 
 Successful connector responses may expose rate-limit telemetry. The connector normalizes supported values into bounded quota windows and discards the raw headers. Publication and online-sync Workers append tenant-scoped `marketplace_quota_snapshots` in the same transaction as the corresponding result event. The table is insert/select only for the application role; the account API projects only the latest normalized snapshot. Amazon typically supplies an operation rate limit, while Etsy may supply per-second and per-day limit/remaining windows.
@@ -58,6 +60,7 @@ Same-platform site/language copies create a new draft Listing/version plus immut
 21. Only one publication per tenant/account may hold the connector execution lease; the lease is acquired before the request enters `processing`.
 22. Provider retry windows can lengthen but cannot shorten the local exponential delay or exceed the configured safety cap.
 23. Quota snapshots are append-only, tenant scoped, linked to exactly one publication or online-sync request, and contain no raw response headers or provider request identifiers.
+24. Background publication reconciliation is a bounded status-read workflow; it cannot replay a marketplace mutation, and exhaustion becomes explicit manual reconciliation.
 
 ## Consequences
 

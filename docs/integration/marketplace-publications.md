@@ -50,7 +50,8 @@ Every completed external step appends evidence before the next step starts: `con
 
 - Authorization failures revoke the local account and stop publication.
 - Validation/conflict failures are terminal for the pinned Listing version.
-- Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. A valid provider `Retry-After` window lengthens the exponential delay up to fifteen minutes; it cannot force a tight retry loop. Exhausted status polling remains explicit as `sync_pending` for later reconciliation.
+- Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. A valid provider `Retry-After` window lengthens the exponential delay up to fifteen minutes; it cannot force a tight retry loop. Exhausted initial status polling remains explicit as `sync_pending` and schedules the identifier-only `publication-reconciliation` queue.
+- Background reconciliation waits fifteen minutes between safe status reads and is bounded to twenty attempts. It reuses the tenant/account execution lease, skips already-recorded submission/activation mutations, and can read an accepted external mutation after the original Listing approval or capability snapshot becomes stale. A conclusive status appends normally; queue admission failure or an exhausted reconciliation window appends `reconciliation_required` for manual handling.
 - A lost Etsy create response, an Etsy `5xx`, an invalid success response, or a failed Etsy external-ID writeback becomes `reconciliation_required`; automatic retry is blocked to prevent duplicate drafts.
 - Research-domain, deleted, changed, rights-unapproved, or checksum-mismatched assets fail before connector invocation or upload.
 - Scheduled or queued requests can be cancelled without mutating their request row or prior events. Cancellation never rolls back a provider mutation that has already started.
