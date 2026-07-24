@@ -8,7 +8,7 @@ import type { MarketplacePublicationEnqueuer } from "./marketplace-publication.s
 export class RedisMarketplacePublicationEnqueuer implements MarketplacePublicationEnqueuer, OnModuleDestroy {
   private readonly queue = createQueue(QueueName.Publication);
 
-  async enqueue(input: { publicationRequestId: string; requestedBy: string; tenantId: string }) {
+  async enqueue(input: { delayMs: number; publicationRequestId: string; requestedBy: string; tenantId: string }) {
     await enqueueJob(this.queue, "marketplace-publication.execute", {
       attempt: 0,
       correlationId: input.publicationRequestId,
@@ -20,7 +20,12 @@ export class RedisMarketplacePublicationEnqueuer implements MarketplacePublicati
       requestedBy: input.requestedBy,
       tenantId: input.tenantId,
       traceId: createTraceId(),
-    }, { backoff: { type: "exponential", delay: 5_000 } });
+    }, { backoff: { type: "exponential", delay: 5_000 }, delay: input.delayMs });
+  }
+
+  async cancel(publicationRequestId: string) {
+    const job = await this.queue.getJob(publicationRequestId);
+    await job?.remove();
   }
 
   async onModuleDestroy() {

@@ -1,6 +1,6 @@
 # Marketplace publications
 
-P1 publication starts from one current, approved Listing version. The API performs preflight, writes an immutable request plus a `queued` event, and enqueues only the request ID. The publication Worker loads credentials from the encrypted tenant store and revalidates the pinned resources before calling a marketplace.
+P1 publication starts from one current, approved Listing version. The API performs preflight, writes an immutable request plus a `queued` or `scheduled` event, and enqueues only the request ID. The publication Worker loads credentials from the encrypted tenant store and revalidates the pinned resources before calling a marketplace.
 
 ## Listing publication settings
 
@@ -21,14 +21,16 @@ Refresh capabilities before approving the Listing so the version references curr
   "listingId": "019...",
   "listingVersionId": "019...",
   "marketplaceId": "ATVPDKIKX0DER",
-  "variantSkuId": "019..."
+  "variantSkuId": "019...",
+  "scheduledFor": "2026-07-25T08:00:00.000Z"
 }
 ```
 
-`variantSkuId` is required for Amazon and rejected for Etsy draft creation. Repeating the same account, Listing version, marketplace, and action returns the same request; it cannot create a second external action.
+`variantSkuId` is required for Amazon and rejected for Etsy draft creation. `scheduledFor` is optional, must be a future timestamp no more than 90 days away, and creates a BullMQ delayed job. Repeating the same account, Listing version, marketplace, and action returns the same request; it cannot create a second external action or change its immutable schedule.
 
 - `GET /v1/marketplace-publications?listingId={id}&accountId={id}&limit={1..100}` requires `listing:read` and returns tenant-scoped requests with their latest event projection. Filters are optional and support the Listing publication ledger and store diagnostics without exposing event payload internals.
 - `POST /v1/marketplace-publications/:id/continue` requires `listing:publish`. It is accepted only for an Amazon `validation_passed` request or an Etsy `draft_created` request with a recorded external Listing ID. The response is an idempotent child request for `amazon_submit` or `etsy_activate`; the P1-D parent remains immutable.
+- `POST /v1/marketplace-publications/:id/cancel` requires `listing:publish` and a non-empty `reason`. It appends `cancelled` only while the request is `scheduled`, `queued`, or `retry_pending`; processing or externally accepted work cannot be presented as cancelled. Queue cleanup is best effort because the Worker independently treats the appended cancellation as terminal before connector execution.
 - `GET /v1/marketplace-publications/:id` requires `listing:read` and returns the current event projection.
 - `GET /v1/marketplace-publications/:id/events` requires `listing:read` and returns the append-only history.
 
@@ -49,6 +51,7 @@ Every completed external step appends evidence before the next step starts: `con
 - Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. Exhausted status polling remains explicit as `sync_pending` for later reconciliation.
 - A lost Etsy create response, an Etsy `5xx`, an invalid success response, or a failed Etsy external-ID writeback becomes `reconciliation_required`; automatic retry is blocked to prevent duplicate drafts.
 - Research-domain, deleted, changed, rights-unapproved, or checksum-mismatched assets fail before connector invocation or upload.
+- Scheduled or queued requests can be cancelled without mutating their request row or prior events. Cancellation never rolls back a provider mutation that has already started.
 
 Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check and an approved Etsy test-shop draft plus configure/upload/activate/status check. CI uses mock connectors and cannot satisfy that release gate.
 

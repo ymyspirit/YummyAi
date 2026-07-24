@@ -9,6 +9,11 @@ export const CreateMarketplacePublicationInputSchema = z.object({
   listingVersionId: EntityIdSchema,
   marketplaceId: z.string().trim().min(1).max(80),
   variantSkuId: z.string().trim().min(1).max(160).optional(),
+  scheduledFor: z.iso.datetime({ offset: true }).optional(),
+}).strict();
+
+export const CancelMarketplacePublicationInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
 }).strict();
 
 export const ListMarketplacePublicationsInputSchema = z.object({
@@ -25,6 +30,7 @@ export const MarketplacePublicationActionSchema = z.enum([
 ]);
 
 export const MarketplacePublicationStatusSchema = z.enum([
+  "scheduled",
   "queued",
   "processing",
   "validation_passed",
@@ -40,6 +46,7 @@ export const MarketplacePublicationStatusSchema = z.enum([
   "deactivated",
   "retry_pending",
   "reconciliation_required",
+  "cancelled",
   "failed",
 ]);
 
@@ -79,12 +86,14 @@ export const MarketplacePublicationRequestViewSchema = z.object({
   idempotencyKey: z.string().regex(/^[a-f0-9]{64}$/),
   payloadChecksum: z.string().regex(/^[a-f0-9]{64}$/),
   assetCount: z.number().int().nonnegative(),
+  scheduledFor: z.iso.datetime().nullable(),
   createdBy: EntityIdSchema.nullable(),
   createdAt: z.iso.datetime(),
   current: MarketplacePublicationEventViewSchema,
 });
 
 export type CreateMarketplacePublicationInput = z.infer<typeof CreateMarketplacePublicationInputSchema>;
+export type CancelMarketplacePublicationInput = z.infer<typeof CancelMarketplacePublicationInputSchema>;
 export type ListMarketplacePublicationsInput = z.infer<typeof ListMarketplacePublicationsInputSchema>;
 export type MarketplacePublicationAction = z.infer<typeof MarketplacePublicationActionSchema>;
 export type MarketplacePublicationStatus = z.infer<typeof MarketplacePublicationStatusSchema>;

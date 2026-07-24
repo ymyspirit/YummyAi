@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
+  CancelMarketplacePublicationInputSchema,
   CreateMarketplacePublicationInputSchema,
   ListMarketplacePublicationsInputSchema,
 } from "@yummyai/contracts";
@@ -30,6 +31,18 @@ export class MarketplacePublicationController {
     const context = requireContext(request);
     authorize(context, Permission.ListingPublish);
     return this.publications.continue(context, z.uuidv7().parse(id));
+  }
+
+  @Post(":id/cancel")
+  @RequiresPermission(Permission.ListingPublish)
+  cancel(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request);
+    authorize(context, Permission.ListingPublish);
+    return this.publications.cancel(
+      context,
+      z.uuidv7().parse(id),
+      CancelMarketplacePublicationInputSchema.parse(body),
+    );
   }
 
   @Get()

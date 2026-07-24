@@ -265,6 +265,7 @@ export {
   type UpdateMarketplaceAccountInput,
 } from "./marketplace/store.js";
 export {
+  CancelMarketplacePublicationInputSchema,
   CreateMarketplacePublicationInputSchema,
   ListMarketplacePublicationsInputSchema,
   MarketplacePublicationActionSchema,
@@ -272,6 +273,7 @@ export {
   MarketplacePublicationIssueSchema,
   MarketplacePublicationRequestViewSchema,
   MarketplacePublicationStatusSchema,
+  type CancelMarketplacePublicationInput,
   type CreateMarketplacePublicationInput,
   type ListMarketplacePublicationsInput,
   type MarketplacePublicationAction,

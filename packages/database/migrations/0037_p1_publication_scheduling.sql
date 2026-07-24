@@ -1,0 +1,4 @@
+ALTER TABLE "marketplace_publication_events" DROP CONSTRAINT "marketplace_publication_events_status_check";--> statement-breakpoint
+ALTER TABLE "marketplace_publication_requests" ADD COLUMN "scheduled_for" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "marketplace_publication_requests_schedule_idx" ON "marketplace_publication_requests" USING btree ("tenant_id","account_id","scheduled_for");--> statement-breakpoint
+ALTER TABLE "marketplace_publication_events" ADD CONSTRAINT "marketplace_publication_events_status_check" CHECK ("marketplace_publication_events"."status" in ('scheduled', 'queued', 'processing', 'validation_passed', 'validation_failed', 'draft_created', 'configuration_applied', 'submission_accepted', 'media_uploaded', 'activation_accepted', 'sync_pending', 'published', 'publication_failed', 'deactivated', 'retry_pending', 'reconciliation_required', 'cancelled', 'failed'));

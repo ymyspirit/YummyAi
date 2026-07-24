@@ -502,6 +502,7 @@ const terminalStatuses = new Set<MarketplacePublicationStatus>([
   "publication_failed",
   "deactivated",
   "reconciliation_required",
+  "cancelled",
   "failed",
 ]);
 

@@ -3415,3 +3415,8 @@ button, a, label, select { cursor: pointer; }
   }
   .operating-cockpit-load-state { align-items: flex-start; }
 }
+
+.publication-status.cancelled {
+  color: #66788b;
+  background: #e9edf1;
+}

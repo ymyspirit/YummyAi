@@ -38,6 +38,7 @@ const terminalStatuses = new Set([
   "publication_failed",
   "deactivated",
   "reconciliation_required",
+  "cancelled",
   "failed",
 ]);
 
@@ -239,7 +240,8 @@ function ContinueSubmit({ platform }: { platform: "amazon" | "etsy" }) {
 function PublicationStatusBadge({ status }: { status: MarketplacePublicationEventView["status"] }) {
   const failed = ["validation_failed", "publication_failed", "reconciliation_required", "failed"].includes(status);
   const completed = ["validation_passed", "draft_created", "published"].includes(status);
-  return <span className={`publication-status ${failed ? "failed" : completed ? "complete" : "running"}`}>{statusLabel(status)}</span>;
+  const tone = status === "cancelled" ? "cancelled" : failed ? "failed" : completed ? "complete" : "running";
+  return <span className={`publication-status ${tone}`}>{statusLabel(status)}</span>;
 }
 
 function ActionNotice({ state }: { state: MarketplaceActionState }) {
@@ -256,16 +258,16 @@ function milestones(action: MarketplacePublicationRequestView["action"]): Array<
   statuses: MarketplacePublicationEventView["status"][];
 }> {
   if (action === "amazon_validation_preview") return [
-    { label: "排队", statuses: ["queued"] }, { label: "校验", statuses: ["processing", "retry_pending"] }, { label: "结果", statuses: ["validation_passed", "validation_failed"] },
+    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "校验", statuses: ["processing", "retry_pending"] }, { label: "结果", statuses: ["validation_passed", "validation_failed"] },
   ];
   if (action === "amazon_submit") return [
-    { label: "排队", statuses: ["queued"] }, { label: "提交", statuses: ["submission_accepted"] }, { label: "同步", statuses: ["sync_pending"] }, { label: "发布", statuses: ["published"] },
+    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "提交", statuses: ["submission_accepted"] }, { label: "同步", statuses: ["sync_pending"] }, { label: "发布", statuses: ["published"] },
   ];
   if (action === "etsy_create_draft") return [
-    { label: "排队", statuses: ["queued"] }, { label: "创建", statuses: ["processing", "retry_pending"] }, { label: "草稿", statuses: ["draft_created"] },
+    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "创建", statuses: ["processing", "retry_pending"] }, { label: "草稿", statuses: ["draft_created"] },
   ];
   return [
-    { label: "排队", statuses: ["queued"] }, { label: "配置", statuses: ["configuration_applied"] }, { label: "媒体", statuses: ["media_uploaded"] }, { label: "激活", statuses: ["activation_accepted"] }, { label: "发布", statuses: ["published"] },
+    { label: "排队", statuses: ["scheduled", "queued"] }, { label: "配置", statuses: ["configuration_applied"] }, { label: "媒体", statuses: ["media_uploaded"] }, { label: "激活", statuses: ["activation_accepted"] }, { label: "发布", statuses: ["published"] },
   ];
 }
 
@@ -277,7 +279,7 @@ function statusLabel(status: MarketplacePublicationEventView["status"]): string 
   return ({
     activation_accepted: "已接受激活", configuration_applied: "配置已写入", deactivated: "已下架", draft_created: "草稿已创建",
     failed: "失败", media_uploaded: "媒体已上传", processing: "处理中", publication_failed: "发布失败", published: "已发布",
-    queued: "已排队", reconciliation_required: "需要对账", retry_pending: "等待重试", submission_accepted: "提交已接受",
+    cancelled: "已取消", queued: "已排队", reconciliation_required: "需要对账", retry_pending: "等待重试", scheduled: "已计划", submission_accepted: "提交已接受",
     sync_pending: "等待同步", validation_failed: "校验未通过", validation_passed: "校验通过",
   })[status];
 }

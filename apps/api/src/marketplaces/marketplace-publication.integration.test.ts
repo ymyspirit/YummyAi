@@ -17,7 +17,8 @@ import {
 } from "./marketplace-publication.service.js";
 
 class FakeEnqueuer implements MarketplacePublicationEnqueuer {
-  enqueue = vi.fn(async () => undefined);
+  enqueue = vi.fn<MarketplacePublicationEnqueuer["enqueue"]>(async () => undefined);
+  cancel = vi.fn<MarketplacePublicationEnqueuer["cancel"]>(async () => undefined);
 }
 
 describe("marketplace publication requests", () => {
@@ -41,6 +42,7 @@ describe("marketplace publication requests", () => {
   const assetId = createEntityId();
   const variantSkuId = createEntityId();
   const secondVariantSkuId = createEntityId();
+  const scheduledVariantSkuId = createEntityId();
   let validatedPreviewRequestId = "";
   let queuedPreviewRequestId = "";
 
@@ -126,6 +128,7 @@ describe("marketplace publication requests", () => {
     expect(first.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
     expect(enqueuer.enqueue).toHaveBeenCalledTimes(3);
     expect(enqueuer.enqueue).toHaveBeenLastCalledWith({
+      delayMs: 0,
       publicationRequestId: secondVariant.id,
       requestedBy: userId,
       tenantId,
@@ -143,6 +146,39 @@ describe("marketplace publication requests", () => {
       tx.update(marketplacePublicationEvents).set({ status: "failed" }).where(eq(marketplacePublicationEvents.requestId, first.id)),
     )).rejects.toThrow();
     await expect(service.get(otherContext, first.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("delays a future publication and appends an immutable cancellation", async () => {
+    const scheduledFor = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+    const scheduled = await service.create(context, {
+      accountId,
+      listingId,
+      listingVersionId,
+      marketplaceId: "ATVPDKIKX0DER",
+      variantSkuId: scheduledVariantSkuId,
+      scheduledFor,
+    });
+    expect(scheduled).toMatchObject({
+      scheduledFor,
+      current: { status: "scheduled" },
+    });
+    expect(enqueuer.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      publicationRequestId: scheduled.id,
+      delayMs: expect.any(Number),
+    }));
+    expect(enqueuer.enqueue.mock.calls.at(-1)?.[0].delayMs).toBeGreaterThan(3_500_000);
+
+    const cancelled = await service.cancel(context, scheduled.id, { reason: "Campaign timing changed" });
+    expect(cancelled.current).toMatchObject({
+      status: "cancelled",
+      code: "PUBLICATION_CANCELLED_BY_USER",
+      message: "Campaign timing changed",
+    });
+    expect(enqueuer.cancel).toHaveBeenCalledWith(scheduled.id);
+    expect((await service.events(context, scheduled.id)).map((event) => event.status))
+      .toEqual(["scheduled", "cancelled"]);
+    await expect(service.cancel(otherContext, scheduled.id, { reason: "Cross tenant" }))
+      .rejects.toMatchObject({ status: 404 });
   });
 
   it("creates one immutable Amazon submit child only after validation passes", async () => {
@@ -218,6 +254,7 @@ describe("marketplace publication requests", () => {
       variants: [
         { skuId: variantSkuId, skuCode: "PILLOW-1", optionValues: { size: "small" } },
         { skuId: secondVariantSkuId, skuCode: "PILLOW-2", optionValues: { size: "large" } },
+        { skuId: scheduledVariantSkuId, skuCode: "PILLOW-3", optionValues: { size: "medium" } },
       ],
       attributes: { brand: "YummyAI" },
       compliance: { countryOfOrigin: "CN" },

@@ -119,6 +119,7 @@ export const marketplacePublicationRequests = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     payloadChecksum: text("payload_checksum").notNull(),
     assetManifest: jsonb("asset_manifest").$type<MarketplacePublicationAssetPin[]>().notNull(),
+    scheduledFor: timestamp("scheduled_for", { mode: "date", withTimezone: true }),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
   },
@@ -159,6 +160,7 @@ export const marketplacePublicationRequests = pgTable(
     uniqueIndex("marketplace_publication_requests_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
     index("marketplace_publication_requests_listing_idx").on(table.tenantId, table.listingId, table.createdAt),
     index("marketplace_publication_requests_account_idx").on(table.tenantId, table.accountId, table.createdAt),
+    index("marketplace_publication_requests_schedule_idx").on(table.tenantId, table.accountId, table.scheduledFor),
     index("marketplace_publication_requests_parent_idx").on(table.tenantId, table.parentRequestId),
   ],
 );
@@ -185,7 +187,7 @@ export const marketplacePublicationEvents = pgTable(
   (table) => [
     check("marketplace_publication_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("marketplace_publication_events_sequence_check", sql`${table.sequence} > 0`),
-    check("marketplace_publication_events_status_check", sql`${table.status} in ('queued', 'processing', 'validation_passed', 'validation_failed', 'draft_created', 'configuration_applied', 'submission_accepted', 'media_uploaded', 'activation_accepted', 'sync_pending', 'published', 'publication_failed', 'deactivated', 'retry_pending', 'reconciliation_required', 'failed')`),
+    check("marketplace_publication_events_status_check", sql`${table.status} in ('scheduled', 'queued', 'processing', 'validation_passed', 'validation_failed', 'draft_created', 'configuration_applied', 'submission_accepted', 'media_uploaded', 'activation_accepted', 'sync_pending', 'published', 'publication_failed', 'deactivated', 'retry_pending', 'reconciliation_required', 'cancelled', 'failed')`),
     foreignKey({
       columns: [table.tenantId, table.requestId],
       foreignColumns: [marketplacePublicationRequests.tenantId, marketplacePublicationRequests.id],

@@ -232,9 +232,10 @@ P1-F implementation status:
 - [x] Amazon Listings Items and Etsy listing/inventory connector operations with normalized provider snapshots
 - [x] `listing_approved` automation rules with listing/platform/locale/completeness conditions, enable/disable state, and immutable runs
 - [x] Listing `Channels` workspace for site copies, online reconciliation, and approval-trigger rules
+- [x] Future publication scheduling with immutable `scheduled_for`, BullMQ delayed jobs, waiting-state cancellation, and Worker-side terminal-state enforcement
 - [ ] Real Store Management and publication smoke evidence with approved non-production Amazon/Etsy accounts
 
-The extended P1-F implementation landed on 2026-07-20. Local contract, connector, Worker, Web typecheck/unit, lint, and migration-chain checks cover the new operations; database integration, full E2E/build, and browser smoke are required before its local code gate can be called complete. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, scheduling, bulk publishing, quotas, notifications, broader automation triggers/actions, and release automation remain open.
+The extended P1-F implementation landed on 2026-07-20. The first P1-G slice added scheduling and cancellation on 2026-07-24 with contract, migration, API integration, Worker, and Web typecheck coverage. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, per-account concurrency and quota enforcement, provider notifications, background reconciliation, broader automation triggers/actions, release automation, and UI scheduling controls remain open.
 
 ## P1 Acceptance Matrix
 

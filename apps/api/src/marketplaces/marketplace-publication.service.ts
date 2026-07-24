@@ -13,6 +13,7 @@ import {
   MarketplacePublicationEventViewSchema,
   MarketplacePublicationRequestViewSchema,
   createEntityId,
+  type CancelMarketplacePublicationInput,
   type CreateMarketplacePublicationInput,
   type ListMarketplacePublicationsInput,
   type MarketplacePublicationEventView,
@@ -44,10 +45,12 @@ import { DATABASE_CONNECTION, MARKETPLACE_PUBLICATION_ENQUEUER } from "../platfo
 
 export interface MarketplacePublicationEnqueuer {
   enqueue(input: {
+    delayMs: number;
     publicationRequestId: string;
     requestedBy: string;
     tenantId: string;
   }): Promise<void>;
+  cancel(publicationRequestId: string): Promise<void>;
 }
 
 @Injectable()
@@ -63,6 +66,7 @@ export class MarketplacePublicationService {
     input: CreateMarketplacePublicationInput,
   ): Promise<MarketplacePublicationRequestView> {
     const prepared = await this.prepare(context, input);
+    const scheduledFor = normalizeSchedule(input.scheduledFor);
     const request = await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${prepared.idempotencyKey}, 0))`);
       const [existing] = await tx.select().from(marketplacePublicationRequests)
@@ -83,6 +87,7 @@ export class MarketplacePublicationService {
         payload: prepared.payload,
         payloadChecksum: checksum(prepared.payload),
         assetManifest: prepared.assets,
+        scheduledFor,
         createdBy: context.userId,
       }).returning();
       await tx.insert(marketplacePublicationEvents).values({
@@ -90,7 +95,7 @@ export class MarketplacePublicationService {
         tenantId: context.tenantId,
         requestId: created!.id,
         sequence: 1,
-        status: "queued",
+        status: scheduledFor ? "scheduled" : "queued",
         actorUserId: context.userId,
       });
       return created!;
@@ -112,6 +117,59 @@ export class MarketplacePublicationService {
       },
     });
     return this.get(context, request.id);
+  }
+
+  async cancel(
+    context: TenantContext,
+    requestId: string,
+    input: CancelMarketplacePublicationInput,
+  ): Promise<MarketplacePublicationRequestView> {
+    const shouldCancel = await withTenant(this.database.db, context, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`);
+      const [request] = await tx.select({ id: marketplacePublicationRequests.id })
+        .from(marketplacePublicationRequests)
+        .where(eq(marketplacePublicationRequests.id, requestId))
+        .limit(1);
+      if (!request) throw new NotFoundException("Marketplace publication request not found");
+      const [latest] = await tx.select().from(marketplacePublicationEvents)
+        .where(eq(marketplacePublicationEvents.requestId, requestId))
+        .orderBy(desc(marketplacePublicationEvents.sequence))
+        .limit(1);
+      if (!latest) throw new NotFoundException("Marketplace publication event not found");
+      if (latest.status === "cancelled") return false;
+      if (!["scheduled", "queued", "retry_pending"].includes(latest.status)) {
+        throw new ConflictException("Only waiting marketplace publications can be cancelled");
+      }
+      await tx.insert(marketplacePublicationEvents).values({
+        id: createEntityId(),
+        tenantId: context.tenantId,
+        requestId,
+        sequence: latest.sequence + 1,
+        status: "cancelled",
+        code: "PUBLICATION_CANCELLED_BY_USER",
+        message: input.reason,
+        retryable: false,
+        actorUserId: context.userId,
+      });
+      return true;
+    });
+
+    if (!shouldCancel) return this.get(context, requestId);
+
+    let queueCleanup = "removed";
+    try {
+      await this.enqueuer.cancel(requestId);
+    } catch {
+      queueCleanup = "worker_will_observe_cancelled_event";
+    }
+    await this.audit.record(context, {
+      action: "marketplace_publication.cancel",
+      resourceType: "marketplace_publication_request",
+      resourceId: requestId,
+      result: "success",
+      metadata: { queueCleanup },
+    });
+    return this.get(context, requestId);
   }
 
   async continue(
@@ -339,6 +397,7 @@ export class MarketplacePublicationService {
     if (terminalStatus.has(current.status)) return;
     try {
       await this.enqueuer.enqueue({
+        delayMs: Math.max(0, (request.scheduledFor?.getTime() ?? Date.now()) - Date.now()),
         publicationRequestId: request.id,
         requestedBy: context.userId,
         tenantId: context.tenantId,
@@ -411,6 +470,7 @@ const terminalStatus = new Set([
   "publication_failed",
   "deactivated",
   "reconciliation_required",
+  "cancelled",
   "failed",
 ]);
 
@@ -671,10 +731,24 @@ function toRequestView(request: RequestRow, current: MarketplacePublicationEvent
     idempotencyKey: request.idempotencyKey,
     payloadChecksum: request.payloadChecksum,
     assetCount: request.assetManifest.length,
+    scheduledFor: request.scheduledFor?.toISOString() ?? null,
     createdBy: request.createdBy,
     createdAt: request.createdAt.toISOString(),
     current,
   });
+}
+
+function normalizeSchedule(value: string | undefined): Date | null {
+  if (!value) return null;
+  const scheduledFor = new Date(value);
+  const now = Date.now();
+  if (scheduledFor.getTime() <= now) {
+    throw new UnprocessableEntityException("Scheduled publication time must be in the future");
+  }
+  if (scheduledFor.getTime() > now + 90 * 24 * 60 * 60 * 1_000) {
+    throw new UnprocessableEntityException("Scheduled publication time cannot exceed 90 days");
+  }
+  return scheduledFor;
 }
 
 function toEventView(event: EventRow): MarketplacePublicationEventView {

@@ -253,6 +253,13 @@
       "when": 1787328000000,
       "tag": "0036_p3_api_client_authentication",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787414400000,
+      "tag": "0037_p1_publication_scheduling",
+      "breakpoints": true
     }
   ]
 }

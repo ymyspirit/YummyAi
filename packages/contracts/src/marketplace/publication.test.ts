@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CancelMarketplacePublicationInputSchema,
   CreateMarketplacePublicationInputSchema,
   MarketplacePublicationRequestViewSchema,
 } from "../index.js";
@@ -15,7 +16,10 @@ describe("marketplace publication contracts", () => {
       listingVersionId: id,
       marketplaceId: "ATVPDKIKX0DER",
       variantSkuId: "sku-blue",
+      scheduledFor: "2026-07-25T08:00:00.000+08:00",
     })).toMatchObject({ marketplaceId: "ATVPDKIKX0DER" });
+    expect(CancelMarketplacePublicationInputSchema.parse({ reason: "Campaign timing changed" }))
+      .toEqual({ reason: "Campaign timing changed" });
   });
 
   it("exposes only checksums and counts instead of provider payloads", () => {
@@ -33,6 +37,7 @@ describe("marketplace publication contracts", () => {
       idempotencyKey: "a".repeat(64),
       payloadChecksum: "b".repeat(64),
       assetCount: 1,
+      scheduledFor: null,
       createdBy: id,
       createdAt: "2026-07-19T00:00:00.000Z",
       current: {
