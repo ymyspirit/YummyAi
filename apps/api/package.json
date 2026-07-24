@@ -6,7 +6,7 @@
   "scripts": {
     "bootstrap:local": "node --env-file=../../.env --import tsx src/bootstrap-local.ts",
     "dev": "node --env-file=../../.env --watch --import tsx src/main.ts",
-    "start": "node --env-file=../../.env --import tsx src/main.ts",
+    "start": "node --env-file-if-exists=../../.env --import tsx src/main.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json"
