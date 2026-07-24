@@ -337,6 +337,7 @@ function fakeGateway(overrides: Partial<MarketplaceDraftGateway>): MarketplaceDr
     getStatus: vi.fn(unsupported),
     readOnlineListing: vi.fn(unsupported),
     updateOnlineListingPriceInventory: vi.fn(unsupported),
+    updateOnlineListingContent: vi.fn(unsupported),
     ...overrides,
   };
 }

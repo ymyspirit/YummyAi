@@ -78,6 +78,7 @@ pnpm --filter @yummyai/api test:integration -- marketplace-account.integration.t
 pnpm --filter @yummyai/api test:integration -- marketplace-authorization.integration.test.ts
 pnpm --filter @yummyai/api test:integration -- marketplace-capability.integration.test.ts
 pnpm --filter @yummyai/api test:integration -- marketplace-publication.integration.test.ts
+pnpm --filter @yummyai/api test:integration -- marketplace-listing-sync.integration.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-publication.processor.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-listing-sync.processor.test.ts
 pnpm --filter @yummyai/worker test:integration -- marketplace-publication-lease.integration.test.ts
@@ -93,7 +94,7 @@ P1-D Amazon execution is a non-persisting Listings Items validation preview. Ets
 
 If initial status polling ends at `sync_pending`, the Worker automatically creates one `publication-reconciliation` job containing only the publication request ID and tenant correlation fields. Keep Redis and the Worker available for the five-hour bounded window: the first safe read starts after fifteen minutes and subsequent attempts retain that spacing. A published/deactivated/failed Provider result closes normally; queue admission failure or twenty inconclusive attempts appends `reconciliation_required`. Do not manually replay the original mutation job.
 
-The Listing `Channels` tab uses the same API and Worker path for site replication, online price/inventory reconciliation, and approval-trigger automation. A real online sync smoke test requires an already published non-production Listing. Run `read` first, verify the normalized snapshot, then use `push_price_inventory` only with deliberately controlled test price/quantity values. An uncertain push must remain in `reconciliation_required`; do not manually replay the job before a read confirms provider state.
+The Listing `Channels` tab uses the same API and Worker path for site replication, online Listing reconciliation, and approval-trigger automation. A real online sync smoke test requires an already published non-production Listing. Use `read`/`push_price_inventory` for the narrow price and quantity boundary, or `read_full_content`/`push_full_content` for supported approved content plus price and inventory. Inspect the normalized read before any push and use deliberately controlled test values. Full content does not replace media. An interrupted, partial, or uncertain push must remain in `reconciliation_required`; do not manually replay it before a read confirms provider state.
 
 Successful publication and online-sync operations append normalized provider quota evidence to `marketplace_quota_snapshots`. Inspect the latest safe projection on `/stores`: Amazon commonly shows only the operation limit, while Etsy can show per-second and per-day remaining/limit values. `未采集` is correct before a supported successful response. Do not populate release evidence manually, and do not expect raw headers or provider request IDs in the database or API response.
 

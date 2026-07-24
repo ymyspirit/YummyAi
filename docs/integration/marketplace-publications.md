@@ -60,16 +60,18 @@ Every completed external step appends evidence before the next step starts: `con
 
 Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check and an approved Etsy test-shop draft plus configure/upload/activate/status check. CI uses mock connectors and cannot satisfy that release gate.
 
-## Online price and inventory reconciliation
+## Online Listing reconciliation
 
 Online operations must reference a published `amazon_submit` or `etsy_activate` request. The API derives the account, marketplace, external Listing ID, and pinned provider payload from that request; clients cannot supply a raw external target.
 
-- `POST /v1/marketplace-listing-syncs` requires `listing:publish`. It accepts `accountId`, `listingId`, `listingVersionId`, `sourcePublicationRequestId`, and `action` (`read` or `push_price_inventory`).
+- `POST /v1/marketplace-listing-syncs` requires `listing:publish`. It accepts `accountId`, `listingId`, `listingVersionId`, `sourcePublicationRequestId`, and one of four actions: `read`, `read_full_content`, `push_price_inventory`, or `push_full_content`.
 - `GET /v1/marketplace-listing-syncs?listingId={id}&accountId={id}&limit={1..100}` and `GET /:id/events` require `listing:read`.
-- Amazon reads Listings Items attributes and patches only `purchasable_offer` and `fulfillment_availability` from the approved payload.
-- Etsy reads the Listing and inventory resources with the processing-profile-compatible `legacy=true` inventory shape. Money objects and provider-only product/offering IDs are normalized before comparison; inventory writes reuse the same writable projection as draft configuration.
+- `read` and `push_price_inventory` compare or mutate only the approved price/inventory projection. `read_full_content` and `push_full_content` include that projection plus the supported writable content projection, so existing callers are not silently broadened.
+- Amazon full reads normalize `productType` and approved non-price/non-inventory attributes. Full writes use `putListingsItem` with `requirements=LISTING` and the complete approved attributes; narrow writes continue to patch only `purchasable_offer` and `fulfillment_availability`.
+- Etsy full reads normalize title, description, tags, taxonomy, shipping/readiness profiles, section, supply/maker/date fields, personalization, price, and inventory. Full writes update Listing fields, then inventory and personalization where present. A later-step failure after an accepted Listing mutation is an uncertain partial outcome.
+- Online media replacement is not part of `push_full_content`. Media remains pinned to immutable publication requests and the separate checksum-verified upload workflow.
 
-Requests and events are immutable and tenant-scoped. `completed` means the normalized online snapshot matches the approved state, while `drift_detected` preserves the observed difference. Any interrupted or uncertain mutation enters `reconciliation_required`; a new read must establish provider state before another push.
+Requests and events are immutable and tenant-scoped. `completed` means the normalized snapshot matches the approved state for the requested action scope, while `drift_detected` preserves the observed difference. Any interrupted, partial, or uncertain mutation enters `reconciliation_required`; a new read must establish provider state before another push.
 
 ## Site replication and approval automation
 

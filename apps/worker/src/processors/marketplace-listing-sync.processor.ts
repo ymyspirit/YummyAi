@@ -27,6 +27,7 @@ import { MarketplaceListingSyncJobPayloadSchema, type JobEnvelope } from "@yummy
 import {
   MarketplaceConnectorError,
   MarketplacePublicationPayloadSchema,
+  onlineListingStateForAction,
   type MarketplaceDraftGateway,
   type MarketplaceOnlineListingResult,
   type MarketplacePublicationPayload,
@@ -71,9 +72,15 @@ export class MarketplaceListingSyncProcessor {
     const snapshot = await this.repository.claim(context, payload.syncRequestId, envelope.attempt);
     if (!snapshot) return { requestId: payload.syncRequestId, status: "ignored" };
     try {
-      const result = await this.repository.withCredential(context, snapshot.accountId, (credential) => snapshot.action === "read"
-        ? this.gateway.readOnlineListing(snapshot.account, credential, snapshot.payload, snapshot.externalListingId)
-        : this.gateway.updateOnlineListingPriceInventory(snapshot.account, credential, snapshot.payload, snapshot.externalListingId));
+      const result = await this.repository.withCredential(context, snapshot.accountId, (credential) => {
+        if (snapshot.action === "read" || snapshot.action === "read_full_content") {
+          return this.gateway.readOnlineListing(snapshot.account, credential, snapshot.payload, snapshot.externalListingId);
+        }
+        if (snapshot.action === "push_price_inventory") {
+          return this.gateway.updateOnlineListingPriceInventory(snapshot.account, credential, snapshot.payload, snapshot.externalListingId);
+        }
+        return this.gateway.updateOnlineListingContent(snapshot.account, credential, snapshot.payload, snapshot.externalListingId);
+      });
       return { requestId: snapshot.requestId, status: await this.repository.complete(context, snapshot, result) };
     } catch (error) {
       const failure = classifyFailure(error, envelope);
@@ -98,9 +105,9 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
       if (!request) return undefined;
       const [latest] = await tx.select().from(marketplaceListingSyncEvents).where(eq(marketplaceListingSyncEvents.requestId, requestId)).orderBy(desc(marketplaceListingSyncEvents.sequence)).limit(1);
       if (!latest || terminalStatuses.has(latest.status as MarketplaceListingSyncStatus)) return undefined;
-      if (attempt > 0 && request.action === "push_price_inventory" && latest.status === "processing") {
+      if (attempt > 0 && isListingMutation(request.action) && latest.status === "processing") {
         const code = "LISTING_SYNC_INTERRUPTED_OUTCOME_UNKNOWN";
-        const message = "A previous price/inventory mutation did not record a conclusive result; automatic retry is blocked";
+        const message = "A previous online Listing mutation did not record a conclusive result; automatic retry is blocked";
         await insertEvent(tx, context, requestId, latest.sequence + 1, { status: "reconciliation_required", code, message, retryable: false });
         await this.channelReconciliations.ensure(tx, context, {
           accountId: request.accountId,
@@ -128,7 +135,11 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
       }
       const stored = request.desiredState as Record<string, unknown>;
       const parsedPayload = MarketplacePublicationPayloadSchema.safeParse(stored.payload);
-      const desired = { price: stored.price ?? null, inventory: stored.inventory ?? null };
+      const desired = onlineListingStateForAction(MarketplaceListingSyncActionSchema.parse(request.action), {
+        content: stored.content ?? null,
+        price: stored.price ?? null,
+        inventory: stored.inventory ?? null,
+      });
       if (!parsedPayload.success || checksum(desired) !== request.desiredChecksum) {
         await insertEvent(tx, context, requestId, latest.sequence + 1, { status: "failed", code: "LISTING_SYNC_PAYLOAD_MISMATCH", message: "Pinned Listing sync payload is invalid", retryable: false });
         return undefined;
@@ -153,7 +164,7 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
   }
 
   async complete(context: TenantContext, snapshot: ListingSyncExecutionSnapshot, result: MarketplaceOnlineListingResult): Promise<MarketplaceListingSyncStatus> {
-    const snapshotChecksum = checksum({ price: result.snapshot.price, inventory: result.snapshot.inventory });
+    const snapshotChecksum = checksum(onlineListingStateForAction(snapshot.action, result.snapshot));
     const status: MarketplaceListingSyncStatus = snapshotChecksum === snapshot.desiredChecksum ? "completed" : "drift_detected";
     await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${snapshot.requestId}, 0))`);
@@ -177,7 +188,7 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
           observedAt: new Date(result.quota.observedAt),
         });
       }
-      await insertEvent(tx, context, snapshot.requestId, latest.sequence + 1, { status, code: null, message: status === "drift_detected" ? "Online price or inventory differs from the approved Listing version" : null, retryable: false, issues: [...result.issues], snapshot: result.snapshot, snapshotChecksum });
+      await insertEvent(tx, context, snapshot.requestId, latest.sequence + 1, { status, code: null, message: status === "drift_detected" ? "Online Listing state differs from the approved Listing version" : null, retryable: false, issues: [...result.issues], snapshot: result.snapshot, snapshotChecksum });
     });
     return status;
   }
@@ -189,7 +200,7 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
       const [latest] = await tx.select().from(marketplaceListingSyncEvents).where(eq(marketplaceListingSyncEvents.requestId, requestId)).orderBy(desc(marketplaceListingSyncEvents.sequence)).limit(1);
       if (!request || !latest || terminalStatuses.has(latest.status as MarketplaceListingSyncStatus)) return;
       await insertEvent(tx, context, requestId, latest.sequence + 1, event);
-      if (event.status === "reconciliation_required" && request.action === "push_price_inventory") {
+      if (event.status === "reconciliation_required" && isListingMutation(request.action)) {
         await this.channelReconciliations.ensure(tx, context, {
           accountId: request.accountId,
           listingId: request.listingId,
@@ -213,6 +224,10 @@ function classifyFailure(error: unknown, envelope: JobEnvelope): SyncFailureEven
   if (error.code === "authorization") return { status: "failed", code: "LISTING_SYNC_AUTHORIZATION", message: error.message, retryable: false, revokeAccount: true };
   const retryable = error.retryable && envelope.attempt + 1 < envelope.maxAttempts;
   return { status: retryable ? "retry_pending" : "failed", code: `LISTING_SYNC_${error.code.toUpperCase()}`, message: error.message, retryable };
+}
+
+function isListingMutation(action: string): boolean {
+  return action === "push_price_inventory" || action === "push_full_content";
 }
 
 async function insertEvent(tx: TenantTransaction, context: TenantContext, requestId: string, sequence: number, event: { status: MarketplaceListingSyncStatus; code: string | null; message: string | null; retryable: boolean; issues?: MarketplaceOnlineListingResult["issues"]; snapshot?: MarketplaceOnlineListingResult["snapshot"]; snapshotChecksum?: string }) {

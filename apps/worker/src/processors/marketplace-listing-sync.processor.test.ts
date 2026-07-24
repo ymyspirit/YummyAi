@@ -29,12 +29,42 @@ describe("marketplace Listing sync processor", () => {
     expect(gateway.readOnlineListing).not.toHaveBeenCalled();
   });
 
+  it("reads full online content through the read gateway", async () => {
+    const state = fixture("read_full_content");
+    const repository = fakeRepository(state, "completed");
+    const gateway = fakeGateway({ readOnlineListing: vi.fn(async () => onlineResult()) });
+    await expect(new MarketplaceListingSyncProcessor(repository, gateway).process(envelope(state.requestId))).resolves.toMatchObject({ status: "completed" });
+    expect(gateway.readOnlineListing).toHaveBeenCalledOnce();
+    expect(gateway.updateOnlineListingContent).not.toHaveBeenCalled();
+  });
+
+  it("uses the full-content mutation gateway for an approved full push", async () => {
+    const state = fixture("push_full_content");
+    const repository = fakeRepository(state, "completed");
+    const gateway = fakeGateway({ updateOnlineListingContent: vi.fn(async () => onlineResult()) });
+    await expect(new MarketplaceListingSyncProcessor(repository, gateway).process(envelope(state.requestId))).resolves.toMatchObject({ status: "completed" });
+    expect(gateway.updateOnlineListingContent).toHaveBeenCalledOnce();
+    expect(gateway.updateOnlineListingPriceInventory).not.toHaveBeenCalled();
+  });
+
   it("marks an uncertain mutation outcome for reconciliation and does not retry", async () => {
     const state = fixture("push_price_inventory");
     const repository = fakeRepository(state, "completed");
     const gateway = fakeGateway({
       updateOnlineListingPriceInventory: vi.fn(async () => {
         throw new MarketplaceConnectorError("amazon", "upstream_terminal", "Response lost", undefined, true);
+      }),
+    });
+    await expect(new MarketplaceListingSyncProcessor(repository, gateway).process(envelope(state.requestId))).resolves.toMatchObject({ status: "reconciliation_required" });
+    expect(repository.fail).toHaveBeenCalledWith(expect.anything(), state.requestId, expect.objectContaining({ status: "reconciliation_required", retryable: false }));
+  });
+
+  it("marks an uncertain full-content mutation outcome for reconciliation", async () => {
+    const state = fixture("push_full_content");
+    const repository = fakeRepository(state, "completed");
+    const gateway = fakeGateway({
+      updateOnlineListingContent: vi.fn(async () => {
+        throw new MarketplaceConnectorError("etsy", "upstream_terminal", "Partial update", undefined, true);
       }),
     });
     await expect(new MarketplaceListingSyncProcessor(repository, gateway).process(envelope(state.requestId))).resolves.toMatchObject({ status: "reconciliation_required" });
@@ -80,12 +110,23 @@ function fakeGateway(overrides: Partial<MarketplaceDraftGateway>): MarketplaceDr
   return {
     create: vi.fn(unsupported), submit: vi.fn(unsupported), configure: vi.fn(unsupported), uploadMedia: vi.fn(unsupported),
     activate: vi.fn(unsupported), getStatus: vi.fn(unsupported), readOnlineListing: vi.fn(unsupported),
-    updateOnlineListingPriceInventory: vi.fn(unsupported), ...overrides,
+    updateOnlineListingPriceInventory: vi.fn(unsupported),
+    updateOnlineListingContent: vi.fn(unsupported),
+    ...overrides,
   };
 }
 
 function onlineResult(): MarketplaceOnlineListingResult {
-  return { issues: [], snapshot: { externalState: "BUYABLE", price: [{ currency: "USD" }], inventory: [{ quantity: 7 }], observedAt: new Date().toISOString() } };
+  return {
+    issues: [],
+    snapshot: {
+      externalState: "BUYABLE",
+      content: null,
+      price: [{ currency: "USD" }],
+      inventory: [{ quantity: 7 }],
+      observedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function envelope(syncRequestId: string): JobEnvelope {

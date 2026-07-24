@@ -222,7 +222,7 @@ export const marketplaceListingSyncRequests = pgTable(
   (table) => [
     check("marketplace_listing_sync_requests_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("marketplace_listing_sync_requests_platform_check", sql`${table.platform} in ('amazon','etsy')`),
-    check("marketplace_listing_sync_requests_action_check", sql`${table.action} in ('read','push_price_inventory')`),
+    check("marketplace_listing_sync_requests_action_check", sql`${table.action} in ('read','read_full_content','push_price_inventory','push_full_content')`),
     check("marketplace_listing_sync_requests_desired_checksum_check", sql`${table.desiredChecksum} ~ '^[0-9a-f]{64}$'`),
     check("marketplace_listing_sync_requests_idempotency_check", sql`${table.idempotencyKey} ~ '^[0-9a-f]{64}$'`),
     foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "marketplace_listing_sync_requests_account_fk" }).onDelete("restrict"),

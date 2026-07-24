@@ -5,6 +5,7 @@ import {
   CreateMarketplaceAutomationRuleInputSchema,
   CreateMarketplaceListingSyncInputSchema,
   MarketplaceListingSyncRequestViewSchema,
+  MarketplaceOnlineListingSnapshotSchema,
 } from "./listing-operations.js";
 
 const id = "0198fbef-4a10-7000-8000-000000000701";
@@ -28,6 +29,29 @@ describe("marketplace Listing operation contracts", () => {
       sourcePublicationRequestId: id,
       action: "push_price_inventory",
     }).action).toBe("push_price_inventory");
+    expect(CreateMarketplaceListingSyncInputSchema.parse({
+      accountId: id,
+      listingId: id,
+      listingVersionId: id,
+      sourcePublicationRequestId: id,
+      action: "read_full_content",
+    }).action).toBe("read_full_content");
+    expect(CreateMarketplaceListingSyncInputSchema.parse({
+      accountId: id,
+      listingId: id,
+      listingVersionId: id,
+      sourcePublicationRequestId: id,
+      action: "push_full_content",
+    }).action).toBe("push_full_content");
+  });
+
+  it("keeps previously persisted online snapshots readable without content", () => {
+    expect(MarketplaceOnlineListingSnapshotSchema.parse({
+      externalState: "active",
+      price: null,
+      inventory: null,
+      observedAt: "2026-07-25T00:00:00.000Z",
+    })).toMatchObject({ content: null });
   });
 
   it("keeps automation actions constrained to guarded publication or sync queues", () => {

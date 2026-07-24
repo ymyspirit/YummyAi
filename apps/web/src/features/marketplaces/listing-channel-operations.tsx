@@ -5,6 +5,7 @@ import type {
   MarketplaceAccountView,
   MarketplaceAutomationRuleView,
   MarketplaceAutomationRunView,
+  MarketplaceListingSyncAction,
   MarketplaceListingSyncRequestView,
   MarketplacePublicationRequestView,
 } from "@yummyai/contracts";
@@ -24,6 +25,12 @@ import {
 
 export type AutomationWorkspaceView = MarketplaceAutomationRuleView & { runs: MarketplaceAutomationRunView[] };
 const initialState: MarketplaceActionState = { message: "", status: "idle" };
+const syncActionOptions: ReadonlyArray<{ label: string; value: MarketplaceListingSyncAction }> = [
+  { value: "read", label: "读取价格与库存" },
+  { value: "read_full_content", label: "读取完整内容" },
+  { value: "push_price_inventory", label: "写入批准价格与库存" },
+  { value: "push_full_content", label: "写入完整批准内容" },
+];
 
 export function ListingChannelOperations({ accounts, automations, error, listing, publications, replications, syncs }: {
   accounts: MarketplaceAccountView[];
@@ -64,7 +71,7 @@ export function ListingChannelOperations({ accounts, automations, error, listing
       <div><p className="section-code">CHANNEL ORCHESTRATION</p><h2 id="channel-operations-title">站点与在线 Listing 编排</h2></div>
       <button aria-label="刷新编排状态" onClick={() => router.refresh()} title="刷新编排状态" type="button"><RefreshCw size={16} /></button>
     </header>
-    {error && <p className="channel-error"><CircleAlert size={14} />{error}</p>}
+    {error ? <p className="channel-error"><CircleAlert size={14} />{error}</p> : null}
 
     <OperationBand icon={<CopyPlus size={17} />} code="SITE REPLICA" title="多站点复制" count={`${replications.length} COPIES`}>
       <form action={replicate} className="channel-form replica-form">
@@ -77,15 +84,15 @@ export function ListingChannelOperations({ accounts, automations, error, listing
       <div className="channel-ledger">{replications.length ? replications.map((item) => <div className="channel-row" key={item.id}><strong>{item.targetMarketplaceId}</strong><span>{item.targetLocale}</span><code>{item.targetListingId.slice(0, 13)}</code><Status label="草稿已创建" tone="complete" /></div>) : <Empty text="尚未创建站点副本；副本始终从当前批准版本生成。" />}</div>
     </OperationBand>
 
-    <OperationBand icon={<SlidersHorizontal size={17} />} code="ONLINE RECONCILIATION" title="价格与库存同步" count={`${syncs.length} REQUESTS`}>
+    <OperationBand icon={<SlidersHorizontal size={17} />} code="ONLINE RECONCILIATION" title="在线 Listing 同步" count={`${syncs.length} REQUESTS`}>
       <form action={sync} className="channel-form sync-form">
         <label><span>已发布 Listing</span><select name="sourcePublicationRequestId" required value={source?.id ?? ""} onChange={(event) => setSourceId(event.target.value)}>{published.map((request) => <option key={request.id} value={request.id}>{request.marketplaceId} · {request.current.externalListingId ?? request.id.slice(0, 8)}</option>)}</select></label>
         <input name="accountId" type="hidden" value={source?.accountId ?? ""} />
-        <label><span>动作</span><select name="action" defaultValue="read"><option value="read">读取并对账</option><option value="push_price_inventory">写入批准价格与库存</option></select></label>
+        <label><span>动作</span><select name="action" defaultValue="read">{syncActionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         <SubmitButton disabled={!source} label="排队执行" />
       </form>
       <Notice state={syncState} />
-      <div className="channel-ledger">{syncs.length ? syncs.map((item) => <div className="channel-row" key={item.id}><strong>{item.action === "read" ? "在线对账" : "价格库存写入"}</strong><span>{item.marketplaceId} · {item.externalListingId}</span><code>{formatDate(item.createdAt)}</code><Status label={syncStatus(item.current.status)} tone={syncTone(item.current.status)} /></div>) : <Empty text="没有同步记录；需要先通过官方发布流程取得在线 Listing。" />}</div>
+      <div className="channel-ledger">{syncs.length ? syncs.map((item) => <div className="channel-row" key={item.id}><strong>{syncActionLabel(item.action)}</strong><span>{item.marketplaceId} · {item.externalListingId}</span><code>{formatDate(item.createdAt)}</code><Status label={syncStatus(item.current.status)} tone={syncTone(item.current.status)} /></div>) : <Empty text="没有同步记录；需要先通过官方发布流程取得在线 Listing。" />}</div>
     </OperationBand>
 
     <OperationBand icon={<Workflow size={17} />} code="APPROVAL TRIGGERS" title="自动化规则" count={`${relevantRules.length} RULES`}>
@@ -95,10 +102,10 @@ export function ListingChannelOperations({ accounts, automations, error, listing
         <label><span>店铺</span><select name="accountId" required value={ruleAccount?.id ?? ""} onChange={(event) => setRuleAccountId(event.target.value)}>{platformAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName}</option>)}</select></label>
         {ruleAction === "queue_publication" ? <>
           <label><span>Marketplace</span><select name="marketplaceId" required>{(ruleAccount?.marketplaceIds ?? []).map((id) => <option key={id} value={id}>{id}</option>)}</select></label>
-          {listing.platform === "amazon" && <label><span>SKU</span><select name="variantSkuId" required>{listing.variants.map((variant) => <option key={variant.skuId} value={variant.skuId}>{variant.skuCode}</option>)}</select></label>}
+          {listing.platform === "amazon" ? <label><span>SKU</span><select name="variantSkuId" required>{listing.variants.map((variant) => <option key={variant.skuId} value={variant.skuId}>{variant.skuCode}</option>)}</select></label> : null}
         </> : <>
           <label><span>在线 Listing</span><select name="sourcePublicationRequestId" required>{rulePublished.map((request) => <option key={request.id} value={request.id}>{request.marketplaceId} · {request.current.externalListingId}</option>)}</select></label>
-          <label><span>同步动作</span><select name="syncAction"><option value="read">读取并对账</option><option value="push_price_inventory">写入价格库存</option></select></label>
+          <label><span>同步动作</span><select name="syncAction">{syncActionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         </>}
         <label><span>最低完整度</span><input min="0" max="100" name="minimumCompleteness" type="number" defaultValue="100" /></label>
         <label className="channel-check"><input name="enabled" type="checkbox" /><span>创建后启用</span></label>
@@ -113,7 +120,7 @@ export function ListingChannelOperations({ accounts, automations, error, listing
 function AutomationRow({ listingId, rule }: { listingId: string; rule: AutomationWorkspaceView }) {
   const [state, action] = useActionState(setMarketplaceAutomationEnabled.bind(null, listingId, rule.id, !rule.enabled), initialState);
   const latest = rule.runs[0];
-  return <div className="channel-row automation-row"><strong>{rule.name}</strong><span>{rule.action.type === "queue_publication" ? "发布预检 / 草稿" : "在线价格库存同步"} · ≥ {rule.conditions.minimumCompleteness}%</span><code>{latest ? `${runLabel(latest.status)} · ${formatDate(latest.occurredAt)}` : "尚未触发"}</code><form action={action}><button className={rule.enabled ? "rule-on" : "rule-off"} type="submit">{rule.enabled ? "已启用" : "已停用"}</button></form><Notice state={state} /></div>;
+  return <div className="channel-row automation-row"><strong>{rule.name}</strong><span>{rule.action.type === "queue_publication" ? "发布预检 / 草稿" : syncActionLabel(rule.action.action)} · ≥ {rule.conditions.minimumCompleteness}%</span><code>{latest ? `${runLabel(latest.status)} · ${formatDate(latest.occurredAt)}` : "尚未触发"}</code><form action={action}><button className={rule.enabled ? "rule-on" : "rule-off"} type="submit">{rule.enabled ? "已启用" : "已停用"}</button></form><Notice state={state} /></div>;
 }
 
 function OperationBand({ children, code, count, icon, title }: { children: React.ReactNode; code: string; count: string; icon: React.ReactNode; title: string }) { return <section className="operation-band"><header><span>{icon}</span><div><p className="section-code">{code}</p><h3>{title}</h3></div><b>{count}</b></header>{children}</section>; }
@@ -121,6 +128,7 @@ function SubmitButton({ disabled, label }: { disabled?: boolean; label: string }
 function Notice({ state }: { state: MarketplaceActionState }) { if (state.status === "idle") return null; return <p className={`channel-notice ${state.status}`} role="status">{state.status === "success" ? <BadgeCheck size={13} /> : <CircleAlert size={13} />}{state.message}</p>; }
 function Empty({ text }: { text: string }) { return <p className="channel-empty">{text}</p>; }
 function Status({ label, tone }: { label: string; tone: string }) { return <em className={`channel-status ${tone}`}>{label}</em>; }
+function syncActionLabel(action: MarketplaceListingSyncAction) { return syncActionOptions.find((option) => option.value === action)?.label ?? action; }
 function syncStatus(status: MarketplaceListingSyncRequestView["current"]["status"]) { return ({ queued: "已排队", processing: "处理中", completed: "一致", drift_detected: "发现差异", retry_pending: "等待重试", reconciliation_required: "需要对账", failed: "失败" })[status]; }
 function syncTone(status: MarketplaceListingSyncRequestView["current"]["status"]) { return ["completed"].includes(status) ? "complete" : ["queued", "processing", "retry_pending"].includes(status) ? "running" : "failed"; }
 function runLabel(status: MarketplaceAutomationRunView["status"]) { return ({ enqueued: "已入队", failed: "失败", skipped: "已跳过" })[status]; }

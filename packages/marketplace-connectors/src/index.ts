@@ -25,6 +25,7 @@ export {
   HttpMarketplaceDraftGateway,
   MarketplacePublicationPayloadSchema,
   desiredOnlineListingState,
+  onlineListingStateForAction,
   type MarketplaceDraftGateway,
   type MarketplaceDraftResult,
   type MarketplaceMediaInput,

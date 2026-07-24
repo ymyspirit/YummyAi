@@ -34,7 +34,12 @@ export const ListingReplicationViewSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-export const MarketplaceListingSyncActionSchema = z.enum(["read", "push_price_inventory"]);
+export const MarketplaceListingSyncActionSchema = z.enum([
+  "read",
+  "read_full_content",
+  "push_price_inventory",
+  "push_full_content",
+]);
 export const MarketplaceListingSyncStatusSchema = z.enum([
   "queued",
   "processing",
@@ -62,6 +67,7 @@ export const ListMarketplaceListingSyncsInputSchema = z.object({
 
 export const MarketplaceOnlineListingSnapshotSchema = z.object({
   externalState: z.string().min(1).max(500),
+  content: z.unknown().nullable().default(null),
   price: z.unknown().nullable(),
   inventory: z.unknown().nullable(),
   observedAt: z.iso.datetime(),

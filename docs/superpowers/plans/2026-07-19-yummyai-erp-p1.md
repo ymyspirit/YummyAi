@@ -230,6 +230,7 @@ P1-F implementation status:
 - [x] Current-approved-version replication into a distinct same-platform marketplace/locale draft with immutable lineage
 - [x] Online Listing price/inventory read and approved-state push requests with append-only reconciliation events
 - [x] Amazon Listings Items and Etsy listing/inventory connector operations with normalized provider snapshots
+- [x] Explicit full-content read/write actions for approved Amazon attributes and Etsy Listing/inventory/personalization fields, with narrow action compatibility and partial-write reconciliation
 - [x] `listing_approved` automation rules with listing/platform/locale/completeness conditions, enable/disable state, and immutable runs
 - [x] Listing `Channels` workspace for site copies, online reconciliation, and approval-trigger rules
 - [x] Future publication scheduling with immutable `scheduled_for`, BullMQ delayed jobs, waiting-state cancellation, and Worker-side terminal-state enforcement
@@ -241,7 +242,7 @@ P1-F implementation status:
 - [x] Bounded background publication reconciliation with identifier-only jobs, safe status reads, per-account serialization, and manual-reconciliation exhaustion
 - [ ] Real Store Management and publication smoke evidence with approved non-production Amazon/Etsy accounts
 
-The extended P1-F implementation landed on 2026-07-20. P1-G now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, successful-response quota telemetry, bounded background publication reconciliation, and commit-bound release-candidate artifact automation. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, provider notifications, and broader automation triggers/actions remain open.
+The extended P1-F implementation landed on 2026-07-20. P1-G now includes scheduling and cancellation UI, cross-replica per-account execution leases, provider `Retry-After` enforcement, successful-response quota telemetry, bounded background publication reconciliation, commit-bound release-candidate artifact automation, and approved online content/price/inventory synchronization. Real provider smoke evidence remains a P1 release gate. Online media replacement, bulk publishing/JSON Listings Feed, provider notifications, and broader automation triggers/actions remain open.
 
 Background reconciliation code gate passed on 2026-07-25. The Worker unit suite covers background admission, queue failure, retry-window exhaustion, and conclusive status pass-through. PostgreSQL integration covers safe status resumption after the original capability snapshot expires and the approved Listing changes, while retaining append-only events and the tenant/account execution lease. This evidence is deterministic local coverage and does not replace an authorized Amazon/Etsy status-writeback smoke test.
 

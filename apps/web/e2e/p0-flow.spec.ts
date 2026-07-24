@@ -39,7 +39,8 @@ test("capture to reviewed export", async ({ page }) => {
   await page.getByRole("button", { name: "Channels" }).click();
   await expect(page.getByRole("heading", { name: "站点与在线 Listing 编排" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "多站点复制" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "价格与库存同步" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "在线 Listing 同步" })).toBeVisible();
+  await expect(page.getByLabel("动作").first()).toContainText("读取完整内容");
   await expect(page.getByRole("heading", { name: "自动化规则" })).toBeVisible();
   await expect(page.getByRole("button", { name: "创建站点草稿" })).toBeDisabled();
   await page.getByRole("button", { name: "查看审核" }).click();

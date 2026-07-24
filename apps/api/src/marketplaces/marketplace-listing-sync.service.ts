@@ -24,7 +24,7 @@ import {
   type DatabaseConnection,
   withTenant,
 } from "@yummyai/database";
-import { MarketplacePublicationPayloadSchema, desiredOnlineListingState, type MarketplacePublicationPayload } from "@yummyai/marketplace-connectors";
+import { MarketplacePublicationPayloadSchema, desiredOnlineListingState, onlineListingStateForAction, type MarketplacePublicationPayload } from "@yummyai/marketplace-connectors";
 import type { ListingDraft } from "@yummyai/platform-rules";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
@@ -126,7 +126,7 @@ export class MarketplaceListingSyncService {
       if (listing.status !== "approved" || version.status !== "approved" || listing.primaryVersionId !== version.id || version.validation.blockers.length) throw new ConflictException("Online Listing sync requires the current approved Listing version");
       const sourcePayload = MarketplacePublicationPayloadSchema.parse(source.payload);
       const payload = buildSyncPayload(version.content, sourcePayload);
-      if (input.action === "push_price_inventory") {
+      if (isListingMutation(input.action)) {
         await this.channelInventory.assertMarketplaceAllocations(tx, {
           accountId: account.id,
           platform: payload.platform,
@@ -135,7 +135,7 @@ export class MarketplaceListingSyncService {
           desired: desiredInventoryTargets(version.content, payload),
         });
       }
-      const desired = desiredOnlineListingState(payload) as Record<string, unknown>;
+      const desired = onlineListingStateForAction(input.action, desiredOnlineListingState(payload));
       return { desiredChecksum: checksum(desired), desiredState: { ...desired, payload }, externalListingId, payload };
     });
   }
@@ -166,14 +166,44 @@ function assertSyncAccount(account: AccountRow, capability: CapabilityRow, actio
   if (account.credentialStatus !== "valid" && account.credentialStatus !== "expiring") throw new UnauthorizedException("Marketplace account is not authorized");
   if (capability.expiresAt.getTime() <= Date.now()) throw new ConflictException("Marketplace capabilities are stale");
   if (!account.externalAccountId || !account.marketplaceIds.includes(marketplaceId) || !capability.marketplaceIds.includes(marketplaceId)) throw new ConflictException("Published marketplace target is not available on the authorized account");
-  const required: MarketplaceCapability[] = action === "read" ? ["listing_read"] : ["listing_write", "inventory_write"];
+  const required: MarketplaceCapability[] = isListingMutation(action) ? ["listing_write", "inventory_write"] : ["listing_read"];
   for (const capabilityName of required) if (!account.capabilities.includes(capabilityName) || !capability.capabilities.includes(capabilityName)) throw new ConflictException(`Online Listing sync requires ${capabilityName}`);
+}
+
+function isListingMutation(action: CreateMarketplaceListingSyncInput["action"]): boolean {
+  return action === "push_price_inventory" || action === "push_full_content";
 }
 
 function buildSyncPayload(content: ListingDraft, source: MarketplacePublicationPayload): MarketplacePublicationPayload {
   if (!content.publication || content.publication.platform !== content.platform || source.platform !== content.platform) throw new UnprocessableEntityException("Approved Listing version is missing matching publication settings");
   if (source.platform === "amazon" && content.publication.platform === "amazon") return MarketplacePublicationPayloadSchema.parse({ ...source, productType: content.publication.productType, attributes: content.publication.attributes });
-  if (source.platform === "etsy" && content.publication.platform === "etsy") return MarketplacePublicationPayloadSchema.parse({ ...source, price: content.publication.price, quantity: content.publication.quantity, inventory: content.publication.inventory });
+  if (source.platform === "etsy" && content.publication.platform === "etsy") {
+    const personalization = content.personalization?.enabled
+      ? {
+          instructions: content.personalization.instructions ?? "",
+          required: content.personalization.required ?? false,
+          maxAllowedCharacters: content.personalization.maxAllowedCharacters ?? 256,
+        }
+      : undefined;
+    return MarketplacePublicationPayloadSchema.parse({
+      ...source,
+      locale: content.locale,
+      title: content.title,
+      description: content.description,
+      tags: content.tags,
+      price: content.publication.price,
+      quantity: content.publication.quantity,
+      whoMade: content.publication.whoMade,
+      whenMade: content.publication.whenMade,
+      taxonomyId: content.publication.taxonomyId,
+      shippingProfileId: content.publication.shippingProfileId,
+      readinessStateId: content.publication.readinessStateId,
+      shopSectionId: content.publication.shopSectionId,
+      isSupply: content.publication.isSupply,
+      inventory: content.publication.inventory,
+      personalization,
+    });
+  }
   throw new UnprocessableEntityException("Approved Listing version does not match the published channel");
 }
 

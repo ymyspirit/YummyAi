@@ -54,7 +54,7 @@ virtual stock participate only when the policy explicitly names the source.
 
 ## Listing write guard and reconciliation
 
-`push_price_inventory` derives each marketplace SKU from the approved pinned
+`push_price_inventory` and `push_full_content` derive each marketplace SKU from the approved pinned
 Listing payload and resolves it through catalog SKU to inventory stock item.
 Each SKU requires a projection for the same account, platform, marketplace, and
 Listing (or a policy wildcard). Missing policy, missing current-version run,

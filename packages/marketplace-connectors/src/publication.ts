@@ -1,5 +1,6 @@
 import type {
   MarketplaceAuthorizationMode,
+  MarketplaceListingSyncAction,
   MarketplaceOnlineListingSnapshot,
   MarketplacePlatform,
   MarketplacePublicationIssue,
@@ -166,6 +167,12 @@ export interface MarketplaceDraftGateway {
     payload: MarketplacePublicationPayload,
     externalListingId: string,
   ): Promise<MarketplaceOnlineListingResult>;
+  updateOnlineListingContent(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    payload: MarketplacePublicationPayload,
+    externalListingId: string,
+  ): Promise<MarketplaceOnlineListingResult>;
 }
 
 export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
@@ -279,6 +286,21 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     return payload.platform === "amazon"
       ? this.updateAmazonPriceInventory(account, credential, payload, externalListingId)
       : this.updateEtsyPriceInventory(account, credential, payload, externalListingId);
+  }
+
+  updateOnlineListingContent(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    input: MarketplacePublicationPayload,
+    externalListingId: string,
+  ): Promise<MarketplaceOnlineListingResult> {
+    const payload = MarketplacePublicationPayloadSchema.parse(input);
+    if (payload.platform !== account.platform) {
+      throw new MarketplaceConnectorError(account.platform, "validation", "Online Listing payload does not match the account platform");
+    }
+    return payload.platform === "amazon"
+      ? this.updateAmazonContent(account, credential, payload, externalListingId)
+      : this.updateEtsyContent(account, credential, payload, externalListingId);
   }
 
   private async previewAmazon(
@@ -441,6 +463,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       ...(quota ? { quota } : {}),
       snapshot: {
         externalState: statuses.join(",") || "UNKNOWN",
+        content: normalizeAmazonContent(response, payload),
         price: response.attributes.purchasable_offer ?? null,
         inventory: response.attributes.fulfillment_availability ?? normalizeAmazonFulfillmentAvailability(response.fulfillmentAvailability),
         observedAt: new Date().toISOString(),
@@ -478,7 +501,36 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     return {
       issues: response.issues.map(normalizeAmazonIssue),
       ...(quota ? { quota } : {}),
-      snapshot: { externalState: response.status, ...desired, observedAt: new Date().toISOString() },
+      snapshot: { externalState: response.status, ...desired, content: null, observedAt: new Date().toISOString() },
+    };
+  }
+
+  private async updateAmazonContent(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    payload: z.infer<typeof AmazonPublicationPayloadSchema>,
+    externalListingId: string,
+  ): Promise<MarketplaceOnlineListingResult> {
+    if (externalListingId !== payload.sku) {
+      throw new MarketplaceConnectorError("amazon", "conflict", "Amazon online Listing target does not match the submitted SKU");
+    }
+    const sellerId = requireCredential(credential, "sellingPartnerId", "amazon");
+    if (sellerId !== account.externalAccountId) {
+      throw new MarketplaceConnectorError("amazon", "authorization", "Amazon seller identity changed");
+    }
+    const accessToken = await this.amazonAccessToken(account, credential);
+    const endpoint = amazonEndpoint(account.region, this.environment);
+    const url = new URL(`/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(payload.sku)}`, `${endpoint}/`);
+    url.search = new URLSearchParams({ marketplaceIds: payload.marketplaceId, issueLocale: payload.locale.replace("-", "_") }).toString();
+    const { data: response, quota } = await this.requestJson(url.toString(), {
+      method: "PUT",
+      headers: { ...amazonHeaders(accessToken), "content-type": "application/json" },
+      body: JSON.stringify({ productType: payload.productType, requirements: "LISTING", attributes: payload.attributes }),
+    }, AmazonListingResponseSchema, "amazon", true);
+    return {
+      issues: response.issues.map(normalizeAmazonIssue),
+      ...(quota ? { quota } : {}),
+      snapshot: { externalState: response.status, ...desiredOnlineListingState(payload), observedAt: new Date().toISOString() },
     };
   }
 
@@ -740,6 +792,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       ...session.rotation,
       snapshot: {
         externalState: listing.state,
+        content: normalizeEtsyContent(listing),
         price: payload.inventory
           ? inventory.products.map((product) => product.offerings.map((offering) => normalizeEtsyMoney(offering.price, payload.price.currency)))
           : normalizeEtsyMoney(listing.price, payload.price.currency),
@@ -791,8 +844,108 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       issues: [],
       ...(quota ? { quota } : {}),
       ...session.rotation,
-      snapshot: { externalState: "UPDATE_ACCEPTED", ...desired, observedAt: new Date().toISOString() },
+      snapshot: { externalState: "UPDATE_ACCEPTED", ...desired, content: null, observedAt: new Date().toISOString() },
     };
+  }
+
+  private async updateEtsyContent(
+    account: PublicationAccountContext,
+    credential: Readonly<Record<string, string>>,
+    payload: z.infer<typeof EtsyPublicationPayloadSchema>,
+    externalListingId: string,
+  ): Promise<MarketplaceOnlineListingResult> {
+    const session = await this.etsySession(credential);
+    const listingBody = etsyListingContentBody(payload);
+    let mutationRecorded = false;
+    let quota: MarketplaceQuotaTelemetry | undefined;
+    try {
+      const listingResponse = await this.requestJson(
+        `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}`,
+        {
+          method: "PUT",
+          headers: { ...session.headers, "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: listingBody,
+        },
+        EtsyListingResponseSchema,
+        "etsy",
+        true,
+      );
+      mutationRecorded = true;
+      quota = listingResponse.quota;
+      if (payload.inventory) {
+        const inventoryResponse = await this.requestJson(
+          etsyInventoryUrl(externalListingId),
+          {
+            method: "PUT",
+            headers: { ...session.headers, "content-type": "application/json" },
+            body: JSON.stringify(toEtsyInventoryBody(payload.inventory)),
+          },
+          EtsyInventoryResponseSchema,
+          "etsy",
+          true,
+        );
+        quota = inventoryResponse.quota ?? quota;
+      }
+      if (payload.personalization) {
+        const personalizationResponse = await this.updateEtsyPersonalization(
+          account,
+          session.headers,
+          payload,
+          externalListingId,
+        );
+        quota = personalizationResponse.quota ?? quota;
+      }
+    } catch (error) {
+      if (mutationRecorded && error instanceof MarketplaceConnectorError && !error.outcomeUncertain) {
+        throw new MarketplaceConnectorError(
+          "etsy",
+          "upstream_terminal",
+          "Etsy Listing content update is partially applied; reconciliation is required",
+          error.retryAfterMs,
+          true,
+        );
+      }
+      throw error;
+    }
+    return {
+      issues: [],
+      ...(quota ? { quota } : {}),
+      ...session.rotation,
+      snapshot: { externalState: "UPDATE_ACCEPTED", ...desiredOnlineListingState(payload), observedAt: new Date().toISOString() },
+    };
+  }
+
+  private updateEtsyPersonalization(
+    account: PublicationAccountContext,
+    headers: Record<string, string>,
+    payload: z.infer<typeof EtsyPublicationPayloadSchema>,
+    externalListingId: string,
+  ) {
+    const personalization = payload.personalization!;
+    const url = new URL(
+      `/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}/personalization`,
+      "https://openapi.etsy.com/",
+    );
+    url.searchParams.set("supports_multiple_personalization_questions", "true");
+    return this.requestJson(
+      url.toString(),
+      {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          personalization_questions: [{
+            question_type: "text_input",
+            question_text: "Personalization",
+            instructions: personalization.instructions,
+            required: personalization.required,
+            max_allowed_characters: personalization.maxAllowedCharacters,
+          }],
+        }),
+      },
+      EtsyPersonalizationResponseSchema,
+      "etsy",
+      true,
+    );
   }
 
   private async etsySession(
@@ -975,6 +1128,7 @@ const AmazonListingResponseSchema = z.object({
 }).passthrough();
 const AmazonListingStatusResponseSchema = z.object({
   sku: z.string().optional(),
+  productType: z.string().optional(),
   attributes: z.record(z.string(), z.unknown()).default({}),
   fulfillmentAvailability: z.unknown().optional(),
   summaries: z.array(z.object({ status: z.array(z.string()).default([]) }).passthrough()).default([]),
@@ -983,6 +1137,20 @@ const AmazonListingStatusResponseSchema = z.object({
 const EtsyListingResponseSchema = z.object({
   listing_id: z.number().int().positive(),
   state: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  taxonomy_id: z.number().int().positive().optional(),
+  shipping_profile_id: z.number().int().positive().optional(),
+  readiness_state_id: z.number().int().positive().optional(),
+  shop_section_id: z.number().int().positive().nullable().optional(),
+  is_supply: z.boolean().optional(),
+  who_made: z.string().optional(),
+  when_made: z.string().optional(),
+  is_personalizable: z.boolean().optional(),
+  personalization_is_required: z.boolean().optional(),
+  personalization_char_count_max: z.number().int().positive().optional(),
+  personalization_instructions: z.string().optional(),
   price: z.unknown().optional(),
   quantity: z.number().int().nonnegative().optional(),
 }).passthrough();
@@ -1023,16 +1191,104 @@ function normalizeAmazonIssue(issue: z.infer<typeof AmazonIssueSchema>): Marketp
   };
 }
 
-export function desiredOnlineListingState(payload: MarketplacePublicationPayload): { price: unknown | null; inventory: unknown | null } {
+export function desiredOnlineListingState(payload: MarketplacePublicationPayload): {
+  content: unknown | null;
+  price: unknown | null;
+  inventory: unknown | null;
+} {
   if (payload.platform === "amazon") {
     return {
+      content: desiredAmazonContent(payload),
       price: payload.attributes.purchasable_offer ?? null,
       inventory: payload.attributes.fulfillment_availability ?? null,
     };
   }
   return payload.inventory
-    ? { price: payload.inventory.products.map((product) => product.offerings.map((offering) => offering.price)), inventory: toEtsyInventoryBody(payload.inventory) }
-    : { price: payload.price, inventory: { quantity: payload.quantity } };
+    ? { content: desiredEtsyContent(payload), price: payload.inventory.products.map((product) => product.offerings.map((offering) => offering.price)), inventory: toEtsyInventoryBody(payload.inventory) }
+    : { content: desiredEtsyContent(payload), price: payload.price, inventory: { quantity: payload.quantity } };
+}
+
+export function onlineListingStateForAction(
+  action: MarketplaceListingSyncAction,
+  state: Pick<MarketplaceOnlineListingSnapshot, "content" | "price" | "inventory">,
+): { content: unknown | null; price: unknown | null; inventory: unknown | null } | { price: unknown | null; inventory: unknown | null } {
+  return action === "read_full_content" || action === "push_full_content"
+    ? { content: state.content, price: state.price, inventory: state.inventory }
+    : { price: state.price, inventory: state.inventory };
+}
+
+function desiredAmazonContent(payload: z.infer<typeof AmazonPublicationPayloadSchema>) {
+  const attributes = Object.fromEntries(Object.entries(payload.attributes)
+    .filter(([key]) => key !== "purchasable_offer" && key !== "fulfillment_availability"));
+  return { productType: payload.productType, attributes };
+}
+
+function normalizeAmazonContent(
+  response: z.infer<typeof AmazonListingStatusResponseSchema>,
+  payload: z.infer<typeof AmazonPublicationPayloadSchema>,
+) {
+  const desired = desiredAmazonContent(payload);
+  const attributes = Object.fromEntries(Object.keys(desired.attributes)
+    .map((key) => [key, response.attributes[key] ?? null]));
+  return { productType: response.productType ?? null, attributes };
+}
+
+function desiredEtsyContent(payload: z.infer<typeof EtsyPublicationPayloadSchema>) {
+  return {
+    title: payload.title,
+    description: payload.description,
+    tags: payload.tags.toSorted(),
+    taxonomyId: payload.taxonomyId,
+    shippingProfileId: payload.shippingProfileId,
+    readinessStateId: payload.readinessStateId,
+    shopSectionId: payload.shopSectionId ?? null,
+    isSupply: payload.isSupply ?? false,
+    whoMade: payload.whoMade,
+    whenMade: payload.whenMade,
+    personalization: payload.personalization ?? null,
+  };
+}
+
+function normalizeEtsyContent(listing: z.infer<typeof EtsyListingResponseSchema>) {
+  return {
+    title: listing.title ?? null,
+    description: listing.description ?? null,
+    tags: listing.tags?.toSorted() ?? null,
+    taxonomyId: listing.taxonomy_id ?? null,
+    shippingProfileId: listing.shipping_profile_id ?? null,
+    readinessStateId: listing.readiness_state_id ?? null,
+    shopSectionId: listing.shop_section_id ?? null,
+    isSupply: listing.is_supply ?? false,
+    whoMade: listing.who_made ?? null,
+    whenMade: listing.when_made ?? null,
+    personalization: listing.is_personalizable
+      ? {
+          instructions: listing.personalization_instructions ?? "",
+          required: listing.personalization_is_required ?? false,
+          maxAllowedCharacters: listing.personalization_char_count_max ?? 0,
+        }
+      : null,
+  };
+}
+
+function etsyListingContentBody(payload: z.infer<typeof EtsyPublicationPayloadSchema>): URLSearchParams {
+  const body = new URLSearchParams({
+    title: payload.title,
+    description: payload.description,
+    tags: payload.tags.join(","),
+    who_made: payload.whoMade,
+    when_made: payload.whenMade,
+    taxonomy_id: String(payload.taxonomyId),
+    shipping_profile_id: String(payload.shippingProfileId),
+    readiness_state_id: String(payload.readinessStateId),
+    is_supply: String(payload.isSupply ?? false),
+    is_personalizable: String(Boolean(payload.personalization)),
+  });
+  if (payload.shopSectionId) body.set("shop_section_id", String(payload.shopSectionId));
+  if (payload.inventory) return body;
+  body.set("price", String(payload.price.amount));
+  body.set("quantity", String(payload.quantity));
+  return body;
 }
 
 function toEtsyInventoryBody(inventory: NonNullable<z.infer<typeof EtsyPublicationPayloadSchema>["inventory"]>) {

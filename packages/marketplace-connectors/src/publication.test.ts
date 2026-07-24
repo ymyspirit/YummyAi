@@ -266,7 +266,25 @@ describe("marketplace draft gateway", () => {
         }],
         price_on_property: [200], quantity_on_property: [], sku_on_property: [200], readiness_state_on_property: [],
       });
-      return json({ listing_id: 456, state: "active", price: { amount: 2450, divisor: 100, currency_code: "USD" }, quantity: 4 });
+      return json({
+        listing_id: 456,
+        state: "active",
+        title: "Pillow",
+        description: "Pillow\nwith personalization",
+        tags: ["gift", "pillow"],
+        taxonomy_id: 1,
+        shipping_profile_id: 2,
+        readiness_state_id: 3,
+        is_supply: false,
+        who_made: "i_did",
+        when_made: "2020_2026",
+        is_personalizable: true,
+        personalization_is_required: true,
+        personalization_char_count_max: 24,
+        personalization_instructions: "Enter a name",
+        price: { amount: 2450, divisor: 100, currency_code: "USD" },
+        quantity: 4,
+      });
     });
     const gateway = new HttpMarketplaceDraftGateway(request as typeof fetch, {
       ETSY_APP_KEYSTRING: "etsy-key",
@@ -290,6 +308,18 @@ describe("marketplace draft gateway", () => {
     }, { userId: "12345", refreshToken: "12345.refresh" }, payload, "456")).resolves.toMatchObject({
       snapshot: {
         externalState: "active",
+        content: {
+          title: "Pillow",
+          description: "Pillow\nwith personalization",
+          tags: ["gift", "pillow"],
+          taxonomyId: 1,
+          shippingProfileId: 2,
+          readinessStateId: 3,
+          isSupply: false,
+          whoMade: "i_did",
+          whenMade: "2020_2026",
+          personalization: { instructions: "Enter a name", required: true, maxAllowedCharacters: 24 },
+        },
         price: [[{ amount: 24.5, currency: "USD" }]],
         inventory: {
           products: [{ sku: "PILLOW-PINK", offerings: [{ price: 24.5, quantity: 4, is_enabled: true }] }],
@@ -322,6 +352,114 @@ describe("marketplace draft gateway", () => {
       platform: "amazon", marketplaceId: "ATVPDKIKX0DER", locale: "en-US", productType: "HOME", sku: "SKU-1",
       attributes: { purchasable_offer: price, fulfillment_availability: inventory },
     }, "SKU-1")).resolves.toMatchObject({ snapshot: { externalState: "ACCEPTED", price, inventory } });
+  });
+
+  it("reads and replaces the complete approved Amazon Listing state", async () => {
+    const attributes = {
+      item_name: [{ language_tag: "en_US", value: "Personalized pillow" }],
+      purchasable_offer: [{ currency: "USD", our_price: [{ schedule: [{ value_with_tax: 26.4 }] }] }],
+      fulfillment_availability: [{ fulfillment_channel_code: "DEFAULT", quantity: 7 }],
+    };
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("auth/o2/token")) return json({ access_token: "access", expires_in: 3600 });
+      if (init?.method === "PUT") {
+        expect(JSON.parse(String(init.body))).toEqual({ productType: "HOME", requirements: "LISTING", attributes });
+        return json({ sku: "SKU-1", status: "ACCEPTED", submissionId: "sync-full-1", issues: [] });
+      }
+      expect(url).toContain("includedData=attributes%2Csummaries%2Cissues%2CfulfillmentAvailability");
+      return json({ productType: "HOME", attributes, summaries: [{ status: ["BUYABLE"] }], issues: [] });
+    });
+    const gateway = new HttpMarketplaceDraftGateway(request as typeof fetch, { AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test" });
+    const account = { authorizationMode: "amazon_private" as const, externalAccountId: "A1SELLER", platform: "amazon" as const, region: "NA" as const };
+    const credential = { clientId: "client", clientSecret: "secret", refreshToken: "refresh", sellingPartnerId: "A1SELLER" };
+    const payload = { platform: "amazon" as const, marketplaceId: "ATVPDKIKX0DER", locale: "en-US", productType: "HOME", sku: "SKU-1", attributes };
+
+    await expect(gateway.readOnlineListing(account, credential, payload, "SKU-1")).resolves.toMatchObject({
+      snapshot: {
+        externalState: "BUYABLE",
+        content: { productType: "HOME", attributes: { item_name: attributes.item_name } },
+        price: attributes.purchasable_offer,
+        inventory: attributes.fulfillment_availability,
+      },
+    });
+    await expect(gateway.updateOnlineListingContent(account, credential, payload, "SKU-1")).resolves.toMatchObject({
+      snapshot: {
+        externalState: "ACCEPTED",
+        content: { productType: "HOME", attributes: { item_name: attributes.item_name } },
+        price: attributes.purchasable_offer,
+        inventory: attributes.fulfillment_availability,
+      },
+    });
+  });
+
+  it("updates Etsy content, inventory, and personalization as one guarded operation", async () => {
+    const requests: Array<{ body: unknown; url: string }> = [];
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/oauth/token")) return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
+      if (url.includes("/personalization")) {
+        requests.push({ body: JSON.parse(String(init?.body)), url });
+        return json({});
+      }
+      if (url.includes("/inventory?legacy=true")) {
+        requests.push({ body: JSON.parse(String(init?.body)), url });
+        return json({ products: [], price_on_property: [], quantity_on_property: [], sku_on_property: [], readiness_state_on_property: [] });
+      }
+      const body = new URLSearchParams(String(init?.body));
+      requests.push({ body: Object.fromEntries(body), url });
+      return json({ listing_id: 456, state: "active" });
+    });
+    const gateway = new HttpMarketplaceDraftGateway(request as typeof fetch, {
+      ETSY_APP_KEYSTRING: "etsy-key",
+      ETSY_APP_SHARED_SECRET: "etsy-shared",
+    });
+    const payload = {
+      platform: "etsy" as const, marketplaceId: "etsy", locale: "en-US", title: "Named pillow", description: "Line one\nLine two",
+      tags: ["pillow", "gift"], price: { amount: 24.5, currency: "USD" }, quantity: 4, whoMade: "i_did" as const,
+      whenMade: "2020_2026", taxonomyId: 1, shippingProfileId: 2, readinessStateId: 3, isSupply: false,
+      personalization: { instructions: "Enter a name", required: true, maxAllowedCharacters: 24 },
+      inventory: {
+        products: [{ sku: "PILLOW-PINK", propertyValues: [], offerings: [{ price: { amount: 24.5, currency: "USD" }, quantity: 4, isEnabled: true, readinessStateId: 3 }] }],
+        priceOnProperty: [], quantityOnProperty: [], skuOnProperty: [], readinessStateOnProperty: [],
+      },
+    };
+    await expect(gateway.updateOnlineListingContent({
+      authorizationMode: "etsy_oauth", externalAccountId: "9001", platform: "etsy", region: "GLOBAL",
+    }, { userId: "12345", refreshToken: "12345.refresh" }, payload, "456")).resolves.toMatchObject({
+      snapshot: { externalState: "UPDATE_ACCEPTED", content: { title: "Named pillow", personalization: payload.personalization } },
+    });
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.body).toMatchObject({ title: "Named pillow", description: "Line one\nLine two", tags: "pillow,gift", is_personalizable: "true" });
+    expect(requests[1]?.body).toMatchObject({ products: [{ sku: "PILLOW-PINK" }] });
+    expect(requests[2]?.body).toMatchObject({ personalization_questions: [{ instructions: "Enter a name", required: true, max_allowed_characters: 24 }] });
+  });
+
+  it("marks a partially applied Etsy full-content update as uncertain", async () => {
+    let listingUpdated = false;
+    const request = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/oauth/token")) return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
+      if (url.includes("/inventory?legacy=true")) return json({ error: "inventory rejected" }, 400);
+      listingUpdated = true;
+      return json({ listing_id: 456, state: "active" });
+    });
+    const promise = new HttpMarketplaceDraftGateway(request as typeof fetch, {
+      ETSY_APP_KEYSTRING: "etsy-key",
+      ETSY_APP_SHARED_SECRET: "etsy-shared",
+    }).updateOnlineListingContent({ authorizationMode: "etsy_oauth", externalAccountId: "9001", platform: "etsy", region: "GLOBAL" }, {
+      userId: "12345", refreshToken: "12345.refresh",
+    }, {
+      platform: "etsy", marketplaceId: "etsy", locale: "en-US", title: "Pillow", description: "Pillow", tags: [],
+      price: { amount: 10, currency: "USD" }, quantity: 1, whoMade: "i_did", whenMade: "2020_2026",
+      taxonomyId: 1, shippingProfileId: 2, readinessStateId: 3,
+      inventory: {
+        products: [{ sku: "SKU", propertyValues: [], offerings: [{ price: { amount: 10, currency: "USD" }, quantity: 1, isEnabled: true, readinessStateId: 3 }] }],
+        priceOnProperty: [], quantityOnProperty: [], skuOnProperty: [], readinessStateOnProperty: [],
+      },
+    }, "456");
+    await expect(promise).rejects.toMatchObject({ outcomeUncertain: true, retryable: false } satisfies Partial<MarketplaceConnectorError>);
+    expect(listingUpdated).toBe(true);
   });
 
   it("marks a lost Etsy create response as uncertain so a retry cannot duplicate the draft", async () => {

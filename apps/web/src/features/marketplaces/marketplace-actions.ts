@@ -3,6 +3,7 @@
 import type {
   MarketplaceAccountView,
   MarketplaceAutomationRuleView,
+  MarketplaceListingSyncAction,
   MarketplaceListingSyncRequestView,
   MarketplaceOAuthStartView,
   MarketplacePublicationRequestView,
@@ -18,6 +19,13 @@ export interface MarketplaceActionState {
   redirectUrl?: string;
   status: "idle" | "success" | "error";
 }
+
+const listingSyncQueuedMessages: Record<MarketplaceListingSyncAction, string> = {
+  read: "在线价格与库存读取已排队。",
+  read_full_content: "在线完整内容读取已排队。",
+  push_price_inventory: "批准价格与库存写入已排队。",
+  push_full_content: "完整批准内容写入已排队。",
+};
 
 export async function createMarketplaceAccount(
   _previous: MarketplaceActionState,
@@ -242,10 +250,11 @@ export async function createMarketplaceListingSync(
   _previous: MarketplaceActionState,
   formData: FormData,
 ): Promise<MarketplaceActionState> {
+  const action = value(formData, "action") as MarketplaceListingSyncAction;
   const response = await marketplaceRequest<MarketplaceListingSyncRequestView>("/v1/marketplace-listing-syncs", {
     body: JSON.stringify({
       accountId: value(formData, "accountId"),
-      action: value(formData, "action"),
+      action,
       listingId,
       listingVersionId,
       sourcePublicationRequestId: value(formData, "sourcePublicationRequestId"),
@@ -255,7 +264,7 @@ export async function createMarketplaceListingSync(
   });
   if (!response.ok) return failure(response.message);
   revalidatePath(`/listings/${listingId}`);
-  return success(value(formData, "action") === "read" ? "在线价格与库存对账已排队。" : "批准价格与库存写入已排队。");
+  return success(listingSyncQueuedMessages[action] ?? "在线 Listing 同步已排队。");
 }
 
 export async function createMarketplaceAutomationRule(
