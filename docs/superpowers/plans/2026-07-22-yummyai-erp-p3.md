@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** P3-A through P3-G are locally implemented and have current-worktree full gates, fresh-database migration, backup/restore, and populated browser evidence. Exact-candidate clean commit and CI, outstanding P1/P2, and real-provider gates remain open until their evidence is recorded.
+**Status:** P3-A through P3-G are implemented and have a pushed clean code candidate, green CI, fresh-database migration, backup/restore, and populated browser evidence. Outstanding P1/P2 and real-provider gates remain open, so P3 is not a release candidate for authorized marketplace operations.
 
 **Goal:** Extend the tenant-isolated fulfillment system into a complete inventory, procurement, finance, advertising, forecasting, and operating-analysis loop without rewriting marketplace, order, or production evidence.
 
@@ -119,7 +119,7 @@ Starting P3 does not waive these gates and does not make the incomplete fulfillm
 - [x] Applied local migration and refreshed local permissions.
 - [x] Populated desktop and 390 px browser evidence.
 - [x] Current-worktree full local gates.
-- [ ] Exact-candidate clean commit, push, and CI.
+- [x] Exact-candidate clean commit, push, and CI.
 
 Current local implementation evidence on 2026-07-23:
 
@@ -149,7 +149,7 @@ Current local implementation evidence on 2026-07-23:
 - [x] Cross-tenant, replay, changed-payload, correction, exact-FX, completeness, and privilege integration coverage.
 - [x] Real-API finance workspace with explicit empty, unauthorized, forbidden, failed, and incomplete states.
 - [x] Current-worktree full gates plus populated desktop and 390 px browser evidence.
-- [ ] Exact-candidate clean commit, push, and CI.
+- [x] Exact-candidate clean commit, push, and CI.
 - [ ] Authorized Amazon/Etsy settlement retrieval acceptance evidence.
 
 ## Phase P3-F: advertising, VOC, and service
@@ -194,7 +194,7 @@ Current local implementation evidence on 2026-07-23:
 - [x] Full-worktree unit, integration, E2E, production build, and rule gates.
 - [x] Fresh-database migration plus current-worktree backup/restore and
   populated desktop/390 px browser evidence.
-- [ ] Exact-candidate clean commit, push, CI, and rerun of release drills.
+- [x] Exact-candidate clean commit, push, CI, and rerun of release drills.
 - [ ] Outstanding P1/P2 and authorized inventory, settlement, advertising,
   supplier, carrier, and marketplace acceptance evidence.
 
@@ -223,9 +223,29 @@ Focused implementation evidence on 2026-07-24:
   letter. Both widths retained fifteen navigation items without document-level
   overflow or browser console errors; mobile table overflow remained inside
   each table container.
-- These checks are current-worktree evidence only. They do not satisfy the
-  exact-candidate clean commit/CI or authorized-provider release gates listed
-  above.
+- These focused checks are supplemented by the exact-candidate evidence below.
+  They do not satisfy the authorized-provider release gates listed above.
+
+Exact-candidate evidence recorded on 2026-07-24:
+
+- Clean code candidate `5e86e8bf33508f282088d6d98d442068e2eaa181` is pushed on
+  `codex/p3-forecasting-operations`.
+- GitHub Actions run
+  `https://github.com/ymyspirit/YummyAi/actions/runs/30061088615` passed all 36
+  migrations through `0036_p3_api_client_authentication`, `drizzle-kit check`,
+  lint, typecheck, unit, integration, Web/extension E2E, production build,
+  extension ZIP, and the tracked-file credential scan with Node 24.17.0 and
+  pnpm 11.10.0.
+- The candidate backup manifest recorded PostgreSQL SHA-256
+  `1d8de221e84015487c01ca96ce0d0c694685c60e277744a311ff1611ff88e5fe`
+  and 46 private objects. The non-destructive restore drill reproduced core
+  counts `1526|640|303|69|64|511|8|6931` for organizations, captures, assets,
+  inventory, profit, forecasts, Webhook attempts, and audits, restored all 46
+  objects, and removed the verification database and bucket.
+- A real non-demo development restart served `/operating-cockpit` at 1440x900
+  and 390x844. Both widths retained 15 navigation links, zero main alerts, and
+  zero document-level horizontal overflow. The page exposed the populated
+  forecast and Webhook evidence, and the browser reported no page errors.
 
 ## P3-F implementation ledger
 
@@ -240,7 +260,7 @@ Focused implementation evidence on 2026-07-24:
 - [x] Focused contract, database integration, Web render, navigation, and type checks.
 - [x] Full-worktree lint, unit, integration, E2E, build, and migration gates.
 - [x] Populated desktop and 390 px browser verification.
-- [ ] Exact-candidate clean commit, push, and CI.
+- [x] Exact-candidate clean commit, push, and CI.
 - [ ] Authorized Amazon Ads/Etsy Ads retrieval acceptance evidence.
 
 ## P3-A implementation ledger
@@ -258,7 +278,10 @@ Local implementation evidence on 2026-07-23:
 - Migration `0029_p3_inventory_kernel` applies under PostgreSQL 17 and passes `drizzle-kit check`.
 - The inventory integration suite covers replay, changed-payload conflict, unit mismatch, negative availability, 12 concurrent reservations against 10 available units, release replay, paired transfer movements, cancellation, append-only grants, cross-tenant IDs, and projection rebuild equivalence.
 - `/inventory` consumes `/v1/inventory/workspace` through the local OIDC service identity. Empty and populated states were checked at 1280 px and 390 px; the page has no document-level horizontal overflow and mobile table overflow remains scoped to its table container.
-- Root lint, typecheck, unit, integration, Web and extension E2E, production build, project-rule, migration, and documentation checks pass locally. This is not exact-candidate CI evidence and does not close any deferred provider gate.
+- Root lint, typecheck, unit, integration, Web and extension E2E, production
+  build, project-rule, migration, and documentation checks passed locally. The
+  later exact-candidate evidence is recorded above and does not close any
+  deferred provider gate.
 
 ## P3-B implementation ledger
 
@@ -293,9 +316,9 @@ Local implementation evidence on 2026-07-23:
   overflow, table overflow is scoped to its container, and a fresh browser tab
   reports no console errors.
 - Root lint, typecheck, unit, integration, Web and extension E2E, production
-  build, project-rule, migration, and diff checks pass locally. This is not
-  exact-candidate CI evidence and does not close P1/P2 provider authorization or
-  future P3-C provider inventory gates.
+  build, project-rule, migration, and diff checks passed locally. The later
+  exact-candidate evidence is recorded above and does not close P1/P2 provider
+  authorization or P3-C provider inventory gates.
 
 ## P3-C implementation ledger
 
@@ -313,7 +336,7 @@ Local implementation evidence on 2026-07-23:
   stable fifteen-item navigation.
 - [x] Current-worktree full local gates plus populated desktop and 390 px
   browser/E2E evidence.
-- [ ] Exact-candidate clean commit, push, and CI.
+- [x] Exact-candidate clean commit, push, and CI.
 - [ ] Authorized Amazon/Etsy/3PL inventory-report acceptance evidence.
 
 Current local implementation evidence on 2026-07-23:
@@ -330,7 +353,7 @@ Current local implementation evidence on 2026-07-23:
 - `/channel-inventory` consumes the authenticated workspace API and does not
   contain demo data. The populated local workspace was checked at 1440 px and
   the real API route passed a 390 px document-overflow assertion. Exact-candidate
-  CI and authorized provider evidence remain pending.
+  CI is recorded above; authorized provider evidence remains pending.
 
 ## P3 acceptance matrix
 
