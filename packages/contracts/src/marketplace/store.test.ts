@@ -6,6 +6,7 @@ import {
   MarketplaceAccountViewSchema,
   MarketplaceCapabilitySnapshotViewSchema,
   MarketplaceOAuthCompleteInputSchema,
+  MarketplaceQuotaTelemetrySchema,
   SyncMarketplaceCapabilitiesInputSchema,
 } from "./store.js";
 
@@ -59,6 +60,7 @@ describe("marketplace account contracts", () => {
       lastHealthAt: null,
       lastCapabilitySyncAt: null,
       capabilityExpiresAt: null,
+      quota: null,
       lastErrorCode: null,
       createdAt: "2026-07-19T00:00:00.000Z",
       updatedAt: "2026-07-19T00:00:00.000Z",
@@ -80,6 +82,22 @@ describe("marketplace account contracts", () => {
       refreshToken: "Atzr|refresh",
       accessToken: "must-be-rejected",
     })).toThrow();
+  });
+
+  it("normalizes bounded marketplace quota windows without raw headers", () => {
+    expect(MarketplaceQuotaTelemetrySchema.parse({
+      platform: "etsy",
+      windows: [
+        { scope: "second", limit: 10, remaining: 7 },
+        { scope: "day", limit: 10_000, remaining: 9_123 },
+      ],
+      observedAt: "2026-07-24T12:00:00.000Z",
+    })).toMatchObject({ windows: [{ scope: "second" }, { scope: "day" }] });
+    expect(MarketplaceQuotaTelemetrySchema.safeParse({
+      platform: "amazon",
+      windows: [{ scope: "second" }],
+      observedAt: "2026-07-24T12:00:00.000Z",
+    }).success).toBe(false);
   });
 
   it("requires a high-entropy OAuth state and rejects platform token fields", () => {

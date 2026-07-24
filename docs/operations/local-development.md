@@ -80,6 +80,9 @@ pnpm --filter @yummyai/api test:integration -- marketplace-capability.integratio
 pnpm --filter @yummyai/api test:integration -- marketplace-publication.integration.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-publication.processor.test.ts
 pnpm --filter @yummyai/worker test -- marketplace-listing-sync.processor.test.ts
+pnpm --filter @yummyai/worker test:integration -- marketplace-publication-lease.integration.test.ts
+pnpm --filter @yummyai/database test:integration -- tenant-isolation.integration.test.ts
+pnpm --filter @yummyai/database exec drizzle-kit check
 ```
 
 P1-B authorization requires registered marketplace applications. Configure the variables documented in `docs/integration/marketplace-accounts.md`. Real Etsy OAuth requires an exact registered HTTPS callback, so local browser testing uses an approved HTTPS development hostname or tunnel rather than changing the callback to an unregistered localhost URL.
@@ -89,6 +92,8 @@ The local API can start without marketplace application credentials. Authorizati
 P1-D Amazon execution is a non-persisting Listings Items validation preview. Etsy execution creates a real provider draft. P1-E starts only through `POST /v1/marketplace-publications/:id/continue`; it performs a real Amazon submission or configures media/inventory/personalization and activates an Etsy draft. Use only approved non-production stores and test Listing data. Uncertain external mutations are intentionally held for reconciliation instead of retried.
 
 The Listing `Channels` tab uses the same API and Worker path for site replication, online price/inventory reconciliation, and approval-trigger automation. A real online sync smoke test requires an already published non-production Listing. Run `read` first, verify the normalized snapshot, then use `push_price_inventory` only with deliberately controlled test price/quantity values. An uncertain push must remain in `reconciliation_required`; do not manually replay the job before a read confirms provider state.
+
+Successful publication and online-sync operations append normalized provider quota evidence to `marketplace_quota_snapshots`. Inspect the latest safe projection on `/stores`: Amazon commonly shows only the operation limit, while Etsy can show per-second and per-day remaining/limit values. `未采集` is correct before a supported successful response. Do not populate release evidence manually, and do not expect raw headers or provider request IDs in the database or API response.
 
 ## P2 order-kernel development
 

@@ -18,7 +18,7 @@ describe("marketplace draft gateway", () => {
         status: "INVALID",
         submissionId: "submission-1",
         issues: [{ code: "90220", message: "Brand is required", severity: "ERROR", attributeNames: ["brand"] }],
-      });
+      }, 200, { "x-amzn-ratelimit-limit": "5.5" });
     });
     const result = await new HttpMarketplaceDraftGateway(request as typeof fetch, {
       AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test",
@@ -45,6 +45,7 @@ describe("marketplace draft gateway", () => {
       externalState: "INVALID",
       externalSubmissionId: "submission-1",
       issues: [{ code: "90220", path: "brand", severity: "blocker" }],
+      quota: { platform: "amazon", windows: [{ scope: "second", limit: 5.5 }] },
     });
     expect(result.externalListingId).toBeUndefined();
   });
@@ -64,7 +65,12 @@ describe("marketplace draft gateway", () => {
       expect(body.get("shipping_profile_id")).toBe("66");
       expect(body.get("tags")).toBe("pillow,gift");
       expect(body.has("processing_min")).toBe(false);
-      return json({ listing_id: 456, state: "draft" });
+      return json({ listing_id: 456, state: "draft" }, 200, {
+        "x-limit-per-second": "10",
+        "x-remaining-this-second": "7",
+        "x-limit-per-day": "10000",
+        "x-remaining-today": "9123",
+      });
     });
     const result = await new HttpMarketplaceDraftGateway(request as typeof fetch, {
       ETSY_APP_KEYSTRING: "etsy-key",
@@ -94,6 +100,13 @@ describe("marketplace draft gateway", () => {
       externalListingId: "456",
       externalState: "draft",
       refreshedCredential: { refreshToken: "12345.rotated" },
+      quota: {
+        platform: "etsy",
+        windows: [
+          { scope: "second", limit: 10, remaining: 7 },
+          { scope: "day", limit: 10000, remaining: 9123 },
+        ],
+      },
     });
   });
 
@@ -336,6 +349,6 @@ describe("marketplace draft gateway", () => {
   });
 });
 
-function json(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+function json(value: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...headers } });
 }

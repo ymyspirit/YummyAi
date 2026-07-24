@@ -54,7 +54,9 @@ Unknown fields are rejected. Token, secret, password, and API-key fields are not
 - `GET /v1/marketplace-accounts`
 - `GET /v1/marketplace-accounts/{id}`
 
-Responses include account identity, requested/granted scopes, capabilities, account status, credential status, and health metadata. They expose `hasCredential` as a boolean only.
+Responses include account identity, requested/granted scopes, capabilities, account status, credential status, health metadata, and the latest normalized successful-response quota snapshot when one has been observed. They expose `hasCredential` as a boolean only.
+
+`quota` is `null` until a publication or online Listing sync receives usable provider quota headers. Amazon currently commonly exposes only an operation rate limit through `x-amzn-ratelimit-limit`. Etsy may expose per-second and per-day limit/remaining windows. The response never includes raw headers, request IDs, access tokens, or provider payloads.
 
 ## Update account
 

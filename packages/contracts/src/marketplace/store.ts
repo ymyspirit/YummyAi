@@ -44,6 +44,22 @@ export const MarketplaceCapabilitySchema = z.enum([
   "notification_read",
 ]);
 
+export const MarketplaceQuotaWindowSchema = z.object({
+  scope: z.enum(["second", "day", "operation"]),
+  limit: z.number().positive().optional(),
+  remaining: z.number().nonnegative().optional(),
+  resetAt: z.iso.datetime().optional(),
+}).strict().refine(
+  (value) => value.limit !== undefined || value.remaining !== undefined || value.resetAt !== undefined,
+  "A quota window must expose at least one normalized value",
+);
+
+export const MarketplaceQuotaTelemetrySchema = z.object({
+  platform: MarketplacePlatformSchema,
+  windows: z.array(MarketplaceQuotaWindowSchema).min(1).max(4),
+  observedAt: z.iso.datetime(),
+}).strict();
+
 export const AmazonPrivateAuthorizationInputSchema = z.object({
   sellingPartnerId: z.string().trim().min(1).max(160),
   clientId: z.string().trim().min(1).max(2_048),
@@ -134,6 +150,7 @@ export const MarketplaceAccountViewSchema = z.object({
   lastHealthAt: z.iso.datetime().nullable(),
   lastCapabilitySyncAt: z.iso.datetime().nullable(),
   capabilityExpiresAt: z.iso.datetime().nullable(),
+  quota: MarketplaceQuotaTelemetrySchema.nullable(),
   lastErrorCode: z.string().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -145,6 +162,8 @@ export type MarketplaceAccountStatus = z.infer<typeof MarketplaceAccountStatusSc
 export type MarketplaceCredentialStatus = z.infer<typeof MarketplaceCredentialStatusSchema>;
 export type MarketplaceHealthStatus = z.infer<typeof MarketplaceHealthStatusSchema>;
 export type MarketplaceCapability = z.infer<typeof MarketplaceCapabilitySchema>;
+export type MarketplaceQuotaWindow = z.infer<typeof MarketplaceQuotaWindowSchema>;
+export type MarketplaceQuotaTelemetry = z.infer<typeof MarketplaceQuotaTelemetrySchema>;
 export type AmazonPrivateAuthorizationInput = z.infer<typeof AmazonPrivateAuthorizationInputSchema>;
 export type MarketplaceOAuthCompleteInput = z.infer<typeof MarketplaceOAuthCompleteInputSchema>;
 export type MarketplaceOAuthStartView = z.infer<typeof MarketplaceOAuthStartViewSchema>;

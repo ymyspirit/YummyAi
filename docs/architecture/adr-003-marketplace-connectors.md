@@ -29,6 +29,8 @@ P1-E actions are separate child commands rather than mutations of the P1-D reque
 
 Online price/inventory reconciliation uses separate immutable `marketplace_listing_sync_requests` and append-only `marketplace_listing_sync_events`. A request pins the approved Listing version and the published request that owns the account, marketplace, and external Listing ID. Provider reads are normalized to the same writable price/inventory shape as the approved version before checksum comparison. Provider-generated IDs and Money wrappers are not treated as business drift. Mutations with an unknown outcome require reconciliation and cannot be replayed automatically.
 
+Successful connector responses may expose rate-limit telemetry. The connector normalizes supported values into bounded quota windows and discards the raw headers. Publication and online-sync Workers append tenant-scoped `marketplace_quota_snapshots` in the same transaction as the corresponding result event. The table is insert/select only for the application role; the account API projects only the latest normalized snapshot. Amazon typically supplies an operation rate limit, while Etsy may supply per-second and per-day limit/remaining windows.
+
 Same-platform site/language copies create a new draft Listing/version plus immutable `listing_replications` lineage; approval never propagates. `marketplace_automation_rules` are mutable tenant configuration, while each trigger outcome is an immutable `marketplace_automation_runs` row. Rules delegate to the normal publication or sync service so authorization, capability, rights, validation, and idempotency checks remain authoritative.
 
 ## Invariants
@@ -55,6 +57,7 @@ Same-platform site/language copies create a new draft Listing/version plus immut
 20. Cancellation is accepted only before connector processing starts and is represented by a new immutable event, never by changing or deleting historical publication evidence.
 21. Only one publication per tenant/account may hold the connector execution lease; the lease is acquired before the request enters `processing`.
 22. Provider retry windows can lengthen but cannot shorten the local exponential delay or exceed the configured safety cap.
+23. Quota snapshots are append-only, tenant scoped, linked to exactly one publication or online-sync request, and contain no raw response headers or provider request identifiers.
 
 ## Consequences
 

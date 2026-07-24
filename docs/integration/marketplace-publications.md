@@ -54,7 +54,8 @@ Every completed external step appends evidence before the next step starts: `con
 - A lost Etsy create response, an Etsy `5xx`, an invalid success response, or a failed Etsy external-ID writeback becomes `reconciliation_required`; automatic retry is blocked to prevent duplicate drafts.
 - Research-domain, deleted, changed, rights-unapproved, or checksum-mismatched assets fail before connector invocation or upload.
 - Scheduled or queued requests can be cancelled without mutating their request row or prior events. Cancellation never rolls back a provider mutation that has already started.
-- Worker replicas serialize connector execution per tenant/account with a database advisory lease acquired before `processing`. Separate accounts remain independent; provider quota windows are applied to retries, while successful-response quota telemetry remains a separate P1-G control.
+- Worker replicas serialize connector execution per tenant/account with a database advisory lease acquired before `processing`. Separate accounts remain independent; provider quota windows are applied to retries.
+- Successful publication and online Listing-sync responses normalize supported quota headers into bounded `second`, `day`, or `operation` windows. The Worker appends the snapshot in the same tenant transaction as the result event. Amazon commonly reports only a rate limit; Etsy can report per-second and per-day limit/remaining values. Raw headers and request IDs are discarded.
 
 Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check and an approved Etsy test-shop draft plus configure/upload/activate/status check. CI uses mock connectors and cannot satisfy that release gate.
 

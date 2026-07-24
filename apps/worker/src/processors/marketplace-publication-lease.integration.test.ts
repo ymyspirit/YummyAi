@@ -155,5 +155,19 @@ describe("marketplace publication account lease", () => {
       [scheduledRequestId],
     );
     expect(events.map((event) => event.status)).toEqual(["scheduled", "queued", "processing"]);
+
+    const observedAt = "2026-07-24T12:00:00.000Z";
+    await repository.complete(context, scheduledRequestId, {
+      externalState: "VALID",
+      issues: [],
+      quota: { platform: "amazon", windows: [{ scope: "second", limit: 5.5 }], observedAt },
+      status: "validation_passed",
+      submittedAt: new Date(observedAt),
+    });
+    const [quota] = await database.client.unsafe<Array<{ operation: string; platform: string; windows: unknown }>>(
+      `select operation, platform, windows from marketplace_quota_snapshots where publication_request_id = $1`,
+      [scheduledRequestId],
+    );
+    expect(quota).toEqual({ operation: "validation_passed", platform: "amazon", windows: [{ scope: "second", limit: 5.5 }] });
   });
 });

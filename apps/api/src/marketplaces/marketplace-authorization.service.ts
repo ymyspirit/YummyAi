@@ -345,6 +345,7 @@ export class MarketplaceAuthorizationService {
       lastHealthAt: account.lastHealthAt?.toISOString() ?? null,
       lastCapabilitySyncAt: account.lastCapabilitySyncAt?.toISOString() ?? null,
       capabilityExpiresAt: account.capabilityExpiresAt?.toISOString() ?? null,
+      quota: null,
       lastErrorCode: account.lastErrorCode,
       createdAt: account.createdAt.toISOString(),
       updatedAt: account.updatedAt.toISOString(),

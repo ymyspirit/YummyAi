@@ -21,6 +21,7 @@ import {
   marketplaceCredentials,
   marketplacePublicationEvents,
   marketplacePublicationRequests,
+  marketplaceQuotaSnapshots,
   type DatabaseConnection,
   type MarketplacePublicationAssetPin,
   type TenantTransaction,
@@ -490,6 +491,19 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
           rotatedAt: result.submittedAt,
           updatedAt: result.submittedAt,
         }).where(eq(marketplaceCredentials.id, stored.id));
+      }
+      if (result.quota) {
+        await tx.insert(marketplaceQuotaSnapshots).values({
+          id: createEntityId(),
+          tenantId: context.tenantId,
+          accountId: request.accountId,
+          platform: request.platform,
+          operation: result.status,
+          publicationRequestId: requestId,
+          listingSyncRequestId: null,
+          windows: [...result.quota.windows],
+          observedAt: new Date(result.quota.observedAt),
+        });
       }
       await insertEvent(tx, context, requestId, latest.sequence + 1, {
         status: result.status,

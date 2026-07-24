@@ -168,6 +168,7 @@ function MarketplaceAccountRecord({ account, publicationCount }: { account: Mark
           <Fact label="健康检查" value={healthLabel(account.healthStatus)} />
           <Fact label="能力同步" value={formatDate(account.lastCapabilitySyncAt)} />
           <Fact label="能力有效期" value={formatDate(account.capabilityExpiresAt)} />
+          <Fact label="API 配额" value={formatQuota(account.quota)} />
           <Fact label="发布请求" value={`${publicationCount} 次`} />
         </dl>
         <div className="store-capabilities">
@@ -260,4 +261,15 @@ function healthLabel(status: MarketplaceAccountView["healthStatus"]): string {
 function formatDate(value: string | null): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatQuota(quota: MarketplaceAccountView["quota"]): string {
+  if (!quota) return "未采集";
+  return quota.windows.map((window) => {
+    const scope = window.scope === "second" ? "/秒" : window.scope === "day" ? "/日" : "";
+    if (window.limit !== undefined && window.remaining !== undefined) return `${window.remaining}/${window.limit}${scope}`;
+    if (window.limit !== undefined) return `${window.limit}${scope}`;
+    if (window.remaining !== undefined) return `剩余 ${window.remaining}${scope}`;
+    return `重置于 ${formatDate(window.resetAt ?? null)}`;
+  }).join(" · ");
 }

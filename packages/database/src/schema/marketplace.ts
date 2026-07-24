@@ -4,6 +4,7 @@ import type {
   MarketplaceCapability,
   MarketplaceOnlineListingSnapshot,
   MarketplacePublicationIssue,
+  MarketplaceQuotaWindow,
 } from "@yummyai/contracts";
 import { sql } from "drizzle-orm";
 import { boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
@@ -261,6 +262,35 @@ export const marketplaceListingSyncEvents = pgTable(
     uniqueIndex("marketplace_listing_sync_events_tenant_id_unique").on(table.tenantId, table.id),
     uniqueIndex("marketplace_listing_sync_events_sequence_unique").on(table.tenantId, table.requestId, table.sequence),
     index("marketplace_listing_sync_events_latest_idx").on(table.tenantId, table.requestId, table.sequence),
+  ],
+);
+
+export const marketplaceQuotaSnapshots = pgTable(
+  "marketplace_quota_snapshots",
+  {
+    id: uuid("id").primaryKey(),
+    tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id").notNull(),
+    platform: text("platform").notNull(),
+    operation: text("operation").notNull(),
+    publicationRequestId: uuid("publication_request_id"),
+    listingSyncRequestId: uuid("listing_sync_request_id"),
+    windows: jsonb("windows").$type<MarketplaceQuotaWindow[]>().notNull(),
+    observedAt: timestamp("observed_at", { mode: "date", withTimezone: true }).notNull(),
+    recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("marketplace_quota_snapshots_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+    check("marketplace_quota_snapshots_platform_check", sql`${table.platform} in ('amazon','etsy')`),
+    check("marketplace_quota_snapshots_operation_check", sql`${table.operation} ~ '^[a-z][a-z0-9_]{0,79}$'`),
+    check("marketplace_quota_snapshots_source_check", sql`(${table.publicationRequestId} is null) <> (${table.listingSyncRequestId} is null)`),
+    foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "marketplace_quota_snapshots_account_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.tenantId, table.publicationRequestId], foreignColumns: [marketplacePublicationRequests.tenantId, marketplacePublicationRequests.id], name: "marketplace_quota_snapshots_publication_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.tenantId, table.listingSyncRequestId], foreignColumns: [marketplaceListingSyncRequests.tenantId, marketplaceListingSyncRequests.id], name: "marketplace_quota_snapshots_listing_sync_fk" }).onDelete("restrict"),
+    uniqueIndex("marketplace_quota_snapshots_tenant_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("marketplace_quota_snapshots_publication_unique").on(table.tenantId, table.publicationRequestId, table.operation, table.observedAt),
+    uniqueIndex("marketplace_quota_snapshots_listing_sync_unique").on(table.tenantId, table.listingSyncRequestId, table.operation, table.observedAt),
+    index("marketplace_quota_snapshots_account_idx").on(table.tenantId, table.accountId, table.observedAt),
   ],
 );
 

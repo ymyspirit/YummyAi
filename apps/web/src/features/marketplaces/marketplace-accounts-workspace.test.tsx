@@ -11,6 +11,7 @@ describe("marketplace accounts workspace", () => {
     );
     for (const label of ["连接", "授权", "能力", "可发布", "listing_write"]) expect(html).toContain(label);
     expect(html).toContain("同步能力");
+    expect(html).toContain("9123/10000/日");
     expect(html).not.toContain("refresh-token-value");
     expect(html).not.toContain("client-secret-value");
   });
@@ -22,6 +23,20 @@ describe("marketplace accounts workspace", () => {
     expect(html).toContain("新增店铺连接");
     expect(html).toContain("暂无店铺连接");
   });
+
+  it("renders reset-only quota windows without an undefined value", () => {
+    const resetOnlyAccount = account();
+    resetOnlyAccount.quota = {
+      platform: "amazon",
+      windows: [{ scope: "operation", resetAt: "2026-07-25T08:00:00.000Z" }],
+      observedAt: "2026-07-24T08:00:00.000Z",
+    };
+    const html = renderToStaticMarkup(
+      <MarketplaceAccountsWorkspace accounts={[resetOnlyAccount]} publications={[]} />,
+    );
+    expect(html).toContain("重置于");
+    expect(html).not.toContain("undefined");
+  });
 });
 
 function account(): MarketplaceAccountView {
@@ -29,6 +44,11 @@ function account(): MarketplaceAccountView {
     authorizationMode: "etsy_oauth",
     capabilities: ["listing_read", "listing_write", "media_write", "inventory_write"],
     capabilityExpiresAt: "2026-07-20T00:00:00.000Z",
+    quota: {
+      platform: "etsy",
+      windows: [{ scope: "day", limit: 10_000, remaining: 9_123 }],
+      observedAt: "2026-07-19T01:00:00.000Z",
+    },
     createdAt: "2026-07-19T00:00:00.000Z",
     credentialStatus: "valid",
     displayName: "Etsy Main",

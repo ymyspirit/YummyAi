@@ -3,6 +3,8 @@ import type {
   MarketplaceOnlineListingSnapshot,
   MarketplacePlatform,
   MarketplacePublicationIssue,
+  MarketplaceQuotaTelemetry,
+  MarketplaceQuotaWindow,
   MarketplaceRegion,
 } from "@yummyai/contracts";
 import { z } from "zod";
@@ -92,6 +94,7 @@ export interface MarketplaceDraftResult {
   externalMediaIds?: readonly string[];
   externalState: string;
   issues: readonly MarketplacePublicationIssue[];
+  quota?: MarketplaceQuotaTelemetry;
   refreshedCredential?: Readonly<Record<string, string>>;
   refreshedCredentialExpiresAt?: Date;
   status:
@@ -111,6 +114,7 @@ export interface MarketplaceDraftResult {
 
 export interface MarketplaceOnlineListingResult {
   issues: readonly MarketplacePublicationIssue[];
+  quota?: MarketplaceQuotaTelemetry;
   refreshedCredential?: Readonly<Record<string, string>>;
   refreshedCredentialExpiresAt?: Date;
   snapshot: MarketplaceOnlineListingSnapshot;
@@ -297,7 +301,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       issueLocale: payload.locale.replace("-", "_"),
       mode: "VALIDATION_PREVIEW",
     }).toString();
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       url.toString(),
       {
         method: "PUT",
@@ -314,6 +318,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalSubmissionId: response.submissionId,
       externalState: response.status,
       issues,
+      ...(quota ? { quota } : {}),
       status: invalid ? "validation_failed" : "validation_passed",
       submittedAt: new Date(),
     };
@@ -338,7 +343,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       marketplaceIds: payload.marketplaceId,
       issueLocale: payload.locale.replace("-", "_"),
     }).toString();
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       url.toString(),
       {
         method: "PUT",
@@ -356,6 +361,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalSubmissionId: response.submissionId,
       externalState: response.status,
       issues,
+      ...(quota ? { quota } : {}),
       status: rejected ? "publication_failed" : "submission_accepted",
       submittedAt: new Date(),
     };
@@ -385,7 +391,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       issueLocale: payload.locale.replace("-", "_"),
       includedData: "summaries,issues",
     }).toString();
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       url.toString(),
       { headers: amazonHeaders(accessToken) },
       AmazonListingStatusResponseSchema,
@@ -401,6 +407,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalListingId,
       externalState: statuses.join(",") || "PROCESSING",
       issues,
+      ...(quota ? { quota } : {}),
       status: blocker ? "publication_failed" : deactivated ? "deactivated" : published ? "published" : "sync_pending",
       submittedAt: new Date(),
     };
@@ -427,10 +434,11 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       issueLocale: payload.locale.replace("-", "_"),
       includedData: "attributes,summaries,issues,fulfillmentAvailability",
     }).toString();
-    const response = await this.requestJson(url.toString(), { headers: amazonHeaders(accessToken) }, AmazonListingStatusResponseSchema, "amazon", false);
+    const { data: response, quota } = await this.requestJson(url.toString(), { headers: amazonHeaders(accessToken) }, AmazonListingStatusResponseSchema, "amazon", false);
     const statuses = response.summaries.flatMap((summary) => summary.status);
     return {
       issues: response.issues.map(normalizeAmazonIssue),
+      ...(quota ? { quota } : {}),
       snapshot: {
         externalState: statuses.join(",") || "UNKNOWN",
         price: response.attributes.purchasable_offer ?? null,
@@ -462,13 +470,14 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     const endpoint = amazonEndpoint(account.region, this.environment);
     const url = new URL(`/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(payload.sku)}`, `${endpoint}/`);
     url.search = new URLSearchParams({ marketplaceIds: payload.marketplaceId, issueLocale: payload.locale.replace("-", "_") }).toString();
-    const response = await this.requestJson(url.toString(), {
+    const { data: response, quota } = await this.requestJson(url.toString(), {
       method: "PATCH",
       headers: { ...amazonHeaders(accessToken), "content-type": "application/json" },
       body: JSON.stringify({ productType: payload.productType, patches }),
     }, AmazonListingResponseSchema, "amazon", true);
     return {
       issues: response.issues.map(normalizeAmazonIssue),
+      ...(quota ? { quota } : {}),
       snapshot: { externalState: response.status, ...desired, observedAt: new Date().toISOString() },
     };
   }
@@ -484,7 +493,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     const clientId = requiredEnvironment(this.environment, "ETSY_APP_KEYSTRING", "etsy");
     const sharedSecret = requiredEnvironment(this.environment, "ETSY_APP_SHARED_SECRET", "etsy");
     const refreshToken = requireCredential(credential, "refreshToken", "etsy");
-    const token = await this.requestJson(
+    const { data: token } = await this.requestJson(
       "https://api.etsy.com/v3/public/oauth/token",
       {
         method: "POST",
@@ -513,7 +522,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     if (payload.tags.length > 0) body.set("tags", payload.tags.join(","));
     if (payload.shopSectionId !== undefined) body.set("shop_section_id", String(payload.shopSectionId));
     if (payload.isSupply !== undefined) body.set("is_supply", String(payload.isSupply));
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings`,
       {
         method: "POST",
@@ -537,6 +546,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalListingId: String(response.listing_id),
       externalState: response.state,
       issues: [],
+      ...(quota ? { quota } : {}),
       ...(refreshedCredential ? {
         refreshedCredential,
         refreshedCredentialExpiresAt: new Date(submittedAt.getTime() + 90 * 24 * 60 * 60 * 1_000),
@@ -557,6 +567,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     }
     const session = await this.etsySession(credential);
     const externalMediaIds: string[] = [];
+    let quota: MarketplaceQuotaTelemetry | undefined;
     for (const asset of [...media].sort((left, right) => left.rank - right.rank)) {
       if (!asset.mediaType.startsWith("image/")) {
         throw new MarketplaceConnectorError("etsy", "validation", "Etsy listing media must be an image");
@@ -566,7 +577,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       const body = new FormData();
       body.set("image", new Blob([bytes], { type: asset.mediaType }), asset.fileName);
       body.set("rank", String(asset.rank));
-      const response = await this.requestJson(
+      const { data: response, quota: responseQuota } = await this.requestJson(
         `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}/images`,
         {
           method: "POST",
@@ -577,6 +588,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "etsy",
         true,
       );
+      quota = responseQuota ?? quota;
       externalMediaIds.push(String(response.listing_image_id));
     }
     return {
@@ -584,6 +596,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalMediaIds,
       externalState: "media_uploaded",
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       status: "media_uploaded",
       submittedAt: new Date(),
@@ -597,8 +610,9 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     externalListingId: string,
   ): Promise<MarketplaceDraftResult> {
     const session = await this.etsySession(credential);
+    let quota: MarketplaceQuotaTelemetry | undefined;
     if (payload.inventory) {
-      await this.requestJson(
+      const response = await this.requestJson(
         etsyInventoryUrl(externalListingId),
         {
           method: "PUT",
@@ -609,6 +623,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "etsy",
         true,
       );
+      quota = response.quota ?? quota;
     }
     if (payload.personalization) {
       const url = new URL(
@@ -616,7 +631,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "https://openapi.etsy.com/",
       );
       url.searchParams.set("supports_multiple_personalization_questions", "true");
-      await this.requestJson(
+      const response = await this.requestJson(
         url.toString(),
         {
           method: "POST",
@@ -635,11 +650,13 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "etsy",
         true,
       );
+      quota = response.quota ?? quota;
     }
     return {
       externalListingId,
       externalState: "configuration_applied",
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       status: "configuration_applied",
       submittedAt: new Date(),
@@ -652,7 +669,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     externalListingId: string,
   ): Promise<MarketplaceDraftResult> {
     const session = await this.etsySession(credential);
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}`,
       {
         method: "PUT",
@@ -667,6 +684,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalListingId,
       externalState: response.state,
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       status: "activation_accepted",
       submittedAt: new Date(),
@@ -679,7 +697,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     externalListingId: string,
   ): Promise<MarketplaceDraftResult> {
     const session = await this.etsySession(credential);
-    const response = await this.requestJson(
+    const { data: response, quota } = await this.requestJson(
       `https://openapi.etsy.com/v3/application/listings/${encodeURIComponent(externalListingId)}`,
       { headers: session.headers },
       EtsyListingResponseSchema,
@@ -695,6 +713,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
       externalListingId,
       externalState: response.state,
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       status,
       submittedAt: new Date(),
@@ -708,12 +727,16 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     externalListingId: string,
   ): Promise<MarketplaceOnlineListingResult> {
     const session = await this.etsySession(credential);
-    const [listing, inventory] = await Promise.all([
+    const [listingResponse, inventoryResponse] = await Promise.all([
       this.requestJson(`https://openapi.etsy.com/v3/application/listings/${encodeURIComponent(externalListingId)}`, { headers: session.headers }, EtsyListingResponseSchema, "etsy", false),
       this.requestJson(etsyInventoryUrl(externalListingId), { headers: session.headers }, EtsyInventoryResponseSchema, "etsy", false),
     ]);
+    const listing = listingResponse.data;
+    const inventory = inventoryResponse.data;
+    const quota = inventoryResponse.quota ?? listingResponse.quota;
     return {
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       snapshot: {
         externalState: listing.state,
@@ -736,8 +759,9 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
   ): Promise<MarketplaceOnlineListingResult> {
     const session = await this.etsySession(credential);
     const desired = desiredOnlineListingState(payload);
+    let quota: MarketplaceQuotaTelemetry | undefined;
     if (payload.inventory) {
-      await this.requestJson(
+      const response = await this.requestJson(
         etsyInventoryUrl(externalListingId),
         {
           method: "PUT",
@@ -748,8 +772,9 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "etsy",
         true,
       );
+      quota = response.quota;
     } else {
-      await this.requestJson(
+      const response = await this.requestJson(
         `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}`,
         {
           method: "PUT",
@@ -760,9 +785,11 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         "etsy",
         true,
       );
+      quota = response.quota;
     }
     return {
       issues: [],
+      ...(quota ? { quota } : {}),
       ...session.rotation,
       snapshot: { externalState: "UPDATE_ACCEPTED", ...desired, observedAt: new Date().toISOString() },
     };
@@ -777,7 +804,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     const clientId = requiredEnvironment(this.environment, "ETSY_APP_KEYSTRING", "etsy");
     const sharedSecret = requiredEnvironment(this.environment, "ETSY_APP_SHARED_SECRET", "etsy");
     const refreshToken = requireCredential(credential, "refreshToken", "etsy");
-    const token = await this.requestJson(
+    const { data: token } = await this.requestJson(
       "https://api.etsy.com/v3/public/oauth/token",
       {
         method: "POST",
@@ -813,7 +840,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     credential: Readonly<Record<string, string>>,
   ): Promise<string> {
     const privateApplication = account.authorizationMode === "amazon_private";
-    const token = await this.requestJson(
+    const { data: token } = await this.requestJson(
       "https://api.amazon.com/auth/o2/token",
       {
         method: "POST",
@@ -842,7 +869,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
     schema: z.ZodType<T>,
     platform: MarketplacePlatform,
     mutation: boolean,
-  ): Promise<T> {
+  ): Promise<{ data: T; quota?: MarketplaceQuotaTelemetry }> {
     let response: Response;
     try {
       response = await this.request(url, { ...init, signal: AbortSignal.timeout(20_000) });
@@ -883,8 +910,53 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway {
         mutation,
       );
     }
-    return parsed.data;
+    const quota = normalizeQuotaTelemetry(platform, response.headers);
+    return { data: parsed.data, ...(quota ? { quota } : {}) };
   }
+}
+
+function normalizeQuotaTelemetry(
+  platform: MarketplacePlatform,
+  headers: Headers,
+): MarketplaceQuotaTelemetry | undefined {
+  const windows: MarketplaceQuotaWindow[] = [];
+  if (platform === "amazon") {
+    const limit = positiveHeaderNumber(headers, "x-amzn-ratelimit-limit");
+    if (limit !== undefined) windows.push({ scope: "second", limit });
+  } else {
+    const second = quotaWindow(headers, "second", "x-limit-per-second", "x-remaining-this-second");
+    const day = quotaWindow(headers, "day", "x-limit-per-day", "x-remaining-today");
+    if (second) windows.push(second);
+    if (day) windows.push(day);
+  }
+  if (windows.length === 0) return undefined;
+  return { platform, windows, observedAt: new Date().toISOString() };
+}
+
+function quotaWindow(
+  headers: Headers,
+  scope: MarketplaceQuotaWindow["scope"],
+  limitHeader: string,
+  remainingHeader: string,
+): MarketplaceQuotaWindow | undefined {
+  const limit = positiveHeaderNumber(headers, limitHeader);
+  const remaining = nonnegativeHeaderNumber(headers, remainingHeader);
+  if (limit === undefined && remaining === undefined) return undefined;
+  return { scope, ...(limit === undefined ? {} : { limit }), ...(remaining === undefined ? {} : { remaining }) };
+}
+
+function positiveHeaderNumber(headers: Headers, name: string): number | undefined {
+  const raw = headers.get(name);
+  if (raw === null || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function nonnegativeHeaderNumber(headers: Headers, name: string): number | undefined {
+  const raw = headers.get(name);
+  if (raw === null || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 const AccessTokenSchema = z.object({ access_token: z.string().min(1), expires_in: z.number().positive() }).passthrough();

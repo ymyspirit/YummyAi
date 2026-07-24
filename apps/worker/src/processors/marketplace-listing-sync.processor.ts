@@ -18,6 +18,7 @@ import {
   marketplaceCredentials,
   marketplaceListingSyncEvents,
   marketplaceListingSyncRequests,
+  marketplaceQuotaSnapshots,
   type DatabaseConnection,
   type TenantTransaction,
   withTenant,
@@ -162,6 +163,19 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
         const [stored] = await tx.select({ id: marketplaceCredentials.id, version: marketplaceCredentials.version }).from(marketplaceCredentials).where(eq(marketplaceCredentials.accountId, snapshot.accountId)).limit(1);
         if (!stored) throw new MarketplaceConnectorError(snapshot.account.platform, "authorization", "Marketplace credential is unavailable");
         await tx.update(marketplaceCredentials).set({ encryptedEnvelope: this.secrets.encrypt(JSON.stringify(result.refreshedCredential)), version: stored.version + 1, expiresAt: result.refreshedCredentialExpiresAt ?? null, rotatedAt: new Date(), updatedAt: new Date() }).where(eq(marketplaceCredentials.id, stored.id));
+      }
+      if (result.quota) {
+        await tx.insert(marketplaceQuotaSnapshots).values({
+          id: createEntityId(),
+          tenantId: context.tenantId,
+          accountId: snapshot.accountId,
+          platform: snapshot.account.platform,
+          operation: snapshot.action,
+          publicationRequestId: null,
+          listingSyncRequestId: snapshot.requestId,
+          windows: [...result.quota.windows],
+          observedAt: new Date(result.quota.observedAt),
+        });
       }
       await insertEvent(tx, context, snapshot.requestId, latest.sequence + 1, { status, code: null, message: status === "drift_detected" ? "Online price or inventory differs from the approved Listing version" : null, retryable: false, issues: [...result.issues], snapshot: result.snapshot, snapshotChecksum });
     });

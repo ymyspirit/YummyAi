@@ -72,6 +72,7 @@ Protected assets are tenant records, private files, provider credentials, user s
 | Forged or replayed Webhook changes a consumer | HMAC-SHA256 over timestamp/event ID/raw canonical body, consumer timestamp tolerance and event-ID deduplication guidance | signing fixture and consumer acceptance test |
 | Provider failure is retried without evidence or forever | persisted attempts, normalized status-only errors, bounded exponential retry, dead letters, explicit linked manual replay | Worker database integration and manual replay tests |
 | Retention removes delivery auditability or permits stale replay | payload-only redaction, preserved checksum/event/attempt lineage, replay rejection after payload removal | retention and replay integration tests plus restore drill |
+| Provider quota telemetry leaks request metadata or crosses tenants | normalized bounded windows only, raw-header discard, forced RLS, append-only snapshots, safe latest-account projection | connector normalization, Worker persistence, API contract, and tenant-isolation tests |
 
 ## Abuse cases
 
@@ -80,6 +81,7 @@ Protected assets are tenant records, private files, provider credentials, user s
 - Competitor/research files cannot be promoted by changing metadata; promotion copies through the policy service and creates a new authorized record.
 - Job progress and notification streams are tenant scoped and resume only from visible event IDs.
 - Raw prompts, authorization headers, tokens, cookies, and credentials are excluded from logs and telemetry.
+- Marketplace quota views contain only normalized limit, remaining, reset, scope, platform, and observation time fields; raw headers and provider request IDs are never persisted or returned.
 - Buyer names, email addresses, phone numbers, address lines, postal codes, and protected provider payload fragments are excluded from public order views, queue payloads, notifications, exports, diagnostics, and audit metadata.
 - Fulfillment-detail reads require an allowed purpose and append a tenant-scoped access event before returning plaintext.
 - Missing protected fields remain explicit; services never infer or fabricate a customer address or contact value.

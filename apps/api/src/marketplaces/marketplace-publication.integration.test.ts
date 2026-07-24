@@ -4,6 +4,7 @@ import {
   connectDatabase,
   marketplacePublicationEvents,
   marketplacePublicationRequests,
+  marketplaceQuotaSnapshots,
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
@@ -11,6 +12,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AuditService } from "../audit/audit.service.js";
+import { MarketplaceAccountService } from "./marketplace-account.service.js";
 import {
   MarketplacePublicationService,
   type MarketplacePublicationEnqueuer,
@@ -25,6 +27,7 @@ describe("marketplace publication requests", () => {
   const database = connectDatabase();
   const enqueuer = new FakeEnqueuer();
   const service = new MarketplacePublicationService(database, enqueuer, new AuditService(database));
+  const accountService = new MarketplaceAccountService(database, new AuditService(database));
   const tenantId = createEntityId();
   const otherTenantId = createEntityId();
   const userId = createEntityId();
@@ -139,6 +142,42 @@ describe("marketplace publication requests", () => {
     expect(requests).toHaveLength(2);
     expect(events).toHaveLength(2);
     expect(JSON.stringify(requests)).not.toContain("refreshToken");
+    await withTenant(database.db, context, async (tx) => {
+      await tx.insert(marketplaceQuotaSnapshots).values([
+        {
+          id: createEntityId(),
+          tenantId,
+          accountId,
+          platform: "amazon",
+          operation: "validation_passed",
+          publicationRequestId: first.id,
+          listingSyncRequestId: null,
+          windows: [{ scope: "second", limit: 4 }],
+          observedAt: new Date("2026-07-24T10:00:00.000Z"),
+        },
+        {
+          id: createEntityId(),
+          tenantId,
+          accountId,
+          platform: "amazon",
+          operation: "validation_passed",
+          publicationRequestId: first.id,
+          listingSyncRequestId: null,
+          windows: [{ scope: "second", limit: 5.5 }],
+          observedAt: new Date("2026-07-24T11:00:00.000Z"),
+        },
+      ]);
+    });
+    await expect(accountService.get(context, accountId)).resolves.toMatchObject({
+      quota: {
+        platform: "amazon",
+        windows: [{ scope: "second", limit: 5.5 }],
+        observedAt: "2026-07-24T11:00:00.000Z",
+      },
+    });
+    expect((await accountService.list(context)).find((account) => account.id === accountId)?.quota)
+      .toMatchObject({ windows: [{ limit: 5.5 }] });
+    await expect(accountService.get(otherContext, accountId)).rejects.toMatchObject({ status: 404 });
     await expect(withTenant(database.db, context, (tx) =>
       tx.update(marketplacePublicationRequests).set({ marketplaceId: "mutated" }).where(eq(marketplacePublicationRequests.id, first.id)),
     )).rejects.toThrow();

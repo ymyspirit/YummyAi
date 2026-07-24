@@ -1,6 +1,7 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
   MarketplaceAccountViewSchema,
+  MarketplaceQuotaTelemetrySchema,
   createEntityId,
   type CreateMarketplaceAccountInput,
   type MarketplaceAccountView,
@@ -8,7 +9,7 @@ import {
   type TenantContext,
   type UpdateMarketplaceAccountInput,
 } from "@yummyai/contracts";
-import { marketplaceAccounts, type DatabaseConnection, withTenant } from "@yummyai/database";
+import { marketplaceAccounts, marketplaceQuotaSnapshots, type DatabaseConnection, withTenant } from "@yummyai/database";
 import { and, desc, eq } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
@@ -22,10 +23,12 @@ export class MarketplaceAccountService {
   ) {}
 
   async list(context: TenantContext): Promise<MarketplaceAccountView[]> {
-    const rows = await withTenant(this.database.db, context, (tx) =>
+    const [rows, quotaRows] = await withTenant(this.database.db, context, async (tx) => Promise.all([
       tx.select().from(marketplaceAccounts).orderBy(desc(marketplaceAccounts.updatedAt)),
-    );
-    return rows.map(toView);
+      tx.selectDistinctOn([marketplaceQuotaSnapshots.accountId]).from(marketplaceQuotaSnapshots)
+        .orderBy(marketplaceQuotaSnapshots.accountId, desc(marketplaceQuotaSnapshots.observedAt)),
+    ]));
+    return rows.map((row) => toView(row, latestQuota(quotaRows, row.id)));
   }
 
   async get(context: TenantContext, id: string): Promise<MarketplaceAccountView> {
@@ -33,7 +36,13 @@ export class MarketplaceAccountService {
       tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, id)).limit(1),
     );
     if (!row) throw new NotFoundException("Marketplace account not found");
-    return toView(row);
+    const [quota] = await withTenant(this.database.db, context, (tx) =>
+      tx.select().from(marketplaceQuotaSnapshots)
+        .where(eq(marketplaceQuotaSnapshots.accountId, id))
+        .orderBy(desc(marketplaceQuotaSnapshots.observedAt))
+        .limit(1),
+    );
+    return toView(row, quota ? toQuota(quota) : null);
   }
 
   async create(context: TenantContext, input: CreateMarketplaceAccountInput): Promise<MarketplaceAccountView> {
@@ -127,7 +136,7 @@ export class MarketplaceAccountService {
   }
 }
 
-function toView(row: typeof marketplaceAccounts.$inferSelect): MarketplaceAccountView {
+function toView(row: typeof marketplaceAccounts.$inferSelect, quota: MarketplaceAccountView["quota"] = null): MarketplaceAccountView {
   return MarketplaceAccountViewSchema.parse({
     id: row.id,
     platform: row.platform,
@@ -146,8 +155,25 @@ function toView(row: typeof marketplaceAccounts.$inferSelect): MarketplaceAccoun
     lastHealthAt: row.lastHealthAt?.toISOString() ?? null,
     lastCapabilitySyncAt: row.lastCapabilitySyncAt?.toISOString() ?? null,
     capabilityExpiresAt: row.capabilityExpiresAt?.toISOString() ?? null,
+    quota,
     lastErrorCode: row.lastErrorCode,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  });
+}
+
+function latestQuota(
+  rows: Array<typeof marketplaceQuotaSnapshots.$inferSelect>,
+  accountId: string,
+): MarketplaceAccountView["quota"] {
+  const row = rows.find((candidate) => candidate.accountId === accountId);
+  return row ? toQuota(row) : null;
+}
+
+function toQuota(row: typeof marketplaceQuotaSnapshots.$inferSelect): MarketplaceAccountView["quota"] {
+  return MarketplaceQuotaTelemetrySchema.parse({
+    platform: row.platform,
+    windows: row.windows,
+    observedAt: row.observedAt.toISOString(),
   });
 }
