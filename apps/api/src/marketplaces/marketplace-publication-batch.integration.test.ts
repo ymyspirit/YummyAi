@@ -175,11 +175,17 @@ describe("marketplace publication batches", () => {
         readinessProfiles: { results: [{ readiness_state_definition_id: 789 }] },
       }), userId],
     );
+    const secondEtsyPlanId = createEntityId();
     const secondEtsySpuId = createEntityId();
+    await database.client.unsafe(
+      `insert into product_plans (id, tenant_id, name, status, source_report_ids, customization, created_by)
+       values ($1, $2, 'Second Etsy batch plan', 'approved', '[]'::jsonb, '{"version":1,"fields":[]}'::jsonb, $3)`,
+      [secondEtsyPlanId, tenantId, userId],
+    );
     await database.client.unsafe(
       `insert into spus (id, tenant_id, product_plan_id, code, name, status, customization)
        values ($1, $2, $3, 'BATCH-ETSY-2', 'Second Etsy batch product', 'listing', '{"version":1,"fields":[]}'::jsonb)`,
-      [secondEtsySpuId, tenantId, planId],
+      [secondEtsySpuId, tenantId, secondEtsyPlanId],
     );
     for (const [index, etsyListingId] of etsyListingIds.entries()) {
       const etsyVersionId = etsyVersionIds[index]!;
