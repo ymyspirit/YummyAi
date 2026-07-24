@@ -48,11 +48,11 @@ Every completed external step appends evidence before the next step starts: `con
 
 - Authorization failures revoke the local account and stop publication.
 - Validation/conflict failures are terminal for the pinned Listing version.
-- Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. Exhausted status polling remains explicit as `sync_pending` for later reconciliation.
+- Rate limits, pending status reads, and safe read/preview failures retry with BullMQ backoff while attempts remain. A valid provider `Retry-After` window lengthens the exponential delay up to fifteen minutes; it cannot force a tight retry loop. Exhausted status polling remains explicit as `sync_pending` for later reconciliation.
 - A lost Etsy create response, an Etsy `5xx`, an invalid success response, or a failed Etsy external-ID writeback becomes `reconciliation_required`; automatic retry is blocked to prevent duplicate drafts.
 - Research-domain, deleted, changed, rights-unapproved, or checksum-mismatched assets fail before connector invocation or upload.
 - Scheduled or queued requests can be cancelled without mutating their request row or prior events. Cancellation never rolls back a provider mutation that has already started.
-- Worker replicas serialize connector execution per tenant/account with a database advisory lease acquired before `processing`. Separate accounts remain independent; provider quota windows can still delay a leased request and remain a separate P1-G control.
+- Worker replicas serialize connector execution per tenant/account with a database advisory lease acquired before `processing`. Separate accounts remain independent; provider quota windows are applied to retries, while successful-response quota telemetry remains a separate P1-G control.
 
 Real release evidence requires an approved Amazon non-production SKU preview plus submit/status check and an approved Etsy test-shop draft plus configure/upload/activate/status check. CI uses mock connectors and cannot satisfy that release gate.
 

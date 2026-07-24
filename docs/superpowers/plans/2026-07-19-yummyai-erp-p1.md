@@ -234,9 +234,10 @@ P1-F implementation status:
 - [x] Listing `Channels` workspace for site copies, online reconciliation, and approval-trigger rules
 - [x] Future publication scheduling with immutable `scheduled_for`, BullMQ delayed jobs, waiting-state cancellation, and Worker-side terminal-state enforcement
 - [x] Cross-replica per-tenant/account publication concurrency enforced before Worker claim through a session advisory lease
+- [x] Provider `Retry-After` enforcement through bounded provider-aware BullMQ backoff
 - [ ] Real Store Management and publication smoke evidence with approved non-production Amazon/Etsy accounts
 
-The extended P1-F implementation landed on 2026-07-20. The first P1-G slices added scheduling, cancellation, and cross-replica per-account execution leases on 2026-07-24 with contract, migration, API integration, Worker, and Web typecheck coverage. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, provider quota-window enforcement, provider notifications, background reconciliation, broader automation triggers/actions, release automation, and UI scheduling controls remain open.
+The extended P1-F implementation landed on 2026-07-20. The first P1-G slices added scheduling, cancellation, cross-replica per-account execution leases, and provider `Retry-After` enforcement on 2026-07-24 with contract, migration, API integration, Worker, and Web typecheck coverage. Real provider smoke evidence remains a P1 release gate. P1-G online content synchronization, bulk publishing/JSON Listings Feed, successful-response quota telemetry, provider notifications, background reconciliation, broader automation triggers/actions, release automation, and UI scheduling controls remain open.
 
 ## P1 Acceptance Matrix
 

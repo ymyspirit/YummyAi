@@ -20,7 +20,7 @@ export class RedisMarketplacePublicationEnqueuer implements MarketplacePublicati
       requestedBy: input.requestedBy,
       tenantId: input.tenantId,
       traceId: createTraceId(),
-    }, { backoff: { type: "exponential", delay: 5_000 }, delay: input.delayMs });
+    }, { backoff: { type: "provider-aware", delay: 5_000 }, delay: input.delayMs });
   }
 
   async cancel(publicationRequestId: string) {
