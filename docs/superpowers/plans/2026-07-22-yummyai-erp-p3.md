@@ -227,26 +227,34 @@ Focused implementation evidence on 2026-07-24:
 - These focused checks are supplemented by the exact-candidate evidence below.
   They do not satisfy the authorized-provider release gates listed above.
 
-Exact-candidate evidence recorded on 2026-07-24:
+Latest exact-candidate evidence recorded on 2026-07-25:
 
-- Clean code candidate `5e86e8bf33508f282088d6d98d442068e2eaa181` is pushed on
-  `codex/p3-forecasting-operations`.
+- Clean code candidate `94194be15eda4f4443139a58a805db2c3a62f5f5` is pushed on
+  `codex/p3-forecasting-operations` with a clean worktree.
 - GitHub Actions run
-  `https://github.com/ymyspirit/YummyAi/actions/runs/30061088615` passed all 36
-  migrations through `0036_p3_api_client_authentication`, `drizzle-kit check`,
-  lint, typecheck, unit, integration, Web/extension E2E, production build,
-  extension ZIP, and the tracked-file credential scan with Node 24.17.0 and
-  pnpm 11.10.0.
+  `https://github.com/ymyspirit/YummyAi/actions/runs/30119644137` passed all 40
+  migrations through `0040_p1_marketplace_publication_batches`,
+  `drizzle-kit check`, lint, typecheck, unit, integration, Web/extension E2E,
+  production build, extension packaging, release-manifest generation, and the
+  tracked-file credential scan with Node 24.17.0 and pnpm 11.10.0.
+- The downloaded CI release manifest pins the exact commit and records Chrome
+  SHA-256 `4c5c467204182e95f911f97f9362443ddf7ab548843ea267d9bfcc9aa1495bbb`
+  and Edge SHA-256
+  `b26563571ac7bfb83b9a3712d3f35b9bb3f40ad37819aa8bc09b1d798ed3b738`;
+  both downloaded ZIPs reproduced those checksums.
 - The candidate backup manifest recorded PostgreSQL SHA-256
-  `1d8de221e84015487c01ca96ce0d0c694685c60e277744a311ff1611ff88e5fe`
-  and 46 private objects. The non-destructive restore drill reproduced core
-  counts `1526|640|303|69|64|511|8|6931` for organizations, captures, assets,
-  inventory, profit, forecasts, Webhook attempts, and audits, restored all 46
-  objects, and removed the verification database and bucket.
-- A real non-demo development restart served `/operating-cockpit` at 1440x900
-  and 390x844. Both widths retained 15 navigation links, zero main alerts, and
-  zero document-level horizontal overflow. The page exposed the populated
-  forecast and Webhook evidence, and the browser reported no page errors.
+  `88225ca7e8ba14ba1e8abe767da3a45789100892e9978c29cecfdd2723db3bc4`
+  and 51 private objects. The non-destructive restore drill reproduced core
+  counts `1869|725|356|94|94|1016|20|9288` for organizations, captures,
+  assets, inventory, profit, forecasts, Webhook attempts, and audits, restored
+  all 51 objects, and removed the verification database and bucket.
+- Real non-demo processes served all seven P3 workspaces at 1440x900 and
+  390x844. Inventory, procurement, channel inventory, finance, supplier
+  performance, customer intelligence, and the operating cockpit each retained
+  15 navigation links, zero main alerts, and zero document-level horizontal
+  overflow. The populated operating cockpit rendered forecast, metric,
+  reconciliation, API-client, and Webhook evidence without browser warnings or
+  errors; wide tables remained contained by their own horizontal scrollers.
 
 ## P3-F implementation ledger
 
