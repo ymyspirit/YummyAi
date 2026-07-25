@@ -1,13 +1,22 @@
-import { Boxes } from "lucide-react";
+import { Boxes, ShieldCheck } from "lucide-react";
 
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
+import { ProductCatalog } from "../../../features/products/product-catalog";
 import { ProductEditor, type ProductPlanView } from "../../../features/products/product-editor";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProductsPage() {
-  const result = await loadProductPlan();
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function ProductsPage({ searchParams }: { searchParams: SearchParams }) {
+  const [result, params] = await Promise.all([loadProductPlans(), searchParams]);
+  const query = stringValue(params.q);
+  const status = stringValue(params.status);
+  const owner = stringValue(params.owner);
+  const selectedId = stringValue(params.plan);
+  const selectedPlan = selectedId ? result.items.find((plan) => plan.id === selectedId) : undefined;
+
   return (
     <div className="research-shell product-shell">
       <ErpSidebar
@@ -16,35 +25,73 @@ export default async function ProductsPage() {
         note="证据审批、产品状态、定制 Schema、成本与供应商候选在同一开发档案中留痕。"
       />
       <main className="research-main product-main">
-        {result.plan ? (
-          <ProductEditor initialPlan={result.plan} />
-        ) : (
-          <section className="analysis-error" role="alert">
-            <Boxes size={28} />
-            <h1>暂无产品计划</h1>
-            <p>{result.error ?? "从已审批的分析报告创建第一个产品计划。"}</p>
-            <a href="/research">返回研究资料库</a>
+        <header className="product-index-header">
+          <div>
+            <p className="kicker">CATALOG / PRODUCT CONTROL</p>
+            <h1>产品目录</h1>
+            <p>按真实企划状态定位产品，再进入定制 Schema、SPU/SKU、供应商与 Listing 开发档案。</p>
+          </div>
+          <span>
+            <ShieldCheck aria-hidden="true" size={18} />
+            EVIDENCE GATED
+          </span>
+        </header>
+
+        {result.error ? (
+          <section className="product-catalog-load-state" role="alert">
+            <Boxes aria-hidden="true" size={24} />
+            <div>
+              <strong>产品目录暂不可用</strong>
+              <span>{result.error}</span>
+            </div>
           </section>
+        ) : (
+          <>
+            <ProductCatalog
+              items={result.items}
+              query={query}
+              selectedId={selectedId}
+              status={status}
+              owner={owner}
+            />
+            {selectedId && !selectedPlan ? (
+              <p className="product-selection-error" role="alert">
+                指定产品不存在或当前成员无权访问。
+              </p>
+            ) : null}
+            {selectedPlan ? (
+              <section
+                className="product-detail-section"
+                id="product-detail"
+                aria-label={`${selectedPlan.name} 产品详情`}
+              >
+                <ProductEditor initialPlan={selectedPlan} />
+              </section>
+            ) : null}
+          </>
         )}
       </main>
     </div>
   );
 }
 
-async function loadProductPlan(): Promise<{ plan?: ProductPlanView; error?: string }> {
-  if (process.env.PRODUCT_DEMO_MODE === "1") return { plan: demoPlan() };
+async function loadProductPlans(): Promise<{ items: ProductPlanView[]; error?: string }> {
+  if (process.env.PRODUCT_DEMO_MODE === "1") return { items: [demoPlan()] };
   const apiBase = process.env.API_BASE_URL;
-  if (!apiBase) return { error: "尚未配置产品 API。请设置 API_BASE_URL 后重试。" };
+  if (!apiBase) return { items: [], error: "尚未配置产品 API。请设置 API_BASE_URL 后重试。" };
   try {
     const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/products/plans`, {
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`产品计划读取失败 (${response.status})`);
-    const plans = (await response.json()) as ProductPlanView[];
-    return plans[0] ? { plan: plans[0] } : {};
+    return { items: (await response.json()) as ProductPlanView[] };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "产品计划读取失败" };
+    return { items: [], error: error instanceof Error ? error.message : "产品计划读取失败" };
   }
+}
+
+function stringValue(value: string | string[] | undefined): string {
+  return typeof value === "string" ? value : "";
 }
 
 function demoPlan(): ProductPlanView {
@@ -58,6 +105,10 @@ function demoPlan(): ProductPlanView {
       "0198fbef-4a10-7000-8000-000000000043",
     ],
     targetCost: { amount: 8.5, currency: "USD" },
+    ownerUserId: "0198fbef-4a10-7000-8000-000000000040",
+    ownerName: "Lin Q.",
+    createdAt: "2026-07-16T05:10:00.000Z",
+    updatedAt: "2026-07-18T03:12:00.000Z",
     customization: {
       version: 3,
       fields: [
@@ -108,15 +159,18 @@ function demoPlan(): ProductPlanView {
       ],
     },
     spu: {
+      id: "0198fbef-4a10-7000-8000-000000000045",
       code: "TRAVEL-MUG-GIFT",
       name: "Travel Mug Gift",
       skus: [
         {
+          id: "0198fbef-4a10-7000-8000-000000000046",
           code: "TMG-NVY-16",
           attributes: { finish: "navy", size: "16oz" },
           unitCost: { amount: 7.8, currency: "USD" },
         },
         {
+          id: "0198fbef-4a10-7000-8000-000000000047",
           code: "TMG-SND-16",
           attributes: { finish: "sand", size: "16oz" },
           unitCost: { amount: 8.1, currency: "USD" },
@@ -140,6 +194,13 @@ function demoPlan(): ProductPlanView {
         minimumOrderQuantity: 150,
         leadTimeDays: 18,
       },
+    ],
+    designTasks: [
+      { id: "0198fbef-4a10-7000-8000-000000000091", skuCode: "TMG-NVY-16", title: "旅行礼品杯 · 激光刻字与礼盒校样", status: "in_review", dueAt: "2026-07-24T10:00:00.000Z" },
+    ],
+    listings: [
+      { id: "0198fbef-4a10-7000-8000-000000000061", platform: "amazon", marketplaceId: "ATVPDKIKX0DER", locale: "en-US", status: "in_review" },
+      { id: "0198fbef-4a10-7000-8000-000000000062", platform: "etsy", locale: "en-US", status: "draft" },
     ],
   };
 }

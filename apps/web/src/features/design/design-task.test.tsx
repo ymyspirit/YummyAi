@@ -14,6 +14,27 @@ describe("design task", () => {
     expect(html).toContain("许可使用");
     expect(html).toContain("授权域");
   });
+
+  it("turns an empty task into an actionable first-version state", () => {
+    const html = renderToStaticMarkup(
+      <DesignTask
+        task={{
+          id: "019f9a00-5635-7889-adb8-f30149da968d",
+          skuId: "019f9a00-560d-7360-a08a-56eb7f1e8c42",
+          skuCode: "P1G-PILLOW-STD",
+          title: "Personalized Pillow Cover · 原创图案与生产校样",
+          brief: "Only use the research item as demand evidence.",
+          status: "open",
+          versions: [],
+        }}
+      />,
+    );
+
+    expect(html).toContain("尚未上传设计版本");
+    expect(html).toContain("上传自有或已获许可的设计文件");
+    expect(html).toContain("不能上传竞品图片作为设计资产");
+    expect(html).toContain("P1G-PILLOW-STD");
+  });
 });
 
 function fixture(): DesignTaskView {

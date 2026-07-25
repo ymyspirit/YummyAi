@@ -72,6 +72,7 @@ export async function authorizeAmazonPrivate(
   );
   if (!response.ok) return failure(response.message);
   revalidatePath("/stores");
+  revalidatePath(`/stores/${accountId}`);
   return success("Amazon 授权已验证并加密保存。 ");
 }
 
@@ -120,6 +121,7 @@ export async function syncMarketplaceCapabilities(
   );
   if (!response.ok) return failure(response.message);
   revalidatePath("/stores");
+  revalidatePath(`/stores/${accountId}`);
   return success("店铺身份与发布能力已同步。 ");
 }
 
@@ -138,6 +140,7 @@ export async function setMarketplaceAccountEnabled(
   });
   if (!response.ok) return failure(response.message);
   revalidatePath("/stores");
+  revalidatePath(`/stores/${accountId}`);
   return success(enabled ? "店铺已启用，需要重新确认授权。" : "店铺已停用，历史记录继续保留。");
 }
 
@@ -153,6 +156,7 @@ export async function revokeMarketplaceAuthorization(
   });
   if (!response.ok) return failure(response.message);
   revalidatePath("/stores");
+  revalidatePath(`/stores/${accountId}`);
   return success("本地授权已撤销，发布入口已锁定。");
 }
 

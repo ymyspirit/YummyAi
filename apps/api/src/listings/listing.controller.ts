@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import { CreateListingReplicationInputSchema } from "@yummyai/contracts";
 import type { ListingDraft, ListingPlatform } from "@yummyai/platform-rules";
@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
-import { ListingDraftSchema, ListingService } from "./listing.service.js";
+import { ListingCatalogQuerySchema, ListingDraftSchema, ListingService } from "./listing.service.js";
 
 @Controller("v1/listings")
 export class ListingController {
@@ -15,6 +15,13 @@ export class ListingController {
   @Get()
   @RequiresPermission(Permission.ListingRead)
   list(@Req() request: AuthenticatedRequest) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.list(context); }
+
+  @Get("catalog")
+  @RequiresPermission(Permission.ListingRead)
+  catalog(@Req() request: AuthenticatedRequest, @Query() query: Record<string, unknown>) {
+    const context = requireContext(request); authorize(context, Permission.ListingRead);
+    return this.service.catalog(context, ListingCatalogQuerySchema.parse(query));
+  }
 
   @Get(":id")
   @RequiresPermission(Permission.ListingRead)

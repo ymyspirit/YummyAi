@@ -141,6 +141,7 @@ export class OrderService {
   async list(context: TenantContext, rawInput: ListOrdersInput): Promise<OrderView[]> {
     const input = ListOrdersInputSchema.parse(rawInput);
     const rows = await withTenant(this.database.db, context, (tx) => tx.select().from(orders).where(and(
+      input.accountId ? eq(orders.accountId, input.accountId) : undefined,
       input.workflowState ? eq(orders.workflowState, input.workflowState) : undefined,
       input.sideState === "none" ? isNull(orders.sideState) : input.sideState ? eq(orders.sideState, input.sideState) : undefined,
       input.platform ? eq(orders.platform, input.platform) : undefined,

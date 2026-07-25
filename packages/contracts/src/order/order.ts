@@ -63,6 +63,7 @@ export const AnonymizeOrderProtectedDetailsCommandSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(200), reason: z.string().trim().min(1).max(1_000),
 }).strict();
 export const ListOrdersInputSchema = z.object({
+  accountId: EntityIdSchema.optional(),
   workflowState: OrderWorkflowStateSchema.optional(), sideState: z.union([OrderSideStateSchema, z.literal("none")]).optional(),
   platform: MarketplacePlatformSchema.optional(), limit: z.coerce.number().int().min(1).max(100).default(50),
 }).strict();

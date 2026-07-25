@@ -80,6 +80,14 @@ describe("order kernel", () => {
     expect(stored?.encryptedEnvelope).not.toContain("1 Test Street");
   });
 
+  it("filters the public order projection by marketplace account", async () => {
+    await expect(service.list(contextA, { accountId: accountA, limit: 50 })).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: orderId, accountId: accountA })]),
+    );
+    await expect(service.list(contextA, { accountId: createEntityId(), limit: 50 })).resolves.toEqual([]);
+    await expect(service.list(contextB, { accountId: accountA, limit: 50 })).resolves.toEqual([]);
+  });
+
   it("pins the order line to the catalog version available at materialization time", async () => {
     const [line] = await withTenant(database.db, contextA, (tx) => tx.select().from(orderLines).where(eq(orderLines.orderId, orderId)).limit(1));
     const [link] = await withTenant(database.db, contextA, (tx) => tx.select().from(orderLineCatalogLinks).where(eq(orderLineCatalogLinks.orderLineId, line!.id)).limit(1));

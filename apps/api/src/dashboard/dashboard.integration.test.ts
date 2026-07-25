@@ -20,6 +20,9 @@ describe("dashboard database aggregation", () => {
   it("counts only the current tenant's captures and committed AI cost", async () => {
     const metrics = await service.getMetrics(first, { from: "2026-07-18", to: "2026-07-18", timezone: "UTC" });
     expect(metrics.capture.total).toBe(3); expect(metrics.capture.complete).toBe(3); expect(metrics.ai.costUsd).toBe(1.25);
+    expect(metrics.aiLedger).toEqual([expect.objectContaining({ taskType: "AI-01", amountUsd: 1.25 })]);
+    expect(metrics.freshness.capture).toBe("2026-07-18T06:00:00.000Z"); expect(metrics.freshness.ai).toBe("2026-07-18T06:00:00.000Z");
+    expect(metrics.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/); expect(metrics.jobs).toEqual([]);
   });
 
   async function seed(context: TenantContext, captures: number, cost: number) {

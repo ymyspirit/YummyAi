@@ -36,6 +36,6 @@ class TenantMetrics implements DashboardRepository {
   seed(tenantId: string, captures: number, cost: number, patch: Partial<{ overdue: number; blockers: number; failedJobs: number }> = {}) { this.rows.set(tenantId, { captures, cost, overdue: patch.overdue ?? 0, blockers: patch.blockers ?? 0, failedJobs: patch.failedJobs ?? 0 }); }
   async getMetrics(context: TenantContext) {
     const row = this.rows.get(context.tenantId) ?? { captures: 0, cost: 0, overdue: 0, blockers: 0, failedJobs: 0 };
-    return { capture: { total: row.captures, complete: row.captures, partial: 0, failed: 0, successRate: row.captures ? 100 : 0 }, ai: { queued: 0, running: 0, costUsd: row.cost }, productFunnel: {}, design: { overdue: row.overdue, active: row.overdue }, listing: { total: row.blockers ? 1 : 0, averageCompleteness: row.blockers ? 70 : 0, blockers: row.blockers }, failedJobs: row.failedJobs, recentActivity: [], myTasks: [] };
+    return { capture: { total: row.captures, complete: row.captures, partial: 0, failed: 0, successRate: row.captures ? 100 : 0 }, ai: { queued: 0, running: 0, costUsd: row.cost }, aiLedger: [], productFunnel: {}, design: { overdue: row.overdue, active: row.overdue }, listing: { total: row.blockers ? 1 : 0, averageCompleteness: row.blockers ? 70 : 0, blockers: row.blockers }, freshness: { capture: null, ai: null, product: null, design: null, listing: null }, jobs: [], failedJobs: row.failedJobs, recentActivity: [], myTasks: [] };
   }
 }

@@ -1,10 +1,12 @@
 "use client";
 
 import type { CustomizationDefinition, ProductStatus } from "@yummyai/contracts";
-import { Boxes, CircleDollarSign, Factory, PackageCheck } from "lucide-react";
+import { ArrowUpRight, Boxes, CircleDollarSign, Factory, FileSearch2, FileText, PackageCheck, Palette } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { CustomizationSchemaEditor } from "./customization-schema-editor";
+import { ProductDevelopmentActions } from "./product-development-actions";
 
 export interface ProductPlanView {
   id: string;
@@ -14,8 +16,14 @@ export interface ProductPlanView {
   sourceReportIds: string[];
   targetCost?: { amount: number; currency: string };
   customization: CustomizationDefinition;
-  spu?: { code: string; name: string; skus: Array<{ code: string; attributes: Record<string, string>; unitCost?: { amount: number; currency: string } }> };
+  ownerUserId?: string;
+  ownerName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  spu?: { id: string; code: string; name: string; skus: Array<{ id: string; code: string; attributes: Record<string, string>; unitCost?: { amount: number; currency: string } }> };
   suppliers?: Array<{ id: string; name: string; priority: number; quotedCost?: { amount: number; currency: string }; minimumOrderQuantity?: number; leadTimeDays?: number }>;
+  designTasks?: Array<{ id: string; skuCode: string; title: string; status: string; dueAt?: string }>;
+  listings?: Array<{ id: string; platform: "amazon" | "etsy"; marketplaceId?: string; locale: string; status: string }>;
 }
 
 const stages: ProductStatus[] = ["researching", "pending_approval", "approved", "developing", "listing", "ready"];
@@ -26,7 +34,7 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
   return (
     <div className="product-workbench">
       <header className="product-hero">
-        <div><p className="kicker">PRODUCT PLAN / DEVELOPMENT DOCKET</p><h1>{initialPlan.name}</h1><p>{initialPlan.description ?? "从已审批的证据结论推进到可生产、可刊登的商品主数据。"}</p></div>
+        <div><p className="kicker">PRODUCT PLAN / DEVELOPMENT DOCKET</p><h2>{initialPlan.name}</h2><p>{initialPlan.description ?? "从已审批的证据结论推进到可生产、可刊登的商品主数据。"}</p></div>
         <div className="plan-id"><span>PLAN ID</span><code>{initialPlan.id}</code><strong>{statusLabel(initialPlan.status)}</strong></div>
       </header>
       <nav className="lifecycle-track" aria-label="产品生命周期">
@@ -38,6 +46,7 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
         <div><Boxes size={18} /><span>SKU 数量</span><strong className="mono">{initialPlan.spu?.skus.length ?? 0}</strong></div>
         <div><Factory size={18} /><span>供应商候选</span><strong className="mono">{initialPlan.suppliers?.length ?? 0}</strong></div>
       </section>
+      <ProductDevelopmentActions plan={initialPlan} />
       <CustomizationSchemaEditor initialSchema={customization} onChange={setCustomization} />
       <div className="product-lower-grid">
         <section className="sku-frame" aria-labelledby="sku-title">
@@ -49,9 +58,27 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
           <ol>{initialPlan.suppliers?.map((supplier) => <li key={supplier.id}><span className="supplier-rank mono">P{supplier.priority}</span><div><strong>{supplier.name}</strong><small>{supplier.minimumOrderQuantity ? `MOQ ${supplier.minimumOrderQuantity}` : "MOQ 待确认"} · {supplier.leadTimeDays ?? "—"} 天</small></div><b className="mono">{supplier.quotedCost ? `${supplier.quotedCost.currency} ${supplier.quotedCost.amount.toFixed(2)}` : "待报价"}</b></li>)}</ol>
         </section>
       </div>
+      <section className="product-associations" aria-labelledby="product-associations-title">
+        <header><div><p className="section-code">TRACEABLE ASSOCIATIONS</p><h2 id="product-associations-title">关联工作</h2></div><span>仅显示当前租户可见的真实记录</span></header>
+        <div>
+          <AssociationColumn icon={<FileSearch2 size={17} />} title="研究来源" count={initialPlan.sourceReportIds.length} empty="尚未关联研究报告。">
+            {initialPlan.sourceReportIds.map((reportId) => <Link href={`/analysis/${reportId}`} key={reportId}><span><strong>分析报告</strong><code>{reportId}</code></span><ArrowUpRight size={14} /></Link>)}
+          </AssociationColumn>
+          <AssociationColumn icon={<Palette size={17} />} title="设计任务" count={initialPlan.designTasks?.length ?? 0} empty={initialPlan.spu ? "当前 SPU/SKU 尚未创建设计任务。" : "创建 SPU/SKU 后才能关联设计任务。"}>
+            {initialPlan.designTasks?.map((task) => <Link href={`/design?task=${encodeURIComponent(task.id)}`} key={task.id}><span><strong>{task.title}</strong><small>{task.skuCode} · {task.status}</small></span><ArrowUpRight size={14} /></Link>)}
+          </AssociationColumn>
+          <AssociationColumn icon={<FileText size={17} />} title="Listing" count={initialPlan.listings?.length ?? 0} empty={initialPlan.spu ? "当前 SPU 尚未创建 Listing。" : "创建 SPU 后才能关联 Listing。"}>
+            {initialPlan.listings?.map((listing) => <Link href={`/listings/${listing.id}`} key={listing.id}><span><strong>{listing.platform === "amazon" ? "Amazon" : "Etsy"} · {listing.locale}</strong><small>{listing.marketplaceId ?? "未指定店铺"} · {listing.status}</small></span><ArrowUpRight size={14} /></Link>)}
+          </AssociationColumn>
+        </div>
+      </section>
       <footer className="editor-footer"><span className="mono">SCHEMA V{customization.version} · {customization.fields.length} FIELDS</span><button type="button">保存产品计划</button></footer>
     </div>
   );
+}
+
+function AssociationColumn({ children, count, empty, icon, title }: { children?: React.ReactNode; count: number; empty: string; icon: React.ReactNode; title: string }) {
+  return <article><header><span>{icon}</span><h3>{title}</h3><b>{count}</b></header>{count ? <div className="product-association-links">{children}</div> : <p>{empty}</p>}</article>;
 }
 
 function statusLabel(status: ProductStatus) {

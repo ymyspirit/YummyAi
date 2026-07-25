@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code") ?? url.searchParams.get("spapi_oauth_code");
   const sellingPartnerId = url.searchParams.get("selling_partner_id");
-  const target = new URL("/stores", request.url);
+  const target = new URL(accountId ? `/stores/${accountId}` : "/stores", request.url);
   if (!accountId || !state || !code) {
     target.searchParams.set("oauth", "failed");
     target.searchParams.set("reason", "missing_callback_data");

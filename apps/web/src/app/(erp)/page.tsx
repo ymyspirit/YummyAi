@@ -49,14 +49,11 @@ async function loadDashboard(): Promise<{ data?: OperationsDashboardView; error?
       apiFetch(`${base.replace(/\/$/, "")}/v1/notifications?limit=20`, { cache: "no-store" }),
     ]);
     if (!metricsResponse.ok) throw new Error(`仪表盘读取失败 (${metricsResponse.status})`);
-    const metrics = (await metricsResponse.json()) as Omit<
-      OperationsDashboardView,
-      "jobs" | "notifications"
-    >;
+    const metrics = (await metricsResponse.json()) as Omit<OperationsDashboardView, "notifications">;
     const notifications = notificationsResponse.ok
       ? ((await notificationsResponse.json()) as OperationsDashboardView["notifications"])
       : [];
-    return { data: { ...metrics, jobs: [], notifications } };
+    return { data: { ...metrics, notifications } };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "仪表盘读取失败" };
   }
@@ -64,9 +61,14 @@ async function loadDashboard(): Promise<{ data?: OperationsDashboardView; error?
 
 function demoData(): OperationsDashboardView {
   return {
+    generatedAt: "2026-07-18T04:16:00.000Z",
     range: { from: "2026-07-01", to: "2026-07-18", timezone: "Asia/Shanghai" },
     capture: { total: 38, complete: 32, partial: 4, failed: 2, successRate: 94.7 },
     ai: { queued: 2, running: 1, costUsd: 12.48 },
+    aiLedger: [
+      { id: "ledger-1", taskType: "AI-03", modelKey: "analyst.pricing", provider: "openai", amountUsd: 7.24, occurredAt: "2026-07-18T04:14:00Z" },
+      { id: "ledger-2", taskType: "AI-05", modelKey: "analyst.comparison", provider: "openai", amountUsd: 5.24, occurredAt: "2026-07-18T03:58:00Z" },
+    ],
     productFunnel: {
       researching: 8,
       pending_approval: 3,
@@ -77,6 +79,13 @@ function demoData(): OperationsDashboardView {
     },
     design: { overdue: 2, active: 7 },
     listing: { total: 5, averageCompleteness: 86, blockers: 3 },
+    freshness: {
+      capture: "2026-07-18T04:11:00.000Z",
+      ai: "2026-07-18T04:14:00.000Z",
+      product: "2026-07-18T03:12:00.000Z",
+      design: "2026-07-18T03:48:00.000Z",
+      listing: "2026-07-18T04:02:00.000Z",
+    },
     risks: [
       { kind: "capture_failed", count: 2, label: "抓取失败" },
       { kind: "design_overdue", count: 2, label: "设计已逾期" },

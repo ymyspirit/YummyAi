@@ -32,6 +32,7 @@ class MemoryListings implements ListingRepository {
   }
   async get(_context: TenantContext, id: string) { return this.listings.find((row) => row.id === id); }
   async list() { return this.listings; }
+  async listCatalog() { return []; }
   async listVersions(_context: TenantContext, listingId: string) { return this.versions.filter((row) => row.listingId === listingId); }
   async createVersion(_context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai" }) {
     const version = this.makeVersion(listingId, input.content, input.validation, input.ruleVersion, input.source); this.versions.push(version); this.bridge.attach(this.listings[0]!, version); return version;

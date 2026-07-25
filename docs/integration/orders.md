@@ -18,7 +18,7 @@ All routes derive tenant context from authenticated membership:
 
 | Method | Route | Permission | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/v1/orders` | `order:read` | Safe list with optional platform, workflow, side-state, and limit filters |
+| `GET` | `/v1/orders` | `order:read` | Safe list with optional marketplace-account, platform, workflow, side-state, and limit filters |
 | `GET` | `/v1/orders/ingestion/runs` | `order:read` | Safe ingestion counts, checkpoint versions, status, and static risk diagnostics |
 | `GET` | `/v1/orders/customizations` | `order:read` | Safe tenant customization queue; optional `orderId` filter |
 | `GET` | `/v1/orders/routing` | `order:read` | Safe tenant routing-decision queue; optional `orderId` filter |

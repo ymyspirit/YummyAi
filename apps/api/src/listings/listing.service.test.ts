@@ -3,7 +3,7 @@ import { createEntityId, type ListingReplicationView, type TenantContext } from 
 import type { ListingDraft, ListingPlatform, ListingValidation } from "@yummyai/platform-rules";
 import { describe, expect, it, vi } from "vitest";
 
-import { ListingService, type ListingRecord, type ListingRepository, type ListingVersionRecord } from "./listing.service.js";
+import { ListingService, type ListingCatalogItem, type ListingRecord, type ListingRepository, type ListingVersionRecord } from "./listing.service.js";
 
 const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: [], dataScope: "tenant" };
 
@@ -60,10 +60,29 @@ describe("listing service", () => {
     expect(dispatchListingApproved).toHaveBeenCalledWith(context, created.listing.id, created.version.id);
     expect(repository.listings[0]).toMatchObject({ status: "approved", primaryVersionId: created.version.id });
   });
+
+  it("filters, sorts, and paginates the Listing catalog", async () => {
+    const repository = new MemoryListingRepository();
+    repository.catalog = [
+      catalogItem({ id: "a", platform: "etsy", title: "Zebra mug", completeness: 92, blockerCount: 0, locale: "en-GB", marketplaceId: "etsy-uk" }),
+      catalogItem({ id: "b", platform: "amazon", title: "Amber mug", completeness: 61, blockerCount: 2, locale: "en-US", marketplaceId: "ATVPDKIKX0DER" }),
+      catalogItem({ id: "c", platform: "amazon", title: "Complete mug", completeness: 100, blockerCount: 0, locale: "en-US", marketplaceId: "ATVPDKIKX0DER" }),
+    ];
+    const result = await new ListingService(repository).catalog(context, {
+      q: "mug", platform: "amazon", locale: "en-US", marketplaceId: "ATVPDKIKX0DER", completeness: "low", blockers: "with", sort: "completeness", direction: "asc", page: 1, limit: 25,
+    });
+    expect(result).toMatchObject({ total: 1, page: 1, pages: 1 });
+    expect(result.items[0]).toMatchObject({ id: "b", title: "Amber mug", blockerCount: 2 });
+
+    await expect(new ListingService(repository).catalog(context, {
+      q: "", completeness: "complete", blockers: "all", sort: "updatedAt", direction: "desc", page: 1, limit: 25,
+    })).resolves.toMatchObject({ total: 1, items: [expect.objectContaining({ id: "c" })] });
+  });
 });
 
 class MemoryListingRepository implements ListingRepository {
   listings: ListingRecord[] = []; versions: ListingVersionRecord[] = []; replications: ListingReplicationView[] = [];
+  catalog: ListingCatalogItem[] = [];
   async create(_context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
     const listing: ListingRecord = { id: createEntityId(), tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.marketplaceId, locale: input.locale, status: "draft" };
     const version = this.version(listing.id, input.content, input.validation, input.ruleVersion, "human");
@@ -71,6 +90,7 @@ class MemoryListingRepository implements ListingRepository {
   }
   async get(_context: TenantContext, id: string) { return this.listings.find((listing) => listing.id === id); }
   async list() { return this.listings; }
+  async listCatalog() { return this.catalog; }
   async listVersions(_context: TenantContext, listingId: string) { return this.versions.filter((version) => version.listingId === listingId); }
   async createVersion(_context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai" }) {
     const version = this.version(listingId, input.content, input.validation, input.ruleVersion, input.source); this.versions.push(version); return version;
@@ -90,6 +110,15 @@ class MemoryListingRepository implements ListingRepository {
   private version(listingId: string, content: ListingDraft, validation: ListingValidation, ruleVersion: string, source: "human" | "ai"): ListingVersionRecord {
     return { id: createEntityId(), tenantId: context.tenantId, listingId, versionNumber: this.versions.filter((version) => version.listingId === listingId).length + 1, ruleVersion, status: "draft", source, content: structuredClone(content), validation, createdAt: new Date() };
   }
+}
+
+function catalogItem(overrides: Partial<ListingCatalogItem>): ListingCatalogItem {
+  return {
+    id: "listing", spuId: createEntityId(), spuCode: "MUG", spuName: "Travel Mug", platform: "amazon",
+    locale: "en-US", status: "draft", versionId: createEntityId(), versionNumber: 1, title: "Travel mug",
+    hasMainImage: true, completeness: 100, blockerCount: 0, source: "human", updatedAt: "2026-07-25T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 function amazon(patch: Partial<ListingDraft>): ListingDraft { return { platform: "amazon", locale: "en-US", title: "Personalized travel mug", description: "Gift ready", bullets: ["Laser engraved"], tags: [], mainImageId: "asset-main", mediaAssetIds: ["asset-main"], variants: [{ skuId: "sku-1", skuCode: "MUG-NVY", optionValues: { color: "navy" } }], attributes: { brand: "Yummy" }, compliance: { countryOfOrigin: "CN" }, aPlusModules: [{ type: "standard", assetIds: ["asset-main"] }], ...patch }; }

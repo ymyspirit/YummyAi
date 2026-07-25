@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEntityId } from "../common/ids.js";
-import { AnonymizeOrderProtectedDetailsCommandSchema, CompleteOrderIngestionRunInputSchema, NormalizeOrderInputSchema, OrderFulfillmentViewSchema, OrderTransitionCommandSchema, OrderViewSchema } from "./order.js";
+import { AnonymizeOrderProtectedDetailsCommandSchema, CompleteOrderIngestionRunInputSchema, ListOrdersInputSchema, NormalizeOrderInputSchema, OrderFulfillmentViewSchema, OrderTransitionCommandSchema, OrderViewSchema } from "./order.js";
 
 describe("order contracts", () => {
   it("uses integer minor units and accepts protected data only on the internal normalization boundary", () => {
@@ -32,6 +32,11 @@ describe("order contracts", () => {
   it("requires optimistic sequence and idempotency on transition commands", () => {
     expect(OrderTransitionCommandSchema.safeParse({ toState: "awaiting_customization", expectedSequence: 1, idempotencyKey: "approve-0001" }).success).toBe(true);
     expect(OrderTransitionCommandSchema.safeParse({ toState: "awaiting_customization", expectedSequence: 0, idempotencyKey: "short" }).success).toBe(false);
+  });
+
+  it("accepts a tenant-scoped marketplace account filter for store drill-through", () => {
+    const accountId = createEntityId();
+    expect(ListOrdersInputSchema.parse({ accountId })).toMatchObject({ accountId, limit: 50 });
   });
 
   it("requires optimistic order and envelope versions for irreversible PII anonymization", () => {

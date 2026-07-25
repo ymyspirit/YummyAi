@@ -29,8 +29,8 @@ export default async function StoresPage({
         <header className="store-header">
           <div>
             <p className="kicker">MARKETPLACE / CONNECTION CONTROL</p>
-            <h1>店铺连接</h1>
-            <p>授权状态、能力有效期与发布入口保持在同一条操作轨道。</p>
+            <h1>店铺运营</h1>
+            <p>先在台账中识别授权、能力新鲜度与发布异常，再进入单店处理连接设置。</p>
           </div>
           <span><ShieldCheck size={18} />TENANT ISOLATED</span>
         </header>

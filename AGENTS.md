@@ -104,6 +104,7 @@ the same change; `pnpm check:rules` enforces equality.
 
 ## Documentation Map
 
+- User guide: `docs/user-guide.md`
 - Product requirements: `docs/superpowers/specs/2026-07-17-yummyai-erp-design.md`
 - P0 implementation baseline: `docs/superpowers/plans/2026-07-17-yummyai-erp-p0.md`
 - P1 implementation plan: `docs/superpowers/plans/2026-07-19-yummyai-erp-p1.md`

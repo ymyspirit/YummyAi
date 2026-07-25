@@ -13,8 +13,8 @@ import {
   type ProductStatus,
   type TenantContext,
 } from "@yummyai/contracts";
-import { productPlans, skus, spus, type DatabaseConnection, withTenant } from "@yummyai/database";
-import { and, desc, eq } from "drizzle-orm";
+import { designTasks, listings, productPlans, skus, spus, supplierCandidates, users, type DatabaseConnection, withTenant } from "@yummyai/database";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { CATALOG_REPOSITORY, DATABASE_CONNECTION } from "../platform.tokens.js";
 
@@ -27,6 +27,26 @@ export interface ProductPlanRecord {
   sourceReportIds: string[];
   targetCost?: Money;
   customization: CustomizationDefinition;
+  ownerUserId?: string;
+  ownerName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  spu?: {
+    id: string;
+    code: string;
+    name: string;
+    skus: Array<{ id: string; code: string; attributes: Record<string, string>; unitCost?: Money }>;
+  };
+  suppliers?: Array<{
+    id: string;
+    name: string;
+    priority: number;
+    quotedCost?: Money;
+    minimumOrderQuantity?: number;
+    leadTimeDays?: number;
+  }>;
+  designTasks?: Array<{ id: string; skuCode: string; title: string; status: string; dueAt?: string }>;
+  listings?: Array<{ id: string; platform: "amazon" | "etsy"; marketplaceId?: string; locale: string; status: string }>;
 }
 
 export interface SpuRecord {
@@ -162,8 +182,77 @@ export class DrizzleCatalogRepository implements CatalogRepository {
   }
 
   async listPlans(context: TenantContext): Promise<ProductPlanRecord[]> {
-    const rows = await withTenant(this.database.db, context, (tx) => tx.select().from(productPlans).orderBy(desc(productPlans.updatedAt)));
-    return rows.map(mapPlan);
+    return withTenant(this.database.db, context, async (tx) => {
+      const planRows = await tx.select().from(productPlans).orderBy(desc(productPlans.updatedAt));
+      if (planRows.length === 0) return [];
+      const planIds = planRows.map((row) => row.id);
+      const spuRows = await tx.select().from(spus).where(inArray(spus.productPlanId, planIds));
+      const spuIds = spuRows.map((row) => row.id);
+      const skuRows = spuIds.length ? await tx.select().from(skus).where(inArray(skus.spuId, spuIds)) : [];
+      const supplierRows = await tx.select().from(supplierCandidates).where(inArray(supplierCandidates.productPlanId, planIds));
+      const designRows = skuRows.length ? await tx.select().from(designTasks).where(inArray(designTasks.skuId, skuRows.map((row) => row.id))).orderBy(desc(designTasks.updatedAt)) : [];
+      const listingRows = spuIds.length ? await tx.select().from(listings).where(inArray(listings.spuId, spuIds)).orderBy(desc(listings.updatedAt)) : [];
+      const ownerIds = [...new Set(planRows.flatMap((row) => row.createdBy ? [row.createdBy] : []))];
+      const ownerRows = ownerIds.length
+        ? await tx.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, ownerIds))
+        : [];
+      const ownerNames = new Map(ownerRows.map((row) => [row.id, row.displayName]));
+      const spuByPlan = new Map(spuRows.map((row) => [row.productPlanId, row]));
+      const skusBySpu = new Map<string, typeof skuRows>();
+      for (const row of skuRows) skusBySpu.set(row.spuId, [...(skusBySpu.get(row.spuId) ?? []), row]);
+      const suppliersByPlan = new Map<string, typeof supplierRows>();
+      for (const row of supplierRows) suppliersByPlan.set(row.productPlanId, [...(suppliersByPlan.get(row.productPlanId) ?? []), row]);
+      const skuById = new Map(skuRows.map((row) => [row.id, row]));
+      const designsBySpu = new Map<string, typeof designRows>();
+      for (const row of designRows) {
+        const sku = skuById.get(row.skuId);
+        if (sku) designsBySpu.set(sku.spuId, [...(designsBySpu.get(sku.spuId) ?? []), row]);
+      }
+      const listingsBySpu = new Map<string, typeof listingRows>();
+      for (const row of listingRows) listingsBySpu.set(row.spuId, [...(listingsBySpu.get(row.spuId) ?? []), row]);
+      return planRows.map((row) => {
+        const spu = spuByPlan.get(row.id);
+        return {
+          ...mapPlan(row),
+          ...(row.createdBy ? { ownerUserId: row.createdBy, ownerName: ownerNames.get(row.createdBy) ?? "成员已移除" } : {}),
+          ...(spu ? {
+            spu: {
+              id: spu.id,
+              code: spu.code,
+              name: spu.name,
+              skus: (skusBySpu.get(spu.id) ?? []).map((sku) => ({
+                id: sku.id,
+                code: sku.code,
+                attributes: sku.attributes,
+                ...(sku.unitCostAmount && sku.unitCostCurrency ? { unitCost: { amount: Number(sku.unitCostAmount), currency: sku.unitCostCurrency } } : {}),
+              })),
+            },
+          } : {}),
+          suppliers: (suppliersByPlan.get(row.id) ?? []).sort((left, right) => left.priority - right.priority).map((supplier) => ({
+            id: supplier.id,
+            name: supplier.name,
+            priority: supplier.priority,
+            ...(supplier.quotedCostAmount && supplier.quotedCostCurrency ? { quotedCost: { amount: Number(supplier.quotedCostAmount), currency: supplier.quotedCostCurrency } } : {}),
+            ...(supplier.minimumOrderQuantity !== null ? { minimumOrderQuantity: supplier.minimumOrderQuantity } : {}),
+            ...(supplier.leadTimeDays !== null ? { leadTimeDays: supplier.leadTimeDays } : {}),
+          })),
+          designTasks: spu ? (designsBySpu.get(spu.id) ?? []).map((task) => ({
+            id: task.id,
+            skuCode: skuById.get(task.skuId)?.code ?? task.skuId.slice(0, 12),
+            title: task.title,
+            status: task.status,
+            ...(task.dueAt ? { dueAt: task.dueAt.toISOString() } : {}),
+          })) : [],
+          listings: spu ? (listingsBySpu.get(spu.id) ?? []).map((listing) => ({
+            id: listing.id,
+            platform: listing.platform as "amazon" | "etsy",
+            ...(listing.marketplaceId ? { marketplaceId: listing.marketplaceId } : {}),
+            locale: listing.locale,
+            status: listing.status,
+          })) : [],
+        };
+      });
+    });
   }
 
   async setPlanStatus(context: TenantContext, id: string, status: ProductStatus, approval?: { by: string; at: Date }) {
@@ -210,6 +299,9 @@ function mapPlan(row: typeof productPlans.$inferSelect): ProductPlanRecord {
     status: ProductStatusSchema.parse(row.status), sourceReportIds: row.sourceReportIds,
     targetCost: row.targetCostAmount && row.targetCostCurrency ? { amount: Number(row.targetCostAmount), currency: row.targetCostCurrency } : undefined,
     customization: row.customization,
+    ...(row.createdBy ? { ownerUserId: row.createdBy } : {}),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 

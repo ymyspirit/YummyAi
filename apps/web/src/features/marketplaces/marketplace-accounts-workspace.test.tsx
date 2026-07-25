@@ -2,18 +2,26 @@ import type { MarketplaceAccountView } from "@yummyai/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MarketplaceAccountsWorkspace } from "./marketplace-accounts-workspace";
+import { MarketplaceAccountDetail, MarketplaceAccountsWorkspace } from "./marketplace-accounts-workspace";
 
 describe("marketplace accounts workspace", () => {
-  it("renders operational readiness without exposing credential values", () => {
+  it("renders an operator-facing store ledger without exposing connection controls", () => {
     const html = renderToStaticMarkup(
       <MarketplaceAccountsWorkspace accounts={[account()]} publications={[]} />,
     );
-    for (const label of ["连接", "授权", "能力", "可发布", "listing_write"]) expect(html).toContain(label);
-    expect(html).toContain("同步能力");
-    expect(html).toContain("9123/10000/日");
+    for (const label of ["店铺巡检台账", "授权健康", "能力新鲜度", "可发布", "需处理原因"]) expect(html).toContain(label);
+    expect(html).toContain("/stores/0198fbef-4a10-7000-8000-000000000810");
+    expect(html).not.toContain("同步能力");
     expect(html).not.toContain("refresh-token-value");
     expect(html).not.toContain("client-secret-value");
+  });
+
+  it("keeps credentials, capabilities, and quota telemetry in the store detail", () => {
+    const html = renderToStaticMarkup(<MarketplaceAccountDetail account={account()} listingCount={2} orderCount={4} publicationCount={3} />);
+    for (const label of ["连接", "授权", "能力", "可发布", "概览", "Listings", "订单", "健康与能力", "设置", "listing_write", "同步能力", "9123/10000/日", "2 个", "3 次", "4 个"]) expect(html).toContain(label);
+    for (const anchor of ["#store-overview", "#store-listings", "#store-orders", "#store-health", "#store-settings"]) expect(html).toContain(anchor);
+    expect(html).not.toContain("refresh-token-value");
+    expect(html).not.toContain("buyer@example.test");
   });
 
   it("keeps the account creation command available in the empty state", () => {
@@ -32,7 +40,7 @@ describe("marketplace accounts workspace", () => {
       observedAt: "2026-07-24T08:00:00.000Z",
     };
     const html = renderToStaticMarkup(
-      <MarketplaceAccountsWorkspace accounts={[resetOnlyAccount]} publications={[]} />,
+      <MarketplaceAccountDetail account={resetOnlyAccount} listingCount={0} orderCount={0} publicationCount={0} />,
     );
     expect(html).toContain("重置于");
     expect(html).not.toContain("undefined");

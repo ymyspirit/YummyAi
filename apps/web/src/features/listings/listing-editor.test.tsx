@@ -1,13 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ListingEditor, type ListingEditorView } from "./listing-editor";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 describe("listing editor", () => {
   it("renders stable platform tabs, field provenance, and validation", () => {
     const html = renderToStaticMarkup(<ListingEditor listing={fixture()} />);
     for (const tab of ["Content", "Media", "Variants", "Attributes", "Compliance", "Publish", "Channels", "History"]) expect(html).toContain(tab);
     expect(html).toContain("AI SUGGESTION");
+    expect(html).toContain("平台本地预览");
+    expect(html).toContain("不代表平台在线状态");
+    expect(html).toContain("版本活动");
+    expect(html).toContain("保存为新版本");
     expect(html).toContain("刊登健康度");
     expect(html).toContain("attributes.brand");
     expect(html).toContain("amazon-2026.07");
@@ -16,5 +22,5 @@ describe("listing editor", () => {
 
 function fixture(): ListingEditorView {
   const content = { platform: "amazon" as const, locale: "en-US", title: "Travel mug", description: "Gift ready", bullets: ["Personalized"], tags: [], mainImageId: "asset", mediaAssetIds: ["asset"], variants: [{ skuId: "sku", skuCode: "MUG", optionValues: {} }], attributes: {}, compliance: { countryOfOrigin: "CN" } };
-  return { id: "listing", platform: "amazon", locale: "en-US", status: "draft", spuCode: "MUG", versionId: "version", versionNumber: 3, ruleVersion: "amazon-2026.07", source: "human", updatedAt: "2026-07-18T00:00:00Z", content, validation: { completeness: 83, blockers: [{ severity: "blocker", code: "common.required", path: "attributes.brand", message: "brand is required", ruleVersion: "amazon-2026.07" }], warnings: [] }, history: [] };
+  return { id: "listing", platform: "amazon", locale: "en-US", status: "draft", spuCode: "MUG", versionId: "version", versionNumber: 3, ruleVersion: "amazon-2026.07", source: "human", updatedAt: "2026-07-18T00:00:00Z", content, validation: { completeness: 83, blockers: [{ severity: "blocker", code: "common.required", path: "attributes.brand", message: "brand is required", ruleVersion: "amazon-2026.07" }], warnings: [] }, history: [{ id: "version", versionNumber: 3, status: "draft", source: "human", createdAt: "2026-07-18T00:00:00Z" }] };
 }

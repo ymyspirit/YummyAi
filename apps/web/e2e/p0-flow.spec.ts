@@ -8,6 +8,9 @@ test("capture to reviewed export", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "运营总览" })).toBeVisible();
   await expect(page.getByText("研究抓取", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /研究抓取：38，打开明细/ })).toHaveAttribute("href", /dateFrom=2026-07-01/);
+  await expect(page.getByRole("link", { name: "查看机会研究产品" })).toHaveAttribute("href", "/products?status=researching");
+  await expect(page.locator("#ai-ledger")).toContainText("本期模型账本");
   await expect(page.getByText("销售额", { exact: true })).toHaveCount(0);
 
   await page.goto("/research");
@@ -20,15 +23,21 @@ test("capture to reviewed export", async ({ page }) => {
 
   await page.goto("/products");
   await expect(page.getByText("轻定制旅行礼品杯", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "打开 轻定制旅行礼品杯" }).click();
   await expect(page.getByText("TRAVEL-MUG-GIFT", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "关联工作" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /旅行礼品杯 · 激光刻字与礼盒校样/ })).toHaveAttribute("href", /\/design\?task=/);
+  await expect(page.getByRole("link", { name: /Amazon · en-US/ })).toHaveAttribute("href", /\/listings\//);
 
-  await page.goto("/design");
+  await page.goto("/design?status=overdue");
+  await expect(page.getByRole("heading", { name: "设计任务队列" })).toBeVisible();
+  await expect(page.getByText("1 TASKS · 已逾期")).toBeVisible();
   await page.getByRole("button", { name: /VERSION 02.*已审批/ }).click();
   await expect(page.getByText("审批版本已锁定", { exact: true })).toBeVisible();
   await expect(page.getByText("授权域", { exact: true }).first()).toBeVisible();
 
   await page.goto("/stores");
-  await expect(page.getByRole("heading", { name: "店铺连接" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "店铺运营" })).toBeVisible();
 
   const listingId = createEntityId();
   await page.goto(`/listings/${listingId}`);
@@ -61,7 +70,7 @@ test("P0 pages expose headings and keyboard focus", async ({ page }) => {
 test("primary navigation stays complete across ERP pages", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "主导航" });
-  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品开发", "设计校样", "店铺连接", "刊登控制台", "订单履约", "库存台账", "采购补货", "供应商绩效", "渠道库存", "财务利润", "广告与 VOC", "运营驾驶舱"];
+  const labels = ["运营总览", "研究资料库", "竞争店铺", "产品目录", "设计校样", "刊登控制台", "店铺运营", "订单履约", "库存台账", "采购补货", "供应商绩效", "渠道库存", "财务利润", "广告与 VOC", "数据与集成"];
 
   for (const label of labels.slice(1)) {
     await expect(navigation.getByRole("link")).toHaveCount(labels.length);
@@ -77,6 +86,91 @@ test("P2 order inbox uses the real public projection", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "订单履约" })).toBeVisible();
   await expect(page.getByText("订单流水线")).toBeVisible();
   await expect(page.getByText(/买家姓名|详细地址|电子邮箱/)).toHaveCount(0);
+});
+
+test("Listing catalog keeps filters in the URL and mobile overflow inside the table", async ({ page }) => {
+  await page.goto("/listings");
+  await expect(page.getByRole("heading", { name: "Listing 目录" })).toBeVisible();
+  await page.getByPlaceholder("标题、SPU、Listing ID").fill("travel");
+  await page.getByPlaceholder("en-US").fill("en-US");
+  await page.locator('select[name="completeness"]').selectOption("partial");
+  await page.getByRole("button", { name: "应用" }).click();
+  await expect(page).toHaveURL(/q=travel/);
+  await expect(page).toHaveURL(/locale=en-US/);
+  await expect(page).toHaveURL(/completeness=partial/);
+  await expect(page.getByRole("heading", { name: "Listing 目录" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const scroll = page.locator(".listing-index-table-scroll");
+  expect(await scroll.evaluate((element) => element.scrollWidth >= element.clientWidth)).toBe(true);
+});
+
+test("Product catalog keeps owner filters and dense table overflow contained", async ({ page }) => {
+  await page.goto("/products");
+  await expect(page.getByRole("heading", { name: "产品目录" }).first()).toBeVisible();
+  await page.locator("details.product-create-panel > summary").click();
+  await page.getByRole("textbox", { name: "产品名称 *" }).fill("校验测试产品");
+  await page.getByRole("textbox", { name: /关联研究报告 ID/ }).fill("invalid-report-id");
+  await page.getByRole("button", { name: "创建产品企划" }).click();
+  await expect(page.getByText(/研究报告 ID 必须是有效的 UUIDv7/)).toBeVisible();
+  await page.getByPlaceholder("搜索产品名称或描述…").fill("旅行");
+  await page.getByLabel("产品状态").selectOption("developing");
+  await page.getByLabel("负责人").selectOption({ label: "Lin Q." });
+  await page.getByRole("button", { name: "应用筛选" }).click();
+  await expect(page).toHaveURL(/q=%E6%97%85%E8%A1%8C|q=旅行/);
+  await expect(page).toHaveURL(/status=developing/);
+  await expect(page).toHaveURL(/owner=0198fbef/);
+  await expect(page.getByText("TRAVEL-MUG-GIFT", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "打开 轻定制旅行礼品杯" }).click();
+  await expect(page.locator("#product-detail")).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const scroll = page.locator(".product-catalog-table-scroll");
+  expect(await scroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+});
+
+test("Store ledger drills into layered real-data operations without page overflow", async ({ page }) => {
+  const storeName = `E2E Store ${createEntityId().slice(-8)}`;
+  await page.goto("/stores");
+  await expect(page.getByRole("heading", { name: "店铺运营" })).toBeVisible();
+  const createPanel = page.locator("details.store-create-panel");
+  if (!await createPanel.evaluate((element) => (element as HTMLDetailsElement).open)) {
+    await page.getByText("新增店铺连接", { exact: true }).click();
+  }
+  await page.getByLabel("连接名称").fill(storeName);
+  await page.getByRole("button", { name: "创建连接" }).click();
+  await expect(page.getByText(storeName, { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: `打开 ${storeName} 店铺详情` }).click();
+  await expect(page.getByRole("heading", { name: storeName })).toBeVisible();
+  for (const label of ["概览", "Listings", "订单", "健康与能力", "设置"]) {
+    await expect(page.getByRole("heading", { name: label })).toBeVisible();
+  }
+  await expect(page.getByText("系统不会生成占位订单。", { exact: false })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await page.locator(".store-detail-nav").evaluate((element) => element.scrollWidth >= element.clientWidth)).toBe(true);
+});
+
+test("Listing editor keeps one live draft and a local-only preview", async ({ page }) => {
+  await page.goto(`/listings/${createEntityId()}`);
+  const title = page.getByRole("textbox", { name: /商品标题/ });
+  await title.fill("Updated travel mug title");
+  await expect(page.getByText("● 未保存", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Updated travel mug title" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存为新版本" })).toBeEnabled();
+  await expect(page.getByText(/不代表平台在线状态/)).toBeVisible();
+  await page.getByRole("button", { name: "Media" }).click();
+  await expect(page.getByRole("heading", { name: "媒体与 A+ 计划" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 });
 
 test("P3 inventory workspace uses the real projection", async ({ page }) => {

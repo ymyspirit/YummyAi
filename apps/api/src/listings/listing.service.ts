@@ -6,7 +6,7 @@ import {
   type ListingReplicationView,
   type TenantContext,
 } from "@yummyai/contracts";
-import { listingReplications, listingVersions, listings, type DatabaseConnection, withTenant } from "@yummyai/database";
+import { listingReplications, listingVersions, listings, spus, type DatabaseConnection, withTenant } from "@yummyai/database";
 import { amazonRules, etsyRules, validateListing, type ListingDraft, type ListingPlatform, type ListingValidation } from "@yummyai/platform-rules";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -89,10 +89,47 @@ export interface ListingVersionRecord {
   content: ListingDraft; validation: ListingValidation; createdAt: Date;
 }
 
+export const ListingCatalogQuerySchema = z.object({
+  q: z.string().trim().max(200).default(""),
+  platform: z.enum(["amazon", "etsy"]).optional(),
+  status: z.enum(["draft", "in_review", "approved", "archived"]).optional(),
+  locale: z.string().trim().max(20).optional(),
+  marketplaceId: z.string().trim().max(80).optional(),
+  completeness: z.enum(["all", "low", "partial", "complete"]).default("all"),
+  blockers: z.enum(["all", "with", "without"]).default("all"),
+  sort: z.enum(["updatedAt", "title", "completeness", "versionNumber"]).default("updatedAt"),
+  direction: z.enum(["asc", "desc"]).default("desc"),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export type ListingCatalogQuery = z.infer<typeof ListingCatalogQuerySchema>;
+
+export interface ListingCatalogItem {
+  id: string;
+  spuId: string;
+  spuCode: string;
+  spuName: string;
+  platform: ListingPlatform;
+  marketplaceId?: string;
+  locale: string;
+  status: ListingRecord["status"];
+  primaryVersionId?: string;
+  versionId: string;
+  versionNumber: number;
+  title: string;
+  hasMainImage: boolean;
+  completeness: number;
+  blockerCount: number;
+  source: ListingVersionRecord["source"];
+  updatedAt: string;
+}
+
 export interface ListingRepository {
   create(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }): Promise<{ listing: ListingRecord; version: ListingVersionRecord }>;
   get(context: TenantContext, id: string): Promise<ListingRecord | undefined>;
   list(context: TenantContext): Promise<ListingRecord[]>;
+  listCatalog(context: TenantContext): Promise<ListingCatalogItem[]>;
   listVersions(context: TenantContext, listingId: string): Promise<ListingVersionRecord[]>;
   createVersion(context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai" }): Promise<ListingVersionRecord>;
   approveVersion(context: TenantContext, listingId: string, versionId: string): Promise<ListingVersionRecord>;
@@ -117,6 +154,29 @@ export class ListingService {
   }
 
   list(context: TenantContext) { return this.repository.list(context); }
+  async catalog(context: TenantContext, rawQuery: ListingCatalogQuery) {
+    const query = ListingCatalogQuerySchema.parse(rawQuery);
+    const q = query.q.toLocaleLowerCase();
+    const filtered = (await this.repository.listCatalog(context)).filter((item) => {
+      if (query.platform && item.platform !== query.platform) return false;
+      if (query.status && item.status !== query.status) return false;
+      if (query.locale && item.locale !== query.locale) return false;
+      if (query.marketplaceId && item.marketplaceId !== query.marketplaceId) return false;
+      if (query.completeness === "low" && item.completeness >= 80) return false;
+      if (query.completeness === "partial" && (item.completeness < 80 || item.completeness >= 100)) return false;
+      if (query.completeness === "complete" && item.completeness < 100) return false;
+      if (query.blockers === "with" && item.blockerCount === 0) return false;
+      if (query.blockers === "without" && item.blockerCount > 0) return false;
+      return !q || [item.title, item.spuCode, item.spuName, item.id]
+        .some((value) => value.toLocaleLowerCase().includes(q));
+    });
+    filtered.sort((left, right) => compareCatalogItems(left, right, query.sort, query.direction));
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / query.limit));
+    const page = Math.min(query.page, pages);
+    const start = (page - 1) * query.limit;
+    return { items: filtered.slice(start, start + query.limit), page, limit: query.limit, total, pages };
+  }
   listVersions(context: TenantContext, listingId: string) { return this.repository.listVersions(context, listingId); }
 
   async getWorkspace(context: TenantContext, listingId: string) {
@@ -221,6 +281,53 @@ export class DrizzleListingRepository implements ListingRepository {
     return rows.map(mapListing);
   }
 
+  async listCatalog(context: TenantContext) {
+    const rows = await withTenant(this.database.db, context, (tx) => tx.select({
+      id: listings.id,
+      spuId: listings.spuId,
+      spuCode: spus.code,
+      spuName: spus.name,
+      platform: listings.platform,
+      marketplaceId: listings.marketplaceId,
+      locale: listings.locale,
+      status: listings.status,
+      primaryVersionId: listings.primaryVersionId,
+      versionId: listingVersions.id,
+      versionNumber: listingVersions.versionNumber,
+      source: listingVersions.source,
+      content: listingVersions.content,
+      validation: listingVersions.validation,
+      updatedAt: listingVersions.createdAt,
+    }).from(listings)
+      .innerJoin(spus, eq(spus.id, listings.spuId))
+      .innerJoin(listingVersions, eq(listingVersions.listingId, listings.id))
+      .orderBy(desc(listingVersions.versionNumber)));
+    const seen = new Set<string>();
+    return rows.filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    }).map((row): ListingCatalogItem => ({
+      id: row.id,
+      spuId: row.spuId,
+      spuCode: row.spuCode,
+      spuName: row.spuName,
+      platform: row.platform as ListingPlatform,
+      ...(row.marketplaceId ? { marketplaceId: row.marketplaceId } : {}),
+      locale: row.locale,
+      status: row.status as ListingRecord["status"],
+      ...(row.primaryVersionId ? { primaryVersionId: row.primaryVersionId } : {}),
+      versionId: row.versionId,
+      versionNumber: row.versionNumber,
+      title: row.content.title,
+      hasMainImage: Boolean(row.content.mainImageId),
+      completeness: row.validation.completeness,
+      blockerCount: row.validation.blockers.length,
+      source: row.source as ListingVersionRecord["source"],
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
   async listVersions(context: TenantContext, listingId: string) {
     const rows = await withTenant(this.database.db, context, (tx) => tx.select().from(listingVersions).where(eq(listingVersions.listingId, listingId)).orderBy(desc(listingVersions.versionNumber)));
     return rows.map(mapVersion);
@@ -287,3 +394,9 @@ function assertChannel(platform: ListingPlatform, locale: string, content: Listi
 function mapListing(row: typeof listings.$inferSelect): ListingRecord { return { id: row.id, tenantId: row.tenantId, spuId: row.spuId, platform: row.platform as ListingPlatform, marketplaceId: row.marketplaceId ?? undefined, locale: row.locale, status: row.status as ListingRecord["status"], primaryVersionId: row.primaryVersionId ?? undefined }; }
 function mapVersion(row: typeof listingVersions.$inferSelect): ListingVersionRecord { return { id: row.id, tenantId: row.tenantId, listingId: row.listingId, versionNumber: row.versionNumber, ruleVersion: row.ruleVersion, status: row.status as ListingVersionRecord["status"], source: row.source as ListingVersionRecord["source"], content: row.content, validation: row.validation, createdAt: row.createdAt }; }
 function mapReplication(row: typeof listingReplications.$inferSelect): ListingReplicationView { return ListingReplicationViewSchema.parse({ id: row.id, sourceListingId: row.sourceListingId, sourceVersionId: row.sourceVersionId, targetListingId: row.targetListingId, targetVersionId: row.targetVersionId, platform: row.platform, targetMarketplaceId: row.targetMarketplaceId, targetLocale: row.targetLocale, overrides: row.overrides, createdBy: row.createdBy, createdAt: row.createdAt.toISOString() }); }
+function compareCatalogItems(left: ListingCatalogItem, right: ListingCatalogItem, sort: ListingCatalogQuery["sort"], direction: ListingCatalogQuery["direction"]) {
+  const leftValue = sort === "title" ? left.title.toLocaleLowerCase() : sort === "updatedAt" ? Date.parse(left.updatedAt) : left[sort];
+  const rightValue = sort === "title" ? right.title.toLocaleLowerCase() : sort === "updatedAt" ? Date.parse(right.updatedAt) : right[sort];
+  const result = leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+  return direction === "asc" ? result : -result;
+}
