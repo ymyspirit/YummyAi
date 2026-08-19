@@ -1,0 +1,106 @@
+name: YummyAI release gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, "feature/**", "codex/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      POSTGRES_DB: yummyai
+      POSTGRES_USER: yummyai_local
+      POSTGRES_PASSWORD: yummyai_ci_postgres
+      POSTGRES_PORT: 5432
+      DATABASE_URL: postgresql://yummyai_local:yummyai_ci_postgres@localhost:5432/yummyai
+      REDIS_PASSWORD: yummyai_ci_redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://:yummyai_ci_redis@localhost:6379
+      MINIO_ROOT_USER: yummyai_ci_admin
+      MINIO_ROOT_PASSWORD: yummyai_ci_minio_password
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: yummyai_ci_admin
+      S3_SECRET_ACCESS_KEY: yummyai_ci_minio_password
+      S3_PRIVATE_BUCKET: yummyai-private
+      KEYCLOAK_ADMIN: yummyai_ci_admin
+      KEYCLOAK_ADMIN_PASSWORD: yummyai_ci_keycloak
+      OIDC_ISSUER: http://localhost:8081/realms/yummyai
+      OIDC_AUDIENCE: yummyai-api
+      OIDC_WEB_CLIENT_ID: yummyai-web
+      OIDC_WEB_REDIRECT_URI: http://localhost:3000/auth/callback
+      LOCAL_OIDC_CLIENT_ID: yummyai-local-web
+      LOCAL_OIDC_CLIENT_SECRET: yummyai_ci_local_oidc_secret
+      LOCAL_EXTENSION_USER: yummyai-local
+      LOCAL_EXTENSION_USER_EMAIL: yummyai-extension@yummyai.local
+      LOCAL_EXTENSION_USER_PASSWORD: yummyai-local-2026
+      API_BASE_URL: http://127.0.0.1:8000
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose -f infra/docker-compose.yml up -d postgres redis minio keycloak otel-collector
+      - name: Wait for infrastructure
+        run: |
+          for i in {1..60}; do
+            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format json | jq -s '[.[] | select(.Health != "healthy" and .State != "exited")] | length')
+            [ "$unhealthy" = "0" ] && exit 0
+            sleep 2
+          done
+          docker compose -f infra/docker-compose.yml ps
+          exit 1
+      - run: pnpm --filter @yummyai/database db:migrate
+      - name: Bootstrap CI service identity
+        working-directory: apps/api
+        run: node --import tsx src/bootstrap-local.ts
+      - run: pnpm --filter @yummyai/database exec drizzle-kit check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - run: pnpm build
+      - run: pnpm --filter @yummyai/extension zip
+      - run: pnpm release:manifest
+      - name: Verify tracked files contain no local credentials
+        run: |
+          ! git grep -n -E '(Bearer [A-Za-z0-9._-]{20,}|sk-[A-Za-z0-9]{20,}|BEGIN (RSA |EC )?PRIVATE KEY)' -- ':!pnpm-lock.yaml'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-reports
+          path: |
+            playwright-report
+            test-results
+            apps/*/playwright-report
+            apps/*/test-results
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            output/release-candidate/release-candidate-manifest.json
+            apps/extension/.output/*.zip
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - if: always()
+        run: docker compose -f infra/docker-compose.yml logs --tail=120

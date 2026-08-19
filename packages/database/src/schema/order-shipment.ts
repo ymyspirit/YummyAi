@@ -1,0 +1,200 @@
+import { sql } from "drizzle-orm";
+import { bigint, check, foreignKey, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+
+import { assetFiles } from "./assets.js";
+import { organizations, users } from "./identity.js";
+import { marketplaceAccounts } from "./marketplace.js";
+import { orderLines, orders } from "./order.js";
+
+export const shipments = pgTable("shipments", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull(),
+  status: text("status").default("draft").notNull(),
+  currentVersionNumber: integer("current_version_number").default(1).notNull(),
+  approvedVersionNumber: integer("approved_version_number"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipments_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipments_status_check", sql`${table.status} in ('draft','approved','writeback_pending','shipped','in_transit','delivered','exception','cancelled')`),
+  check("shipments_versions_check", sql`${table.currentVersionNumber} > 0 and (${table.approvedVersionNumber} is null or (${table.approvedVersionNumber} > 0 and ${table.approvedVersionNumber} <= ${table.currentVersionNumber}))`),
+  foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "shipments_order_fk" }).onDelete("restrict"),
+  uniqueIndex("shipments_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipments_idempotency_unique").on(table.tenantId, table.orderId, table.idempotencyKey),
+  index("shipments_queue_idx").on(table.tenantId, table.status, table.updatedAt),
+]);
+
+export const shipmentVersions = pgTable("shipment_versions", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  shipDate: timestamp("ship_date", { mode: "date", withTimezone: true }).notNull(),
+  promisedDeliveryAt: timestamp("promised_delivery_at", { mode: "date", withTimezone: true }),
+  estimatedDeliveryAt: timestamp("estimated_delivery_at", { mode: "date", withTimezone: true }),
+  shipFromCountryCode: text("ship_from_country_code").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_versions_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_versions_number_check", sql`${table.versionNumber} > 0`),
+  check("shipment_versions_country_check", sql`${table.shipFromCountryCode} ~ '^[A-Z]{2}$'`),
+  check("shipment_versions_delivery_check", sql`(${table.promisedDeliveryAt} is null or ${table.promisedDeliveryAt} >= ${table.shipDate}) and (${table.estimatedDeliveryAt} is null or ${table.estimatedDeliveryAt} >= ${table.shipDate})`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_versions_shipment_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_versions_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_versions_number_unique").on(table.tenantId, table.shipmentId, table.versionNumber),
+  uniqueIndex("shipment_versions_idempotency_unique").on(table.tenantId, table.shipmentId, table.idempotencyKey),
+]);
+
+export const shipmentPackages = pgTable("shipment_packages", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  shipmentVersionId: uuid("shipment_version_id").notNull(),
+  packageReferenceId: text("package_reference_id").notNull(),
+  trackingNumber: text("tracking_number").notNull(),
+  carrierCode: text("carrier_code").notNull(),
+  carrierName: text("carrier_name").notNull(),
+  carrierService: text("carrier_service").notNull(),
+  labelAssetId: uuid("label_asset_id"),
+  externalLabelId: text("external_label_id"),
+  labelCostMinor: bigint("label_cost_minor", { mode: "number" }),
+  labelCurrency: text("label_currency"),
+  weightGrams: integer("weight_grams"),
+  lengthMm: integer("length_mm"),
+  widthMm: integer("width_mm"),
+  heightMm: integer("height_mm"),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_packages_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_packages_carrier_code_check", sql`${table.carrierCode} ~ '^[A-Z0-9_:-]{1,80}$'`),
+  check("shipment_packages_money_check", sql`(${table.labelCostMinor} is null and ${table.labelCurrency} is null) or (${table.labelCostMinor} >= 0 and ${table.labelCurrency} ~ '^[A-Z]{3}$')`),
+  check("shipment_packages_weight_check", sql`${table.weightGrams} is null or ${table.weightGrams} > 0`),
+  check("shipment_packages_dimensions_check", sql`(${table.lengthMm} is null and ${table.widthMm} is null and ${table.heightMm} is null) or (${table.lengthMm} > 0 and ${table.widthMm} > 0 and ${table.heightMm} > 0)`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_packages_shipment_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.shipmentVersionId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id], name: "shipment_packages_version_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.labelAssetId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "shipment_packages_label_asset_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_packages_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_packages_reference_unique").on(table.tenantId, table.shipmentVersionId, table.packageReferenceId),
+  index("shipment_packages_tracking_idx").on(table.tenantId, table.carrierCode, table.trackingNumber),
+]);
+
+export const shipmentPackageLines = pgTable("shipment_package_lines", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  shipmentVersionId: uuid("shipment_version_id").notNull(),
+  packageId: uuid("package_id").notNull(),
+  orderLineId: uuid("order_line_id").notNull(),
+  quantity: integer("quantity").notNull(),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_package_lines_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_package_lines_quantity_check", sql`${table.quantity} > 0`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_package_lines_shipment_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.shipmentVersionId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id], name: "shipment_package_lines_version_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.packageId], foreignColumns: [shipmentPackages.tenantId, shipmentPackages.id], name: "shipment_package_lines_package_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.orderLineId], foreignColumns: [orderLines.tenantId, orderLines.id], name: "shipment_package_lines_order_line_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_package_lines_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_package_lines_pair_unique").on(table.tenantId, table.packageId, table.orderLineId),
+]);
+
+export const shipmentVersionReviews = pgTable("shipment_version_reviews", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  shipmentVersionId: uuid("shipment_version_id").notNull(),
+  decision: text("decision").notNull(),
+  reasonCode: text("reason_code").notNull(),
+  encryptedReason: text("encrypted_reason").notNull(),
+  reasonChecksum: text("reason_checksum").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_version_reviews_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_version_reviews_decision_check", sql`${table.decision} in ('approved','rejected')`),
+  check("shipment_version_reviews_checksum_check", sql`${table.reasonChecksum} ~ '^[0-9a-f]{64}$'`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_version_reviews_shipment_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.shipmentVersionId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id], name: "shipment_version_reviews_version_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_version_reviews_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_version_reviews_version_unique").on(table.tenantId, table.shipmentVersionId),
+  uniqueIndex("shipment_version_reviews_idempotency_unique").on(table.tenantId, table.shipmentId, table.idempotencyKey),
+]);
+
+export const shipmentWritebackRequests = pgTable("shipment_writeback_requests", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  shipmentVersionId: uuid("shipment_version_id").notNull(),
+  orderId: uuid("order_id").notNull(),
+  accountId: uuid("account_id").notNull(),
+  platform: text("platform").notNull(),
+  externalOrderId: text("external_order_id").notNull(),
+  status: text("status").default("queued").notNull(),
+  projectionVersion: integer("projection_version").default(1).notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_writeback_requests_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_writeback_requests_platform_check", sql`${table.platform} in ('amazon','etsy')`),
+  check("shipment_writeback_requests_status_check", sql`${table.status} in ('queued','dispatched','accepted','rejected','reconciliation_required','reconciled')`),
+  check("shipment_writeback_requests_version_check", sql`${table.projectionVersion} > 0`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_writeback_requests_shipment_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.shipmentVersionId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id], name: "shipment_writeback_requests_version_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "shipment_writeback_requests_order_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "shipment_writeback_requests_account_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_writeback_requests_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_writeback_requests_idempotency_unique").on(table.tenantId, table.shipmentId, table.idempotencyKey),
+  index("shipment_writeback_requests_queue_idx").on(table.tenantId, table.status, table.updatedAt),
+]);
+
+export const shipmentWritebackEvents = pgTable("shipment_writeback_events", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  requestId: uuid("request_id").notNull(),
+  sequence: integer("sequence").notNull(),
+  action: text("action").notNull(),
+  fromStatus: text("from_status").notNull(),
+  toStatus: text("to_status").notNull(),
+  providerCode: text("provider_code"),
+  externalReference: text("external_reference"),
+  actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+  recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_writeback_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_writeback_events_sequence_check", sql`${table.sequence} > 0`),
+  check("shipment_writeback_events_action_check", sql`${table.action} in ('dispatched','accepted','rejected','uncertain','reconcile_accepted','reconcile_rejected')`),
+  foreignKey({ columns: [table.tenantId, table.requestId], foreignColumns: [shipmentWritebackRequests.tenantId, shipmentWritebackRequests.id], name: "shipment_writeback_events_request_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_writeback_events_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_writeback_events_sequence_unique").on(table.tenantId, table.requestId, table.sequence),
+]);
+
+export const shipmentTrackingEvents = pgTable("shipment_tracking_events", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(),
+  packageId: uuid("package_id").notNull(),
+  status: text("status").notNull(),
+  provider: text("provider").notNull(),
+  externalEventId: text("external_event_id").notNull(),
+  detailCode: text("detail_code").notNull(),
+  estimatedDeliveryAt: timestamp("estimated_delivery_at", { mode: "date", withTimezone: true }),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+  recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("shipment_tracking_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_tracking_events_status_check", sql`${table.status} in ('information_received','picked_up','in_transit','out_for_delivery','delivered','delivery_exception','returned')`),
+  foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_tracking_events_shipment_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.packageId], foreignColumns: [shipmentPackages.tenantId, shipmentPackages.id], name: "shipment_tracking_events_package_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_tracking_events_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_tracking_events_external_unique").on(table.tenantId, table.provider, table.externalEventId),
+  index("shipment_tracking_events_timeline_idx").on(table.tenantId, table.shipmentId, table.occurredAt),
+]);

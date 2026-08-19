@@ -1,0 +1,4 @@
+services:
+  minio:
+    ports:
+      - "${YUMMYAI_MINIO_PORT:-19000}:9000"

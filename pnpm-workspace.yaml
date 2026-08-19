@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+overrides:
+  "@vitejs/plugin-react": "5.2.0"
+
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false
+  sharp: true
+  spawn-sync: false
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.25.0

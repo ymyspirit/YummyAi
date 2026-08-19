@@ -1,0 +1,4 @@
+ALTER TABLE "mockup_template_source_inspections" ADD COLUMN "confirmed_by" uuid;--> statement-breakpoint
+ALTER TABLE "mockup_template_source_inspections" ADD COLUMN "confirmed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "mockup_template_source_inspections" ADD CONSTRAINT "mockup_template_source_inspections_confirmed_by_app_users_id_fk" FOREIGN KEY ("confirmed_by") REFERENCES "public"."app_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mockup_template_source_inspections" ADD CONSTRAINT "mockup_template_source_inspections_confirmation_check" CHECK ("mockup_template_source_inspections"."confirmed_at" is null or ("mockup_template_source_inspections"."status" = 'completed' and "mockup_template_source_inspections"."confirmed_by" is not null));

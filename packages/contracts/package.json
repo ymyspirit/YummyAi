@@ -1,0 +1,44 @@
+{
+  "name": "@yummyai/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./channel-inventory": "./src/channel-inventory/channel-inventory.ts",
+    "./catalog/amazon-custom-workflow": "./src/catalog/amazon-custom-workflow.ts",
+    "./workflow": "./src/workflow/workflow.ts",
+    "./catalog/custom-product-package": "./src/catalog/custom-product-package.ts",
+    "./catalog/product": "./src/catalog/product.ts",
+    "./common/ids": "./src/common/ids.ts",
+    "./capture": "./src/capture/capture.ts",
+    "./finance": "./src/finance/finance.ts",
+    "./inventory": "./src/inventory/inventory.ts",
+    "./marketplace/platform": "./src/marketplace/platform.ts",
+    "./marketplace/store": "./src/marketplace/store.ts",
+    "./procurement": "./src/procurement/procurement.ts",
+    "./research": "./src/research/research.ts",
+    "./supplier-performance": "./src/supplier-performance/supplier-performance.ts",
+    "./customer-intelligence": "./src/customer-intelligence/customer-intelligence.ts",
+    "./planning": "./src/planning/planning.ts",
+    "./integration": "./src/integration/integration.ts",
+    "./pod": "./src/pod/pod.ts",
+    "./pod/governance": "./src/pod/governance.ts",
+    "./pod/batch-workflows": "./src/pod/batch-workflows.ts",
+    "./pod/listing-artifacts": "./src/pod/listing-artifacts.ts",
+    "./pod/order-personalization": "./src/pod/order-personalization.ts",
+    "./pod/personalization": "./src/pod/personalization.ts",
+    "./pod/visual-search": "./src/pod/visual-search.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

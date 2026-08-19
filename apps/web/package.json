@@ -1,0 +1,36 @@
+{
+  "name": "@yummyai/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node --env-file-if-exists=../../.env ../../tools/scripts/check-web-env.mjs",
+    "dev": "node --env-file-if-exists=../../.env ../../tools/scripts/start-web.mjs dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.1.0",
+    "@tanstack/react-table": "^8.21.3",
+    "@xyflow/react": "^12.11.2",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/platform-rules": "workspace:*",
+    "geist": "^1.7.2",
+    "lucide-react": "^1.25.0",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.54",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/storage": "workspace:*",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

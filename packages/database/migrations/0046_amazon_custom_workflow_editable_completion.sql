@@ -1,0 +1,2 @@
+ALTER TABLE "amazon_custom_workflow_events" DROP CONSTRAINT "amazon_custom_workflow_events_action_check";--> statement-breakpoint
+ALTER TABLE "amazon_custom_workflow_events" ADD CONSTRAINT "amazon_custom_workflow_events_action_check" CHECK ("amazon_custom_workflow_events"."action" in ('workflow_started','step_started','step_blocked','step_unblocked','step_completed','step_note_updated','step_reopened'));

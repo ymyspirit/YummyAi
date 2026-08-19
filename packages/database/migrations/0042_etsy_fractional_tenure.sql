@@ -1,0 +1,1 @@
+ALTER TABLE "competitor_shop_snapshots" ALTER COLUMN "years_on_platform" SET DATA TYPE numeric(4, 1);

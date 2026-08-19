@@ -1,0 +1,43 @@
+{
+  "name": "yummyai-erp",
+  "private": true,
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=24.17 <25"
+  },
+  "scripts": {
+    "start:local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools/scripts/start-local.ps1",
+    "dev": "node --env-file=.env node_modules/turbo/bin/turbo dev",
+    "dev:lite": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/api --filter=@yummyai/web",
+    "dev:api": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/api",
+    "dev:web": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/web",
+    "dev:worker": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/worker",
+    "dev:extension": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/extension",
+    "dev:full": "node --env-file=.env node_modules/turbo/bin/turbo dev",
+    "infra:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
+    "infra:lite": "docker compose --env-file .env -f infra/docker-compose.yml -f infra/docker-compose.low-memory.yml up -d",
+    "infra:full": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
+    "infra:file-scanning": "docker compose --env-file .env -f infra/docker-compose.yml up -d clamav",
+    "infra:observability": "docker compose --env-file .env -f infra/docker-compose.yml up -d otel-collector",
+    "check:local-runtime": "node --env-file=.env tools/scripts/check-local-runtime.mjs",
+    "build": "turbo build",
+    "check:rules": "node --test tools/tests/project-rules.test.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "release:manifest": "node tools/scripts/create-release-candidate-manifest.mjs",
+    "typecheck": "turbo typecheck",
+    "test": "pnpm check:rules && pnpm test:tools && turbo test",
+    "test:integration": "turbo test:integration",
+    "test:tools": "node --test tools/tests/workspace.test.mjs tools/tests/release-candidate-manifest.test.mjs",
+    "test:e2e": "node tools/scripts/run-e2e.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@playwright/test": "1.61.1",
+    "eslint": "^9.0.0",
+    "jszip": "^3.10.1",
+    "prettier": "^3.6.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

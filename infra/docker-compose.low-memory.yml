@@ -1,0 +1,6 @@
+services:
+  clamav:
+    profiles: ["file-scanning"]
+
+  otel-collector:
+    profiles: ["observability"]

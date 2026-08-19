@@ -1,0 +1,1 @@
+ALTER TABLE "competitor_shop_snapshots" ADD COLUMN "shop_sections" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "env": [
+        "ANALYSIS_DEMO_MODE",
+        "API_ACCESS_TOKEN",
+        "API_BASE_URL",
+        "DASHBOARD_DEMO_MODE",
+        "DESIGN_DEMO_MODE",
+        "LISTING_DEMO_MODE",
+        "LOCAL_OIDC_CLIENT_ID",
+        "LOCAL_OIDC_CLIENT_SECRET",
+        "OIDC_ISSUER",
+        "OIDC_WEB_CLIENT_ID",
+        "OIDC_WEB_REDIRECT_URI",
+        "PRODUCT_DEMO_MODE"
+      ],
+      "persistent": true
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "env": [
+        "DATABASE_URL",
+        "OIDC_AUDIENCE",
+        "OIDC_ISSUER",
+        "REDIS_URL",
+        "S3_ACCESS_KEY_ID",
+        "S3_ENDPOINT",
+        "S3_PRIVATE_BUCKET",
+        "S3_REGION",
+        "S3_SECRET_ACCESS_KEY"
+      ],
+      "outputs": ["coverage/**"]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "outputs": ["playwright-report/**", "test-results/**"]
+    }
+  }
+}

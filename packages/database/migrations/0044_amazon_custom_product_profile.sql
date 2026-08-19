@@ -1,0 +1,1 @@
+ALTER TABLE "product_plans" ADD COLUMN "custom_product_profile" jsonb;

@@ -1,0 +1,2 @@
+ALTER TABLE "marketplace_listing_sync_requests" DROP CONSTRAINT "marketplace_listing_sync_requests_action_check";--> statement-breakpoint
+ALTER TABLE "marketplace_listing_sync_requests" ADD CONSTRAINT "marketplace_listing_sync_requests_action_check" CHECK ("marketplace_listing_sync_requests"."action" in ('read','read_full_content','push_price_inventory','push_full_content'));
