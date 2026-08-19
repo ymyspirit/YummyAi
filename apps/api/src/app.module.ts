@@ -24,12 +24,40 @@ import { CustomerIntelligenceController } from "./customer-intelligence/customer
 import { CustomerIntelligenceService } from "./customer-intelligence/customer-intelligence.service.js";
 import { ProductController } from "./catalog/product.controller.js";
 import { DrizzleCatalogRepository, ProductService } from "./catalog/product.service.js";
+import { AmazonCustomWorkflowController } from "./catalog/amazon-custom-workflow.controller.js";
+import { AmazonCustomWorkflowService } from "./catalog/amazon-custom-workflow.service.js";
+import { CustomProductPackageController } from "./catalog/custom-product-package.controller.js";
+import { CustomProductPackageService } from "./catalog/custom-product-package.service.js";
+import { AmazonCustomListingMaterialsService } from "./catalog/amazon-custom-listing-materials.service.js";
 import { CompetitorShopController } from "./competitors/competitor-shop.controller.js";
 import { CompetitorShopService } from "./competitors/competitor-shop.service.js";
 import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { DashboardService, DrizzleDashboardRepository } from "./dashboard/dashboard.service.js";
 import { DesignController } from "./design/design.controller.js";
 import { DesignService, DrizzleDesignRepository } from "./design/design.service.js";
+import { PodWorkbenchController } from "./design/pod-workbench.controller.js";
+import { PodWorkbenchService } from "./design/pod-workbench.service.js";
+import { PodToolActivationPolicy } from "./design/pod-workbench.service.js";
+import { PodArtworkTaskService } from "./design/pod-artwork-task.service.js";
+import { PodGovernanceController } from "./design/pod-governance.controller.js";
+import { PodGovernanceService } from "./design/pod-governance.service.js";
+import { PodPersonalizationController } from "./design/pod-personalization.controller.js";
+import { PodPersonalizationService } from "./design/pod-personalization.service.js";
+import { PodExportController } from "./design/pod-export.controller.js";
+import { PodExportService } from "./design/pod-export.service.js";
+import { RedisPodExportEnqueuer } from "./design/redis-pod-export-enqueuer.js";
+import { RedisPodArtworkEnqueuer } from "./design/redis-pod-artwork-enqueuer.js";
+import { PodBatchWorkflowController } from "./design/pod-batch-workflow.controller.js";
+import { PodBatchWorkflowService } from "./design/pod-batch-workflow.service.js";
+import { PodMockupBatchService } from "./design/pod-mockup-batch.service.js";
+import { RedisPodBatchWorkflowEnqueuer } from "./design/redis-pod-batch-workflow-enqueuer.js";
+import { RedisPersonalizationTemplateSourceInspectionEnqueuer } from "./design/redis-personalization-template-source-inspection-enqueuer.js";
+import { OrderPersonalizationBatchController } from "./design/order-personalization-batch.controller.js";
+import { OrderPersonalizationBatchService } from "./design/order-personalization-batch.service.js";
+import { RedisOrderPersonalizationBatchEnqueuer } from "./design/redis-order-personalization-batch-enqueuer.js";
+import { OrderPersonalizationRenderController } from "./design/order-personalization-render.controller.js";
+import { OrderPersonalizationRenderService } from "./design/order-personalization-render.service.js";
+import { RedisOrderPersonalizationRenderEnqueuer } from "./design/redis-order-personalization-render-enqueuer.js";
 import { FinanceController } from "./finance/finance.controller.js";
 import { FinanceService } from "./finance/finance.service.js";
 import { HealthController } from "./health.controller.js";
@@ -103,8 +131,16 @@ import {
   SHIPMENT_WRITEBACK_ENQUEUER,
   WEBHOOK_DELIVERY_ENQUEUER,
   PRIVATE_STORAGE,
+  PERSONALIZATION_TEMPLATE_SOURCE_INSPECTION_ENQUEUER,
+  ORDER_PERSONALIZATION_BATCH_ENQUEUER,
+  ORDER_PERSONALIZATION_RENDER_ENQUEUER,
+  POD_ARTWORK_ENQUEUER,
+  POD_BATCH_WORKFLOW_ENQUEUER,
+  POD_EXPORT_ENQUEUER,
+  WORKFLOW_NODE_ENQUEUER,
 } from "./platform.tokens.js";
 import { ResearchController } from "./research/research.controller.js";
+import { ResearchClassificationService } from "./research/research-classification.service.js";
 import { ResearchRepository } from "./research/research.repository.js";
 import { ProcurementController } from "./procurement/procurement.controller.js";
 import { ProcurementService } from "./procurement/procurement.service.js";
@@ -112,16 +148,39 @@ import { PlanningController } from "./planning/planning.controller.js";
 import { PlanningService } from "./planning/planning.service.js";
 import { SupplierPerformanceController } from "./supplier-performance/supplier-performance.controller.js";
 import { SupplierPerformanceService } from "./supplier-performance/supplier-performance.service.js";
+import { RedisWorkflowNodeEnqueuer } from "./workflows/redis-workflow-node-enqueuer.js";
+import { WorkflowCapabilityRegistry } from "./workflows/workflow-capability.registry.js";
+import {
+  WorkflowDefinitionController,
+  WorkflowRunController,
+} from "./workflows/workflow.controller.js";
+import { WorkflowDefinitionService } from "./workflows/workflow-definition.service.js";
+import {
+  ExternalWorkflowExecutor,
+  HumanExecutor,
+  InternalCapabilityExecutor,
+  WorkflowExecutorRouter,
+} from "./workflows/workflow-node.executor.js";
+import { WorkflowRunService } from "./workflows/workflow-run.service.js";
 
 @Module({
   controllers: [
     AssetsController,
+    AmazonCustomWorkflowController,
     CaptureController,
     ChannelInventoryController,
     CustomerIntelligenceController,
+    CustomProductPackageController,
     CompetitorShopController,
     DashboardController,
     DesignController,
+    PodWorkbenchController,
+    PodGovernanceController,
+    PodPersonalizationController,
+    OrderPersonalizationBatchController,
+    OrderPersonalizationRenderController,
+    PodExportController,
+    PodBatchWorkflowController,
     FinanceController,
     HealthController,
     InventoryController,
@@ -147,6 +206,8 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     ProductController,
     ResearchController,
     SupplierRoutingController,
+    WorkflowDefinitionController,
+    WorkflowRunController,
   ],
   providers: [
     {
@@ -196,13 +257,33 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     { provide: NOTIFICATION_REPOSITORY, useClass: DrizzleNotificationRepository },
     { provide: ORDER_PII_VAULT, useFactory: createOrderPiiVault },
     { provide: SHIPMENT_WRITEBACK_ENQUEUER, useClass: RedisShipmentWritebackEnqueuer },
+    { provide: POD_ARTWORK_ENQUEUER, useClass: RedisPodArtworkEnqueuer },
+    { provide: POD_BATCH_WORKFLOW_ENQUEUER, useClass: RedisPodBatchWorkflowEnqueuer },
+    { provide: POD_EXPORT_ENQUEUER, useClass: RedisPodExportEnqueuer },
+    { provide: WORKFLOW_NODE_ENQUEUER, useClass: RedisWorkflowNodeEnqueuer },
+    { provide: PERSONALIZATION_TEMPLATE_SOURCE_INSPECTION_ENQUEUER, useClass: RedisPersonalizationTemplateSourceInspectionEnqueuer },
+    { provide: ORDER_PERSONALIZATION_BATCH_ENQUEUER, useClass: RedisOrderPersonalizationBatchEnqueuer },
+    { provide: ORDER_PERSONALIZATION_RENDER_ENQUEUER, useClass: RedisOrderPersonalizationRenderEnqueuer },
     AuditService,
+    AmazonCustomWorkflowService,
     CaptureService,
     ChannelInventoryService,
     CustomerIntelligenceService,
+    CustomProductPackageService,
+    AmazonCustomListingMaterialsService,
     CompetitorShopService,
     DashboardService,
     DesignService,
+    PodWorkbenchService,
+    PodToolActivationPolicy,
+    PodArtworkTaskService,
+    PodGovernanceService,
+    PodPersonalizationService,
+    OrderPersonalizationBatchService,
+    OrderPersonalizationRenderService,
+    PodExportService,
+    PodBatchWorkflowService,
+    PodMockupBatchService,
     FinanceService,
     ListingService,
     MarketplaceAccountService,
@@ -228,7 +309,15 @@ import { SupplierPerformanceService } from "./supplier-performance/supplier-perf
     PlanningService,
     SupplierPerformanceService,
     ProductService,
+    ResearchClassificationService,
     ResearchRepository,
+    WorkflowCapabilityRegistry,
+    WorkflowDefinitionService,
+    WorkflowRunService,
+    HumanExecutor,
+    InternalCapabilityExecutor,
+    ExternalWorkflowExecutor,
+    WorkflowExecutorRouter,
     { provide: APP_GUARD, useClass: TenantContextGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

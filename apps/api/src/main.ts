@@ -2,11 +2,16 @@ import "reflect-metadata";
 
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 
 import { AppModule } from "./app.module.js";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: false });
+  // Asset uploads are JSON/base64. A 20 MB binary expands to about 26.7 MB,
+  // so keep the transport limit aligned with the design UI's 20 MB file gate.
+  app.useBodyParser("json", { limit: "28mb" });
+  app.useBodyParser("urlencoded", { extended: true, limit: "28mb" });
   app.enableCors({
     allowedHeaders: ["Authorization", "Content-Type"],
     methods: ["GET", "POST", "PATCH", "OPTIONS"],

@@ -8,25 +8,72 @@
 
 ## Start
 
+### One-click Windows startup
+
+Double-click `start-yummyai.cmd` in the repository root, or run:
+
+```powershell
+pnpm start:local
+```
+
+The launcher is idempotent. It starts Docker Desktop when needed, starts only
+the YummyAI Compose services, applies migrations, refreshes the local extension
+account, and starts missing API, Web, Worker, and extension processes. Existing
+unrelated containers and processes are never stopped. If port `3000` is already
+serving another active Web workflow, the launcher uses an isolated Web runtime
+on `3002` and points the development extension at that proxy. Startup logs and
+the last resolved endpoints are stored under `%LOCALAPPDATA%\YummyAI`.
+
+The launcher reloads only the YummyAI development extension so its proxy target
+is deterministic. Use the newly opened Chrome window, refresh the public Amazon
+or Etsy page, and then click **发送到研究库** or **保存竞争店铺**.
+
+### Manual startup
+
 ```powershell
 Copy-Item .env.example .env
-docker compose --env-file .env -f infra/docker-compose.yml up -d
 pnpm install --frozen-lockfile
+pnpm infra:up
 pnpm --filter @yummyai/database db:migrate
 pnpm dev
 ```
 
-`pnpm dev` starts the publication Worker together with the API and Web application. To run only the Worker while diagnosing P1 publication jobs:
+The default path preserves the complete local runtime:
+
+- `pnpm infra:up` starts PostgreSQL, Redis, MinIO, Keycloak, ClamAV, and the OpenTelemetry Collector.
+- `pnpm dev` starts the API, Web application, Worker, and WXT extension hot reload.
+
+These commands retain the existing full-feature behavior. For a memory-bounded session that only needs synchronous API and Web work, start from a stopped Compose project and use:
+
+```powershell
+pnpm infra:lite
+pnpm dev:lite
+```
+
+The low-memory Compose override leaves ClamAV and the OpenTelemetry Collector stopped, while the low-memory development command omits the Worker and WXT watcher. It does not replace the normal runtime for file scanning, background jobs, extension capture, observability acceptance, or full cross-module verification. If the full stack is already running, stop its optional containers before switching modes:
+
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml stop clamav otel-collector
+```
+
+Start an omitted component without restarting the rest of the session when a workflow reaches it:
+
+```powershell
+pnpm dev:worker
+pnpm dev:extension
+pnpm infra:file-scanning
+pnpm infra:observability
+```
+
+`pnpm infra:full` and `pnpm dev:full` are explicit aliases for the normal complete runtime. `pnpm dev:web` is available for isolated UI work; demo-mode flags remain restricted to that isolated UI boundary and are not valid acceptance evidence.
 
 The Web application owns `http://localhost:3000`. WXT uses `http://localhost:3001` for extension hot reload so `localhost` cannot resolve to the wrong development server.
 
-The root `dev` script loads `.env` through Node before starting Turbo. `turbo.json` explicitly passes the Web server's API and local OIDC variable names to development tasks; keep `pnpm check:rules` green when that set changes. API and Worker scripts also load the same root `.env` directly. Do not put provider credentials into browser-visible `NEXT_PUBLIC_*` variables.
+The root development scripts load `.env` through Node before starting Turbo. `turbo.json` explicitly passes the Web server's API and local OIDC variable names to development tasks; keep `pnpm check:rules` green when that set changes. The Web package also loads `../../.env` and runs an environment preflight before `next dev`, so an accidental `pnpm dev` from `apps/web` cannot silently start without `API_BASE_URL`. Missing server configuration must render an explicit error and must never be presented as a legitimate empty dataset. API and Worker scripts also load the same root `.env` directly. Do not put provider credentials into browser-visible `NEXT_PUBLIC_*` variables.
 
-```powershell
-pnpm --filter @yummyai/worker start
-```
+The Worker uses `DATABASE_URL`, `REDIS_URL`, the marketplace application variables, the same `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY` as the API, and `CLAMAV_HOST`/`CLAMAV_PORT`/`CLAMAV_TIMEOUT_MS` for quarantined customer-file scanning. The API and Worker share the separate `ORDER_PII_ENCRYPTION_KEY`: purpose-bound order-personalization jobs decrypt protected fields only in Worker memory while preparing or rendering a pinned encrypted slot-resolution snapshot. API client and Webhook signing secrets use `INTEGRATION_SECRET_ENCRYPTION_KEY` in both the API and Worker. In non-production local development only, each encryption domain derives a distinct fallback key from `LOCAL_OIDC_CLIENT_SECRET`.
 
-The Worker uses `DATABASE_URL`, `REDIS_URL`, the marketplace application variables, the same `MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY` as the API, and `CLAMAV_HOST`/`CLAMAV_PORT`/`CLAMAV_TIMEOUT_MS` for quarantined customer-file scanning. The API uses a separate `ORDER_PII_ENCRYPTION_KEY` for protected order details. API client and Webhook signing secrets use `INTEGRATION_SECRET_ENCRYPTION_KEY` in both the API and Worker. In non-production local development only, each encryption domain derives a distinct fallback key from `LOCAL_OIDC_CLIENT_SECRET`.
+Order-context rendering is disabled unless `POD_ORDER_PROCESSOR_URL`, `POD_ORDER_PROCESSOR_API_KEY`, `POD_ORDER_PROCESSOR_DEPLOYMENT_ID`, and `POD_ORDER_ENABLED_TOOLS` are all set. The allowlist accepts `image_composite`, `group_photo`, `pet_outfit`, `fulfillment_composite`, and `vector_fulfillment`; `POD_ORDER_PROCESSOR_MAX_OUTPUT_BYTES` defaults to 50 MiB. These credentials and the endpoint are separate from the ordinary `POD_PROCESSOR_*` variables because the order processor receives minimum-necessary customer text and file bytes. Use only a locally controlled fixture processor in development, never a shared public image endpoint.
 
 Default endpoints are PostgreSQL `5432`, Redis `6379`, MinIO `9000/9001`, Keycloak `8081`, ClamAV `3310` (loopback only), and OTLP `4317/4318`. Change host ports in `.env` when they collide; keep container ports unchanged. ClamAV needs several GiB of RAM while loading and refreshing signatures, so allocate enough Docker Desktop memory before enabling P2-C file scans.
 
@@ -36,9 +83,96 @@ Default endpoints are PostgreSQL `5432`, Redis `6379`, MinIO `9000/9001`, Keyclo
 docker compose --env-file .env -f infra/docker-compose.yml ps
 docker compose --env-file .env -f infra/docker-compose.yml logs --tail=100 postgres redis minio keycloak clamav otel-collector
 pnpm --filter @yummyai/database exec drizzle-kit check
+pnpm check:local-runtime
 ```
 
+In a low-memory session, ClamAV and OpenTelemetry Collector logs exist only after those components have been started explicitly.
+
+Run `pnpm check:local-runtime` after starting API and Web. It compares the
+tenant-scoped research, marketplace-account, and competitor-shop API responses
+with the rendered `/research`, `/stores`, and `/competitors` pages. The check
+fails if a page reports missing API configuration or does not render data that
+its API returned.
+
 Use `DASHBOARD_DEMO_MODE=1`, `ANALYSIS_DEMO_MODE=1`, `PRODUCT_DEMO_MODE=1`, `DESIGN_DEMO_MODE=1`, and `LISTING_DEMO_MODE=1` only for UI development. Never set demo flags in deployed environments.
+
+## POD artwork processor development
+
+The POD workbench tool catalog is readable without a processor, but task creation fails closed until a verified processor deployment is explicitly configured for both the API and Worker:
+
+```dotenv
+POD_PROCESSOR_URL=https://processor.example.test/v1/execute
+POD_PROCESSOR_API_KEY=replace-with-a-local-test-secret
+POD_PROCESSOR_DEPLOYMENT_ID=pod-test-2026-08-03
+POD_ENABLED_TOOLS=pattern_crop,print_extract,background_remove,super_resolution,outpaint,crop_compress,vectorize,authorized_watermark_remove,design_variation,text_to_image,series_design,canvas_extend,seamless_pattern,seamless_stitch,product_suite,title_draft,virtual_try_on,background_replace
+POD_PROCESSOR_MAX_OUTPUT_BYTES=52428800
+```
+
+`POD_ENABLED_TOOLS` accepts the generic executable keys documented in `docs/integration/pod-workbench.md`, including the isolated POD-3 keys `product_video`, `piece_extract`, `piece_compose`, and `uv_layers`. Order-context tools are intentionally rejected by this allowlist. The API exposes a tool as enabled only when the URL, secret, deployment ID, and allowlist are all present; the Worker uses the same condition before registering the queue consumer. Keep the secret server-only. A loopback `http://localhost` processor is allowed for local development, while non-loopback processor URLs must use HTTPS.
+
+Apply the POD task migration and verify the identifier-only queue, worker policy checks, and tenant boundary before an end-to-end processor smoke:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/contracts test -- pod/pod.test.ts pod/governance.test.ts
+pnpm --filter @yummyai/jobs test -- pod-artwork.test.ts
+pnpm --filter @yummyai/api test:integration -- pod-artwork-task.integration.test.ts
+pnpm --filter @yummyai/worker test -- pod-artwork.processor.test.ts pod-artwork.http-gateway.test.ts pod-export.processor.test.ts pod-personalization-resolver.test.ts
+pnpm --filter @yummyai/web test -- pod-governance-actions.test.ts pod-workbench.test.tsx
+pnpm --filter @yummyai/database exec drizzle-kit check
+```
+
+Use only a deterministic non-production processor fixture for local acceptance. Confirm that a successful run creates a new pending-review design version and authorized-domain AI asset with model, version, seed, technical metadata, AI inference regions, and task provenance; it must not create a publishable export. Research-domain inputs are accepted only by `rights_risk_scan`. Customer-provided inputs are rejected by ordinary artwork tasks. All transform tools require rights-approved authorized assets, watermark removal requires explicit rights attestation, and licensed brand/IP fusion also requires a license reference.
+
+After manually approving the generated design version, request an export from the POD task center. Confirm that the Worker produces a private ZIP containing `manifest.json`, that the export row becomes `completed`, and that the UI obtains a short-lived read URL. Changing rights state or file bytes before packaging must fail closed. The export job payload must contain only `exportId`.
+
+For the POD governance UI smoke, run the deterministic fixture with `POD_FIXTURE_PORT` set to the web app's local `API_BASE_URL` port (or pass the port as the fixture script's first argument). Open `?module=print_extraction&tool=pattern_crop` and verify mode, multi-crop limit, format/background, padding, result label, fixed perspective correction, and strict crop evidence. Switch to `tool=print_extract` and verify scenario, correction strength, restoration, transparent-format constraints, minimum completeness, and marked AI-region evidence. Open `?module=print_design&tool=series_design` and verify required batch prompts, fixed PNG/count/AI controls, prompt fingerprint, complete input coverage and two per-file evidence rows; switch to `tool=seamless_pattern` and verify repeat direction, immutable seam/tile checks and reviewed flat-pattern evidence. Spot-check asset-free `text_to_image`, licensed-brand proof, canvas-extension regions and non-generative `seamless_stitch`. Open `?module=listing_assets&tool=product_suite` and verify platform/locale, category, template, partial-success slot evidence and stable failure code; switch to `title_draft` and verify separate confirmed facts, keyword constraints, rule version, title counts and mandatory text review. Spot-check model-license rejection in `virtual_try_on`, subject-preservation rejection and marked background regions in `background_replace`, then verify reviewed candidates can only bind a fixed Listing version and slot. Open `?module=pattern_processing&tool=outpaint` and verify ratio, direction, format, optional prompt, immutable AI marking, and the reviewed extension rectangle; switch to `tool=vectorize` and verify SVG/EPS, color count/mode, smoothing, path closure, SVG safety notice, and strict path evidence. Spot-check transparent JPEG rejection in `crop_compress` and the mandatory rights confirmation in `authorized_watermark_remove`. Open `?module=rights_risk&tool=rights_risk_scan` and verify depth, Amazon/Etsy scope, validity, search terms, the fixed non-legal-opinion warning, blocked high-risk evidence, source/model versions, and a separately labelled visual similarity percentage; then run visual search and verify similarity remains visibly separate from legal risk. Open `?module=listing_assets&tool=product_video` and verify the reviewed-output boundary plus duration, framing, resolution, FPS, transition, caption, licensed soundtrack, AI-motion, fixed safe-area controls, and the strict MP4 evidence in the task center. Open `?module=personalization` and verify blank template creation, PNG/PSD source inspection status, four-class slot confirmation, explicit warning acknowledgement, the repeated `customer_image_1` mapping for same-name slots, approval, and explicit SKU/size binding. Open `?module=production_artwork`, switch the production type between bitmap and vector fulfillment, and verify SVG template profile, physical canvas, text-to-path, hollow/bridge, minimum-line-width, path-repair controls, strict evidence, file metadata, and approve/reject controls. The fixture is UI-only; release acceptance still uses tenant-backed APIs and real storage paths.
+
+The PNG/PSD inspection worker is built in and registers the `personalization-template-source-inspection` queue whenever the normal Worker runs; it does not use `POD_PROCESSOR_*`. Apply migration `0049_personalization_template_source_inspections`, keep Redis and MinIO available, and restart API, Worker, and Web. The source must already be a non-customer asset in the authorized domain with approved rights. The queue payload contains only `inspectionId`; the Worker revalidates the pinned source version and SHA-256 before reading private bytes. Use a non-production PSD with controlled `image`, `text`, `decoration`, and `background` groups, then verify warnings must be acknowledged and one inspection cannot create two template versions.
+
+## Canvas batch design and controlled mockup rendering
+
+The canvas batch workbenches are disabled by default. Batch design uses the
+ordinary POD processor and additionally requires both `text_to_image` and
+`canvas_extend` in `POD_ENABLED_TOOLS`. Enable its API and Worker boundary only
+after Redis, the Worker, and that pinned processor deployment are ready:
+
+```dotenv
+POD_BATCH_WORKFLOWS_ENABLED=true
+```
+
+The repository-owned mockup path requires ImageMagick 7. Set
+`POD_MOCKUP_MAGICK_PATH` to the `magick` executable, keep the memory, map, disk,
+thread, file, time, canvas, and output limits from `.env.example`, then set:
+
+```dotenv
+POD_MOCKUP_RENDERER_ENABLED=true
+```
+
+The independent creative UI is available at `/creative-designs`; the former
+`/pod-workbench/batch-designs` path redirects there without dropping its batch
+query parameter. The UI still keeps `/pod-workbench/mockup-batches` unavailable until the tenant
+has at least one approved template pack. A template pack can only be assembled
+from a rights-approved authorized PSD that compiled successfully, reached SSIM
+0.99 against its saved composite, and was explicitly confirmed by a reviewer.
+The four BullMQ queues carry identifiers only: `creative-design`,
+`creative-design-adaptation`, `mockup-template-compile`, and `mockup-render`.
+
+Apply migrations and verify the deterministic renderer with the repository PSD
+fixture before enabling the flags:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm --filter @yummyai/database exec drizzle-kit check --config drizzle.config.ts
+pnpm --filter @yummyai/mockup-renderer test
+pnpm --filter @yummyai/mockup-renderer smoke
+pnpm --filter @yummyai/database exec vitest run --config vitest.integration.config.ts src/pod-batches.integration.test.ts
+```
+
+The smoke script uses a network-disabled, CPU/memory/PID-limited ImageMagick 7
+container and the real `packages/mockup-renderer/fixtures/controlled-canvas.psd`
+fixture. Production can use an installed ImageMagick 7 executable through the
+same argument-array runner; do not wrap it in a shell command.
 
 ## Verification
 

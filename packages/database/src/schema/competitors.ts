@@ -80,7 +80,11 @@ export const competitorShopSnapshots = pgTable(
     activeListingCount: integer("active_listing_count"),
     admirerCount: integer("admirer_count"),
     openedYear: integer("opened_year"),
-    yearsOnPlatform: integer("years_on_platform"),
+    yearsOnPlatform: numeric("years_on_platform", {
+      precision: 4,
+      scale: 1,
+      mode: "number",
+    }),
     badges: jsonb("badges")
       .$type<string[]>()
       .default(sql`'[]'::jsonb`)
@@ -94,6 +98,10 @@ export const competitorShopSnapshots = pgTable(
       .notNull(),
     productionPartners: jsonb("production_partners")
       .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    shopSections: jsonb("shop_sections")
+      .$type<CompetitorShopDraft["shopSections"]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
     draft: jsonb("draft").$type<CompetitorShopDraft | CapturedShopSummary>().notNull(),

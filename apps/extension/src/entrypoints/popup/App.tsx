@@ -1,4 +1,10 @@
-import type { CaptureDomain, CaptureDraft, CompetitorShopDraft } from "@yummyai/contracts";
+import type {
+  CaptureDomain,
+  CaptureDraft,
+  CaptureEhuntShopActiveSection,
+  CaptureEhuntShopAnalysis,
+  CompetitorShopDraft,
+} from "@yummyai/contracts";
 import {
   AlertCircle,
   Check,
@@ -114,7 +120,9 @@ export function App() {
 
     try {
       const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
-      const isLocalProxy = apiBaseUrl.replace(/\/$/, "") === "http://localhost:3000";
+      const isLocalProxy =
+        import.meta.env.VITE_LOCAL_EXTENSION_PROXY === "1" ||
+        apiBaseUrl.replace(/\/$/, "") === "http://localhost:3000";
       const token = isLocalProxy ? undefined : await getSessionAccessToken();
       const options = {
         apiBaseUrl,
@@ -288,7 +296,7 @@ export function App() {
                 <dd>{draft.shipping?.cost?.raw ?? "页面未提供"}</dd>
               </div>
               <div>
-                <dt>发货地</dt>
+                <dt>{draft.platform === "amazon" ? "发货方" : "发货地"}</dt>
                 <dd>{draft.shipping?.shipsFrom ?? "页面未提供"}</dd>
               </div>
               <div>
@@ -296,12 +304,18 @@ export function App() {
                 <dd>{draft.shipping?.destination ?? "页面未提供"}</dd>
               </div>
               <div>
-                <dt>发布日期</dt>
-                <dd>{draft.listingPublishedAt ?? "页面未提供"}</dd>
+                <dt>{draft.platform === "amazon" ? "首次上架" : "发布日期"}</dt>
+                <dd>
+                  {draft.listingPublishedAt ??
+                    (draft.platform === "amazon" ? "Amazon 未公开" : "页面未提供")}
+                </dd>
               </div>
               <div>
                 <dt>收藏数</dt>
-                <dd>{draft.favoriteCount ?? "页面未提供"}</dd>
+                <dd>
+                  {draft.favoriteCount ??
+                    (draft.platform === "amazon" ? "Amazon 未公开" : "页面未提供")}
+                </dd>
               </div>
             </dl>
             {draft.shop && (
@@ -320,6 +334,173 @@ export function App() {
               </a>
             )}
           </section>
+
+          {draft.ehuntAnalysis && (
+            <section className="ehunt-analysis-section" aria-labelledby="ehunt-analysis-heading">
+              <div className="section-heading compact">
+                <div>
+                  <p className="section-index">EHUNT / THIRD-PARTY</p>
+                  <h2 id="ehunt-analysis-heading">商品分析</h2>
+                </div>
+                <span className="external-source-badge">EHunt</span>
+              </div>
+              <p className="external-source-note">
+                读取当前页面中 EHunt 已显示的数据；数值和标签由 EHunt 提供。
+              </p>
+              <dl className="ehunt-metric-grid">
+                <EhuntMetric
+                  label="总销量"
+                  value={formatCount(draft.ehuntAnalysis.totalSales)}
+                  delta={draft.ehuntAnalysis.salesDelta}
+                />
+                <EhuntMetric
+                  label="总销售额"
+                  value={draft.ehuntAnalysis.totalRevenue?.raw ?? "—"}
+                  delta={draft.ehuntAnalysis.revenueDelta?.raw}
+                />
+                <EhuntMetric
+                  label="总浏览量"
+                  value={formatCount(draft.ehuntAnalysis.viewCount)}
+                />
+                <EhuntMetric
+                  label="总评论"
+                  value={formatCount(draft.ehuntAnalysis.reviewCount)}
+                  delta={draft.ehuntAnalysis.reviewDelta}
+                />
+                <EhuntMetric
+                  label="总收藏"
+                  value={formatCount(draft.ehuntAnalysis.favoriteCount)}
+                  delta={draft.ehuntAnalysis.favoriteDelta}
+                />
+                <EhuntMetric
+                  label="平均转化率"
+                  value={formatPercent(draft.ehuntAnalysis.conversionRatePercent)}
+                />
+              </dl>
+              <dl className="ehunt-facts">
+                <div>
+                  <dt>EHunt 上架时间</dt>
+                  <dd>{draft.ehuntAnalysis.listingPublishedAt ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>EHunt 价格</dt>
+                  <dd>{draft.ehuntAnalysis.price?.raw ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>发货地</dt>
+                  <dd>{draft.ehuntAnalysis.shipsFrom ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>库存</dt>
+                  <dd>{formatCount(draft.ehuntAnalysis.inventoryCount)}</dd>
+                </div>
+                <div>
+                  <dt>店铺</dt>
+                  <dd>{draft.ehuntAnalysis.shopName ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>店铺销量</dt>
+                  <dd>{formatCount(draft.ehuntAnalysis.shopSalesCount)}</dd>
+                </div>
+              </dl>
+              {draft.ehuntAnalysis.categoryPath.length > 0 && (
+                <div className="ehunt-category-path">
+                  {draft.ehuntAnalysis.categoryPath.map((node) => (
+                    <span key={node}>{node}</span>
+                  ))}
+                </div>
+              )}
+              {draft.ehuntAnalysis.tags.length > 0 && (
+                <div className="ehunt-tags">
+                  <div className="ehunt-tags-heading">
+                    <strong>商品标签</strong>
+                    <span>{draft.ehuntAnalysis.tags.length} TAGS</span>
+                  </div>
+                  <ul>
+                    {draft.ehuntAnalysis.tags.map((tag) => (
+                      <li key={tag.label}>
+                        <span>{tag.label}</span>
+                        {tag.metricRaw && <small>{tag.metricRaw}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {draft.ehuntAnalysis.annualTrendUrl && (
+                <a
+                  className="ehunt-detail-link"
+                  href={draft.ehuntAnalysis.annualTrendUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  查看 EHunt 年度历史趋势
+                  <ExternalLink size={11} aria-hidden="true" />
+                </a>
+              )}
+            </section>
+          )}
+
+          {draft.platform === "amazon" && (
+            <section
+              className="product-information-section"
+              aria-labelledby="product-information-heading"
+            >
+              <div className="section-heading compact">
+                <div>
+                  <p className="section-index">PRODUCT INFORMATION</p>
+                  <h2 id="product-information-heading">产品参数</h2>
+                </div>
+                <span className="parameter-count">
+                  {draft.productInformation.reduce(
+                    (total, section) => total + section.items.length,
+                    0,
+                  )}{" "}
+                  项
+                </span>
+              </div>
+              {draft.productInformation.length > 0 ? (
+                <div className="product-information-groups">
+                  {draft.productInformation.map((section, sectionIndex) => (
+                    <details key={`${sectionIndex}-${section.name}`} open={sectionIndex === 0}>
+                      <summary>
+                        <span>{section.name}</span>
+                        <small>{section.items.length}</small>
+                      </summary>
+                      <dl>
+                        {section.items.map((item, itemIndex) => (
+                          <div key={`${itemIndex}-${item.label}-${item.value}`}>
+                            <dt>{item.label}</dt>
+                            <dd>
+                              <span>{item.value}</span>
+                              {item.links.length > 0 && (
+                                <span className="parameter-links">
+                                  {item.links.map((link) => (
+                                    <a
+                                      key={link.url}
+                                      href={link.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {link.label}
+                                      <ExternalLink size={10} aria-hidden="true" />
+                                    </a>
+                                  ))}
+                                </span>
+                              )}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <p className="product-information-empty">
+                  当前公开页面没有提供 Product information 参数。
+                </p>
+              )}
+            </section>
+          )}
 
           {(draft.reviewSummary || draft.platform === "etsy") && (
             <section className="review-collector" aria-labelledby="review-evidence-heading">
@@ -583,6 +764,44 @@ export function App() {
             </dl>
             {shopDraft.announcement && <blockquote>{shopDraft.announcement}</blockquote>}
           </section>
+          {shopDraft.ehuntAnalysis && (
+            <EhuntShopAnalysisPanel analysis={shopDraft.ehuntAnalysis} />
+          )}
+          <section className="shop-sections-card" aria-labelledby="shop-sections-heading">
+            <div className="section-heading compact">
+              <div>
+                <p className="section-index">03 / SECTIONS</p>
+                <h2 id="shop-sections-heading">店铺标签</h2>
+              </div>
+              <span className="shop-section-summary">
+                {shopDraft.shopSections.length} 标签 · 全部{" "}
+                {formatCount(
+                  shopDraft.shopSections.find((section) => section.kind === "all")
+                    ?.listingCount ?? null,
+                )}
+              </span>
+            </div>
+            {shopDraft.shopSections.length > 0 ? (
+              <ul className="shop-section-list">
+                {shopDraft.shopSections.map((section) => (
+                  <li key={`${section.kind}-${section.externalId}`}>
+                    {section.sourceUrl ? (
+                      <a href={section.sourceUrl} target="_blank" rel="noreferrer">
+                        <span>{section.name}</span>
+                        <ExternalLink size={10} aria-hidden="true" />
+                      </a>
+                    ) : (
+                      <span>{section.name}</span>
+                    )}
+                    <strong>{formatCount(section.listingCount)}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="shop-section-empty">当前页面没有公开店铺标签。</p>
+            )}
+            <p className="shop-section-note">数量为页面报告值，未逐条访问商品链接。</p>
+          </section>
           {shopDraft.diagnostics.length > 0 && (
             <section className="diagnostics" aria-labelledby="shop-diagnostics-heading">
               <div className="diagnostic-title">
@@ -649,6 +868,205 @@ function StatusBadge({ state }: { state: CaptureProgressState }) {
   );
 }
 
+function EhuntMetric({
+  delta,
+  label,
+  value,
+}: {
+  delta?: number | string | null;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <span>{value}</span>
+        {delta !== null && delta !== undefined ? <small>+{delta}</small> : null}
+      </dd>
+    </div>
+  );
+}
+
+function EhuntShopAnalysisPanel({ analysis }: { analysis: CaptureEhuntShopAnalysis }) {
+  return (
+    <section
+      className="ehunt-analysis-section ehunt-shop-analysis-section"
+      aria-labelledby="ehunt-shop-analysis-heading"
+    >
+      <div className="section-heading compact">
+        <div>
+          <p className="section-index">03 / THIRD-PARTY</p>
+          <h2 id="ehunt-shop-analysis-heading">店铺分析</h2>
+        </div>
+        <span className="external-source-badge">EHunt</span>
+      </div>
+      <p className="external-source-note">
+        读取 EHunt 当前已显示的店铺摘要和活动页签；不会自动切换页签。
+      </p>
+      <dl className="ehunt-metric-grid ehunt-shop-metric-grid">
+        <EhuntMetric label="周销量" value={analysis.weeklySales?.raw ?? "—"} />
+        <EhuntMetric label="周销售额" value={analysis.weeklyRevenue?.raw ?? "—"} />
+        <EhuntMetric label="周收藏" value={analysis.weeklyFavorites?.raw ?? "—"} />
+        <EhuntMetric label="总销量" value={analysis.totalSales?.raw ?? "—"} />
+        <EhuntMetric label="总销售额" value={analysis.totalRevenue?.raw ?? "—"} />
+        <EhuntMetric label="商品总数" value={analysis.listingCount?.raw ?? "—"} />
+      </dl>
+      <dl className="ehunt-facts ehunt-shop-facts">
+        <div>
+          <dt>EHunt 开店时间</dt>
+          <dd>{analysis.openedAt ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>国家</dt>
+          <dd>{analysis.country ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>主营类目</dt>
+          <dd>{analysis.primaryCategory ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Star Seller</dt>
+          <dd>{formatOptionalBoolean(analysis.starSeller)}</dd>
+        </div>
+        <div>
+          <dt>总评论</dt>
+          <dd>{analysis.totalReviews?.raw ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>总收藏</dt>
+          <dd>{analysis.totalFavorites?.raw ?? "—"}</dd>
+        </div>
+      </dl>
+      {(analysis.paymentMethods.length > 0 || analysis.socialMedia.length > 0) && (
+        <div className="ehunt-shop-chip-groups">
+          {analysis.paymentMethods.length > 0 && (
+            <div>
+              <strong>支付方式</strong>
+              <ul>
+                {analysis.paymentMethods.map((method) => <li key={method}>{method}</li>)}
+              </ul>
+            </div>
+          )}
+          {analysis.socialMedia.length > 0 && (
+            <div>
+              <strong>社媒信息</strong>
+              <ul>
+                {analysis.socialMedia.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {analysis.activeSection && <EhuntShopActiveSectionView section={analysis.activeSection} />}
+    </section>
+  );
+}
+
+function EhuntShopActiveSectionView({
+  section,
+}: {
+  section: CaptureEhuntShopActiveSection;
+}) {
+  if (
+    section.kind === "hot_products" ||
+    section.kind === "new_products" ||
+    section.kind === "delisted_products"
+  ) {
+    return (
+      <EhuntShopActiveSectionFrame label={section.label}>
+        <ul className="ehunt-shop-product-list">
+          {section.items.map((item, index) => (
+            <li key={`${item.detailUrl ?? item.title}-${index}`}>
+              <div>
+                {item.detailUrl ? (
+                  <a href={item.detailUrl} target="_blank" rel="noreferrer">
+                    {item.title}
+                    <ExternalLink size={10} aria-hidden="true" />
+                  </a>
+                ) : (
+                  <strong>{item.title}</strong>
+                )}
+                <span>
+                  总销量 {item.totalSales?.raw ?? "—"} · 价格 {item.price?.raw ?? "—"}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </EhuntShopActiveSectionFrame>
+    );
+  }
+  if (section.kind === "common_tags") {
+    return (
+      <EhuntShopActiveSectionFrame label={section.label}>
+        <ul className="ehunt-shop-data-list">
+          {section.items.map((item) => (
+            <li key={item.label}>
+              <strong>{item.label}</strong>
+              <span>
+                频次 {item.frequency?.raw ?? "—"} · 竞争度 {item.competition?.raw ?? "—"} ·
+                销售 {item.sales?.raw ?? "—"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </EhuntShopActiveSectionFrame>
+    );
+  }
+  if (section.kind === "popular_categories") {
+    return (
+      <EhuntShopActiveSectionFrame label={section.label}>
+        <ul className="ehunt-shop-data-list">
+          {section.items.map((item) => (
+            <li key={item.raw}>
+              <strong>{item.path.join(" › ")}</strong>
+              <span>{item.sharePercent === null ? "占比未显示" : `${item.sharePercent}%`}</span>
+            </li>
+          ))}
+        </ul>
+      </EhuntShopActiveSectionFrame>
+    );
+  }
+  if (!("points" in section)) return null;
+  return (
+    <EhuntShopActiveSectionFrame label={section.label}>
+      <ul className="ehunt-shop-data-list">
+        {section.points.map((point) => (
+          <li key={point.period}>
+            <strong>{point.period}</strong>
+            <span>
+              {point.values.map((value) => `${value.label} ${value.metric.raw}`).join(" · ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </EhuntShopActiveSectionFrame>
+  );
+}
+
+function EhuntShopActiveSectionFrame({
+  children,
+  label,
+}: {
+  children: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="ehunt-shop-active-section">
+      <div className="ehunt-shop-active-heading">
+        <strong>当前页签</strong>
+        <span>{label}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function formatOptionalBoolean(value: boolean | null): string {
+  return value === null ? "—" : value ? "是" : "否";
+}
+
 function EmptyState({
   icon,
   title,
@@ -707,6 +1125,10 @@ function reviewStatusLabel(status: CaptureDraft["reviewCollection"]["status"]): 
 
 function formatCount(value: number | null): string {
   return value === null ? "—" : new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatPercent(value: number | null): string {
+  return value === null ? "—" : `${value}%`;
 }
 
 function wait(milliseconds: number): Promise<void> {

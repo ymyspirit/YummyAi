@@ -1,6 +1,7 @@
 "use server";
 
-import type { ProductPlanInput } from "@yummyai/contracts";
+import type { CustomizationDefinition, ProductPlanInput } from "@yummyai/contracts";
+import { CustomizationSchema } from "@yummyai/contracts/catalog/product";
 import { revalidatePath } from "next/cache";
 
 import { apiFetch } from "../../server-api";
@@ -33,7 +34,10 @@ export async function createProductPlan(
   }
   const amount = targetCostAmount ? Number(targetCostAmount) : undefined;
   const currency = value(formData, "targetCostCurrency").toUpperCase();
-  if (amount !== undefined && (!Number.isFinite(amount) || amount < 0 || !CURRENCY_PATTERN.test(currency))) {
+  if (
+    amount !== undefined &&
+    (!Number.isFinite(amount) || amount < 0 || !CURRENCY_PATTERN.test(currency))
+  ) {
     fieldErrors.targetCost = "目标成本必须为不小于 0 的数字，并使用三位大写币种代码。";
   }
   if (Object.keys(fieldErrors).length) {
@@ -64,10 +68,10 @@ export async function createProductPlan(
       method: "POST",
     });
     const payload = (await response.json().catch(() => undefined)) as
-      | { id?: unknown; detail?: unknown; message?: unknown; title?: unknown }
-      | undefined;
+      { id?: unknown; detail?: unknown; message?: unknown; title?: unknown } | undefined;
     if (!response.ok) return failure(messageFrom(payload) ?? `创建失败 (${response.status})`);
-    if (typeof payload?.id !== "string") return failure("产品已创建，但接口未返回产品 ID。请刷新目录确认记录。");
+    if (typeof payload?.id !== "string")
+      return failure("产品已创建，但接口未返回产品 ID。请刷新目录确认记录。");
     revalidatePath("/products");
     return { message: "产品企划已创建，正在打开开发档案。", planId: payload.id, status: "success" };
   } catch (error) {
@@ -83,11 +87,43 @@ export async function transitionProductPlan(
 ): Promise<ProductDevelopmentState> {
   void _previous;
   void _formData;
-  return productRequest(`/v1/products/plans/${planId}/transitions`, {
-    body: JSON.stringify({ status: nextStatus }),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  }, nextStatus === "pending_approval" ? "产品企划已提交立项审核。" : "产品企划已批准，可以创建 SPU。", planId);
+  return productRequest(
+    `/v1/products/plans/${planId}/transitions`,
+    {
+      body: JSON.stringify({ status: nextStatus }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+    nextStatus === "pending_approval"
+      ? "产品企划已提交立项审核。"
+      : "产品企划已批准，可以创建 SPU。",
+    planId,
+  );
+}
+
+export async function saveProductPlanCustomization(
+  planId: string,
+  _previous: ProductDevelopmentState,
+  formData: FormData,
+): Promise<ProductDevelopmentState> {
+  void _previous;
+  const rawCustomization = value(formData, "customization");
+  let customization: CustomizationDefinition;
+  try {
+    customization = CustomizationSchema.parse(JSON.parse(rawCustomization));
+  } catch {
+    return failure("定制 Schema 无效，请修正字段后再保存。");
+  }
+  return productRequest(
+    `/v1/products/plans/${planId}/customization`,
+    {
+      body: JSON.stringify({ customization }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    },
+    "定制 Schema 已保存。",
+    planId,
+  );
 }
 
 export async function createProductSpu(
@@ -97,12 +133,18 @@ export async function createProductSpu(
 ): Promise<ProductDevelopmentState> {
   const code = value(formData, "code").toUpperCase();
   const name = value(formData, "name");
-  if (!code || code.length > 80 || !name || name.length > 200) return failure("请填写有效的 SPU 编码和名称。");
-  return productRequest(`/v1/products/plans/${planId}/spu`, {
-    body: JSON.stringify({ code, name }),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  }, "SPU 已创建，产品进入开发中。", planId);
+  if (!code || code.length > 80 || !name || name.length > 200)
+    return failure("请填写有效的 SPU 编码和名称。");
+  return productRequest(
+    `/v1/products/plans/${planId}/spu`,
+    {
+      body: JSON.stringify({ code, name }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+    "SPU 已创建，产品进入开发中。",
+    planId,
+  );
 }
 
 export async function createProductSku(
@@ -116,7 +158,10 @@ export async function createProductSku(
   const amount = amountValue ? Number(amountValue) : undefined;
   const currency = value(formData, "unitCostCurrency").toUpperCase();
   if (!code || code.length > 100) return failure("请填写有效的 SKU 编码。");
-  if (amount !== undefined && (!Number.isFinite(amount) || amount < 0 || !CURRENCY_PATTERN.test(currency))) {
+  if (
+    amount !== undefined &&
+    (!Number.isFinite(amount) || amount < 0 || !CURRENCY_PATTERN.test(currency))
+  ) {
     return failure("SKU 单位成本必须为不小于 0 的数字，并使用三位币种代码。");
   }
   let attributes: Record<string, string> = {};
@@ -125,11 +170,21 @@ export async function createProductSku(
   } catch (error) {
     return failure(error instanceof Error ? error.message : "SKU 属性格式无效。");
   }
-  return productRequest("/v1/products/skus", {
-    body: JSON.stringify({ spuId, code, attributes, ...(amount !== undefined ? { unitCost: { amount, currency } } : {}) }),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  }, "SKU 已创建，现在可以建立设计任务。", planId);
+  return productRequest(
+    "/v1/products/skus",
+    {
+      body: JSON.stringify({
+        spuId,
+        code,
+        attributes,
+        ...(amount !== undefined ? { unitCost: { amount, currency } } : {}),
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+    "SKU 已创建，现在可以建立设计任务。",
+    planId,
+  );
 }
 
 async function productRequest(
@@ -141,8 +196,12 @@ async function productRequest(
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return failure("API_BASE_URL 未配置，操作无法完成。");
   try {
-    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}${path}`, { ...init, cache: "no-store" });
-    const payload = await response.json().catch(() => undefined) as { detail?: unknown; message?: unknown; title?: unknown } | undefined;
+    const response = await apiFetch(`${apiBase.replace(/\/$/, "")}${path}`, {
+      ...init,
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => undefined)) as
+      { detail?: unknown; message?: unknown; title?: unknown } | undefined;
     if (!response.ok) return failure(messageFrom(payload) ?? `操作失败 (${response.status})`);
     revalidatePath("/products");
     revalidatePath(`/products?plan=${planId}`);
@@ -159,14 +218,20 @@ function value(formData: FormData, name: string): string {
 }
 
 function list(input: string): string[] {
-  return input.split(/[,\n]/).map((entry) => entry.trim()).filter(Boolean);
+  return input
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
-function messageFrom(payload: { detail?: unknown; message?: unknown; title?: unknown } | undefined) {
+function messageFrom(
+  payload: { detail?: unknown; message?: unknown; title?: unknown } | undefined,
+) {
   for (const key of ["detail", "message", "title"] as const) {
     const candidate = payload?.[key];
     if (typeof candidate === "string") return candidate;
-    if (Array.isArray(candidate) && candidate.every((entry) => typeof entry === "string")) return candidate.join("；");
+    if (Array.isArray(candidate) && candidate.every((entry) => typeof entry === "string"))
+      return candidate.join("；");
   }
   return undefined;
 }
@@ -178,9 +243,13 @@ function failure(message: string): ProductCreateState & ProductDevelopmentState 
 function parseAttributes(input: string): Record<string, string> {
   if (!input) return {};
   const attributes: Record<string, string> = {};
-  for (const pair of input.split(/[\n,]/).map((entry) => entry.trim()).filter(Boolean)) {
+  for (const pair of input
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)) {
     const separator = pair.indexOf(":");
-    if (separator < 1 || !pair.slice(separator + 1).trim()) throw new Error("SKU 属性请使用“属性: 值”，多个属性用换行或逗号分隔。");
+    if (separator < 1 || !pair.slice(separator + 1).trim())
+      throw new Error("SKU 属性请使用“属性: 值”，多个属性用换行或逗号分隔。");
     attributes[pair.slice(0, separator).trim()] = pair.slice(separator + 1).trim();
   }
   return attributes;

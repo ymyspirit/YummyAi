@@ -91,13 +91,22 @@ export class Storage {
 
   async promoteQuarantineToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
     assertAssetAccess(context, input, "quarantine");
-    return this.copyToAuthorized(context, input);
+    return this.copyToDomain(context, input, "authorized");
+  }
+
+  async promoteQuarantineToOrder(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
+    assertAssetAccess(context, input, "quarantine");
+    return this.copyToDomain(context, input, "order");
   }
 
   private async copyToAuthorized(context: TenantContext, input: PromotePrivateInput): Promise<PutPrivateResult> {
+    return this.copyToDomain(context, input, "authorized");
+  }
+
+  private async copyToDomain(context: TenantContext, input: PromotePrivateInput, domain: "authorized" | "order"): Promise<PutPrivateResult> {
     const key = objectKey({
       tenantId: context.tenantId,
-      domain: "authorized",
+      domain,
       sha256: input.checksumSha256,
       fileName: input.fileName,
     });
@@ -114,7 +123,7 @@ export class Storage {
       CopySource: encodedSource,
       ContentType: input.mediaType,
       MetadataDirective: "REPLACE",
-      Metadata: { "asset-domain": "authorized", "sha256": input.checksumSha256, "tenant-id": context.tenantId },
+      Metadata: { "asset-domain": domain, "sha256": input.checksumSha256, "tenant-id": context.tenantId },
     }));
     return { checksumSha256: input.checksumSha256, deduplicated: false, objectKey: key };
   }

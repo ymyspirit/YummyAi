@@ -2,10 +2,19 @@ export const QueueName = {
   AiAnalysis: "ai-analysis",
   Capture: "capture",
   CustomizationFileScan: "customization-file-scan",
+  CreativeDesign: "creative-design",
+  CreativeDesignAdaptation: "creative-design-adaptation",
   Export: "export",
   Media: "media",
   Metrics: "metrics",
+  MockupRender: "mockup-render",
+  MockupTemplateCompile: "mockup-template-compile",
   OrderIngestion: "order-ingestion",
+  PodArtwork: "pod-artwork",
+  PodExport: "pod-export",
+  PersonalizationTemplateSourceInspection: "personalization-template-source-inspection",
+  OrderPersonalizationBatch: "order-personalization-batch",
+  OrderPersonalizationRender: "order-personalization-render",
   ListingSync: "listing-sync",
   Publication: "publication",
   PublicationBatch: "publication-batch",
@@ -13,6 +22,7 @@ export const QueueName = {
   ShipmentWriteback: "shipment-writeback",
   FulfillmentAutomation: "fulfillment-automation",
   WebhookDelivery: "webhook-delivery",
+  WorkflowNode: "workflow-node",
 } as const;
 
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];

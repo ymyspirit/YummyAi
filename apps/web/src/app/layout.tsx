@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
+import "@xyflow/react/dist/style.css";
 
 import "./globals.css";
+import "./workflow.css";
 
 export const metadata: Metadata = {
   title: "YummyAI Research",

@@ -1,6 +1,12 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
-import { CreateSkuInputSchema, CreateSpuInputSchema, ProductPlanInputSchema, ProductStatusSchema } from "@yummyai/contracts";
+import {
+  CreateSkuInputSchema,
+  CreateSpuInputSchema,
+  ProductPlanInputSchema,
+  ProductStatusSchema,
+  UpdateProductPlanCustomizationInputSchema,
+} from "@yummyai/contracts";
 import { z } from "zod";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
@@ -25,6 +31,22 @@ export class ProductController {
     const context = requireContext(request);
     authorize(context, Permission.ProductWrite);
     return this.products.createPlan(context, ProductPlanInputSchema.parse(body));
+  }
+
+  @Patch("plans/:id/customization")
+  @RequiresPermission(Permission.ProductWrite)
+  updateCustomization(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    const context = requireContext(request);
+    authorize(context, Permission.ProductWrite);
+    return this.products.updateCustomization(
+      context,
+      z.uuidv7().parse(id),
+      UpdateProductPlanCustomizationInputSchema.parse(body),
+    );
   }
 
   @Post("plans/:id/transitions")

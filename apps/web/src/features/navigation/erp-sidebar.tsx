@@ -12,9 +12,12 @@ import {
   Network,
   PackageSearch,
   Palette,
+  Images,
+  WandSparkles,
   ScanSearch,
   ShoppingCart,
   Store,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -23,6 +26,10 @@ export type ErpSection =
   | "research"
   | "competitors"
   | "products"
+  | "workflows"
+  | "pod-workbench"
+  | "creative-designs"
+  | "mockup-batches"
   | "design"
   | "stores"
   | "listings"
@@ -50,11 +57,26 @@ const navigationGroups = [
     ],
   },
   {
+    id: "creative",
+    label: "创意设计",
+    items: [
+      { id: "creative-designs", href: "/creative-designs", label: "画图设计", icon: WandSparkles },
+      { id: "pod-workbench", href: "/pod-workbench", label: "POD 作图中心", icon: Palette },
+      { id: "design", href: "/design", label: "设计校样", icon: Palette },
+      { id: "mockup-batches", href: "/pod-workbench/mockup-batches", label: "批量套图", icon: Images },
+    ],
+  },
+  {
     id: "catalog",
     label: "商品",
     items: [
       { id: "products", href: "/products", label: "产品目录", icon: Boxes },
-      { id: "design", href: "/design", label: "设计校样", icon: Palette },
+      {
+        id: "workflows",
+        href: "/workflows",
+        label: "工作流中心",
+        icon: Workflow,
+      },
       { id: "listings", href: "/listings", label: "刊登控制台", icon: FileText },
     ],
   },
@@ -115,7 +137,7 @@ export function ErpSidebar({
   listingHref = "/listings",
 }: ErpSidebarProps) {
   return (
-    <aside className="side-rail">
+    <aside aria-label="ERP 主导航" className="side-rail">
       <div className="rail-brand">
         <span className="rail-mark">
           <ScanSearch aria-hidden="true" size={20} />

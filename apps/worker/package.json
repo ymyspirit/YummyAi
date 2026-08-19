@@ -17,10 +17,12 @@
     "@yummyai/database": "workspace:*",
     "@yummyai/jobs": "workspace:*",
     "@yummyai/marketplace-connectors": "workspace:*",
+    "@yummyai/mockup-renderer": "workspace:*",
     "@yummyai/storage": "workspace:*",
     "bullmq": "^5.60.0",
     "drizzle-orm": "^0.44.0",
     "jszip": "^3.10.1",
+    "sharp": "^0.35.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {

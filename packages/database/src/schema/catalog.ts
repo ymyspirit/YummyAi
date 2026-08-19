@@ -1,4 +1,5 @@
 import type { CustomizationDefinition } from "@yummyai/contracts";
+import type { CustomProductProfileV1 } from "@yummyai/contracts/catalog/custom-product-package";
 import { sql } from "drizzle-orm";
 import { check, foreignKey, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
@@ -16,6 +17,7 @@ export const productPlans = pgTable(
     targetCostAmount: numeric("target_cost_amount", { precision: 14, scale: 2 }),
     targetCostCurrency: text("target_cost_currency"),
     customization: jsonb("customization").$type<CustomizationDefinition>().notNull(),
+    customProductProfile: jsonb("custom_product_profile").$type<CustomProductProfileV1>(),
     approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "set null" }),
     approvedAt: timestamp("approved_at", { mode: "date", withTimezone: true }),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),

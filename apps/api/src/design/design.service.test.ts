@@ -61,12 +61,31 @@ describe("design service", () => {
     const version = await service.uploadVersion(context, repository.task.id, { files: [{ assetId: repository.authorized.id, role: "source" }] });
     await expect(service.signVersionFile(context, version.id, version.files[0]!.id)).resolves.toMatchObject({ url: "https://signed.example/file", expiresInSeconds: 600 });
   });
+
+  it("allows reviewed order-private render results only with customer-provided rights", async () => {
+    const repository = new MemoryDesignRepository();
+    const service = new DesignService(repository);
+    const version = await repository.createVersion(context, repository.task.id, {
+      files: [{ assetId: repository.order.id, role: "effect" }],
+    });
+
+    await expect(service.reviewVersion(context, version.id, { decision: "approve" })).resolves.toMatchObject({ status: "approved" });
+    await expect(service.signVersionFile(context, version.id, version.files[0]!.id)).resolves.toMatchObject({ url: "https://signed.example/file" });
+
+    const invalid = await repository.createVersion(context, repository.task.id, {
+      files: [{ assetId: repository.order.id, role: "effect" }],
+    });
+    repository.order.rightsSource = { kind: "owned", reference: "invalid order evidence" };
+    await expect(service.reviewVersion(context, invalid.id, { decision: "approve" }))
+      .rejects.toBeInstanceOf(AuthorizedDesignAssetRequiredError);
+  });
 });
 
 class MemoryDesignRepository implements DesignRepository {
   task: DesignTaskRecord = { id: createEntityId(), tenantId: context.tenantId, skuId: createEntityId(), title: "Gift mug", brief: "Create production art", status: "open" };
   authorized: DesignAssetRecord = asset("authorized", { kind: "owned", reference: "internal artwork" });
   research: DesignAssetRecord = asset("research");
+  order: DesignAssetRecord = asset("order", { kind: "customer_provided", reference: createEntityId() });
   versions: DesignVersionRecord[] = [];
 
   seedApprovedVersion() {
@@ -96,7 +115,7 @@ class MemoryDesignRepository implements DesignRepository {
     this.task = { ...this.task, primaryVersionId: versionId, status: "approved" };
     return this.task;
   }
-  async getAsset(_context: TenantContext, id: string) { return [this.authorized, this.research].find((item) => item.id === id); }
+  async getAsset(_context: TenantContext, id: string) { return [this.authorized, this.research, this.order].find((item) => item.id === id); }
   async approveAssetRights(_context: TenantContext, id: string, source: RightsSource) {
     const found = (await this.getAsset(context, id))!;
     found.rightsSource = source;
@@ -105,17 +124,22 @@ class MemoryDesignRepository implements DesignRepository {
   }
   async promoteAsset(_context: TenantContext, source: DesignAssetRecord) { return { ...source, id: createEntityId(), domain: "authorized" as const }; }
   async signAsset() { return "https://signed.example/file"; }
+  async promoteApprovedCreativeBindings() { return []; }
 
   private makeVersion(input: UploadDesignVersionInput, taskId = this.task.id): DesignVersionRecord {
     return {
       id: createEntityId(), tenantId: context.tenantId, taskId, versionNumber: this.versions.length + 1,
       status: "pending_review", changeNote: input.changeNote, createdAt: new Date(),
-      files: input.files.map((file) => ({ id: createEntityId(), role: file.role, asset: (file.assetId === this.authorized.id ? this.authorized : this.research) })),
+      files: input.files.map((file) => ({
+        id: createEntityId(),
+        role: file.role,
+        asset: [this.authorized, this.research, this.order].find((candidate) => candidate.id === file.assetId)!,
+      })),
     };
   }
 }
 
-function asset(domain: "research" | "authorized", rightsSource?: RightsSource): DesignAssetRecord {
+function asset(domain: "research" | "authorized" | "order", rightsSource?: RightsSource): DesignAssetRecord {
   return {
     id: createEntityId(), tenantId: context.tenantId, domain,
     objectKey: `tenants/${context.tenantId}/${domain}/abc/file.psd`, fileName: "file.psd", mediaType: "image/vnd.adobe.photoshop",

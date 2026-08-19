@@ -158,7 +158,14 @@ export class PublicPageReader {
             select.getAttribute("aria-label")?.trim() ??
             "Option";
           const options = [...select.options]
-            .filter((option) => !option.disabled && normalizeText(option.textContent))
+            .filter((option) => {
+              const label = normalizeText(option.textContent);
+              return (
+                !option.disabled &&
+                Boolean(label) &&
+                !(option.value.trim() === "" && isVariantPlaceholder(label!))
+              );
+            })
             .map((option) => {
               const value = option.value.split(",").at(-1)?.trim();
               return {
@@ -178,7 +185,7 @@ export class PublicPageReader {
 
   contentBlock(kind: ContentBlock["kind"], selector: string): ContentBlock | null {
     try {
-      const text = normalizeText(this.document.querySelector(selector)?.textContent);
+      const text = structuredText(this.document.querySelector(selector));
       return text ? { kind, text, sourceSelector: selector } : null;
     } catch {
       this.selectorError("contentBlocks", selector);
@@ -190,7 +197,7 @@ export class PublicPageReader {
     for (const selector of selectors) {
       try {
         const blocks = [...this.document.querySelectorAll(selector)]
-          .map((node) => normalizeText(node.textContent))
+          .map((node) => structuredText(node))
           .filter((text): text is string => Boolean(text))
           .map((text) => ({ kind, text, sourceSelector: selector }));
         if (blocks.length > 0) return blocks;
@@ -259,6 +266,55 @@ export function numberFromText(value: string | null): number | null {
 function normalizeText(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim();
   return normalized || null;
+}
+
+function structuredText(node: Element | null): string | null {
+  if (!node) return null;
+  const blockTags = new Set([
+    "ADDRESS",
+    "ARTICLE",
+    "ASIDE",
+    "BLOCKQUOTE",
+    "DIV",
+    "FIGCAPTION",
+    "FOOTER",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "HEADER",
+    "LI",
+    "MAIN",
+    "NAV",
+    "P",
+    "SECTION",
+    "TR",
+  ]);
+  const ignoredTags = new Set(["BUTTON", "NOSCRIPT", "SCRIPT", "STYLE"]);
+
+  const read = (current: Node): string => {
+    if (current.nodeType === current.TEXT_NODE) return current.textContent ?? "";
+    if (current.nodeType !== current.ELEMENT_NODE) return "";
+    const element = current as Element;
+    if (ignoredTags.has(element.tagName)) return "";
+    if (element.tagName === "BR") return "\n";
+    const content = [...element.childNodes].map(read).join("");
+    return blockTags.has(element.tagName) ? `\n${content}\n` : content;
+  };
+
+  const normalized = read(node)
+    .replace(/\u00a0/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
+    .replace(/ *\r?\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return normalized || null;
+}
+
+function isVariantPlaceholder(value: string): boolean {
+  return /^(?:select|choose)(?:\s+(?:an?|the))?\s+option\b/i.test(value.trim());
 }
 
 function unique<T>(values: T[]): T[] {

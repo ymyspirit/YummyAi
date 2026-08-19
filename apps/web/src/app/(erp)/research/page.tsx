@@ -1,6 +1,13 @@
+import {
+  ResearchListResponseSchema,
+  ResearchProductTypeFacetResponseSchema,
+  type ResearchProductTypeFacet,
+} from "@yummyai/contracts/research";
+import Link from "next/link";
+
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { DateFilter } from "../../../features/research/date-filter";
-import { ResearchTable, type ResearchItemView } from "../../../features/research/research-table";
+import { ResearchTable } from "../../../features/research/research-table";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -14,8 +21,11 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
     "platform",
     "marketplace",
     "captureStatus",
+    "classificationStatus",
     "priceMin",
     "priceMax",
+    "productType",
+    "q",
     "rating",
     "tags",
     "project",
@@ -27,7 +37,8 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
     const value = params[key];
     if (typeof value === "string" && value) query.set(key, value);
   }
-  const result = await loadResearch(query);
+  const [result, productTypes] = await Promise.all([loadResearch(query), loadProductTypes()]);
+  const nextPageHref = result.nextCursor ? researchPageHref(query, result.nextCursor) : null;
   return (
     <div className="research-shell">
       <ErpSidebar
@@ -48,6 +59,38 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
         </header>
         <section className="filter-panel" aria-label="研究资料筛选">
           <form method="get">
+            <label className="research-query-filter">
+              搜索标题
+              <input
+                name="q"
+                type="search"
+                defaultValue={stringValue(params.q)}
+                placeholder="pillow, mug, gift tag"
+              />
+            </label>
+            <label>
+              产品类型
+              <select name="productType" defaultValue={stringValue(params.productType)}>
+                <option value="">全部类型</option>
+                {productTypes.items.map((type) => (
+                  <option key={type.key} value={type.key}>
+                    {type.name} ({type.total})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              分类状态
+              <select
+                name="classificationStatus"
+                defaultValue={stringValue(params.classificationStatus)}
+              >
+                <option value="">全部状态</option>
+                <option value="confirmed">已确认</option>
+                <option value="suggested">待复核</option>
+                <option value="unclassified">未分类</option>
+              </select>
+            </label>
             <label>
               平台
               <select name="platform" defaultValue={stringValue(params.platform)}>
@@ -129,6 +172,9 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
             <button className="filter-button" type="submit">
               应用筛选
             </button>
+            <Link className="filter-reset" href="/research">
+              清除
+            </Link>
           </form>
         </section>
         <section className="library-frame" aria-labelledby="library-title">
@@ -137,38 +183,80 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
               <p className="section-code">LIVE INDEX</p>
               <h2 id="library-title">证据条目</h2>
             </div>
-            <span className="result-count">{result.items.length} RESULTS</span>
+            <span className="result-count">{result.total} RESULTS</span>
           </div>
           {result.error && (
             <p role="alert" className="empty-library">
               {result.error}
             </p>
           )}
-          {!result.error && <ResearchTable items={result.items} nextCursor={result.nextCursor} />}
+          {!result.error && (
+            <ResearchTable
+              items={result.items}
+              nextPageHref={nextPageHref}
+              productTypes={productTypes.items}
+            />
+          )}
         </section>
       </main>
     </div>
   );
 }
 
-async function loadResearch(
-  query: URLSearchParams,
-): Promise<{ items: ResearchItemView[]; nextCursor: string | null; error?: string }> {
+export async function loadResearch(query: URLSearchParams): Promise<{
+  items: ReturnType<typeof ResearchListResponseSchema.parse>["items"];
+  nextCursor: string | null;
+  total: number;
+  error?: string;
+}> {
   const apiBase = process.env.API_BASE_URL;
-  if (!apiBase) return { items: [], nextCursor: null };
+  if (!apiBase) {
+    return {
+      items: [],
+      nextCursor: null,
+      total: 0,
+      error: "尚未配置研究 API。请设置 API_BASE_URL 后重试。",
+    };
+  }
   try {
     const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/research-items?${query}`, {
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`资料库读取失败 (${response.status})`);
-    return (await response.json()) as { items: ResearchItemView[]; nextCursor: string | null };
+    if (!response.ok) {
+      if (response.status === 401) throw new Error("身份会话无效，请重新登录。");
+      if (response.status === 403) throw new Error("当前成员没有 research:read 权限。");
+      throw new Error(`资料库读取失败 (${response.status})`);
+    }
+    return ResearchListResponseSchema.parse(await response.json());
   } catch (error) {
     return {
       items: [],
       nextCursor: null,
+      total: 0,
       error: error instanceof Error ? error.message : "资料库读取失败",
     };
   }
+}
+
+async function loadProductTypes(): Promise<{ items: ResearchProductTypeFacet[] }> {
+  const apiBase = process.env.API_BASE_URL;
+  if (!apiBase) return { items: [] };
+  try {
+    const response = await apiFetch(
+      `${apiBase.replace(/\/$/, "")}/v1/research-items/product-types`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) return { items: [] };
+    return ResearchProductTypeFacetResponseSchema.parse(await response.json());
+  } catch {
+    return { items: [] };
+  }
+}
+
+function researchPageHref(query: URLSearchParams, cursor: string) {
+  const next = new URLSearchParams(query);
+  next.set("cursor", cursor);
+  return `/research?${next.toString()}`;
 }
 
 function stringValue(value: string | string[] | undefined) {

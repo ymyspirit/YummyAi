@@ -1,6 +1,7 @@
-import type { CaptureDraft } from "@yummyai/contracts";
+import type { CaptureDraft } from "@yummyai/contracts/capture";
 import {
   CalendarDays,
+  ChartNoAxesCombined,
   ExternalLink,
   Heart,
   ImageIcon,
@@ -58,6 +59,11 @@ export function ResearchProductDossier({
   const reviewCount =
     draft?.reviewCollection?.reportedTotal ?? draft?.reviewCount ?? draft?.shop?.reviewCount;
   const descriptionBlocks = splitProductDetails(description);
+  const productInformationCount =
+    draft?.productInformation?.reduce(
+      (total, section) => total + section.items.length,
+      0,
+    ) ?? 0;
 
   if (loading) {
     return (
@@ -164,9 +170,20 @@ export function ResearchProductDossier({
               value={formatEstimatedDelivery(draft?.shipping?.estimatedDelivery, latestSnapshot.capturedAt)}
             />
             <EvidenceLine icon={<PackageOpen size={15} />} label="运费" value={draft?.shipping?.cost?.raw} />
-            <EvidenceLine icon={<Store size={15} />} label="发货地" value={draft?.shipping?.shipsFrom} />
+            <EvidenceLine
+              icon={<Store size={15} />}
+              label={item.platform === "amazon" ? "发货方" : "发货地"}
+              value={draft?.shipping?.shipsFrom}
+            />
             <EvidenceLine icon={<Truck size={15} />} label="配送至" value={draft?.shipping?.destination} />
-            <EvidenceLine icon={<CalendarDays size={15} />} label="发布日期" value={draft?.listingPublishedAt} />
+            <EvidenceLine
+              icon={<CalendarDays size={15} />}
+              label={item.platform === "amazon" ? "首次上架" : "发布日期"}
+              value={
+                draft?.listingPublishedAt ??
+                (item.platform === "amazon" ? "Amazon 未公开" : null)
+              }
+            />
           </dl>
           {draft?.taxonomy?.length ? (
             <div className="dossier-taxonomy">
@@ -182,12 +199,126 @@ export function ResearchProductDossier({
       </div>
 
       <dl className="dossier-signal-rail">
-        <Signal icon={<Heart size={14} />} label="收藏" value={formatCount(draft?.favoriteCount)} />
+        <Signal
+          icon={<Heart size={14} />}
+          label="收藏"
+          value={
+            item.platform === "amazon" ? "Amazon 未公开" : formatCount(draft?.favoriteCount)
+          }
+        />
         <Signal icon={<Star size={14} />} label="评分" value={formatRating(productRating)} />
         <Signal icon={<MessageSquareText size={14} />} label="评论" value={formatCount(reviewCount)} />
         <Signal icon={<ImageIcon size={14} />} label="媒体" value={`${includedImages.length || (mainImage ? 1 : 0)} 张`} />
-        <Signal icon={<PackageOpen size={14} />} label="规格" value={`${draft?.variants?.length ?? 0} 组`} />
+        <Signal
+          icon={<PackageOpen size={14} />}
+          label="规格"
+          value={
+            productInformationCount > 0
+              ? `${productInformationCount} 项`
+              : `${draft?.variants?.length ?? 0} 组`
+          }
+        />
       </dl>
+
+      {draft?.ehuntAnalysis ? (
+        <section
+          className="dossier-ehunt"
+          aria-labelledby={`ehunt-analysis-${latestSnapshot.id}`}
+        >
+          <div className="dossier-ehunt-heading">
+            <div>
+              <p className="section-code">THIRD-PARTY MARKET SIGNALS</p>
+              <h4 id={`ehunt-analysis-${latestSnapshot.id}`}>EHunt 商品分析</h4>
+            </div>
+            <span>EHunt evidence</span>
+          </div>
+          <p className="dossier-ehunt-note">
+            以下数值与标签来自采集时页面中可见的 EHunt 面板，不是 Etsy 原生字段。
+          </p>
+          <dl className="dossier-ehunt-metrics">
+            <ExternalMetric
+              icon={<ChartNoAxesCombined size={13} />}
+              label="总销量"
+              value={formatCount(draft.ehuntAnalysis.totalSales)}
+              delta={draft.ehuntAnalysis.salesDelta}
+            />
+            <ExternalMetric
+              label="总销售额"
+              value={draft.ehuntAnalysis.totalRevenue?.raw ?? "—"}
+              delta={draft.ehuntAnalysis.revenueDelta?.raw}
+            />
+            <ExternalMetric
+              label="总浏览量"
+              value={formatCount(draft.ehuntAnalysis.viewCount)}
+            />
+            <ExternalMetric
+              label="总评论"
+              value={formatCount(draft.ehuntAnalysis.reviewCount)}
+              delta={draft.ehuntAnalysis.reviewDelta}
+            />
+            <ExternalMetric
+              label="总收藏"
+              value={formatCount(draft.ehuntAnalysis.favoriteCount)}
+              delta={draft.ehuntAnalysis.favoriteDelta}
+            />
+            <ExternalMetric
+              label="平均转化率"
+              value={formatPercent(draft.ehuntAnalysis.conversionRatePercent)}
+            />
+          </dl>
+          <div className="dossier-ehunt-detail-grid">
+            <dl>
+              <EvidenceFact label="EHunt 上架时间" value={draft.ehuntAnalysis.listingPublishedAt} />
+              <EvidenceFact label="EHunt 价格" value={draft.ehuntAnalysis.price?.raw} />
+              <EvidenceFact label="发货地" value={draft.ehuntAnalysis.shipsFrom} />
+              <EvidenceFact
+                label="库存"
+                value={formatCount(draft.ehuntAnalysis.inventoryCount)}
+              />
+              <EvidenceFact label="店铺" value={draft.ehuntAnalysis.shopName} />
+              <EvidenceFact
+                label="店铺销量"
+                value={formatCount(draft.ehuntAnalysis.shopSalesCount)}
+              />
+            </dl>
+            <div className="dossier-ehunt-tags">
+              <div>
+                <strong>商品标签</strong>
+                <span>{draft.ehuntAnalysis.tags.length} TAGS</span>
+              </div>
+              {draft.ehuntAnalysis.tags.length > 0 ? (
+                <ul>
+                  {draft.ehuntAnalysis.tags.map((tag) => (
+                    <li key={tag.label}>
+                      <span>{tag.label}</span>
+                      {tag.metricRaw ? <small>{tag.metricRaw}</small> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="dossier-muted-note">EHunt 面板没有显示商品标签。</p>
+              )}
+              {draft.ehuntAnalysis.categoryPath.length > 0 ? (
+                <ol aria-label="EHunt 类目路径">
+                  {draft.ehuntAnalysis.categoryPath.map((node) => (
+                    <li key={node}>{node}</li>
+                  ))}
+                </ol>
+              ) : null}
+              {draft.ehuntAnalysis.annualTrendUrl ? (
+                <a
+                  href={draft.ehuntAnalysis.annualTrendUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  查看 EHunt 年度历史趋势
+                  <ExternalLink size={11} aria-hidden="true" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="dossier-lower-grid">
         <section className="dossier-description">
@@ -219,6 +350,58 @@ export function ResearchProductDossier({
                 );
               })}
             </dl>
+          ) : null}
+          {item.platform === "amazon" ? (
+            <section
+              className="dossier-product-information"
+              aria-labelledby={`product-information-${latestSnapshot.id}`}
+            >
+              <div className="dossier-parameter-heading">
+                <h5 id={`product-information-${latestSnapshot.id}`}>产品参数</h5>
+                <span>{productInformationCount} 项</span>
+              </div>
+              {draft?.productInformation?.length ? (
+                <div className="dossier-parameter-groups">
+                  {draft.productInformation.map((section, sectionIndex) => (
+                    <details key={`${sectionIndex}-${section.name}`} open={sectionIndex === 0}>
+                      <summary>
+                        <span>{section.name}</span>
+                        <small>{section.items.length}</small>
+                      </summary>
+                      <dl>
+                        {section.items.map((item, itemIndex) => (
+                          <div key={`${itemIndex}-${item.label}-${item.value}`}>
+                            <dt>{item.label}</dt>
+                            <dd>
+                              <span>{item.value}</span>
+                              {item.links.length > 0 ? (
+                                <span className="dossier-parameter-links">
+                                  {item.links.map((link) => (
+                                    <a
+                                      key={link.url}
+                                      href={link.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {link.label}
+                                      <ExternalLink size={10} aria-hidden="true" />
+                                    </a>
+                                  ))}
+                                </span>
+                              ) : null}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <p className="dossier-muted-note">
+                  当前快照没有公开 Product information 参数。
+                </p>
+              )}
+            </section>
           ) : null}
         </section>
 
@@ -277,6 +460,43 @@ function Signal({ icon, label, value }: { icon: React.ReactNode; label: string; 
   );
 }
 
+function ExternalMetric({
+  delta,
+  icon,
+  label,
+  value,
+}: {
+  delta?: number | string | null;
+  icon?: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <dt>{icon}{label}</dt>
+      <dd>
+        <span>{value}</span>
+        {delta !== null && delta !== undefined ? <small>+{delta}</small> : null}
+      </dd>
+    </div>
+  );
+}
+
+function EvidenceFact({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value || "—"}</dd>
+    </div>
+  );
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -292,6 +512,10 @@ function formatCount(value: number | null | undefined) {
 
 function formatRating(value: number | null | undefined) {
   return value == null ? "—" : value.toFixed(1);
+}
+
+function formatPercent(value: number | null | undefined) {
+  return value == null ? "—" : `${value}%`;
 }
 
 function formatSnapshotPrice(snapshot: ResearchSnapshotView) {

@@ -12,7 +12,8 @@
     "@aws-sdk/client-s3": "^3.900.0",
     "@aws-sdk/s3-request-presigner": "^3.900.0",
     "@yummyai/authz": "workspace:*",
-    "@yummyai/contracts": "workspace:*"
+    "@yummyai/contracts": "workspace:*",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

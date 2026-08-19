@@ -17,6 +17,7 @@ import { and, eq } from "drizzle-orm";
 import { AuditService } from "../audit/audit.service.js";
 import { persistCompetitorShopSnapshot } from "../competitors/competitor-shop.service.js";
 import { CAPTURE_MEDIA_ENQUEUER, DATABASE_CONNECTION } from "../platform.tokens.js";
+import { ResearchClassificationService } from "../research/research-classification.service.js";
 
 export interface CaptureReceipt {
   researchItemId: string;
@@ -40,6 +41,8 @@ export class CaptureService {
     @Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection,
     @Inject(CAPTURE_MEDIA_ENQUEUER) private readonly mediaJobs: CaptureMediaEnqueuer,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(ResearchClassificationService)
+    private readonly classifications: ResearchClassificationService,
   ) {}
 
   async createSnapshot(context: TenantContext, input: CaptureDraft): Promise<CaptureReceipt> {
@@ -97,6 +100,18 @@ export class CaptureService {
         draft,
         capturedAt: new Date(draft.capturedAt),
       });
+      await this.classifications.suggestFromCapture(
+        tx,
+        context,
+        itemId,
+        draft,
+        existing
+          ? {
+              classificationSource: existing.classificationSource,
+              classificationStatus: existing.classificationStatus,
+            }
+          : undefined,
+      );
       const competitor = draft.shop
         ? await persistCompetitorShopSnapshot(tx, context, draft.shop, {
             capturedAt: new Date(draft.capturedAt),

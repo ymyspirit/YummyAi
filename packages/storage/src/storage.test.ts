@@ -38,6 +38,26 @@ describe("private asset reads", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("requires order PII permission before reading an order-private object", async () => {
+    const send = vi.fn();
+    const storage = new Storage({ send } as unknown as S3Client, "private-assets");
+    const asset = {
+      id: "019b0000-0000-7000-8000-000000000003",
+      tenantId: context.tenantId,
+      assetDomain: "order" as const,
+      objectKey: `tenants/${context.tenantId}/order/${"a".repeat(64)}/customer.png`,
+    };
+    await expect(storage.readPrivate(context, asset, { requiredDomain: "order" })).rejects.toThrow();
+    expect(send).not.toHaveBeenCalled();
+    const authorized = { ...context, permissions: ["asset:read", "order:pii:read"] };
+    const allowedSend = vi.fn(async () => ({
+      Body: { transformToByteArray: async () => Uint8Array.from([4, 5, 6]) },
+    }));
+    const allowedStorage = new Storage({ send: allowedSend } as unknown as S3Client, "private-assets");
+    await expect(allowedStorage.readPrivate(authorized, asset, { requiredDomain: "order" }))
+      .resolves.toEqual(Uint8Array.from([4, 5, 6]));
+  });
+
   it("promotes only a tenant-owned quarantine object into the authorized prefix", async () => {
     const send = vi.fn(async (command: unknown) => {
       if (command instanceof HeadObjectCommand) throw Object.assign(new Error("missing"), { name: "NotFound" });

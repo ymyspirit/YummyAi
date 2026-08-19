@@ -8,6 +8,8 @@ The ordinary order projection contains provider identity, workflow state, side s
 
 Protected buyer, shipping-address, and customization details are stored as one AES-256-GCM envelope in `order_protected_details`. Production requires an explicit base64url-encoded 32-byte `ORDER_PII_ENCRYPTION_KEY`. `ORDER_PII_RETENTION_DAYS` controls the stored expiry timestamp and defaults to 90 days.
 
+Clean customer files and all order-specific render outputs use the separate private `order` asset domain. They require both normal asset authorization and `order:pii:read`, remain scoped to the pinned customization/order line, and cannot enter public visual indexes, Listing candidates, or ordinary authorized-asset exports.
+
 `GET /v1/orders/:id/fulfillment?purpose=...` is the only P2-A HTTP read that decrypts this envelope. It requires `order:pii:read`, accepts only `fulfillment`, `customer_support`, `fraud_review`, `legal`, or `retention`, and appends a tenant-scoped access event before plaintext is returned. Do not call it from the ordinary order inbox.
 
 `POST /v1/orders/:id/protected-details/anonymize` is the irreversible retention command. It requires the separate `order:pii:anonymize` permission, the current order event sequence and envelope version, an idempotency key, and an operator reason. It fails before `retentionExpiresAt`. On success it removes the ciphertext and country projection, marks the envelope anonymized, and appends checksum-only event/audit evidence; later provider updates cannot repopulate the protected fields.
@@ -37,9 +39,15 @@ All routes derive tenant context from authenticated membership:
 | `POST` | `/v1/orders/:id/customizations/:requirementId/versions` | `order:write` | Append a remapped version using optimistic version matching |
 | `POST` | `/v1/orders/:id/customizations/:requirementId/versions/:versionId/files` | `order:write`, `asset:write` | Register tenant-quarantine metadata and enqueue malware scanning |
 | `POST` | `/v1/orders/:id/customizations/:requirementId/files/:intakeId/scan` | `order:write`, `asset:write` | Requeue a pending or failed scan without putting file metadata in the job |
-| `POST` | `/v1/orders/:id/customizations/:requirementId/files/:intakeId/promote` | `order:write`, `asset:promote` | Copy a clean file into the authorized domain and record customer-provided rights |
+| `POST` | `/v1/orders/:id/customizations/:requirementId/files/:intakeId/promote` | `order:write`, `asset:promote` | Copy a clean file into the order-private domain and record customer-provided rights |
 | `POST` | `/v1/orders/:id/customizations/:requirementId/proofs` | `order:write` | Append an immutable proof version after customization/file/design gates pass |
 | `POST` | `/v1/orders/:id/proofs/:proofId/decisions` | `order:write` | Record one replay-safe final customer decision |
+| `GET` | `/v1/pod/order-personalization-batches` | `order:read`, `design:read` | List PII-safe order-personalization batch summaries |
+| `GET` | `/v1/pod/order-personalization-batches/:id` | `order:read`, `design:read` | Read one PII-safe batch and its row diagnostics |
+| `POST` | `/v1/pod/order-personalization-batches` | `order:write`, `order:pii:read`, `design:write` | Pin order rows, customization versions, and template bindings for asynchronous encrypted slot preparation |
+| `GET` | `/v1/pod/order-personalization-render-tasks` | `order:read`, `design:read` | List PII-safe render task projections |
+| `GET` | `/v1/pod/order-personalization-render-tasks/:id` | `order:read`, `design:read` | Read one PII-safe render task projection |
+| `POST` | `/v1/pod/order-personalization-render-tasks` | `order:write`, `order:pii:read`, `design:write` | Create an identifier-only asynchronous preview or fulfillment render from a prepared batch item |
 | `POST` | `/v1/orders/:id/routing` | `order:write` | Evaluate one pinned order line against an explicit routing-policy version |
 | `GET` | `/v1/sourcing/suppliers` | `order:read` | List tenant fulfillment suppliers |
 | `POST` | `/v1/sourcing/suppliers` | `order:write` | Create a manual, Printify, or Printful supplier projection |

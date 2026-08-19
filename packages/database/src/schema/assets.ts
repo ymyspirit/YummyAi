@@ -40,7 +40,7 @@ export const assetFiles = pgTable(
   },
   (table) => [
     check("asset_files_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
-    check("asset_files_domain_check", sql`${table.assetDomain} in ('research', 'authorized')`),
+    check("asset_files_domain_check", sql`${table.assetDomain} in ('research', 'authorized', 'order')`),
     check("asset_files_byte_size_check", sql`${table.byteSize} >= 0`),
     check("asset_files_checksum_check", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
     check("asset_files_rights_status_check", sql`${table.rightsStatus} in ('unverified', 'approved', 'rejected')`),

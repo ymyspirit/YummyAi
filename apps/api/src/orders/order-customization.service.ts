@@ -211,7 +211,7 @@ export class OrderCustomizationService {
   async promoteFile(context: TenantContext, intakeId: string) {
     const file = await this.requireFile(context, intakeId);
     if (file.scanStatus !== "clean") throw new ConflictException("A clean malware scan is required before asset promotion");
-    const stored = await this.storage.promoteQuarantineToAuthorized(context, {
+      const stored = await this.storage.promoteQuarantineToOrder(context, {
       id: file.id, tenantId: context.tenantId, assetDomain: "quarantine", objectKey: file.objectKey,
       checksumSha256: file.checksumSha256, fileName: file.safeFileName, mediaType: file.mediaType,
     });
@@ -224,7 +224,7 @@ export class OrderCustomizationService {
       authorizedAssetId = targetAssetId;
       if (!existing) await tx.insert(assetFiles).values({
         id: targetAssetId, tenantId: context.tenantId, ownerUserId: context.userId, objectKey: stored.objectKey,
-        assetDomain: "authorized", fileName: file.safeFileName, mediaType: file.mediaType, byteSize: file.byteSize,
+        assetDomain: "order", fileName: file.safeFileName, mediaType: file.mediaType, byteSize: file.byteSize,
         checksumSha256: file.checksumSha256, rightsStatus: "approved",
         rightsMetadata: { source: { kind: "customer_provided", reference: `order-customization:${file.customizationVersionId}` }, approvedAt: new Date().toISOString() },
       });

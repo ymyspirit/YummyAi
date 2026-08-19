@@ -1,4 +1,5 @@
 import type {
+  CaptureEhuntAnalysis,
   CaptureShipping,
   CapturedReview,
   CapturedShopSummary,
@@ -43,6 +44,10 @@ export const etsyParser: MarketplaceParser = {
       "content",
     );
     const description =
+      reader.contentBlock(
+        "description",
+        "[data-product-details-description-text-content]",
+      ) ??
       reader.contentBlock("description", '#product_details [data-id="description-text"]') ??
       reader.contentBlock("description", '#listing-page-cart [data-id="description-text"]') ??
       reader.contentBlock("description", '[data-id="description-text"]');
@@ -82,10 +87,11 @@ export const etsyParser: MarketplaceParser = {
     const reviewSummary = extractEtsyReviewSummary(document);
     const rating = reviewSummary?.itemAverage ?? shop?.rating ?? null;
     const reviewCount = reviewSummary?.reviewCount ?? shop?.reviewCount ?? null;
+    const ehuntAnalysis = extractEhuntProductAnalysis(document);
 
     return reader.build({
       platform: "etsy",
-      parserVersion: "etsy@1.4.0",
+      parserVersion: "etsy@1.6.0",
       extensionVersion: "0.0.0",
       marketplace: url.hostname.toLowerCase(),
       sourceUrl: url.href,
@@ -109,6 +115,7 @@ export const etsyParser: MarketplaceParser = {
         status: "visible",
         updatedAt: new Date().toISOString(),
       },
+      ...(ehuntAnalysis ? { ehuntAnalysis } : {}),
       bullets,
       media: reader.media(
         [
@@ -123,6 +130,7 @@ export const etsyParser: MarketplaceParser = {
         '[data-selector="listing-page-variations"] select',
         '[data-buy-box-region="variations"] select',
       ]),
+      productInformation: [],
       contentBlocks: [
         ...[description, personalization].filter(
           (block): block is NonNullable<typeof block> => block !== null,
@@ -177,6 +185,184 @@ export function extractEtsyReviews(document: Document): CapturedReview[] {
     });
   }
   return [...unique.values()];
+}
+
+export function extractEhuntProductAnalysis(
+  document: Document,
+): CaptureEhuntAnalysis | null {
+  const sourceSelector = "#etsy-rank-tool-product-table";
+  const root = document.querySelector<HTMLElement>(
+    `${sourceSelector} .eh-product-detail`,
+  );
+  if (!root) return null;
+
+  const listingPublishedAt = ehuntValue(root, ["上架时间", "Listing date"]);
+  const totalSalesCell = ehuntValueCell(root, ["总销量", "Total sales"]);
+  const totalRevenueCell = ehuntValueCell(root, ["总销售额", "Total revenue"]);
+  const viewCountCell = ehuntValueCell(root, ["总浏览量", "Total views"]);
+  const reviewCountCell = ehuntValueCell(root, ["总评论数", "Total reviews"]);
+  const favoriteCountCell = ehuntValueCell(root, ["总收藏", "Total favorites"]);
+  const conversionRateCell = ehuntValueCell(root, [
+    "平均转化率",
+    "Average conversion rate",
+  ]);
+  const reviewRateCell = ehuntValueCell(root, ["评论率", "Review rate"]);
+  const priceCell = ehuntValueCell(root, ["价格", "Price"]);
+  const productTypeCell = ehuntValueCell(root, ["商品类型", "Product type"]);
+  const shipsFrom = ehuntValue(root, ["发货地", "Ships from"]);
+  const otherDataCell = ehuntValueCell(root, ["其它数据", "Other data"]);
+  const categoryCell = ehuntValueCell(root, ["类目", "Category"]);
+  const tagsCell = ehuntValueCell(root, ["商品标签", "Product tags", "Tags"]);
+  const shopNameCell = ehuntValueCell(root, ["店铺名称", "Shop name"]);
+  const shopSalesCell = ehuntValueCell(root, ["店铺销量", "Shop sales"]);
+
+  const productTypes = productTypeCell
+    ? [...productTypeCell.querySelectorAll<HTMLElement>(":scope > span")]
+        .map((node) => normalizeText(node.textContent))
+        .filter(Boolean)
+    : [];
+  const otherValues = otherDataCell
+    ? [...otherDataCell.querySelectorAll<HTMLElement>(".eh-etsy-icon > div")]
+        .map((node) => normalizeText(node.textContent))
+        .filter(Boolean)
+    : [];
+  const inventoryText = otherValues.find((value) => /(?:库存数|inventory)/i.test(value));
+  const categoryPath = categoryCell
+    ? [...categoryCell.querySelectorAll<HTMLElement>(":scope > .is-click")]
+        .map((node) => normalizeText(node.childNodes[0]?.textContent))
+        .filter(Boolean)
+    : [];
+  const tags = tagsCell
+    ? [...tagsCell.querySelectorAll<HTMLElement>(".eh-exe-tags-list-item")]
+        .map((node) => {
+          const label = normalizeText(
+            node.querySelector<HTMLElement>(".el-tooltip__trigger")?.textContent,
+          );
+          const metricRaw =
+            normalizeText(
+              node.querySelector<HTMLElement>(".eh-exe-tags-list-item-value")
+                ?.textContent,
+            ).replace(/^\(|\)$/g, "") || null;
+          return label
+            ? {
+                label,
+                metricRaw,
+                metricValue: parseAbbreviatedNumber(metricRaw),
+              }
+            : null;
+        })
+        .filter((tag): tag is NonNullable<typeof tag> => tag !== null)
+    : [];
+  const annualTrendUrl =
+    root
+      .querySelector<HTMLAnchorElement>('a[href*="ehunt.ai/product-detail/"]')
+      ?.href.trim() || null;
+  const shopName =
+    normalizeText(
+      shopNameCell?.querySelector<HTMLAnchorElement>('a[href*="ehunt.ai/store-detail/"]')
+        ?.textContent,
+    ) || ehuntMainValue(shopNameCell);
+  const shopRating = numberFromText(
+    shopNameCell
+      ?.querySelector<HTMLElement>('[aria-label="rating"][aria-valuenow]')
+      ?.getAttribute("aria-valuenow") ?? null,
+  );
+  const priceRaw = ehuntMainValue(priceCell);
+  const revenueRaw = ehuntMainValue(totalRevenueCell);
+  const revenueDeltaRaw = ehuntGrowthValue(totalRevenueCell);
+
+  const analysis: CaptureEhuntAnalysis = {
+    provider: "ehunt",
+    sourceSelector,
+    listingPublishedAt: listingPublishedAt || null,
+    totalSales: numberFromText(ehuntMainValue(totalSalesCell)),
+    salesDelta: numberFromText(ehuntGrowthValue(totalSalesCell)),
+    totalRevenue: parsePrice(revenueRaw, currencyFromVisibleMoney(priceRaw)),
+    revenueDelta: parsePrice(revenueDeltaRaw, currencyFromVisibleMoney(priceRaw)),
+    viewCount: numberFromText(ehuntMainValue(viewCountCell)),
+    reviewCount: numberFromText(ehuntMainValue(reviewCountCell)),
+    reviewDelta: numberFromText(ehuntGrowthValue(reviewCountCell)),
+    favoriteCount: numberFromText(ehuntMainValue(favoriteCountCell)),
+    favoriteDelta: numberFromText(ehuntGrowthValue(favoriteCountCell)),
+    conversionRatePercent: numberFromText(ehuntMainValue(conversionRateCell)),
+    reviewRatePercent: numberFromText(ehuntMainValue(reviewRateCell)),
+    price: parsePrice(priceRaw, currencyFromVisibleMoney(priceRaw)),
+    productTypes,
+    shipsFrom: shipsFrom || null,
+    badges: otherValues.filter((value) => value !== inventoryText),
+    inventoryCount: numberFromText(inventoryText ?? null),
+    categoryPath,
+    tags,
+    annualTrendUrl,
+    shopName: shopName || null,
+    shopRating,
+    shopSalesCount: numberFromText(ehuntMainValue(shopSalesCell)),
+    shopSalesDelta: numberFromText(ehuntGrowthValue(shopSalesCell)),
+  };
+
+  const hasVisibleEvidence =
+    analysis.totalSales !== null ||
+    analysis.viewCount !== null ||
+    analysis.tags.length > 0 ||
+    analysis.shopName !== null;
+  return hasVisibleEvidence ? analysis : null;
+}
+
+function ehuntValue(root: HTMLElement, labels: readonly string[]): string {
+  return ehuntMainValue(ehuntValueCell(root, labels)) ?? "";
+}
+
+function ehuntValueCell(
+  root: HTMLElement,
+  labels: readonly string[],
+): HTMLElement | null {
+  const normalizedLabels = labels.map((label) => label.toLocaleLowerCase());
+  const labelCell = [
+    ...root.querySelectorAll<HTMLElement>(".eh-product-detail-content-label"),
+  ].find((node) =>
+    normalizedLabels.includes(normalizeText(node.textContent).toLocaleLowerCase()),
+  );
+  return (labelCell?.nextElementSibling as HTMLElement | null | undefined) ?? null;
+}
+
+function ehuntMainValue(cell: HTMLElement | null): string | null {
+  if (!cell) return null;
+  const clone = cell.cloneNode(true) as HTMLElement;
+  clone
+    .querySelectorAll(
+      ".eh-product-detail-content-value-growth, .review-analysis-btn, svg, img, button",
+    )
+    .forEach((node) => node.remove());
+  return normalizeText(clone.textContent) || null;
+}
+
+function ehuntGrowthValue(cell: HTMLElement | null): string | null {
+  return (
+    normalizeText(
+      cell?.querySelector<HTMLElement>(".eh-product-detail-content-value-growth")
+        ?.textContent,
+    ) || null
+  );
+}
+
+function parseAbbreviatedNumber(value: string | null): number | null {
+  if (!value) return null;
+  const match = value.replaceAll(",", "").match(/(\d+(?:\.\d+)?)\s*([KMB])?/i);
+  if (!match) return null;
+  const multiplier =
+    { K: 1_000, M: 1_000_000, B: 1_000_000_000 }[
+      match[2]?.toUpperCase() as "K" | "M" | "B"
+    ] ?? 1;
+  return Number(match[1]) * multiplier;
+}
+
+function currencyFromVisibleMoney(value: string | null): string | null {
+  if (!value) return null;
+  if (value.includes("$")) return "USD";
+  if (value.includes("€")) return "EUR";
+  if (value.includes("£")) return "GBP";
+  if (value.includes("¥")) return "JPY";
+  return null;
 }
 
 function extractEtsyReviewSummary(document: Document) {
@@ -313,6 +499,10 @@ function extractEtsyShipping(
     .match(/Cost to ship:\s*([^|]+?)(?=\s+Ships from|\s+Deliver to|$)/i)?.[1]
     ?.trim();
   const costRaw = symbol && value ? `${symbol}${value}` : (costMatch ?? null);
+  const freeShipping =
+    /\bfree\s+(?:standard\s+)?(?:shipping|delivery)\b/i.test(text) ||
+    /\b(?:shipping|delivery)\s*:\s*free\b/i.test(text);
+  const costCurrency = productCurrency ?? currencyFromSymbol(symbol);
   const shipsFrom =
     text
       .match(/Ships from:\s*([^|]+?)(?=\s+(?:Deliver to|There was|Country|Returns)|$)/i)?.[1]
@@ -334,7 +524,13 @@ function extractEtsyShipping(
   return {
     estimatedDelivery,
     processingTime,
-    cost: parsePrice(costRaw, productCurrency ?? currencyFromSymbol(symbol)),
+    cost: freeShipping
+      ? {
+          raw: "Free shipping",
+          amount: 0,
+          ...(costCurrency ? { currency: costCurrency } : {}),
+        }
+      : parsePrice(costRaw, costCurrency),
     shipsFrom,
     destination,
     sourceSelector: container.id ? `#${container.id}` : '[data-selector="shipping-highlights"]',

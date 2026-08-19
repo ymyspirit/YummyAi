@@ -1,0 +1,90 @@
+import type {
+  PodExecutableToolKey,
+  PodTaskParameterSnapshot,
+  PodTaskStatus,
+} from "@yummyai/contracts";
+import { sql } from "drizzle-orm";
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+import { assetFiles } from "./assets.js";
+import { designTasks, designVersions } from "./design.js";
+import { organizations, users } from "./identity.js";
+
+export const podArtworkTasks = pgTable("pod_artwork_tasks", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  designTaskId: uuid("design_task_id").notNull(),
+  toolKey: text("tool_key").$type<PodExecutableToolKey>().notNull(),
+  status: text("status").$type<PodTaskStatus>().default("queued").notNull(),
+  parameterSnapshot: jsonb("parameter_snapshot").$type<PodTaskParameterSnapshot>().notNull(),
+  modelKey: text("model_key"),
+  modelVersion: text("model_version"),
+  seed: text("seed"),
+  progressPercent: integer("progress_percent").default(0).notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(3).notNull(),
+  resultVersionId: uuid("result_version_id"),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  qualityCheckSnapshot: jsonb("quality_check_snapshot").$type<Record<string, unknown>>(),
+  reviewSnapshot: jsonb("review_snapshot").$type<Record<string, unknown>>(),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+  startedAt: timestamp("started_at", { mode: "date", withTimezone: true }),
+  completedAt: timestamp("completed_at", { mode: "date", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("pod_artwork_tasks_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("pod_artwork_tasks_idempotency_uuidv7_check", sql`substring(${table.idempotencyKey}::text from 15 for 1) = '7'`),
+  check("pod_artwork_tasks_tool_check", sql`${table.toolKey} in ('pattern_crop','print_extract','background_remove','super_resolution','outpaint','crop_compress','vectorize','authorized_watermark_remove','rights_risk_scan','design_variation','product_print_variation','instruction_edit','text_to_image','element_fusion','licensed_brand_fusion','series_design','style_reference','style_transfer','canvas_extend','seamless_pattern','seamless_stitch','print_composite','meme_print','product_suite','title_draft','virtual_try_on','background_replace','product_video','piece_extract','piece_compose','uv_layers')`),
+  check("pod_artwork_tasks_status_check", sql`${table.status} in ('queued','running','awaiting_review','partially_succeeded','failed','blocked','approved','rejected','cancelled')`),
+  check("pod_artwork_tasks_progress_check", sql`${table.progressPercent} between 0 and 100`),
+  check("pod_artwork_tasks_attempt_check", sql`${table.attemptCount} >= 0 and ${table.maxAttempts} between 1 and 20 and ${table.attemptCount} <= ${table.maxAttempts}`),
+  foreignKey({ columns: [table.tenantId, table.designTaskId], foreignColumns: [designTasks.tenantId, designTasks.id], name: "pod_artwork_tasks_design_task_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [table.tenantId, table.resultVersionId], foreignColumns: [designVersions.tenantId, designVersions.id], name: "pod_artwork_tasks_result_version_fk" }).onDelete("restrict"),
+  uniqueIndex("pod_artwork_tasks_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("pod_artwork_tasks_design_task_unique").on(table.tenantId, table.designTaskId),
+  uniqueIndex("pod_artwork_tasks_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+  index("pod_artwork_tasks_status_idx").on(table.tenantId, table.status, table.updatedAt),
+  index("pod_artwork_tasks_tool_idx").on(table.tenantId, table.toolKey, table.createdAt),
+]);
+
+export const podArtworkTaskInputs = pgTable("pod_artwork_task_inputs", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  taskId: uuid("task_id").notNull(),
+  assetFileId: uuid("asset_file_id").notNull(),
+  ordinal: integer("ordinal").notNull(),
+  assetVersion: integer("asset_version").notNull(),
+  checksumSha256: text("checksum_sha256").notNull(),
+  assetDomain: text("asset_domain").notNull(),
+  rightsStatus: text("rights_status").notNull(),
+  rightsSourceKind: text("rights_source_kind"),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  check("pod_artwork_task_inputs_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("pod_artwork_task_inputs_ordinal_check", sql`${table.ordinal} >= 0`),
+  check("pod_artwork_task_inputs_version_check", sql`${table.assetVersion} > 0`),
+  check("pod_artwork_task_inputs_checksum_check", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
+  check("pod_artwork_task_inputs_domain_check", sql`${table.assetDomain} in ('research','authorized')`),
+  check("pod_artwork_task_inputs_rights_check", sql`${table.rightsStatus} in ('unverified','approved','rejected')`),
+  check("pod_artwork_task_inputs_rights_source_check", sql`${table.rightsSourceKind} is null or ${table.rightsSourceKind} in ('owned','licensed','commissioned','ai_generated','customer_provided','competitor')`),
+  foreignKey({ columns: [table.tenantId, table.taskId], foreignColumns: [podArtworkTasks.tenantId, podArtworkTasks.id], name: "pod_artwork_task_inputs_task_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [table.tenantId, table.assetFileId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "pod_artwork_task_inputs_asset_fk" }).onDelete("restrict"),
+  uniqueIndex("pod_artwork_task_inputs_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("pod_artwork_task_inputs_ordinal_unique").on(table.tenantId, table.taskId, table.ordinal),
+  uniqueIndex("pod_artwork_task_inputs_asset_unique").on(table.tenantId, table.taskId, table.assetFileId),
+  index("pod_artwork_task_inputs_task_idx").on(table.tenantId, table.taskId, table.ordinal),
+]);

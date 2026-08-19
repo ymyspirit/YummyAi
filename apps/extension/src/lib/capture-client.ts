@@ -12,6 +12,10 @@ import {
   withoutReviewEvidence,
   type CapturePageResponse,
 } from "./capture-messages.js";
+import {
+  contentScriptFileForUrl,
+  isMissingContentScriptConnection,
+} from "./content-script-recovery.js";
 import { COLLECT_ALL_REVIEWS_MESSAGE } from "./etsy-review-collector.js";
 
 export type CaptureProgressState =
@@ -49,10 +53,29 @@ export async function readActiveEvidence(
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("请先打开 Amazon、Etsy 商品页或 Etsy 店铺页。");
 
-  const response = (await browser.tabs.sendMessage(tab.id, {
+  const request = {
     type: CAPTURE_PAGE_MESSAGE,
     includeReviews: options.includeReviews ?? false,
-  })) as CapturePageResponse | undefined;
+  } as const;
+  let response: CapturePageResponse | undefined;
+  try {
+    response = (await browser.tabs.sendMessage(tab.id, request)) as
+      | CapturePageResponse
+      | undefined;
+  } catch (error) {
+    if (!isMissingContentScriptConnection(error)) throw error;
+    const contentScript = contentScriptFileForUrl(tab.url);
+    if (!contentScript) {
+      throw new Error("当前页面不支持采集，请打开公开的 Amazon 商品页、Etsy 商品页或店铺页。");
+    }
+    await browser.scripting.executeScript({
+      files: [contentScript],
+      target: { tabId: tab.id },
+    });
+    response = (await browser.tabs.sendMessage(tab.id, request)) as
+      | CapturePageResponse
+      | undefined;
+  }
   if (!response) throw new Error("YummyAI 未连接当前页面，请刷新页面后重试。");
   if (!response.ok) throw new Error(response.error);
   return response.kind === "shop"

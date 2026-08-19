@@ -281,6 +281,146 @@
       "when": 1787673600000,
       "tag": "0040_p1_marketplace_publication_batches",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787760000000,
+      "tag": "0041_etsy_shop_sections",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787846400000,
+      "tag": "0042_etsy_fractional_tenure",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787932800000,
+      "tag": "0043_research_product_type_classification",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788019200000,
+      "tag": "0044_amazon_custom_product_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788105600000,
+      "tag": "0045_amazon_custom_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1788192000000,
+      "tag": "0046_amazon_custom_workflow_editable_completion",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1788278400000,
+      "tag": "0047_pod_artwork_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788364800000,
+      "tag": "0048_pod_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788451200000,
+      "tag": "0049_personalization_template_source_inspections",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1788537600000,
+      "tag": "0050_workflow_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788624000000,
+      "tag": "0051_imported_template_inspection_insert_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1788710400000,
+      "tag": "0052_order_personalization_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788796800000,
+      "tag": "0053_order_personalization_render_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1788883200000,
+      "tag": "0054_order_asset_domain",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1788969600000,
+      "tag": "0055_personalization_template_clone_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1789056000000,
+      "tag": "0056_order_personalization_creative_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1789142400000,
+      "tag": "0057_order_vector_fulfillment",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1789228800000,
+      "tag": "0058_pod_batch_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1789315200000,
+      "tag": "0059_creative_candidate_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789401600000,
+      "tag": "0060_template_inspection_confirmation",
+      "breakpoints": true
     }
   ]
 }

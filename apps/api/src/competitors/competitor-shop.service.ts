@@ -163,6 +163,7 @@ export async function persistCompetitorShopSnapshot(
     policies: full?.policies,
     members: full?.members ?? [],
     productionPartners: full?.productionPartners ?? [],
+    shopSections: full?.shopSections ?? [],
     draft,
     capturedAt: options.capturedAt,
   });

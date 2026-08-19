@@ -1,4 +1,7 @@
-import { CompetitorShopLibrary, type CompetitorShopView } from "../../../features/competitors/competitor-shop-library";
+import {
+  CompetitorShopLibrary,
+  type CompetitorShopView,
+} from "../../../features/competitors/competitor-shop-library";
 import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
@@ -22,20 +25,29 @@ export default async function CompetitorShopsPage() {
           </div>
           <aside>
             <span>采集入口</span>
-            <strong>Etsy 店铺页</strong>
-            <p>打开店铺后使用浏览器扩展，可补全公告、简介、成员、生产伙伴与政策。</p>
+            <strong>Amazon / Etsy 公开页面</strong>
+            <p>商品页形成卖家摘要；Etsy 店铺页可补全公告、简介、成员、生产伙伴与政策。</p>
           </aside>
         </header>
-        {result.error && <p className="competitor-error" role="alert">{result.error}</p>}
+        {result.error && (
+          <p className="competitor-error" role="alert">
+            {result.error}
+          </p>
+        )}
         {!result.error && <CompetitorShopLibrary items={result.items} />}
       </main>
     </div>
   );
 }
 
-async function loadCompetitorShops(): Promise<{ items: CompetitorShopView[]; error?: string }> {
+export async function loadCompetitorShops(): Promise<{
+  items: CompetitorShopView[];
+  error?: string;
+}> {
   const apiBase = process.env.API_BASE_URL;
-  if (!apiBase) return { items: [] };
+  if (!apiBase) {
+    return { items: [], error: "尚未配置竞争店铺 API。请设置 API_BASE_URL 后重试。" };
+  }
   try {
     const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/competitor-shops`, {
       cache: "no-store",

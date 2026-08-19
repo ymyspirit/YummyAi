@@ -35,6 +35,28 @@ import { DrizzleShipmentWritebackExecutionRepository, ShipmentWritebackProcessor
 import { DrizzleFulfillmentAttentionRunner, DrizzleFulfillmentAutomationExecutionRepository, FulfillmentAutomationProcessor } from "./processors/fulfillment-automation.processor.js";
 import { DrizzleWebhookDeliveryRepository, HttpWebhookGateway, WebhookDeliveryProcessor } from "./processors/webhook-delivery.processor.js";
 import { createEnvironmentSecretVault } from "@yummyai/ai-core";
+import { PodArtworkProcessor } from "./processors/pod-artwork.processor.js";
+import { DrizzlePodArtworkExecutionRepository } from "./processors/pod-artwork.repository.js";
+import { HttpPodArtworkGateway } from "./processors/pod-artwork.http-gateway.js";
+import { DrizzlePodExportRepository, PodExportProcessor } from "./processors/pod-export.processor.js";
+import {
+  DrizzleTemplateSourceInspectionRepository,
+  PersonalizationTemplateSourceInspectionProcessor,
+} from "./processors/personalization-template-source-inspection.processor.js";
+import {
+  DrizzleOrderPersonalizationBatchRepository,
+  OrderPersonalizationBatchProcessor,
+} from "./processors/order-personalization-batch.processor.js";
+import { HttpOrderPersonalizationRenderGateway } from "./processors/order-personalization-render.http-gateway.js";
+import { OrderPersonalizationRenderProcessor } from "./processors/order-personalization-render.processor.js";
+import { DrizzleOrderPersonalizationRenderRepository } from "./processors/order-personalization-render.repository.js";
+import {
+  CreativeDesignAdaptationProcessor,
+  CreativeDesignCandidateProcessor,
+  MockupRenderProcessor,
+  MockupTemplateCompileProcessor,
+  createCreativeGatewayFromEnvironment,
+} from "./processors/pod-batch-workflow.processor.js";
 
 const database = connectDatabase();
 const storage = createStorageFromEnvironment();
@@ -92,6 +114,66 @@ const fulfillmentAutomationProcessor = new FulfillmentAutomationProcessor(new Dr
 const fulfillmentAutomationWorker = createWorker(QueueName.FulfillmentAutomation, (envelope) => fulfillmentAutomationProcessor.process(envelope));
 const webhookDeliveryProcessor = new WebhookDeliveryProcessor(new DrizzleWebhookDeliveryRepository(database, createEnvironmentSecretVault("INTEGRATION_SECRET_ENCRYPTION_KEY", "yummyai-integration-v1")), new HttpWebhookGateway());
 const webhookDeliveryWorker = createWorker(QueueName.WebhookDelivery, (envelope) => webhookDeliveryProcessor.process(envelope));
+const podArtworkWorker = podProcessorConfigured()
+  ? createWorker(
+      QueueName.PodArtwork,
+      (envelope) => new PodArtworkProcessor(
+        new DrizzlePodArtworkExecutionRepository(database, storage),
+        HttpPodArtworkGateway.fromEnvironment(),
+      ).process(envelope),
+    )
+  : undefined;
+const podExportProcessor = new PodExportProcessor(new DrizzlePodExportRepository(database, storage), storage);
+const podExportWorker = createWorker(QueueName.PodExport, (envelope) => podExportProcessor.process(envelope));
+const templateSourceInspectionProcessor = new PersonalizationTemplateSourceInspectionProcessor(
+  new DrizzleTemplateSourceInspectionRepository(database, storage),
+);
+const templateSourceInspectionWorker = createWorker(
+  QueueName.PersonalizationTemplateSourceInspection,
+  (envelope) => templateSourceInspectionProcessor.process(envelope),
+);
+const orderPersonalizationBatchProcessor = new OrderPersonalizationBatchProcessor(
+  new DrizzleOrderPersonalizationBatchRepository(database),
+  createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"),
+);
+const orderPersonalizationBatchWorker = createWorker(
+  QueueName.OrderPersonalizationBatch,
+  (envelope) => orderPersonalizationBatchProcessor.process(envelope),
+);
+const orderPersonalizationRenderWorker = orderPersonalizationProcessorConfigured()
+  ? createWorker(
+      QueueName.OrderPersonalizationRender,
+      (envelope) => new OrderPersonalizationRenderProcessor(
+        new DrizzleOrderPersonalizationRenderRepository(database, storage),
+        HttpOrderPersonalizationRenderGateway.fromEnvironment(),
+        createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"),
+      ).process(envelope),
+    )
+  : undefined;
+const creativeDesignWorker = podBatchCreativeConfigured()
+  ? createWorker(
+      QueueName.CreativeDesign,
+      (envelope) => new CreativeDesignCandidateProcessor(database, storage, createCreativeGatewayFromEnvironment()).process(envelope),
+    )
+  : undefined;
+const creativeDesignAdaptationWorker = podBatchCreativeConfigured()
+  ? createWorker(
+      QueueName.CreativeDesignAdaptation,
+      (envelope) => new CreativeDesignAdaptationProcessor(database, storage, createCreativeGatewayFromEnvironment()).process(envelope),
+    )
+  : undefined;
+const mockupTemplateCompileWorker = mockupRendererConfigured()
+  ? createWorker(
+      QueueName.MockupTemplateCompile,
+      (envelope) => new MockupTemplateCompileProcessor(database, storage).process(envelope),
+    )
+  : undefined;
+const mockupRenderWorker = mockupRendererConfigured()
+  ? createWorker(
+      QueueName.MockupRender,
+      (envelope) => new MockupRenderProcessor(database, storage).process(envelope),
+    )
+  : undefined;
 
 worker.on("completed", (job) => {
   process.stdout.write(`Publication job completed: ${job.id ?? "unknown"}\n`);
@@ -113,6 +195,24 @@ fulfillmentAutomationWorker.on("completed", (job) => { process.stdout.write(`Ful
 fulfillmentAutomationWorker.on("failed", (job, error) => { process.stderr.write(`Fulfillment automation failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 webhookDeliveryWorker.on("completed", (job) => { process.stdout.write(`Webhook delivery completed: ${job.id ?? "unknown"}\n`); });
 webhookDeliveryWorker.on("failed", (job, error) => { process.stderr.write(`Webhook delivery failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+podArtworkWorker?.on("completed", (job) => { process.stdout.write(`POD artwork task completed: ${job.id ?? "unknown"}\n`); });
+podArtworkWorker?.on("failed", (job, error) => { process.stderr.write(`POD artwork task failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+podExportWorker.on("completed", (job) => { process.stdout.write(`POD export completed: ${job.id ?? "unknown"}\n`); });
+podExportWorker.on("failed", (job, error) => { process.stderr.write(`POD export failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+templateSourceInspectionWorker.on("completed", (job) => { process.stdout.write(`Template source inspection completed: ${job.id ?? "unknown"}\n`); });
+templateSourceInspectionWorker.on("failed", (job, error) => { process.stderr.write(`Template source inspection failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+orderPersonalizationBatchWorker.on("completed", (job) => { process.stdout.write(`Order personalization batch completed: ${job.id ?? "unknown"}\n`); });
+orderPersonalizationBatchWorker.on("failed", (job, error) => { process.stderr.write(`Order personalization batch failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+orderPersonalizationRenderWorker?.on("completed", (job) => { process.stdout.write(`Order personalization render completed: ${job.id ?? "unknown"}\n`); });
+orderPersonalizationRenderWorker?.on("failed", (job, error) => { process.stderr.write(`Order personalization render failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+creativeDesignWorker?.on("completed", (job) => { process.stdout.write(`Creative design candidate completed: ${job.id ?? "unknown"}\n`); });
+creativeDesignWorker?.on("failed", (job, error) => { process.stderr.write(`Creative design candidate failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+creativeDesignAdaptationWorker?.on("completed", (job) => { process.stdout.write(`Creative design adaptation completed: ${job.id ?? "unknown"}\n`); });
+creativeDesignAdaptationWorker?.on("failed", (job, error) => { process.stderr.write(`Creative design adaptation failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+mockupTemplateCompileWorker?.on("completed", (job) => { process.stdout.write(`Mockup template compile completed: ${job.id ?? "unknown"}\n`); });
+mockupTemplateCompileWorker?.on("failed", (job, error) => { process.stderr.write(`Mockup template compile failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+mockupRenderWorker?.on("completed", (job) => { process.stdout.write(`Mockup render completed: ${job.id ?? "unknown"}\n`); });
+mockupRenderWorker?.on("failed", (job, error) => { process.stderr.write(`Mockup render failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 
 async function shutdown() {
   await worker.close();
@@ -124,8 +224,46 @@ async function shutdown() {
   await shipmentWritebackWorker.close();
   await fulfillmentAutomationWorker.close();
   await webhookDeliveryWorker.close();
+  await podArtworkWorker?.close();
+  await podExportWorker.close();
+  await templateSourceInspectionWorker.close();
+  await orderPersonalizationBatchWorker.close();
+  await orderPersonalizationRenderWorker?.close();
+  await creativeDesignWorker?.close();
+  await creativeDesignAdaptationWorker?.close();
+  await mockupTemplateCompileWorker?.close();
+  await mockupRenderWorker?.close();
   await database.client.end();
 }
 
 process.once("SIGINT", () => void shutdown().finally(() => process.exit(0)));
 process.once("SIGTERM", () => void shutdown().finally(() => process.exit(0)));
+
+function podProcessorConfigured() {
+  return Boolean(
+    process.env.POD_PROCESSOR_URL?.trim()
+    && process.env.POD_PROCESSOR_API_KEY?.trim()
+    && process.env.POD_PROCESSOR_DEPLOYMENT_ID?.trim()
+    && process.env.POD_ENABLED_TOOLS?.trim(),
+  );
+}
+
+function orderPersonalizationProcessorConfigured() {
+  return Boolean(
+    process.env.POD_ORDER_PROCESSOR_URL?.trim()
+    && process.env.POD_ORDER_PROCESSOR_API_KEY?.trim()
+    && process.env.POD_ORDER_PROCESSOR_DEPLOYMENT_ID?.trim()
+    && process.env.POD_ORDER_ENABLED_TOOLS?.trim(),
+  );
+}
+
+function podBatchCreativeConfigured() {
+  const enabled = process.env.POD_BATCH_WORKFLOWS_ENABLED?.trim().toLowerCase() === "true";
+  const tools = new Set(process.env.POD_ENABLED_TOOLS?.split(",").map((value) => value.trim()).filter(Boolean));
+  return enabled && podProcessorConfigured() && tools.has("text_to_image") && tools.has("canvas_extend");
+}
+
+function mockupRendererConfigured() {
+  return process.env.POD_BATCH_WORKFLOWS_ENABLED?.trim().toLowerCase() === "true"
+    && process.env.POD_MOCKUP_RENDERER_ENABLED?.trim().toLowerCase() === "true";
+}

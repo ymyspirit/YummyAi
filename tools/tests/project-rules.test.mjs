@@ -30,3 +30,13 @@ test("Turbo passes required server-side web variables to development tasks", asy
     assert.equal(devEnv.has(variable), true, `${variable} must be available to web dev tasks`);
   }
 });
+
+test("low-memory infrastructure override does not change the default stack", async () => {
+  const root = new URL("../../", import.meta.url);
+  const compose = await readFile(new URL("infra/docker-compose.yml", root), "utf8");
+  const lowMemoryCompose = await readFile(new URL("infra/docker-compose.low-memory.yml", root), "utf8");
+
+  assert.doesNotMatch(compose, /profiles:\s*\["(?:file-scanning|observability)"\]/);
+  assert.match(lowMemoryCompose, /clamav:\s*[\s\S]*?profiles:\s*\["file-scanning"\]/);
+  assert.match(lowMemoryCompose, /otel-collector:\s*[\s\S]*?profiles:\s*\["observability"\]/);
+});
