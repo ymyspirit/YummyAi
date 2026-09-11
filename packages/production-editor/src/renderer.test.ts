@@ -26,6 +26,9 @@ beforeAll(async () => {
   resolvers = { resolveAsset: async () => ({ bytes: photo }), resolveFont: async () => ({ bytes: fontBytes }) };
 });
 const options = { format: "png", background: "transparent", purpose: "production" } as const;
+// Full production bitmaps share CPU with other suites on hosted CI runners.
+// These assertions verify file correctness rather than a rendering SLA.
+const largeRasterTimeoutMs = process.env.CI ? 120_000 : 30_000;
 async function pixel(bytes: Buffer, x: number, y: number) { return [...await sharp(bytes).ensureAlpha().extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()]; }
 describe("deterministic production renderer", () => {
   it("renders large photographic PNGs without truncating embedded image data", async () => {
@@ -43,7 +46,7 @@ describe("deterministic production renderer", () => {
     await expect(renderProductionDocument(repeated, { ...options, purpose: "preview" }, largeResolvers)).rejects.toMatchObject({
       preflight: { productionReady: false, issues: expect.arrayContaining([expect.objectContaining({ code: "render_asset_limit" })]) },
     });
-  }, 20_000);
+  }, largeRasterTimeoutMs);
   it("writes a true circular alpha mask, sRGB and physical density", async () => {
     const rendered = await renderProductionDocument(cover(), options, resolvers);
     const metadata = await sharp(rendered.bytes).metadata();
@@ -152,7 +155,7 @@ describe("deterministic production renderer", () => {
     expect([metadata.width, metadata.height, metadata.density]).toEqual([7913, 7913, 300]);
     expect((await pixel(output.bytes, 0, 0))[3]).toBe(0);
     expect((await pixel(output.bytes, 3956, 3956))[3]).toBe(255);
-  }, 30_000);
+  }, largeRasterTimeoutMs);
   it("keeps the reflected baseline of rotated back text while leaving glyphs readable", () => {
     const layer = { ...textLayer(), arc: null, rotationDeg: 35, xMm: 20, yMm: 25 };
     const font = parseProductionFont(fontBytes);

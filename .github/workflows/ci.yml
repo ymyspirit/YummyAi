@@ -56,16 +56,18 @@ jobs:
           node-version: 24.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: docker compose -f infra/docker-compose.yml up -d postgres redis minio keycloak otel-collector
+      - run: docker compose -f infra/docker-compose.yml up -d postgres redis minio keycloak clamav otel-collector
       - name: Wait for infrastructure
         run: |
-          for i in {1..60}; do
+          for i in {1..150}; do
             unhealthy=$(docker compose -f infra/docker-compose.yml ps --format json | jq -s '[.[] | select(.Health != "healthy" and .State != "exited")] | length')
             [ "$unhealthy" = "0" ] && exit 0
             sleep 2
           done
           docker compose -f infra/docker-compose.yml ps
           exit 1
+      - name: Start pinned creative canvas
+        run: docker compose -f infra/infinite-canvas.compose.yml up -d --wait --wait-timeout 180
       - run: pnpm --filter @yummyai/database db:migrate
       - name: Bootstrap CI service identity
         working-directory: apps/api
@@ -73,10 +75,10 @@ jobs:
       - run: pnpm --filter @yummyai/database exec drizzle-kit check
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm test:integration
+      - run: pnpm test --concurrency=2
+      - run: pnpm test:integration --concurrency=2
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm test:e2e
+      - run: pnpm test:e2e --workers=1
       - run: pnpm build
       - run: pnpm --filter @yummyai/extension zip
       - run: pnpm release:manifest
@@ -104,3 +106,5 @@ jobs:
           retention-days: 14
       - if: always()
         run: docker compose -f infra/docker-compose.yml logs --tail=120
+      - if: always()
+        run: docker compose -f infra/infinite-canvas.compose.yml logs --tail=80
