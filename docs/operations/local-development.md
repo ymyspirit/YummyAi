@@ -81,6 +81,8 @@ Order-context rendering is disabled unless `POD_ORDER_PROCESSOR_URL`, `POD_ORDER
 
 Default endpoints are PostgreSQL `5432`, Redis `6379`, MinIO `9000/9001`, Keycloak `8081`, ClamAV `3310` (loopback only), and OTLP `4317/4318`. Change host ports in `.env` when they collide; keep container ports unchanged. ClamAV needs several GiB of RAM while loading and refreshing signatures, so allocate enough Docker Desktop memory before enabling P2-C file scans.
 
+MinIO uses its [official Quay distribution](https://github.com/minio/minio/blob/master/docs/docker/README.md), pinned to release `RELEASE.2025-04-22T22-12-26Z` and digest `sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e`. This is the same artifact previously obtained from Docker Hub; the registry was changed after clean GitHub runners repeatedly received pull-access errors. Existing storage volumes remain in place.
+
 ## Health and diagnostics
 
 ### Independent creative canvas

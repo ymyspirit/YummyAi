@@ -4,6 +4,15 @@ import { CANVAS_BRIDGE, type CanvasBrief, type CanvasResultReceipt } from "@yumm
 import { apiFetch } from "../src/server-api";
 import { syntheticProductionPng } from "./production-editor-fixture";
 
+const createdProductionProjects = new Set<string>();
+test.afterEach(async () => {
+  for (const projectId of [...createdProductionProjects].reverse()) {
+    const response = await apiFetch(`${process.env.API_BASE_URL}/v1/production-editor/projects/${projectId}`, { method: "DELETE" });
+    expect(response.ok).toBe(true);
+  }
+  createdProductionProjects.clear();
+});
+
 async function api<T>(path: string, input?: unknown): Promise<T> {
   const response = await apiFetch(`${process.env.API_BASE_URL}/v1/${path}`, input ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) } : undefined);
   expect(response.ok, `${path}: ${response.status}`).toBe(true);
@@ -75,6 +84,7 @@ test("template workflow reviews candidates, continues with approved images and o
     schemaVersion: 1, name: "Synthetic geometry", productType: "tire_cover", spec: { diameterMm: 100, dpi: 150, safeInsetMm: 5, opening: null }, contour: [], layers: [],
     confirmations: { physicalSize: true, whiteBorderRule: true, narrowParts: true, barcodeTab: true, backText: true, visualReview: true },
   } });
+  createdProductionProjects.add(template.project.id);
   await api(`production-editor/projects/${template.project.id}/review`, { expectedVersionId: template.version.id });
   await page.getByRole("button", { name: "刷新任务", exact: true }).click();
   await page.getByRole("checkbox", { name: "选择方案 最终生产图案", exact: true }).check();
@@ -85,6 +95,7 @@ test("template workflow reviews candidates, continues with approved images and o
   await page.getByRole("button", { name: "生成生产草稿（1）", exact: true }).click();
   const handoff = await handoffResponse; expect(handoff.ok()).toBe(true);
   const { projectId } = await handoff.json() as { projectId: string };
+  createdProductionProjects.add(projectId);
   await expect(page.getByRole("button", { name: new RegExp(`打开生产稿.*${name}`) })).toBeVisible();
   await page.reload();
   await expect(page.getByRole("button", { name: new RegExp(`打开生产稿.*${name}`) })).toBeVisible();

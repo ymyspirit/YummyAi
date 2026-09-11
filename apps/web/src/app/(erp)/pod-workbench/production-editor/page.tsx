@@ -4,7 +4,7 @@ import "../../../../features/production-editor/production-editor.css";
 export const dynamic = "force-dynamic";
 
 export default async function ProductionEditorPage({ searchParams }: {
-  searchParams: Promise<{ kind?: string; projectId?: string; reportLineId?: string }>;
+  searchParams: Promise<{ kind?: string; projectId?: string; versionId?: string; reportLineId?: string }>;
 }) {
   const query = await searchParams;
   const kind = query.kind === "shaped_pillow" || query.kind === "tire_cover" ? query.kind : undefined;
@@ -16,6 +16,7 @@ export default async function ProductionEditorPage({ searchParams }: {
       </header>
       <ProductionEditorWorkspace kind={kind}
         initialProjectId={query.projectId && id.test(query.projectId) ? query.projectId : undefined}
+        initialVersionId={query.versionId && id.test(query.versionId) ? query.versionId : undefined}
         reportLineId={query.reportLineId && id.test(query.reportLineId) ? query.reportLineId : undefined} />
     </main>
   </div>;

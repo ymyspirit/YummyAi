@@ -24,8 +24,8 @@ type Source = { reportLineId: string; reportVersionId: string; title: string; re
 const emptyFonts = [{ id: "geist_regular", name: "Geist Regular", builtin: true, originalPath: "" }];
 
 export type ProductionEditorNavigationState = { dirty: boolean; busy: boolean };
-export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProjectId, reportLineId, scope, onNavigationStateChange }: {
-  kind?: ProductionKind; initialProjectId?: string; reportLineId?: string; scope?: "project" | "order" | "templates";
+export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProjectId, initialVersionId, reportLineId, scope, onNavigationStateChange }: {
+  kind?: ProductionKind; initialProjectId?: string; initialVersionId?: string; reportLineId?: string; scope?: "project" | "order" | "templates";
   onNavigationStateChange?: (state: ProductionEditorNavigationState) => void;
 }) {
   const [projects, setProjects] = useState<ProductionEditorProjectView[]>([]);
@@ -105,12 +105,16 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
           : scope === "templates" ? !project.source : true);
         setProjects(available);
         const resumeId = initialProjectId ?? (scope === "order" ? available[0]?.id : undefined);
-        if (resumeId) await openProject(resumeId, undefined, false);
+        if (resumeId) await openProject(resumeId, initialVersionId, false);
       } catch (cause) { if (!controller.signal.aborted) setError(editorError(cause)); }
       finally { if (!controller.signal.aborted) { setLoading(false); setSourceLoading(false); } }
     })();
     return () => { controller.abort(); context.current += 1; };
-  }, [initialProjectId, reportLineId, scope]);
+  }, [initialProjectId, initialVersionId, reportLineId, scope]);
+
+  useEffect(() => {
+    if (!scope && detail) syncProductionEditorLocation(detail.project.id, detail.version.id === detail.project.currentVersionId ? undefined : detail.version.id);
+  }, [scope, detail?.project.id, detail?.version.id, detail?.project.currentVersionId]);
 
   useEffect(() => {
     function beforeUnload(event: BeforeUnloadEvent) { if (dirtyRef.current) event.preventDefault(); }
@@ -321,7 +325,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
     });
   }
   async function approve() { await perform(async () => { if (!hasPreview || !document.confirmations.visualReview) throw new Error("请先查看当前图稿的后台预览并勾选视觉核对。"); const saved = await saveDocument(); const reviewed = ProductionEditorDetailViewSchema.parse(await editorRequest(`projects/${saved.project.id}/review`, { expectedVersionId: saved.version.id })); setDetail(reviewed); setHistory(createEditorHistory(reviewed.version.document)); setNotice("当前版本已确认。正式出图仍需生产预检通过。"); }); }
-  async function removeProject() { if (!detail || !window.confirm(`删除项目“${detail.project.name}”及该项目的私有素材、版本和导出文件？`)) return; await perform(async () => { const id = detail.project.id; await editorRequest(`projects/${id}`, undefined, "DELETE"); context.current += 1; setDetail(null); setProjects((items) => items.filter((item) => item.id !== id)); setHistory(createEditorHistory(createProductionDocument(kind))); setSelectedId(null); setShowCreate(true); setNotice("项目已删除。"); }); }
+  async function removeProject() { if (!detail || !window.confirm(`删除项目“${detail.project.name}”及该项目的私有素材、版本和导出文件？`)) return; await perform(async () => { const id = detail.project.id; await editorRequest(`projects/${id}`, undefined, "DELETE"); context.current += 1; setDetail(null); setProjects((items) => items.filter((item) => item.id !== id)); setHistory(createEditorHistory(createProductionDocument(kind))); setSelectedId(null); setShowCreate(true); if (!scope) syncProductionEditorLocation(null); setNotice("项目已删除。"); }); }
   function contourPoints(points: ProductionEditorPoint[]) { if (contourMode === "draw") setDraftPoints(points); else if (document.productType === "shaped_pillow") changeDocument({ ...document, contour: points }); }
   function selectCanvasTool(mode: ContourMode) {
     if (contourMode === "draw" && draftPoints.length && mode !== "draw") { setNotice("请先完成轮廓或取消勾图，再切换工具；当前节点仍保留。"); return; }
@@ -423,6 +427,16 @@ async function editorRequest(path: string, body?: unknown, method = body === und
 async function fileBase64(file: File): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === "string" ? resolve(reader.result.slice(reader.result.indexOf(",") + 1)) : reject(new Error("文件读取失败。")); reader.onerror = () => reject(new Error("文件读取失败。")); reader.readAsDataURL(file); }); }
 async function downloadEditorFile(url: string, fileName: string) { const response = await fetch(url, { cache: "no-store" }); if (!response.ok) throw new Error("文件暂时无法下载，请刷新项目后重试。"); const address = URL.createObjectURL(await response.blob()); const anchor = window.document.createElement("a"); anchor.href = address; anchor.download = safeEditorFileName(fileName); window.document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(address), 10_000); }
 function renderFileUrl(projectId: string, renderId: string, key: string) { return `/api/production-editor/projects/${encodeURIComponent(projectId)}/renders/${encodeURIComponent(renderId)}/files/${encodeURIComponent(key)}`; }
+
+function syncProductionEditorLocation(projectId: string | null, versionId?: string) {
+  const url = new URL(window.location.href);
+  if (url.pathname !== "/pod-workbench/production-editor") return;
+  if (projectId) url.searchParams.set("projectId", projectId);
+  else url.searchParams.delete("projectId");
+  if (projectId && versionId) url.searchParams.set("versionId", versionId);
+  else url.searchParams.delete("versionId");
+  if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
+}
 function visualSignature(document: ProductionEditorDocument) { return JSON.stringify({ schemaVersion: document.schemaVersion, productType: document.productType, spec: document.spec, contour: document.contour, layers: document.layers }); }
 function editorError(error: unknown) { return error instanceof Error && /^(登录|当前账号|项目已|文件|图稿|请选择|请先|请填写|订单|操作未)/.test(error.message) ? error.message : "操作未完成，请检查项目参数或稍后重试。"; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Shanghai" }).format(new Date(value)); }

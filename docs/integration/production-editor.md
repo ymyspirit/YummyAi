@@ -5,6 +5,12 @@ product types: `shaped_pillow` (异形抱枕) and `tire_cover` (定制备胎罩)
 that has been reviewed can open the editor through **制作生产图**. The POD production
 artwork tab also provides separate entries for both products.
 
+The standalone editor keeps the selected `projectId` and, for a historical copy,
+`versionId` in its URL. Reloading resumes that saved document. Saving a new version
+or selecting another project clears the historical-version parameter; deleting a
+project clears both identifiers. Embedded order and creative workflows keep their
+own URLs and navigation context. Unsaved artwork still requires an explicit save.
+
 ## Product specifications
 
 Documents use millimetres for geometry and a separate output DPI. Draft settings
