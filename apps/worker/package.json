@@ -18,6 +18,7 @@
     "@yummyai/jobs": "workspace:*",
     "@yummyai/marketplace-connectors": "workspace:*",
     "@yummyai/mockup-renderer": "workspace:*",
+    "@yummyai/production-editor": "workspace:*",
     "@yummyai/storage": "workspace:*",
     "bullmq": "^5.60.0",
     "drizzle-orm": "^0.44.0",

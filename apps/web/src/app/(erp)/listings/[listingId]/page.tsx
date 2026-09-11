@@ -5,7 +5,6 @@ import {
   ListingEditor,
   type ListingEditorView,
 } from "../../../../features/listings/listing-editor";
-import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import type { ReviewDrawerView } from "../../../../features/reviews/review-drawer";
 import type { PublicationWorkspaceView } from "../../../../features/marketplaces/publication-panel";
 import type { AutomationWorkspaceView } from "../../../../features/marketplaces/listing-channel-operations";
@@ -18,12 +17,6 @@ export default async function ListingPage({ params }: { params: Promise<{ listin
   const result = await loadListing(listingId);
   return (
     <div className="research-shell listing-shell">
-      <ErpSidebar
-        active="listings"
-        contextLabel="LISTING OPS"
-        listingHref={`/listings/${listingId}`}
-        note="字段来源、平台规则、变体映射和历史版本一起锁定，审批不会被 AI 建议覆盖。"
-      />
       <main className="research-main listing-main">
         {result.listing ? (
           <ListingEditor accounts={result.accounts} automations={result.automations} listing={result.listing} operationsError={result.operationsError} publicationError={result.publicationError} publications={result.publications} replications={result.replications} review={result.review} syncs={result.syncs} />

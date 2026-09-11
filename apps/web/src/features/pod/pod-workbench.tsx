@@ -136,7 +136,7 @@ export function PodWorkbench({
       <header className="pod-header">
         <div>
           <p className="kicker">POD ARTWORK OPERATIONS</p>
-          <h1>POD 作图中心</h1>
+          <h1>图片处理工具</h1>
           <p>为 Amazon 和 Etsy 统一编排印花提取、设计处理、权利复核、套图、定制与生产文件。</p>
         </div>
         <div className="pod-marketplaces" aria-label="服务平台">
@@ -225,6 +225,13 @@ export function PodWorkbench({
                 renderTasks={orderPersonalizationRenderTasks}
               />
             </>
+          ) : null}
+          {moduleKey === "production_artwork" ? (
+              <div className="pod-production-editor-entry">
+                <div><strong>在线制作生产稿</strong><p>按产品选择工艺模板，排版后保存版本并生成生产文件。</p></div>
+                <Link href="/pod-workbench/production-editor?kind=shaped_pillow">异形抱枕作图</Link>
+                <Link href="/pod-workbench/production-editor?kind=tire_cover">定制备胎罩作图</Link>
+              </div>
           ) : null}
           {!error && moduleKey === "production_artwork" ? (
             <>

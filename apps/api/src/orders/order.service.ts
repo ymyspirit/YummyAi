@@ -39,7 +39,7 @@ export class OrderService {
     return (await this.materializeNormalized(context, rawInput)).order;
   }
 
-  async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
+  async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput, options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
     const input = NormalizeOrderInputSchema.parse(rawInput);
     assertRedactedSource(input.redactedSource);
     const orderId = createEntityId();
@@ -64,7 +64,26 @@ export class OrderService {
       });
       if (existingOrder) {
         const sequence = existingOrder.latestEventSequence + 1;
-        if (input.protectedDetails && encryptedEnvelope) {
+        // A manually downloaded report has no reliable platform update timestamp.
+        // Add newly observed lines without regressing provider state or replacing PII.
+        if (options.manualReport) {
+          const knownLines = await tx.select().from(orderLines).where(eq(orderLines.orderId, existingOrder.id));
+          const newLines = input.lines.filter((line) => !knownLines.some((known) => known.externalLineId === line.externalLineId)).map((line) => ({
+            id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id,
+            externalLineId: line.externalLineId, externalListingId: line.externalListingId, skuCode: line.skuCode, title: line.title,
+            quantity: line.quantity, unitPriceMinor: line.unitPrice.amountMinor, unitPriceCurrency: line.unitPrice.currency, customizationCount: line.customizationCount,
+          }));
+          if (newLines.length) {
+            await tx.insert(orderLines).values(newLines);
+            await tx.insert(orderExternalReferences).values(newLines.map((line) => ({
+              id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, orderLineId: line.id,
+              provider: input.platform, kind: "order_line", externalId: line.externalLineId,
+            })));
+            await linkOrderLinesToCatalog(tx, context, input.accountId, input.platform, newLines);
+            await tx.update(orders).set({ lineCount: knownLines.length + newLines.length }).where(eq(orders.id, existingOrder.id));
+          }
+        }
+        if (input.protectedDetails && encryptedEnvelope && !options.manualReport) {
           const [currentProtected] = await tx.select().from(orderProtectedDetails)
             .where(eq(orderProtectedDetails.orderId, existingOrder.id)).limit(1);
           if (!currentProtected) {
@@ -85,13 +104,13 @@ export class OrderService {
         }
         await tx.insert(orderEvents).values({
           id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, sequence,
-          type: "provider_update_received", code: input.providerStatus,
+          type: "provider_update_received", code: options.manualReport ? "manual_report_received" : input.providerStatus,
           idempotencyKey: `provider:${input.platform}:${input.externalEventId}`, actorUserId: context.userId,
-          metadata: { sourceSnapshotId: snapshotId, previousProviderStatus: existingOrder.providerStatus, providerStatus: input.providerStatus },
+          metadata: { sourceSnapshotId: snapshotId, previousProviderStatus: existingOrder.providerStatus, providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus },
         });
         await tx.update(orders).set({
-          providerStatus: input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
-          ...(input.protectedDetails && existingOrder.addressStatus !== "anonymized" ? {
+          providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
+          ...(input.protectedDetails && !options.manualReport && existingOrder.addressStatus !== "anonymized" ? {
             addressStatus: "protected" as const,
             addressCountryCode: input.protectedDetails.shippingAddress.countryCode,
           } : {}),
@@ -120,7 +139,7 @@ export class OrderService {
       await linkOrderLinesToCatalog(tx, context, input.accountId, input.platform, lineRows);
       if (encryptedEnvelope) await tx.insert(orderProtectedDetails).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, encryptedEnvelope,
-        countryCode, retentionExpiresAt: retentionExpiry(),
+        countryCode, retentionExpiresAt: options.protectedExpiresAt ?? retentionExpiry(),
       });
       await tx.insert(orderEvents).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, sequence: 1, type: "order_ingested",

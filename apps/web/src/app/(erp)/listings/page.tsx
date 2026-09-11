@@ -2,7 +2,6 @@ import type { MarketplaceAccountView, MarketplacePublicationBatchView } from "@y
 import { FileText } from "lucide-react";
 
 import { ListingCatalog, type ListingCatalogFilters, type ListingCatalogPageView } from "../../../features/listings/listing-catalog";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { PublicationBatchWorkspace, type PublicationBatchCandidate } from "../../../features/marketplaces/publication-batch-workspace";
 import { apiFetch } from "../../../server-api";
 
@@ -37,7 +36,6 @@ export default async function ListingsPage({ searchParams }: { searchParams: Pro
   const result = await loadListingsWorkspace(filters, value(rawQuery.page));
   return (
     <div className="research-shell listing-index-shell">
-      <ErpSidebar active="listings" contextLabel="LISTING OPS" listingHref="/listings" note="目录用于筛选与门禁判断；编辑器保存为不可变新版本，批准版本才可进入发布轨道。" />
       <main className="research-main listing-index-main">
         <header className="listing-index-header">
           <div><p className="kicker">LISTING / VERSION CONTROL</p><h1>刊登控制台</h1><p>按标题、渠道、门禁和版本状态组织 Listing，再进入内容编辑或批量发布。</p></div>

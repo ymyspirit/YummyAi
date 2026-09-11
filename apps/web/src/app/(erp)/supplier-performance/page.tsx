@@ -4,7 +4,6 @@ import {
 } from "@yummyai/contracts/supplier-performance";
 import { ChartNoAxesCombined, ShieldAlert } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { SupplierPerformanceWorkspace } from "../../../features/supplier-performance/supplier-performance-workspace";
 import { apiFetch } from "../../../server-api";
 
@@ -14,11 +13,6 @@ export default async function SupplierPerformancePage() {
   const result = await loadSupplierPerformanceWorkspace();
   return (
     <div className="research-shell supplier-performance-shell">
-      <ErpSidebar
-        active="supplier-performance"
-        contextLabel="SUPPLIER EVIDENCE"
-        note="评分固定 KPI 版本、统计窗口和原始证据；结果不会直接改写供应商路由。"
-      />
       <main className="research-main supplier-performance-main">
         <header className="supplier-performance-header">
           <div>

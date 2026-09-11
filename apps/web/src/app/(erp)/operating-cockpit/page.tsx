@@ -8,7 +8,6 @@ import {
 } from "@yummyai/contracts/planning";
 import { Activity, ShieldAlert } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { OperatingCockpit } from "../../../features/operating-cockpit/operating-cockpit";
 import { apiFetch } from "../../../server-api";
 
@@ -31,11 +30,6 @@ export default async function OperatingCockpitPage() {
 
   return (
     <div className="research-shell operating-cockpit-shell">
-      <ErpSidebar
-        active="operating-cockpit"
-        contextLabel="FORECAST / CONTROL"
-        note="预测、指标快照、对账与 Webhook 投递都保留固定输入、版本和可下钻证据。"
-      />
       <main className="research-main operating-cockpit-main">
         <header className="operating-cockpit-header">
           <div>

@@ -7,6 +7,7 @@
         "ANALYSIS_DEMO_MODE",
         "API_ACCESS_TOKEN",
         "API_BASE_URL",
+        "CANVAS_WORKBENCH_URL",
         "DASHBOARD_DEMO_MODE",
         "DESIGN_DEMO_MODE",
         "LISTING_DEMO_MODE",

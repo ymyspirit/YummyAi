@@ -4,7 +4,6 @@ import {
 } from "@yummyai/contracts/procurement";
 import { BadgeCheck, ShoppingCart } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { ProcurementWorkspace } from "../../../features/procurement/procurement-workspace";
 import { apiFetch } from "../../../server-api";
 
@@ -14,11 +13,6 @@ export default async function ProcurementPage() {
   const result = await loadProcurementWorkspace();
   return (
     <div className="research-shell procurement-shell">
-      <ErpSidebar
-        active="procurement"
-        contextLabel="PROCUREMENT CONTROL"
-        note="采购、收货与发票保留独立版本；补货建议不会自动创建或审批采购单。"
-      />
       <main className="research-main procurement-main">
         <header className="procurement-header">
           <div>

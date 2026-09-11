@@ -5,7 +5,6 @@ import {
 import { BadgeDollarSign, ShieldAlert } from "lucide-react";
 
 import { FinanceWorkspace } from "../../../features/finance/finance-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +13,6 @@ export default async function FinancePage() {
   const result = await loadFinanceWorkspace();
   return (
     <div className="research-shell finance-shell">
-      <ErpSidebar
-        active="finance"
-        contextLabel="FINANCE EVIDENCE"
-        note="收入、成本、汇率与利润都锁定到不可变证据；缺失事实不会按零计算。"
-      />
       <main className="research-main finance-main">
         <header className="finance-header">
           <div>

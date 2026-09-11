@@ -162,6 +162,7 @@ export const CreativeDesignVersionSchema = z.object({
 
 export const CreativeDesignBatchItemSchema = CreateCreativeDesignBatchItemInputSchema.safeExtend({
   id: EntityIdSchema,
+  printSpecVersionIds: z.array(EntityIdSchema).max(POD_PRINT_SPEC_LIMIT),
   status: PodBatchStatusSchema,
   candidates: z.array(CreativeDesignCandidateSchema).max(POD_DESIGN_CANDIDATE_LIMIT),
   creativeVersions: z.array(CreativeDesignVersionSchema).max(POD_DESIGN_CANDIDATE_LIMIT),
@@ -172,6 +173,7 @@ export const CreativeDesignBatchItemSchema = CreateCreativeDesignBatchItemInputS
 export const CreativeDesignBatchSchema = z.object({
   id: EntityIdSchema,
   name: z.string().trim().min(1).max(160),
+  executionMode: z.enum(["processor", "infinite_canvas"]).default("processor"),
   recipeVersionId: EntityIdSchema.optional(),
   status: PodBatchStatusSchema,
   itemCount: z.int().min(1).max(POD_BATCH_ITEM_LIMIT),

@@ -3,7 +3,7 @@
 import type { CreateCreativeDesignBatchInput } from "@yummyai/contracts/pod/batch-workflows";
 import { AlertTriangle, Check, ChevronRight, FileSpreadsheet, Plus, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useId, useMemo, useState } from "react";
 
 import {
   bindCreativeSkus,
@@ -43,10 +43,11 @@ export function BatchDesignWorkbench({
       <header className="pod-batch-header">
         <div>
           <p className="kicker">CREATIVE DESIGN STUDIO</p>
-          <h1>画图设计</h1>
+          <h1>批量生图</h1>
           <p>在独立创意空间完成批量生成、候选多选、画幅适配与整套审核；批准后再按需交接给 SKU 和套图生产。</p>
         </div>
         <nav aria-label="生产交接" className="creative-production-bridge">
+          <Link href={batch?.executionMode === "infinite_canvas" ? `/creative-designs/canvas?brief=${batch.id}` : "/creative-designs/canvas"}>返回创意工作台 <ChevronRight size={14} /></Link>
           <Link href="/pod-workbench/mockup-batches">正式设计交接 <ChevronRight size={14} /> 批量套图</Link>
         </nav>
       </header>
@@ -58,7 +59,7 @@ export function BatchDesignWorkbench({
       </section>
 
       {error ? <p className="pod-batch-alert error"><AlertTriangle size={15} />{error}</p> : null}
-      {feature && !feature.enabled ? (
+      {feature && !feature.enabled && batch?.executionMode !== "infinite_canvas" ? (
         <div className="pod-batch-alert warning"><AlertTriangle size={15} /><span><b>入口暂未启用</b>{feature.blockers.join("；")}</span></div>
       ) : null}
 
@@ -188,6 +189,7 @@ function BatchLedger({ activeId, batches }: { activeId?: string; batches: Creati
 
 function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; assetUrls: Record<string, string>; options?: DesignOptions }) {
   const [selectionState, selectionAction, selecting] = useActionState(selectCreativeCandidates, idle);
+  const selectionFormId = useId();
   if (!batch?.items) return <section className="pod-batch-empty"><Sparkles size={24} /><h2>建立第一批创意需求</h2><p>先创建印刷规格，再用表格或 CSV 提交 1–50 条需求。</p></section>;
   return (
     <section className="pod-design-batch-detail">
@@ -195,8 +197,8 @@ function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; ass
         <div><p>IMMUTABLE INPUT · {batch.id.slice(0, 8)}</p><h2>{batch.name}</h2></div>
         <div><span>{statusLabel(batch.status)}</span><b>{batch.generatedCount} 已生成</b><b>{batch.failedCount} 失败款</b></div>
       </header>
-      <form action={selectionAction} className="pod-candidate-selection">
-        <input name="batchId" type="hidden" value={batch.id} />
+      <div className="pod-candidate-selection">
+        <form action={selectionAction} id={selectionFormId}><input name="batchId" type="hidden" value={batch.id} /></form>
         {batch.items.map((item) => (
           <article className="pod-creative-row" key={item.id}>
             <header><div><code>{item.rowKey}</code><h3>{item.name}</h3><p>{item.prompt}</p></div><span>{statusLabel(item.status)}</span></header>
@@ -204,30 +206,30 @@ function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; ass
               {item.candidates.map((candidate) => (
                 <label className={`pod-candidate-frame ${candidate.status}`} key={candidate.id}>
                   <div>{candidate.assetId && assetUrls[candidate.assetId] ? <img alt={`${item.name} 候选 ${candidate.ordinal + 1}`} src={assetUrls[candidate.assetId]} /> : <span>{candidate.status === "failed" ? <AlertTriangle size={20} /> : <Sparkles size={20} />}</span>}</div>
-                  <input disabled={candidate.status !== "generated"} name="candidateId" type="checkbox" value={candidate.id} />
+                  <input form={selectionFormId} disabled={candidate.status !== "generated"} name="candidateId" type="checkbox" value={candidate.id} />
                   <b>候选 {candidate.ordinal + 1}</b><small>{candidate.modelKey ?? statusLabel(candidate.status)}</small>
                   {candidate.errorMessage ? <em>{candidate.errorMessage}</em> : null}
                 </label>
               ))}
             </div>
             {item.status === "failed" || item.status === "partially_succeeded" ? <RetryCreativeForm batchId={batch.id} itemId={item.id} /> : null}
-            {item.creativeVersions.map((version) => <CreativeVersionPanel assetUrls={assetUrls} key={version.id} options={options} version={version} />)}
+            {item.creativeVersions.map((version) => <CreativeVersionPanel assetUrls={assetUrls} key={version.id} options={options} version={version} canvasMaster={batch.executionMode === "infinite_canvas"} />)}
           </article>
         ))}
-        <footer><ActionNotice state={selectionState} /><button disabled={selecting} type="submit">{selecting ? "适配排队中…" : "将所选候选创建为独立创意族"}</button></footer>
-      </form>
+        {batch.items.some((item) => item.candidates.some((candidate) => candidate.status === "generated")) ? <footer><ActionNotice state={selectionState} /><button form={selectionFormId} disabled={selecting} type="submit">{selecting ? "适配排队中…" : "将所选候选创建为独立创意族"}</button></footer> : null}
+      </div>
       {!(["completed", "cancelled"].includes(batch.status)) ? <CancelDesignForm batchId={batch.id} /> : null}
     </section>
   );
 }
 
-function CreativeVersionPanel({ version, assetUrls, options }: { version: CreativeVersion; assetUrls: Record<string, string>; options?: DesignOptions }) {
+function CreativeVersionPanel({ version, assetUrls, options, canvasMaster = false }: { version: CreativeVersion; assetUrls: Record<string, string>; options?: DesignOptions; canvasMaster?: boolean }) {
   const [reviewState, reviewAction, reviewing] = useActionState(reviewCreativeVersion, idle);
   const [bindState, bindAction, binding] = useActionState(bindCreativeSkus, idle);
   const variants = version.assets.filter((asset) => asset.role === "aspect_variant");
   return (
     <section className="pod-aspect-review">
-      <header><div><span>CREATIVE FAMILY</span><b>{version.id.slice(0, 8)}</b></div><strong>{statusLabel(version.status)}</strong></header>
+      <header><div><span>{canvasMaster ? "画布设计方案" : "CREATIVE FAMILY"}</span><b>{canvasMaster ? version.name : version.id.slice(0, 8)}</b></div><strong>{statusLabel(version.status)}</strong></header>
       <div className="pod-aspect-strip">
         {version.assets.map((asset) => (
           <figure className={asset.adaptationMode === "ai_outpaint" ? "ai" : ""} key={asset.id}>
@@ -240,12 +242,13 @@ function CreativeVersionPanel({ version, assetUrls, options }: { version: Creati
         <form action={reviewAction} className="pod-review-bar">
           <input name="versionId" type="hidden" value={version.id} />
           <input name="rejectionReason" placeholder="驳回原因（驳回时必填）" />
-          <button disabled={reviewing} name="decision" value="reject">驳回整套</button>
-          <button className="primary" disabled={reviewing || !variants.length} name="decision" value="approve">批准母版与全部画幅</button>
+          <button disabled={reviewing} name="decision" value="reject">{canvasMaster ? "驳回方案" : "驳回整套"}</button>
+          <button className="primary" disabled={reviewing || (!canvasMaster && !variants.length) || !version.assets.some((asset) => asset.role === "master")} name="decision" value="approve">{canvasMaster ? "批准创意母版" : "批准母版与全部画幅"}</button>
           <ActionNotice state={reviewState} />
         </form>
       ) : null}
-      {version.status === "approved" ? (
+      {canvasMaster ? <p>创意母版经审核后仍需确认产品尺寸和工艺，再制作生产文件。<Link href="/pod-workbench/production-editor">前往生产作图</Link></p> : null}
+      {version.status === "approved" && variants.length > 0 ? (
         <form action={bindAction} className="pod-sku-binding">
           <input name="versionId" type="hidden" value={version.id} />
           <div><b>提升为正式设计</b><span>规格兼容检查整批通过后才会创建记录</span></div>

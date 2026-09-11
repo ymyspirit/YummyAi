@@ -2,7 +2,6 @@ import type { MarketplaceAccountView, MarketplacePublicationRequestView, OrderVi
 import { Store } from "lucide-react";
 
 import { MarketplaceAccountDetail } from "../../../../features/marketplaces/marketplace-accounts-workspace";
-import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +10,7 @@ export default async function StoreDetailPage({ params, searchParams }: { params
   const [{ accountId }, query] = await Promise.all([params, searchParams]);
   const result = await loadStore(accountId);
   const notice = query.oauth === "success" ? { message: "平台授权已完成，请同步店铺能力。", status: "success" as const } : query.oauth === "failed" ? { message: `平台授权未完成 (${query.reason ?? "unknown"})`, status: "error" as const } : undefined;
-  return <div className="research-shell store-shell"><ErpSidebar active="stores" contextLabel="STORE DETAIL" note="授权凭证不会回显；能力快照、发布与订单摘要都来自租户隔离的真实投影。" /><main className="research-main store-main">{result.account ? <MarketplaceAccountDetail account={result.account} error={result.error} listingCount={result.listingCount} notice={notice} orderCount={result.orderCount} publicationCount={result.publicationCount} /> : <section className="analysis-error" role="alert"><Store size={28} /><h1>未找到店铺连接</h1><p>{result.error ?? "该连接不存在或当前成员无权访问。"}</p><a href="/stores">返回店铺运营</a></section>}</main></div>;
+  return <div className="research-shell store-shell"><main className="research-main store-main">{result.account ? <MarketplaceAccountDetail account={result.account} error={result.error} listingCount={result.listingCount} notice={notice} orderCount={result.orderCount} publicationCount={result.publicationCount} /> : <section className="analysis-error" role="alert"><Store size={28} /><h1>未找到店铺连接</h1><p>{result.error ?? "该连接不存在或当前成员无权访问。"}</p><a href="/stores">返回店铺运营</a></section>}</main></div>;
 }
 
 async function loadStore(accountId: string): Promise<{ account?: MarketplaceAccountView; error?: string; listingCount: number; orderCount: number; publicationCount: number }> {

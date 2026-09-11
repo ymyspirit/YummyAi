@@ -1,6 +1,5 @@
 import { WorkflowRunDetailSchema, type WorkflowRunDetail } from "@yummyai/contracts/workflow";
 
-import { ErpSidebar } from "../../../../../features/navigation/erp-sidebar";
 import { WorkflowRunWorkspace } from "../../../../../features/workflows/workflow-run-workspace";
 import { apiFetch } from "../../../../../server-api";
 
@@ -11,11 +10,6 @@ export default async function WorkflowRunPage({ params }: { params: Promise<{ id
   const result = await loadRun(id);
   return (
     <div className="research-shell workflow-shell workflow-run-shell">
-      <ErpSidebar
-        active="workflows"
-        contextLabel="WORKFLOW RUN"
-        note="运行拓扑只读。点击节点执行、审核、阻断或返工；已完成任务仍可修改说明。"
-      />
       <main className="research-main workflow-main workflow-canvas-main">
         {result.run ? <WorkflowRunWorkspace run={result.run} /> : <div className="workflow-alert error">{result.error}</div>}
       </main>

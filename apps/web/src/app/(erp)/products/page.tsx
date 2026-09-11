@@ -1,6 +1,5 @@
 import { Boxes, ShieldCheck } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { ProductCatalog } from "../../../features/products/product-catalog";
 import { ProductEditor, type ProductPlanView } from "../../../features/products/product-editor";
 import { apiFetch } from "../../../server-api";
@@ -19,11 +18,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
 
   return (
     <div className="research-shell product-shell">
-      <ErpSidebar
-        active="products"
-        contextLabel="PRODUCT ERP"
-        note="证据审批、产品状态、定制 Schema、成本与供应商候选在同一开发档案中留痕。"
-      />
       <main className="research-main product-main">
         <header className="product-index-header">
           <div>

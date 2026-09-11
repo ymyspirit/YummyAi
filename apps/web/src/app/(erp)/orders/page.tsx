@@ -1,8 +1,11 @@
-import { ClipboardList, ShieldCheck } from "lucide-react";
+import { ClipboardList } from "lucide-react";
 import type { OrderCustomizationSummaryView, OrderExceptionView, OrderIngestionRunView, OrderSideState, OrderView, OrderWorkflowState } from "@yummyai/contracts";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { OrderInbox, type AfterSalesQueueItem, type OperationalQueues, type ProductionQueueItem, type ShipmentQueueItem } from "../../../features/orders/order-inbox";
+import { OrderWorkspaceHeader } from "../../../features/orders/order-workspace-header";
+import { AmazonReportWorkspace } from "../../../features/orders/amazon-report-workspace";
+import { loadAmazonReportWorkspace } from "../../../features/orders/amazon-report-loader";
+import "../../../features/orders/amazon-report-workspace.css";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +14,13 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function OrdersPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
+  if (params.view === "reports") {
+    const result = await loadAmazonReportWorkspace();
+    return <div className="research-shell order-shell"><main className="research-main order-main order-report-main">
+      <OrderWorkspaceHeader view="reports" />
+      <AmazonReportWorkspace accounts={result.accounts} initialWorkspace={result.workspace} initialError={result.error} />
+    </main></div>;
+  }
   const query = buildQuery(params);
   const [result, ingestion, customizations, production, shipments, exceptions, afterSales] = await Promise.all([
     loadOrders(query), loadIngestionRuns(), loadCustomizations(),
@@ -26,20 +36,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Searc
 
   return (
     <div className="research-shell order-shell">
-      <ErpSidebar
-        active="orders"
-        contextLabel="ORDER CONTROL"
-        note="公开投影用于日常排队；履约 PII 只在授权目的下单独读取并留下审计记录。"
-      />
       <main className="research-main order-main">
-        <header className="order-header">
-          <div>
-            <p className="kicker">ORDER / EVENT LEDGER</p>
-            <h1>订单履约</h1>
-            <p>用不可变来源快照和顺序事件推进定制订单，不在队列中暴露买家信息。</p>
-          </div>
-          <div className="order-privacy-mark"><ShieldCheck size={18} /><span><b>PII 隔离</b>普通队列仅加载公开投影</span></div>
-        </header>
+        <OrderWorkspaceHeader view="fulfillment" />
 
         <form className="order-filters" method="get" aria-label="订单筛选">
           <label>平台<select name="platform" defaultValue={stringValue(params.platform)}><option value="">全部</option><option value="amazon">Amazon</option><option value="etsy">Etsy</option></select></label>

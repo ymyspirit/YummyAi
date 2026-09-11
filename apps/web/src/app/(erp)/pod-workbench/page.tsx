@@ -32,7 +32,6 @@ import {
   type PodListingArtifactOptionsView,
 } from "@yummyai/contracts/pod/listing-artifacts";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import {
   PodWorkbench,
   type PodWorkbenchLoadError,
@@ -78,11 +77,6 @@ export default async function PodWorkbenchPage({ searchParams }: { searchParams:
     : undefined;
   return (
     <div className="research-shell pod-shell">
-      <ErpSidebar
-        active="pod-workbench"
-        contextLabel="POD OPS"
-        note="面向 Amazon 与 Etsy；生成和生产只使用授权资产或订单私有域素材。"
-      />
       <main className="research-main pod-main">
         <PodWorkbench
           {...(catalog ? { catalog } : { error: result.error })}

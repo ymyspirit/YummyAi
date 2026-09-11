@@ -3,7 +3,6 @@ import Link from "next/link";
 
 import { DesignTask, type DesignTaskView } from "../../../features/design/design-task";
 import { DesignCreatePanel, type DesignResearchSample, type DesignSkuOption } from "../../../features/design/design-create-panel";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +18,6 @@ export default async function DesignPage({ searchParams }: { searchParams: Searc
   const [result, context] = await Promise.all([loadDesignWorkspace(selectedTaskId, status), loadDesignContext()]);
   return (
     <div className="research-shell design-shell">
-      <ErpSidebar
-        active="design"
-        contextLabel="DESIGN OPS"
-        note="每个校样版本固定文件校验值、权利来源和评审结论；生产访问只使用授权域签名链接。"
-      />
       <main className="research-main design-main">
         <DesignCreatePanel initialSkuId={selectedSkuId} researchSample={context.researchSample} skus={context.skus} />
         {result.tasks.length ? <DesignTaskQueue selectedId={result.task?.id} status={status} tasks={result.tasks} /> : null}

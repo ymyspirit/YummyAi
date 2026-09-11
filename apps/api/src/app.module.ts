@@ -35,6 +35,9 @@ import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { DashboardService, DrizzleDashboardRepository } from "./dashboard/dashboard.service.js";
 import { DesignController } from "./design/design.controller.js";
 import { DesignService, DrizzleDesignRepository } from "./design/design.service.js";
+import { ProductionEditorController } from "./design/production-editor.controller.js";
+import { ProductionEditorService, ProductionEditorRenderEnqueuer, ProductionEditorScanner, ClamAvProductionEditorScanner } from "./design/production-editor.service.js";
+import { RedisProductionEditorRenderEnqueuer } from "./design/redis-production-editor-render-enqueuer.js";
 import { PodWorkbenchController } from "./design/pod-workbench.controller.js";
 import { PodWorkbenchService } from "./design/pod-workbench.service.js";
 import { PodToolActivationPolicy } from "./design/pod-workbench.service.js";
@@ -48,6 +51,9 @@ import { PodExportService } from "./design/pod-export.service.js";
 import { RedisPodExportEnqueuer } from "./design/redis-pod-export-enqueuer.js";
 import { RedisPodArtworkEnqueuer } from "./design/redis-pod-artwork-enqueuer.js";
 import { PodBatchWorkflowController } from "./design/pod-batch-workflow.controller.js";
+import { CanvasBridgeController } from "./design/canvas-bridge.controller.js";
+import { CanvasBridgeService } from "./design/canvas-bridge.service.js";
+import { CanvasWorkflowService } from "./design/canvas-workflow.service.js";
 import { PodBatchWorkflowService } from "./design/pod-batch-workflow.service.js";
 import { PodMockupBatchService } from "./design/pod-mockup-batch.service.js";
 import { RedisPodBatchWorkflowEnqueuer } from "./design/redis-pod-batch-workflow-enqueuer.js";
@@ -87,6 +93,10 @@ import { RedisMarketplacePublicationEnqueuer } from "./marketplaces/redis-market
 import { RedisMarketplaceListingSyncEnqueuer } from "./marketplaces/redis-marketplace-listing-sync-enqueuer.js";
 import { NotificationController } from "./notifications/notification.controller.js";
 import { OrderController } from "./orders/order.controller.js";
+import { AmazonOrderReportController } from "./orders/amazon-order-report.controller.js";
+import { AmazonOrderReportService } from "./orders/amazon-order-report.service.js";
+import { AmazonReportArchiveGateway, HttpAmazonReportArchiveGateway } from "./orders/amazon-report-archive.gateway.js";
+import { AmazonReportRetentionEnqueuer, RedisAmazonReportRetentionEnqueuer } from "./orders/redis-amazon-report-retention-enqueuer.js";
 import { FulfillmentAutomationController } from "./orders/fulfillment-automation.controller.js";
 import { FulfillmentAutomationService } from "./orders/fulfillment-automation.service.js";
 import { RedisFulfillmentAutomationEnqueuer } from "./orders/redis-fulfillment-automation-enqueuer.js";
@@ -174,6 +184,7 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     CompetitorShopController,
     DashboardController,
     DesignController,
+    ProductionEditorController,
     PodWorkbenchController,
     PodGovernanceController,
     PodPersonalizationController,
@@ -181,6 +192,7 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     OrderPersonalizationRenderController,
     PodExportController,
     PodBatchWorkflowController,
+    CanvasBridgeController,
     FinanceController,
     HealthController,
     InventoryController,
@@ -192,6 +204,7 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     MarketplacePublicationBatchController,
     MarketplacePublicationController,
     NotificationController,
+    AmazonOrderReportController,
     OrderController,
     FulfillmentAutomationController,
     OrderAfterSalesController,
@@ -274,6 +287,9 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     CompetitorShopService,
     DashboardService,
     DesignService,
+    ProductionEditorService,
+    { provide: ProductionEditorRenderEnqueuer, useClass: RedisProductionEditorRenderEnqueuer },
+    { provide: ProductionEditorScanner, useClass: ClamAvProductionEditorScanner },
     PodWorkbenchService,
     PodToolActivationPolicy,
     PodArtworkTaskService,
@@ -283,6 +299,8 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     OrderPersonalizationRenderService,
     PodExportService,
     PodBatchWorkflowService,
+    CanvasBridgeService,
+    CanvasWorkflowService,
     PodMockupBatchService,
     FinanceService,
     ListingService,
@@ -295,6 +313,9 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     MarketplacePublicationService,
     NotificationService,
     OrderService,
+    AmazonOrderReportService,
+    { provide: AmazonReportArchiveGateway, useClass: HttpAmazonReportArchiveGateway },
+    { provide: AmazonReportRetentionEnqueuer, useClass: RedisAmazonReportRetentionEnqueuer },
     FulfillmentAutomationService,
     InventoryService,
     IntegrationService,

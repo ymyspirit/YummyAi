@@ -5,7 +5,6 @@ import {
   type WorkflowRunSummary,
 } from "@yummyai/contracts/workflow";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { WorkflowCenter } from "../../../features/workflows/workflow-center";
 import { apiFetch } from "../../../server-api";
 
@@ -17,11 +16,6 @@ export default async function WorkflowsPage() {
   const result = await loadWorkspace();
   return (
     <div className="research-shell workflow-shell">
-      <ErpSidebar
-        active="workflows"
-        contextLabel="WORKFLOW OPS"
-        note="模板版本固定、证据逐步交接；已完成任务仍可补充说明并留下审计事件。"
-      />
       <main className="research-main workflow-main">
         <WorkflowCenter {...result} />
       </main>

@@ -5,7 +5,6 @@ import {
 } from "@yummyai/contracts/research";
 import Link from "next/link";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { DateFilter } from "../../../features/research/date-filter";
 import { ResearchTable } from "../../../features/research/research-table";
 import { apiFetch } from "../../../server-api";
@@ -41,11 +40,6 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
   const nextPageHref = result.nextCursor ? researchPageHref(query, result.nextCursor) : null;
   return (
     <div className="research-shell">
-      <ErpSidebar
-        active="research"
-        contextLabel="EVIDENCE ERP"
-        note="公开页面证据、版本快照与媒体状态均保留来源链路。"
-      />
       <main className="research-main">
         <header className="page-header">
           <div>

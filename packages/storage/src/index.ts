@@ -6,6 +6,7 @@ export {
   type StoredAsset,
 } from "./asset-policy.js";
 export { checksumSha256 } from "./checksum.js";
+export { ClamAvScanner } from "./clamav-scanner.js";
 export {
   buildCustomProductPackage,
   inspectCustomProductPackage,

@@ -9,6 +9,7 @@ import type {
   MockupTemplatePackStatus,
   PodBatchStatus,
 } from "@yummyai/contracts";
+import type { CanvasWorkflowSnapshot } from "@yummyai/contracts/pod/canvas-bridge";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -73,6 +74,8 @@ export const creativeDesignBatches = pgTable("creative_design_batches", {
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  executionMode: text("execution_mode").$type<"processor" | "infinite_canvas">().default("processor").notNull(),
+  canvasWorkflow: jsonb("canvas_workflow").$type<CanvasWorkflowSnapshot>(),
   recipeVersionId: uuid("recipe_version_id"),
   status: text("status").$type<PodBatchStatus>().default("queued").notNull(),
   itemCount: integer("item_count").notNull(),
@@ -86,12 +89,14 @@ export const creativeDesignBatches = pgTable("creative_design_batches", {
   updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   check("creative_design_batches_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("creative_design_batches_execution_mode_check", sql`${table.executionMode} in ('processor','infinite_canvas')`),
   check("creative_design_batches_status_check", sql`${table.status} in ('queued','running','awaiting_review','partially_succeeded','completed','failed','cancelled')`),
   check("creative_design_batches_count_check", sql`${table.itemCount} between 1 and 50 and ${table.generatedCount} between 0 and 200 and ${table.approvedCount} between 0 and 200 and ${table.failedCount} between 0 and ${table.itemCount}`),
   check("creative_design_batches_checksum_check", sql`${table.requestChecksum} ~ '^[0-9a-f]{64}$'`),
   foreignKey({ columns: [table.tenantId, table.recipeVersionId], foreignColumns: [designRecipeVersions.tenantId, designRecipeVersions.id], name: "creative_design_batches_recipe_fk" }).onDelete("restrict"),
   uniqueIndex("creative_design_batches_tenant_id_unique").on(table.tenantId, table.id),
   uniqueIndex("creative_design_batches_checksum_unique").on(table.tenantId, table.requestChecksum),
+  uniqueIndex("creative_design_batches_canvas_parent_unique").on(table.tenantId, sql`(${table.canvasWorkflow}->>'parentBatchId')`).where(sql`${table.canvasWorkflow}->>'parentBatchId' is not null`),
   index("creative_design_batches_status_idx").on(table.tenantId, table.status, table.updatedAt),
 ]);
 

@@ -6,6 +6,7 @@ overrides:
   "@vitejs/plugin-react": "5.2.0"
 
 allowBuilds:
+  canvas: false
   esbuild: true
   msgpackr-extract: false
   sharp: true

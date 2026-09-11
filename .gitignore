@@ -21,3 +21,5 @@ tmp/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+apps/web/public/plugins/yummyai-bridge-*
+tools/segmentation/__pycache__/

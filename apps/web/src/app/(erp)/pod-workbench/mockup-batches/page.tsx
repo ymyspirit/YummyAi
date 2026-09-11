@@ -1,4 +1,3 @@
-import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import { MockupBatchWorkbench } from "../../../../features/pod/mockup-batch-workbench";
 import type { BatchCapabilities, MockupBatch, MockupOptions } from "../../../../features/pod/pod-batch-types";
 import { apiFetch } from "../../../../server-api";
@@ -11,7 +10,6 @@ export default async function MockupBatchesPage({ searchParams }: { searchParams
   const loaded = await loadConsole(requestedBatchId);
   return (
     <div className="research-shell pod-batch-shell">
-      <ErpSidebar active="mockup-batches" contextLabel="MOCKUP OPS" note="只消费已批准正式设计与模板包；输出审核后显式绑定 Listing，不自动发布。" />
       <main className="research-main pod-batch-main">
         <MockupBatchWorkbench {...loaded} />
       </main>

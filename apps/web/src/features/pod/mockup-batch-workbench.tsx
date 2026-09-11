@@ -43,7 +43,7 @@ export function MockupBatchWorkbench({
       <header className="pod-batch-header">
         <div>
           <p className="kicker">CONTROLLED PSD PRODUCTION</p>
-          <h1>批量套图</h1>
+          <h1>商品套图</h1>
           <p>消费已绑定 SKU 的正式设计版本，用已批准模板包确定性渲染；这里只生成图片，不生成标题。</p>
         </div>
         <nav aria-label="生产上下游">

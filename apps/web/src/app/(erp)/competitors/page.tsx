@@ -2,7 +2,6 @@ import {
   CompetitorShopLibrary,
   type CompetitorShopView,
 } from "../../../features/competitors/competitor-shop-library";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +10,6 @@ export default async function CompetitorShopsPage() {
   const result = await loadCompetitorShops();
   return (
     <div className="research-shell competitor-shell">
-      <ErpSidebar
-        active="competitors"
-        contextLabel="MARKET RADAR"
-        note="店铺经营信号采用版本快照保存，商品页摘要与完整店铺页证据分开标记。"
-      />
       <main className="research-main competitor-main">
         <header className="competitor-header">
           <div>

@@ -6,6 +6,8 @@
     "node": ">=24.17 <25"
   },
   "scripts": {
+    "canvas:build": "node tools/scripts/build-canvas-plugin.mjs",
+    "canvas:start": "docker compose -f infra/infinite-canvas.compose.yml up -d",
     "start:local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools/scripts/start-local.ps1",
     "dev": "node --env-file=.env node_modules/turbo/bin/turbo dev",
     "dev:lite": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/api --filter=@yummyai/web",

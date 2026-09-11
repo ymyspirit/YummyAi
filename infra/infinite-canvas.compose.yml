@@ -1,0 +1,13 @@
+name: yummyai-canvas
+services:
+  canvas:
+    # Official v0.18.0 artifact, pinned by digest; no source patches or ERP credentials.
+    image: ghcr.io/basketikun/infinite-canvas@sha256:94955fb7aa90626e2240b0577c64be5c7685100fc7870592cbbc84e9fd785b8c
+    ports:
+      - "127.0.0.1:4175:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

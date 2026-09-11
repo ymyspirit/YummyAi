@@ -30,6 +30,7 @@ export interface CreativeCandidate {
 }
 
 export interface CreativeBatch {
+  executionMode?: "processor" | "infinite_canvas";
   id: string; name: string; status: string; itemCount: number; generatedCount: number; approvedCount: number; failedCount: number;
   createdAt: string;
   items?: Array<{

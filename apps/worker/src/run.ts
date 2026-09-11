@@ -31,6 +31,8 @@ import {
   DrizzleCustomizationFileScanRepository,
 } from "./processors/customization-file-scan.processor.js";
 import { ClamAvScanner } from "./scanners/clamav.scanner.js";
+import { AmazonOrderReportRetentionProcessor, DrizzleAmazonOrderReportRetentionRepository } from "./processors/amazon-order-report-retention.processor.js";
+import { ProductionEditorRenderProcessor } from "./processors/production-editor.processor.js";
 import { DrizzleShipmentWritebackExecutionRepository, ShipmentWritebackProcessor } from "./processors/shipment-writeback.processor.js";
 import { DrizzleFulfillmentAttentionRunner, DrizzleFulfillmentAutomationExecutionRepository, FulfillmentAutomationProcessor } from "./processors/fulfillment-automation.processor.js";
 import { DrizzleWebhookDeliveryRepository, HttpWebhookGateway, WebhookDeliveryProcessor } from "./processors/webhook-delivery.processor.js";
@@ -112,6 +114,10 @@ const shipmentWritebackProcessor = new ShipmentWritebackProcessor(
 const shipmentWritebackWorker = createWorker(QueueName.ShipmentWriteback, (envelope) => shipmentWritebackProcessor.process(envelope));
 const fulfillmentAutomationProcessor = new FulfillmentAutomationProcessor(new DrizzleFulfillmentAutomationExecutionRepository(database), new DrizzleFulfillmentAttentionRunner(database));
 const fulfillmentAutomationWorker = createWorker(QueueName.FulfillmentAutomation, (envelope) => fulfillmentAutomationProcessor.process(envelope));
+const amazonOrderReportRetentionProcessor = new AmazonOrderReportRetentionProcessor(new DrizzleAmazonOrderReportRetentionRepository(database));
+const amazonOrderReportRetentionWorker = createWorker(QueueName.AmazonOrderReportRetention, (envelope) => amazonOrderReportRetentionProcessor.process(envelope));
+const productionEditorProcessor = new ProductionEditorRenderProcessor(database, storage, createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"));
+const productionEditorWorker = createWorker(QueueName.ProductionEditorRender, (envelope) => productionEditorProcessor.process(envelope));
 const webhookDeliveryProcessor = new WebhookDeliveryProcessor(new DrizzleWebhookDeliveryRepository(database, createEnvironmentSecretVault("INTEGRATION_SECRET_ENCRYPTION_KEY", "yummyai-integration-v1")), new HttpWebhookGateway());
 const webhookDeliveryWorker = createWorker(QueueName.WebhookDelivery, (envelope) => webhookDeliveryProcessor.process(envelope));
 const podArtworkWorker = podProcessorConfigured()
@@ -193,6 +199,10 @@ shipmentWritebackWorker.on("completed", (job) => { process.stdout.write(`Shipmen
 shipmentWritebackWorker.on("failed", (job, error) => { process.stderr.write(`Shipment writeback failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 fulfillmentAutomationWorker.on("completed", (job) => { process.stdout.write(`Fulfillment automation completed: ${job.id ?? "unknown"}\n`); });
 fulfillmentAutomationWorker.on("failed", (job, error) => { process.stderr.write(`Fulfillment automation failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+amazonOrderReportRetentionWorker.on("completed", (job) => { process.stdout.write(`Amazon report retention completed: ${job.id ?? "unknown"}\n`); });
+amazonOrderReportRetentionWorker.on("failed", (job, error) => { process.stderr.write(`Amazon report retention failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
+productionEditorWorker.on("completed", (job) => { process.stdout.write(`Production editor render completed: ${job.id ?? "unknown"}\n`); });
+productionEditorWorker.on("failed", (job, error) => { process.stderr.write(`Production editor render failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 webhookDeliveryWorker.on("completed", (job) => { process.stdout.write(`Webhook delivery completed: ${job.id ?? "unknown"}\n`); });
 webhookDeliveryWorker.on("failed", (job, error) => { process.stderr.write(`Webhook delivery failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 podArtworkWorker?.on("completed", (job) => { process.stdout.write(`POD artwork task completed: ${job.id ?? "unknown"}\n`); });
@@ -223,6 +233,8 @@ async function shutdown() {
   await customizationFileScanWorker.close();
   await shipmentWritebackWorker.close();
   await fulfillmentAutomationWorker.close();
+  await amazonOrderReportRetentionWorker.close();
+  await productionEditorWorker.close();
   await webhookDeliveryWorker.close();
   await podArtworkWorker?.close();
   await podExportWorker.close();

@@ -84,6 +84,7 @@ export const orderLines = pgTable("order_lines", {
   check("order_lines_customization_count_check", sql`${table.customizationCount} >= 0`),
   foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "order_lines_order_fk" }).onDelete("restrict"),
   uniqueIndex("order_lines_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("order_lines_tenant_order_id_unique").on(table.tenantId, table.orderId, table.id),
   uniqueIndex("order_lines_external_unique").on(table.tenantId, table.orderId, table.externalLineId),
   index("order_lines_order_idx").on(table.tenantId, table.orderId, table.createdAt),
 ]);

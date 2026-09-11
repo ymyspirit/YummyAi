@@ -4,6 +4,8 @@ P2-A provides a provider-neutral, tenant-isolated order kernel. P2-B adds increm
 
 ## Data boundary
 
+The manual Amazon TXT/Custom ZIP intake is documented in [Amazon order report intake](amazon-order-reports.md), including its protected viewer, duplicate handling and retention queue. It shares this order kernel without changing fulfillment workflow state.
+
 The ordinary order projection contains provider identity, workflow state, side state, integer-minor-unit totals, product lines, address availability/country, event sequence, and timestamps. It intentionally excludes buyer name, email, phone, address lines, postal code, and customization values.
 
 Protected buyer, shipping-address, and customization details are stored as one AES-256-GCM envelope in `order_protected_details`. Production requires an explicit base64url-encoded 32-byte `ORDER_PII_ENCRYPTION_KEY`. `ORDER_PII_RETENTION_DAYS` controls the stored expiry timestamp and defaults to 90 days.

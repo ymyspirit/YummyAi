@@ -2,7 +2,6 @@ import type { AnalysisReport } from "@yummyai/contracts";
 import { FileSearch2 } from "lucide-react";
 
 import { AnalysisReportView } from "../../../../features/analysis/analysis-report-view";
-import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +15,6 @@ export default async function AnalysisReportPage({
   const result = await loadAnalysis(reportId);
   return (
     <div className="research-shell analysis-shell">
-      <ErpSidebar
-        active="research"
-        contextLabel="EVIDENCE ERP"
-        note="每条事实保留快照和字段路径；推断与建议单独标记，方便人工审阅。"
-      />
       <main className="research-main analysis-main">
         {result.error && (
           <section className="analysis-error" role="alert">

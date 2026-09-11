@@ -2,7 +2,6 @@ import type { InventoryWorkspaceView } from "@yummyai/contracts";
 import { PackageSearch, ShieldCheck } from "lucide-react";
 
 import { InventoryWorkspace } from "../../../features/inventory/inventory-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +10,6 @@ export default async function InventoryPage() {
   const result = await loadInventoryWorkspace();
   return (
     <div className="research-shell inventory-shell">
-      <ErpSidebar
-        active="inventory"
-        contextLabel="INVENTORY LEDGER"
-        note="数量来自不可变库存流水；余额是可重建投影，缺失事实不会被推测或补零。"
-      />
       <main className="research-main inventory-main">
         <header className="inventory-header">
           <div>

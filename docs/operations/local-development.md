@@ -24,6 +24,8 @@ serving another active Web workflow, the launcher uses an isolated Web runtime
 on `3002` and points the development extension at that proxy. Startup logs and
 the last resolved endpoints are stored under `%LOCALAPPDATA%\YummyAI`.
 
+The Web development origin allowlist includes both `localhost` and `127.0.0.1`, matching the launcher and browser addresses. Next.js checks development asset and hot-reload origins; missing the numeric loopback origin can leave server-rendered pages visible while client interactions never initialize. Keep these explicit loopback entries in `apps/web/next.config.ts`; see [Next.js allowedDevOrigins](https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins). After changing this configuration, verify an interactive control through both loopback hostnames.
+
 The launcher reloads only the YummyAI development extension so its proxy target
 is deterministic. Use the newly opened Chrome window, refresh the public Amazon
 or Etsy page, and then click **发送到研究库** or **保存竞争店铺**.
@@ -39,6 +41,8 @@ pnpm dev
 ```
 
 The default path preserves the complete local runtime:
+
+The Amazon order-report importer at `/orders/import` requires Redis, Worker and ClamAV, in addition to API/Web/PostgreSQL. Use the full stack for report and ZIP acceptance; see [the intake runbook](../integration/amazon-order-reports.md).
 
 - `pnpm infra:up` starts PostgreSQL, Redis, MinIO, Keycloak, ClamAV, and the OpenTelemetry Collector.
 - `pnpm dev` starts the API, Web application, Worker, and WXT extension hot reload.
@@ -78,6 +82,20 @@ Order-context rendering is disabled unless `POD_ORDER_PROCESSOR_URL`, `POD_ORDER
 Default endpoints are PostgreSQL `5432`, Redis `6379`, MinIO `9000/9001`, Keycloak `8081`, ClamAV `3310` (loopback only), and OTLP `4317/4318`. Change host ports in `.env` when they collide; keep container ports unchanged. ClamAV needs several GiB of RAM while loading and refreshing signatures, so allocate enough Docker Desktop memory before enabling P2-C file scans.
 
 ## Health and diagnostics
+
+### Independent creative canvas
+
+The optional original Infinite Canvas runs separately from the ERP:
+
+```powershell
+pnpm --filter @yummyai/database db:migrate
+pnpm canvas:build
+pnpm canvas:start
+```
+
+Use **创意设计 → 创意画布** (`/creative-designs/canvas`). The official host image is pinned by digest on loopback port 4175. Server variable `CANVAS_WORKBENCH_URL` overrides its URL. Web dev/build rebuilds the independent plugin. See [setup and upgrades](infinite-canvas.md) and [the local-only BFF boundary](../integration/infinite-canvas.md). This connection does not require `POD_PROCESSOR_*`; original-canvas AI providers are configured separately.
+
+### Infrastructure checks
 
 ```powershell
 docker compose --env-file .env -f infra/docker-compose.yml ps
@@ -571,3 +589,18 @@ migration, the backup/restore drill, and the full root gates on the exact clean
 candidate.
 
 After committing the exact clean candidate, run `pnpm build`, `pnpm --filter @yummyai/extension zip`, and `pnpm release:manifest` to create `output/release-candidate/release-candidate-manifest.json`. Local generation fails when tracked changes are present or either Chrome/Edge ZIP is missing. The manifest records their SHA-256 checksums, the exact commit, Node/pnpm versions, and latest migration. It is code-verification evidence only; authorized-provider acceptance and backup/restore evidence remain separate release gates.
+
+## Production editor
+
+Migration `0064_production_editor` adds private projects, immutable document versions,
+project assets and render jobs. Run `pnpm start:local` to apply migrations and start
+API, Web and Worker, then open `http://localhost:3000/pod-workbench/production-editor`.
+Uploads require ClamAV; output requires the `production-editor-render` Worker queue.
+API and Worker must share the existing order-PII vault configuration so that project
+keys can be unwrapped. No extra external image processor or Photoshop process is used.
+
+See [production-editor.md](../integration/production-editor.md) for supported files,
+physical dimensions, product-rule boundaries and retention. Keep Fabric's optional
+Node `canvas` build disabled; server rendering uses Sharp. Verify the real authenticated
+editor route and exported file metadata, not only a browser screenshot. Stop the active
+Next.js development server before running `pnpm test:e2e production-editor`.

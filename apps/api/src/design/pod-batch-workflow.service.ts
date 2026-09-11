@@ -394,7 +394,7 @@ export class PodBatchWorkflowService {
   async reviewCreativeVersion(context: TenantContext, versionId: string, rawInput: ReviewVersionInput) {
     const input = ReviewVersionInputSchema.parse(rawInput);
     await withTenant(this.database.db, context, async (tx) => {
-      const [version] = await tx.select().from(creativeDesignVersions).where(eq(creativeDesignVersions.id, versionId)).limit(1);
+      const [version] = await tx.select().from(creativeDesignVersions).where(eq(creativeDesignVersions.id, versionId)).limit(1).for("update");
       if (!version) throw new NotFoundException("Creative design version not found");
       if (version.status !== "pending_review") throw new ConflictException("Only pending creative design versions can be reviewed");
       const assets = await tx.select().from(creativeDesignVersionAssets)
@@ -416,6 +416,21 @@ export class PodBatchWorkflowService {
         reviewedBy: context.userId,
         reviewedAt: new Date(),
       }).where(eq(creativeDesignVersions.id, versionId));
+      const [source] = await tx.select({ batchId: creativeDesignBatchItems.batchId }).from(creativeDesignCandidates)
+        .innerJoin(creativeDesignBatchItems, eq(creativeDesignCandidates.itemId, creativeDesignBatchItems.id))
+        .where(eq(creativeDesignCandidates.id, version.sourceCandidateId)).limit(1);
+      if (source) {
+        const [batch] = await tx.select().from(creativeDesignBatches).where(eq(creativeDesignBatches.id, source.batchId)).for("update");
+        if (batch?.executionMode === "infinite_canvas" && batch.status !== "cancelled") {
+          const versions = await tx.select({ status: creativeDesignVersions.status }).from(creativeDesignVersions)
+            .innerJoin(creativeDesignCandidates, eq(creativeDesignVersions.sourceCandidateId, creativeDesignCandidates.id))
+            .innerJoin(creativeDesignBatchItems, eq(creativeDesignCandidates.itemId, creativeDesignBatchItems.id))
+            .where(eq(creativeDesignBatchItems.batchId, batch.id));
+          const pending = versions.some((entry) => entry.status === "pending_review" || entry.status === "adapting");
+          await tx.update(creativeDesignBatches).set({ approvedCount: versions.filter((entry) => entry.status === "approved").length, status: pending ? "awaiting_review" : "completed", completedAt: pending ? null : new Date(), updatedAt: new Date() }).where(eq(creativeDesignBatches.id, batch.id));
+          await tx.update(creativeDesignBatchItems).set({ status: pending ? "awaiting_review" : "completed", updatedAt: new Date() }).where(eq(creativeDesignBatchItems.batchId, batch.id));
+        }
+      }
     });
     await this.record(context, "pod.creative_design_version.review", "creative_design_version", versionId, { decision: input.decision });
     return this.getCreativeVersion(context, versionId);

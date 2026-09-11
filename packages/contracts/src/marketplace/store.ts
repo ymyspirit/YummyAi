@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
-export { MarketplacePlatformSchema, type MarketplacePlatform } from "./platform.js";
-import { MarketplacePlatformSchema } from "./platform.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+export { MarketplacePlatformSchema, type MarketplacePlatform } from "@yummyai/contracts/marketplace/platform";
+import { MarketplacePlatformSchema } from "@yummyai/contracts/marketplace/platform";
 
 export const MarketplaceAuthorizationModeSchema = z.enum([
   "amazon_private",

@@ -2,7 +2,6 @@ import type { MarketplaceAccountView, MarketplacePublicationRequestView } from "
 import { ShieldCheck } from "lucide-react";
 
 import { MarketplaceAccountsWorkspace } from "../../../features/marketplaces/marketplace-accounts-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +19,6 @@ export default async function StoresPage({
       : undefined;
   return (
     <div className="research-shell store-shell">
-      <ErpSidebar
-        active="stores"
-        contextLabel="CHANNEL OPS"
-        note="授权、能力快照和发布记录按租户隔离；撤销授权不会删除历史证据。"
-      />
       <main className="research-main store-main">
         <header className="store-header">
           <div>

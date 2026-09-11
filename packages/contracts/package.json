@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./order/report": "./src/order/report.ts",
     "./channel-inventory": "./src/channel-inventory/channel-inventory.ts",
     "./catalog/amazon-custom-workflow": "./src/catalog/amazon-custom-workflow.ts",
     "./workflow": "./src/workflow/workflow.ts",
@@ -25,9 +26,13 @@
     "./pod": "./src/pod/pod.ts",
     "./pod/governance": "./src/pod/governance.ts",
     "./pod/batch-workflows": "./src/pod/batch-workflows.ts",
+    "./pod/canvas-bridge": "./src/pod/canvas-bridge.ts",
     "./pod/listing-artifacts": "./src/pod/listing-artifacts.ts",
     "./pod/order-personalization": "./src/pod/order-personalization.ts",
     "./pod/personalization": "./src/pod/personalization.ts",
+    "./pod/production-editor": "./src/pod/production-editor.ts",
+    "./pod/production-editor-api": "./src/pod/production-editor-api.ts",
+    "./pod/production-cutout": "./src/pod/production-cutout.ts",
     "./pod/visual-search": "./src/pod/visual-search.ts"
   },
   "scripts": {

@@ -54,7 +54,7 @@ describe("canvas batch workbenches", () => {
     />);
 
     expect(html).toContain("CREATIVE DESIGN STUDIO");
-    expect(html).toContain("画图设计");
+    expect(html).toContain("批量生图");
     expect(html).toContain('href="/pod-workbench/mockup-batches"');
     expect(html).toContain("将所选候选创建为独立创意族");
     expect(html).toContain("只重试失败候选");
