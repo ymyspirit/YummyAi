@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { CreateSupplyPurchaseInputSchema, type CreateSupplyPurchaseInput } from "@yummyai/contracts/catalog/product-supply";
 
 import {
   ConflictException,
@@ -34,6 +35,7 @@ import {
 } from "@yummyai/contracts";
 import {
   fulfillmentSuppliers,
+  productSupplyLinks, productSupplyVersions, productPlans,
   inventoryBalances,
   inventoryLocations,
   inventoryProcurementReceiptLines,
@@ -60,12 +62,16 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { AuditService } from "../audit/audit.service.js";
 import { InventoryService } from "../inventory/inventory.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
+import { readProcurementAnalysis } from "./procurement-analysis.js";
 
 type PurchaseOrderRow = typeof inventoryPurchaseOrders.$inferSelect;
 type PurchaseOrderVersionRow = typeof inventoryPurchaseOrderVersions.$inferSelect;
 
 @Injectable()
 export class ProcurementService {
+  analysisBasis(context: TenantContext, stockItemId: string, locationId: string) {
+    return readProcurementAnalysis(this.database, context, stockItemId, locationId);
+  }
   constructor(
     @Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection,
     @Inject(InventoryService) private readonly inventory: InventoryService,
@@ -227,12 +233,29 @@ export class ProcurementService {
   }
 
   async createPurchaseOrder(context: TenantContext, rawInput: CreateInventoryPurchaseOrderInput) {
-    const input = CreateInventoryPurchaseOrderInputSchema.parse(rawInput);
+    return this.persistPurchaseOrder(context, CreateInventoryPurchaseOrderInputSchema.parse(rawInput));
+  }
+
+  async createPurchaseOrderFromSupply(context: TenantContext, linkId: string, raw: CreateSupplyPurchaseInput) {
+    const input = CreateSupplyPurchaseInputSchema.parse(raw);
+    return this.persistPurchaseOrder(context, undefined, { linkId, input });
+  }
+
+  private async persistPurchaseOrder(context: TenantContext, regularInput?: CreateInventoryPurchaseOrderInput, source?: { linkId: string; input: CreateSupplyPurchaseInput }) {
+    const key = source?.input.idempotencyKey ?? regularInput!.idempotencyKey;
+    const sourceHash = source ? checksum(source) : null;
     const result = await withTenant(this.database.db, context, async (tx) => {
-      await lock(tx, `procurement-order-idempotency:${context.tenantId}:${input.idempotencyKey}`);
+      await lock(tx, `procurement-order-idempotency:${context.tenantId}:${key}`);
       const [replayed] = await tx.select().from(inventoryPurchaseOrders)
-        .where(eq(inventoryPurchaseOrders.idempotencyKey, input.idempotencyKey)).limit(1);
-      if (replayed) return purchaseOrderView(tx, replayed);
+        .where(eq(inventoryPurchaseOrders.idempotencyKey, key)).limit(1);
+      if (replayed) {
+        if (replayed.sourceSupplyRequestHash !== sourceHash) throw new ConflictException("Idempotency key was used with different input");
+        return purchaseOrderView(tx, replayed);
+      }
+      // Resolve and pin the quote inside the same tenant transaction as the draft.
+      // Retries above return the original draft even if a newer quote now exists.
+      const prepared = source ? await prepareSupplyPurchase(tx, source.linkId, source.input) : undefined;
+      const input = prepared?.input ?? regularInput!;
       await requireActiveSuppliers(tx, [input.supplierId]);
       await validatePurchaseLines(tx, input.lines);
       if (input.requisitionId) {
@@ -256,6 +279,9 @@ export class ProcurementService {
         supplierId: input.supplierId,
         requisitionId: input.requisitionId,
         quoteId: input.quoteId,
+        sourceSupplyVersionId: prepared?.versionId ?? null,
+        sourceSupplyRequestHash: sourceHash,
+        purpose: source?.input.purpose ?? "general",
         expectedAt: new Date(input.expectedAt),
         idempotencyKey: input.idempotencyKey,
         createdBy: context.userId,
@@ -776,11 +802,13 @@ export class ProcurementService {
           code: stockItem.code,
           name: stockItem.name,
           baseUnit: stockItem.baseUnit,
+          status: stockItem.status,
         })),
         locations: locations.map((location) => ({
           id: location.id,
           code: location.code,
           name: location.name,
+          status: location.status,
         })),
         requisitions: requisitions.map((row) => {
           const version = requisitionVersions.find((candidate) =>
@@ -907,6 +935,33 @@ async function requisitionView(
 
 async function purchaseOrderView(tx: TenantTransaction, order: PurchaseOrderRow) {
   return mapPurchaseOrder(order, await requirePurchaseOrderVersion(tx, order));
+}
+
+async function prepareSupplyPurchase(tx: TenantTransaction, linkId: string, raw: CreateSupplyPurchaseInput) {
+  const [initial] = await tx.select().from(productSupplyLinks).where(eq(productSupplyLinks.id, linkId)).limit(1);
+  if (!initial) throw new NotFoundException("Product supply not found");
+  await lock(tx, `product-supply:${initial.tenantId}:${initial.productPlanId}`);
+  const [source] = await tx.select({ link: productSupplyLinks, version: productSupplyVersions, productStatus: productPlans.status })
+    .from(productSupplyLinks).innerJoin(productSupplyVersions, and(eq(productSupplyVersions.linkId, productSupplyLinks.id), eq(productSupplyVersions.versionNumber, productSupplyLinks.currentVersion)))
+    .innerJoin(productPlans, eq(productPlans.id, productSupplyLinks.productPlanId)).where(eq(productSupplyLinks.id, linkId)).limit(1);
+  if (!source) throw new NotFoundException("Product supply not found");
+  if (source.link.currentVersion !== raw.expectedVersion) throw new ConflictException("Supply version changed");
+  const terms = source.version.terms;
+  if (source.productStatus === "archived" || terms.status !== "active" || terms.sampleStatus === "failed") throw new ConflictException("Supply is unavailable");
+  if (!terms.fulfillmentModes.includes(raw.purpose)) throw new ConflictException("Supplier does not support this purchase purpose");
+  if (terms.unitCostMinor === null || !terms.stockItemId) throw new ConflictException("Supply quote or stock item is missing");
+  const now = Date.now();
+  if (Date.parse(terms.validFrom) > now || (terms.validUntil && Date.parse(terms.validUntil) <= now)) throw new ConflictException("Supply quote is not currently valid");
+  if (raw.quantity < terms.minimumOrderQuantity) throw new ConflictException("Quantity is below supplier minimum order quantity");
+  const [stock] = await tx.select().from(inventoryStockItems).where(eq(inventoryStockItems.id, terms.stockItemId)).limit(1);
+  if (!stock) throw new NotFoundException("Stock item not found");
+  if (stock.skuId && stock.skuId !== source.link.skuId) throw new ConflictException("Stock SKU does not match supply SKU");
+  return { versionId: source.version.id, input: CreateInventoryPurchaseOrderInputSchema.parse({
+    code: raw.code, supplierId: source.link.supplierId, requisitionId: null, quoteId: null,
+    currency: terms.currency, expectedAt: raw.expectedAt, idempotencyKey: raw.idempotencyKey,
+    lines: [{ lineKey: "LINE-1", stockItemId: stock.id, destinationLocationId: raw.destinationLocationId,
+      quantity: raw.quantity, unit: stock.baseUnit, unitCostMinor: terms.unitCostMinor }],
+  }) };
 }
 
 async function receiptView(
@@ -1040,6 +1095,8 @@ function mapPurchaseOrder(row: PurchaseOrderRow, version: PurchaseOrderVersionRo
     supplierId: row.supplierId,
     requisitionId: row.requisitionId,
     quoteId: row.quoteId,
+    sourceSupplyVersionId: row.sourceSupplyVersionId,
+    purpose: row.purpose as "general" | "custom_order" | "fba_replenishment",
     status: row.status,
     currentVersion: row.currentVersion,
     currency: version.currency,

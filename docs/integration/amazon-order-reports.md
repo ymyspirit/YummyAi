@@ -38,12 +38,27 @@ All routes use authenticated membership, `withTenant()` and the non-owner databa
 | POST | `/lines/:id/upload` | `fileName`, `contentBase64`, `expectedVersionId` (nullable); scan and parse supplied ZIP |
 | POST | `/lines/:id/review` | Non-null `expectedVersionId`; record current-version review |
 | GET | `/lines/:id/files/:key?versionId=…` | Authorized current-version bytes; safe PNG inline or original attachment |
+| GET | `/lines/:id/files/:key?versionId=…&thumbnail=1` | Private PNG display thumbnail, longest side at most 320 px; only safe preview/buyer-image keys |
 
 The Next.js `/api/orders/reports/*` proxy allowlists paths and query parameters, requires same-origin JSON mutations and bounds request streams. API identities stay server-side. Content and files use private/no-store responses; file responses also use `nosniff` and a sandbox CSP. File URLs include the current version to prevent an old screen silently reading new artwork.
 
 ## Persistence and retention
 
 Migrations 0061–0063 add `amazon_order_report_batches`, `amazon_order_report_batch_items`, `amazon_order_report_lines` and `amazon_order_report_versions`, tenant-scoped foreign keys, forced RLS, version guards and preview metadata. Report text, source URLs, buyer customization, original ZIP and file bytes use the existing order-PII encryption vault. This bounded first implementation stores their encrypted envelopes in PostgreSQL; it does not create public or research assets. Larger volumes should move encrypted bodies to the private order storage domain without changing the line/version contract.
+
+Migration `0084_order_report_read_models.sql` adds a derived read table keyed to the
+immutable source version, with forced tenant RLS and the same order-PII vault.
+Metadata and 320 px thumbnails have separate encrypted envelopes. Summary queries
+select only metadata; list images use `thumbnail=1`; opening an image still reads
+the original full display file. New imports create the derived row during parsing.
+Existing versions populate it once on first authorized read, without changing their
+document, archive, checksum, review status or version number. This initial read can
+be slower while it builds thumbnails. No browser or public response cache is added.
+Version pinning, PII permission, protected-access auditing and source expiry apply
+equally to thumbnails. Retention clears both derived envelopes when their source
+document is erased, including anonymization of the containing order. Read locks
+serialize backfill with source erasure so a concurrent read cannot recreate erased
+private data. Deploy this migration before the updated API/Worker.
 
 Intake currently sets a maximum 30-day local report retention window, which re-importing or reprocessing an existing line does not extend. This is a local intake limit, not a claim that an arbitrary historical order meets Amazon's delivery-based retention requirements. Historical shipped orders require verified delivery dates and an appropriate earlier purge before production use. Existing non-report orders retain their own core PII policy; the report viewer cannot revive an expired report.
 

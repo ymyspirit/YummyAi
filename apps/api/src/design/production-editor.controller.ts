@@ -14,9 +14,12 @@ type ResponseHeaders = { setHeader(name: string, value: string): void };
 export class ProductionEditorController {
   constructor(@Inject(ProductionEditorService) private readonly editor: ProductionEditorService) {}
   @Get() @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignRead)
-  list(@Req() request: AuthenticatedRequest) { return this.editor.list(context(request)); }
+  list(@Req() request: AuthenticatedRequest, @Query("scope") scope?: string) { return this.editor.list(context(request), z.literal("templates").optional().parse(scope)); }
   @Post() @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite)
-  create(@Req() request: AuthenticatedRequest, @Body() body: unknown) { return this.editor.create(context(request), body); }
+  create(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
+    if (body && typeof body === "object" && "source" in body && body.source) throw new UnprocessableEntityException("请先在订单中心确认需求并推送，再从制图中心领取任务");
+    return this.editor.create(context(request), body);
+  }
   @Get(":id") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignRead)
   get(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("versionId") versionId?: string) { return this.editor.get(context(request), Id.parse(id), Id.optional().parse(versionId)); }
   @Delete(":id") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite)
@@ -33,6 +36,15 @@ export class ProductionEditorController {
   cutout(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("imageId") imageId: string) { return this.editor.cutoutEditor(context(request), Id.parse(id), Id.parse(imageId)); }
   @Post(":id/images/:imageId/segment") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead)
   segment(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("imageId") imageId: string, @Body() body: unknown) { return this.editor.segmentImage(context(request), Id.parse(id), Id.parse(imageId), body); }
+  @Post(":id/images/:imageId/model-cutout") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead)
+  modelCutout(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("imageId") imageId: string, @Body() body: unknown) { return this.editor.editImageWithModel(context(request), Id.parse(id), Id.parse(imageId), body); }
+  @Post(":id/enhance-order-images") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead, Permission.OrderWrite, Permission.OrderPiiRead)
+  enhanceOrderImages(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const input = z.object({ expectedVersionId: Id, requestId: Id }).strict().parse(body);
+    return this.editor.enhanceOrderImages(context(request), Id.parse(id), input.expectedVersionId, input.requestId);
+  }
+  @Post(":id/renders/:renderId/apply-image") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead)
+  applyModelImage(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("renderId") renderId: string, @Body() body: unknown) { return this.editor.applyModelImage(context(request), Id.parse(id), Id.parse(renderId), ReviewProductionEditorVersionInputSchema.parse(body).expectedVersionId); }
   @Post(":id/images/:imageId/cutout") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead)
   applyCutout(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("imageId") imageId: string, @Body() body: unknown) { return this.editor.applyCutout(context(request), Id.parse(id), Id.parse(imageId), body); }
   @Post(":id/images/:imageId/refine") @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite, Permission.AssetRead)

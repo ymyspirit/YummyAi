@@ -17,6 +17,9 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
   const params = await searchParams;
   const query = new URLSearchParams();
   for (const key of [
+    "item",
+    "visibility",
+    "researchStatus",
     "platform",
     "marketplace",
     "captureStatus",
@@ -36,7 +39,7 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
     const value = params[key];
     if (typeof value === "string" && value) query.set(key, value);
   }
-  const [result, productTypes] = await Promise.all([loadResearch(query), loadProductTypes()]);
+  const [result, productTypes] = await Promise.all([loadResearch(query), loadProductTypes(stringValue(params.visibility))]);
   const nextPageHref = result.nextCursor ? researchPageHref(query, result.nextCursor) : null;
   return (
     <div className="research-shell">
@@ -45,7 +48,7 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
           <div>
             <p className="kicker">RESEARCH / EVIDENCE INDEX</p>
             <h1>研究资料库</h1>
-            <p>用版本化快照追踪商品页面变化，而不是覆盖历史。</p>
+            <p>浏览竞品证据、整理研究结论，选中资料后加入创意项目。</p>
           </div>
           <div className="capture-prompt">
             在 Amazon 或 Etsy 商品页使用浏览器扩展，将当前公开证据发送到这里。
@@ -53,6 +56,14 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
         </header>
         <section className="filter-panel" aria-label="研究资料筛选">
           <form method="get">
+            <label>
+              资料范围
+              <select name="visibility" defaultValue={stringValue(params.visibility) || "active"}>
+                <option value="active">日常资料</option>
+                <option value="archived">已归档</option>
+                <option value="all">全部资料</option>
+              </select>
+            </label>
             <label className="research-query-filter">
               搜索标题
               <input
@@ -71,6 +82,15 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
                     {type.name} ({type.total})
                   </option>
                 ))}
+              </select>
+            </label>
+            <label>
+              研究状态
+              <select name="researchStatus" defaultValue={stringValue(params.researchStatus)}>
+                <option value="">全部研究</option>
+                <option value="unreviewed">待研究</option>
+                <option value="analyzed">已研究</option>
+                <option value="parked">暂不采用</option>
               </select>
             </label>
             <label>
@@ -102,7 +122,7 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
               />
             </label>
             <label>
-              状态
+              采集状态
               <select name="captureStatus" defaultValue={stringValue(params.captureStatus)}>
                 <option value="">全部</option>
                 <option value="complete">完成</option>
@@ -189,6 +209,9 @@ export default async function ResearchPage({ searchParams }: { searchParams: Sea
               items={result.items}
               nextPageHref={nextPageHref}
               productTypes={productTypes.items}
+              initialItemId={stringValue(params.item) || undefined}
+              initialSnapshotId={stringValue(params.snapshot) || undefined}
+              studyRevisionId={stringValue(params.study) || undefined}
             />
           )}
         </section>
@@ -232,12 +255,12 @@ export async function loadResearch(query: URLSearchParams): Promise<{
   }
 }
 
-async function loadProductTypes(): Promise<{ items: ResearchProductTypeFacet[] }> {
+async function loadProductTypes(visibility: string): Promise<{ items: ResearchProductTypeFacet[] }> {
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { items: [] };
   try {
     const response = await apiFetch(
-      `${apiBase.replace(/\/$/, "")}/v1/research-items/product-types`,
+      `${apiBase.replace(/\/$/, "")}/v1/research-items/product-types?visibility=${encodeURIComponent(visibility || "active")}`,
       { cache: "no-store" },
     );
     if (!response.ok) return { items: [] };

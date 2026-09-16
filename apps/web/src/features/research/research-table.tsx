@@ -1,9 +1,6 @@
 "use client";
 
-import type {
-  ResearchItemSummary,
-  ResearchProductTypeFacet,
-} from "@yummyai/contracts/research";
+import type { ResearchItemSummary, ResearchProductTypeFacet } from "@yummyai/contracts/research";
 import {
   flexRender,
   getCoreRowModel,
@@ -22,12 +19,12 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { researchRequest, studyStatusLabels } from "./research-client";
+import { ResearchThumbnail } from "./research-thumbnail";
+import "./research-workflow.css";
 
-import {
-  ResearchProductDossier,
-  type ResearchSnapshotView,
-} from "./snapshot-timeline";
+import { ResearchProductDossier, type ResearchSnapshotView } from "./snapshot-timeline";
 
 export type ResearchItemView = ResearchItemSummary & {
   snapshots?: ResearchSnapshotView[];
@@ -37,10 +34,16 @@ export function ResearchTable({
   items,
   nextPageHref,
   productTypes,
+  initialItemId,
+  initialSnapshotId,
+  studyRevisionId,
 }: {
   items: ResearchItemView[];
   nextPageHref: string | null;
   productTypes: ResearchProductTypeFacet[];
+  initialItemId?: string;
+  initialSnapshotId?: string;
+  studyRevisionId?: string;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<string[]>([]);
@@ -49,8 +52,28 @@ export function ResearchTable({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
-  const allVisibleSelected =
-    items.length > 0 && items.every((item) => selectedSet.has(item.id));
+  const allVisibleSelected = items.length > 0 && items.every((item) => selectedSet.has(item.id));
+
+  async function setArchived(item: ResearchItemView) {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await researchRequest("archive", { itemIds: [item.id], archived: !item.archivedAt });
+      setSelected((current) => current.filter((id) => id !== item.id));
+      setNotice(
+        item.archivedAt
+          ? "已恢复到资料库。"
+          : "已归档，可在“资料范围 → 已归档”中恢复。历史快照和创意引用仍保留。",
+      );
+      router.refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "归档状态保存失败");
+    } finally {
+      setPending(false);
+    }
+  }
 
   const assignProductType = useCallback(
     async (itemIds: string[], nextProductTypeName: string | null) => {
@@ -103,26 +126,40 @@ export function ResearchTable({
         accessorKey: "platform",
         header: "平台",
         cell: ({ row }) => (
-          <span className={`platform-stamp platform-${row.original.platform}`}>
-            {row.original.platform}
-          </span>
+          <div>
+            <span className={`platform-stamp platform-${row.original.platform}`}>
+              {row.original.platform}
+            </span>
+            <small className="research-platform-meta">{row.original.marketplace}</small>
+          </div>
         ),
       },
       {
         accessorKey: "latestTitle",
         header: "研究条目",
         cell: ({ row }) => (
-          <div className="item-title">
-            {row.original.latestTitle ?? "未识别标题"}
-            <a
-              className="item-url"
-              href={row.original.normalizedUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {row.original.normalizedUrl}
-              <ExternalLink size={10} aria-hidden="true" />
-            </a>
+          <div className="research-item-visual">
+            <ResearchThumbnail
+              src={row.original.thumbnailUrl}
+              alt={row.original.latestTitle ?? "竞品缩略图"}
+            />
+            <div className="item-title">
+              {row.original.latestTitle ?? "未识别标题"}
+              <small>
+                {row.original.archivedAt ? "已归档 · " : ""}
+                {row.original.study?.theme || "尚未归纳设计主题"}
+                {row.original.priceRaw ? ` · 采集价 ${row.original.priceRaw}` : ""}
+              </small>
+              <a
+                className="item-url"
+                href={row.original.normalizedUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {row.original.normalizedUrl}
+                <ExternalLink size={10} aria-hidden="true" />
+              </a>
+            </div>
           </div>
         ),
       },
@@ -148,25 +185,38 @@ export function ResearchTable({
         ),
       },
       {
-        accessorKey: "marketplace",
-        header: "站点",
-        cell: ({ getValue }) => <span className="mono">{String(getValue())}</span>,
+        id: "researchStatus",
+        header: "研究状态",
+        cell: ({ row }) => (
+          <div>
+            {studyStatusLabels[row.original.study?.status ?? "unreviewed"]}
+            {row.original.study?.version ? (
+              <small className="research-capture-meta">
+                V{row.original.study.version}
+                {row.original.study.snapshotId !== row.original.latestSnapshotId
+                  ? " · 需复核新快照"
+                  : ""}
+              </small>
+            ) : null}
+          </div>
+        ),
       },
       {
         accessorKey: "lastCapturedAt",
         header: "最近采集",
-        cell: ({ getValue }) => (
-          <time className="mono">{formatDate(String(getValue()))}</time>
+        cell: ({ row, getValue }) => (
+          <div>
+            <time className="mono">{formatDate(String(getValue()))}</time>
+            <small className="research-capture-meta">
+              采集：{captureStatusLabel(row.original.latestStatus)}
+            </small>
+          </div>
         ),
       },
       {
-        accessorKey: "latestStatus",
-        header: "状态",
-        cell: ({ row }) => (
-          <span className={`status-chip status-${row.original.latestStatus}`}>
-            {row.original.latestStatus}
-          </span>
-        ),
+        id: "creativeCount",
+        header: "关联创意",
+        cell: ({ row }) => <span>{row.original.study?.creativeCount ?? 0} 个项目</span>,
       },
     ],
     [assignProductType, pending],
@@ -176,6 +226,7 @@ export function ResearchTable({
   if (!items.length) {
     return (
       <div className="empty-library">
+        {notice && <p role="status">{notice}</p>}
         <strong>没有符合当前条件的研究资料</strong>
         <span>调整标题、产品类型或分类状态筛选；也可以继续从扩展采集公开证据。</span>
       </div>
@@ -227,6 +278,14 @@ export function ResearchTable({
           {notice ? <span className="is-success">{notice}</span> : null}
           {!error && !notice ? <span>仅修改研究索引，不改变历史快照。</span> : null}
         </div>
+        <button
+          type="button"
+          className="classification-apply"
+          disabled={!selected.length || selected.length > 30 || pending}
+          onClick={() => router.push(`/creative-designs/canvas?research=${selected.join(",")}`)}
+        >
+          加入创意项目{selected.length > 30 ? "（最多 30 条）" : ""}
+        </button>
       </div>
       <div className="research-table-scroll">
         <table className="research-table">
@@ -267,8 +326,14 @@ export function ResearchTable({
           <tbody>
             {table.getRowModel().rows.map((row) => (
               <ResearchTableRow
-                key={row.id}
+                key={row.original.id}
+                initialOpen={row.original.id === initialItemId}
+                initialSnapshotId={
+                  row.original.id === initialItemId ? initialSnapshotId : undefined
+                }
+                studyRevisionId={row.original.id === initialItemId ? studyRevisionId : undefined}
                 pending={pending}
+                onArchive={() => void setArchived(row.original)}
                 row={row}
                 selected={selectedSet.has(row.original.id)}
                 onSelect={(checked) =>
@@ -331,41 +396,57 @@ function ProductTypeCell({
 }
 
 function ResearchTableRow({
+  onArchive,
   onSelect,
   pending,
   row,
   selected,
+  initialOpen = false,
+  initialSnapshotId,
+  studyRevisionId,
 }: {
+  onArchive: () => void;
   onSelect: (checked: boolean) => void;
   pending: boolean;
   row: Row<ResearchItemView>;
   selected: boolean;
+  initialOpen?: boolean;
+  initialSnapshotId?: string;
+  studyRevisionId?: string;
 }) {
   const [snapshots, setSnapshots] = useState(row.original.snapshots ?? []);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
+  const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detailId = `research-detail-${row.original.id}`;
 
-  async function toggle() {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-
-    setOpen(true);
-    if (snapshots.length) return;
+  useEffect(() => {
+    if (!open || snapshots.length) return;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-    try {
-      const response = await fetch(`/v1/research-items/${row.original.id}/snapshots`);
+    void (async () => {
+      const response = await fetch(`/v1/research-items/${row.original.id}/snapshots`, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
       if (!response.ok) throw new Error(`商品详情读取失败 (${response.status})`);
       setSnapshots((await response.json()) as ResearchSnapshotView[]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "商品详情读取失败");
-    } finally {
-      setLoading(false);
-    }
+    })()
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted)
+          setError(reason instanceof Error ? reason.message : "商品详情读取失败");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [open, row.original.id, snapshots.length]);
+  function toggle() {
+    if (open && dirty && !confirm("研究结论尚未保存，确定收起？")) return;
+    setOpen(!open);
+    setDirty(false);
   }
 
   return (
@@ -399,6 +480,21 @@ function ResearchTableRow({
             {open ? "收起" : "查看详情"}
             <ChevronDown className="timeline-chevron" size={13} aria-hidden="true" />
           </button>
+          <button
+            className="timeline-toggle"
+            type="button"
+            onClick={onArchive}
+            disabled={pending || dirty}
+            title={
+              dirty
+                ? "请先保存研究结论"
+                : row.original.archivedAt
+                  ? "恢复到日常资料库"
+                  : "移到已归档，保留历史快照和创意引用"
+            }
+          >
+            {row.original.archivedAt ? "恢复" : "归档"}
+          </button>
         </td>
       </tr>
       {open ? (
@@ -409,11 +505,26 @@ function ResearchTableRow({
               snapshots={snapshots}
               loading={loading}
               error={error}
+              researchItemId={row.original.id}
+              initialSnapshotId={initialSnapshotId}
+              studyRevisionId={studyRevisionId}
+              onDirtyChange={setDirty}
             />
           </td>
         </tr>
       ) : null}
     </Fragment>
+  );
+}
+
+function captureStatusLabel(status: string) {
+  return (
+    (
+      { complete: "完成", partial: "部分完成", failed: "失败", normalizing: "整理中" } as Record<
+        string,
+        string
+      >
+    )[status] ?? status
   );
 }
 

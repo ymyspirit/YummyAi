@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
 
 export const SupplierKindSchema = z.enum(["manual", "printify", "printful"]);
 export const SupplierStatusSchema = z.enum(["active", "suspended", "archived"]);
@@ -12,6 +12,16 @@ export const CreateFulfillmentSupplierInputSchema = z.object({
   settlementCurrency: z.string().regex(/^[A-Z]{3}$/),
   externalConnectionRef: z.string().trim().min(1).max(300).nullable().default(null),
 }).strict();
+
+export const UpdateFulfillmentSupplierInputSchema = CreateFulfillmentSupplierInputSchema
+  .pick({ name: true, regionCode: true, settlementCurrency: true }).strict();
+export type UpdateFulfillmentSupplierInput = z.infer<typeof UpdateFulfillmentSupplierInputSchema>;
+
+export const FulfillmentSupplierViewSchema = z.object({
+  id: EntityIdSchema, name: z.string(), kind: SupplierKindSchema,
+  regionCode: z.string(), settlementCurrency: z.string(), status: SupplierStatusSchema,
+});
+export type FulfillmentSupplierView = z.infer<typeof FulfillmentSupplierViewSchema>;
 
 export const CreateSupplierCapabilitySnapshotInputSchema = z.object({
   supplierId: EntityIdSchema,

@@ -21,7 +21,7 @@ import {
 export interface OpenAiProviderConfig {
   apiKey: string;
   endpoint?: string;
-  pricing: ProviderPricing;
+  pricing: ProviderPricing | null;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -38,6 +38,7 @@ export class OpenAiProvider implements ModelProvider {
   async generate<T>(request: ResolvedModelRequest<T>, signal: AbortSignal): Promise<ModelResult<T>> {
     const response = await this.request(normalizeEndpoint(this.endpoint, "/v1/responses"), {
       method: "POST",
+      redirect: "error",
       signal,
       headers: {
         authorization: `Bearer ${this.config.apiKey}`,
@@ -46,7 +47,10 @@ export class OpenAiProvider implements ModelProvider {
       body: JSON.stringify({
         model: request.providerModel,
         instructions: request.systemInstructions,
-        input: [{ role: "user", content: untrustedUserMessage(request.untrustedSourceData) }],
+        input: [{ role: "user", content: request.images?.length ? [
+          { type: "input_text", text: untrustedUserMessage(request.untrustedSourceData) },
+          ...request.images.flatMap(image => [{ type: "input_text", text: `Evidence image: ${image.sourceId}` }, { type: "input_image", image_url: image.dataUrl, detail: "auto" }]),
+        ] : untrustedUserMessage(request.untrustedSourceData) }],
         max_output_tokens: request.maxOutputTokens ?? 1_024,
         store: false,
         text: {
@@ -73,29 +77,30 @@ export class OpenAiProvider implements ModelProvider {
       value,
       inputTokens,
       outputTokens,
-      costUsd: calculateCostUsd(
+      usageReported: typeof payload.usage?.input_tokens === "number" && typeof payload.usage?.output_tokens === "number",
+      costUsd: this.config.pricing ? calculateCostUsd(
         inputTokens,
         outputTokens,
         this.config.pricing.inputUsdPerMillion,
         this.config.pricing.outputUsdPerMillion,
-      ),
+      ) : null,
       providerRequestId: response.headers.get("x-request-id") ?? payload.id,
       completedAt: new Date(),
     };
   }
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
-    const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData);
+    const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData) + (request.images?.length ?? 0) * 4096;
     const maxOutputTokens = request.maxOutputTokens ?? 1_024;
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: calculateCostUsd(
+      costUsd: this.config.pricing ? calculateCostUsd(
         estimatedInputTokens,
         maxOutputTokens,
         this.config.pricing.inputUsdPerMillion,
         this.config.pricing.outputUsdPerMillion,
-      ),
+      ) : null,
     };
   }
 

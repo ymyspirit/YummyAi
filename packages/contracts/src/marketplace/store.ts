@@ -126,6 +126,7 @@ export const CreateMarketplaceAccountInputSchema = accountCore.superRefine((valu
 });
 
 export const UpdateMarketplaceAccountInputSchema = z.object({
+  authorizationMode: MarketplaceAuthorizationModeSchema.optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
   marketplaceIds: z.array(z.string().trim().min(1).max(80)).min(1).max(64).optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(120)).max(64).optional(),

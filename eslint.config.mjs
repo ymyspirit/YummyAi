@@ -16,6 +16,7 @@ export default tseslint.config(
       ".artifacts/**",
       "tmp/**",
       "packages/infinite-canvas-plugin/vendor/**",
+      "packages/canvas-runtime/vendor/**",
       "apps/web/public/plugins/**",
       "**/.playwright-cli/**",
       "**/.output/**",

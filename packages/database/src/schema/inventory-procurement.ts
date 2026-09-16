@@ -27,6 +27,7 @@ import {
   inventoryStockItems,
 } from "./inventory.js";
 import { fulfillmentSuppliers } from "./order-routing.js";
+import { productSupplyVersions } from "./product-supply.js";
 
 export const inventoryProcurementRequisitions = pgTable("inventory_procurement_requisitions", {
   id: uuid("id").primaryKey(),
@@ -147,6 +148,9 @@ export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
   supplierId: uuid("supplier_id").notNull(),
   requisitionId: uuid("requisition_id"),
   quoteId: uuid("quote_id"),
+  sourceSupplyVersionId: uuid("source_supply_version_id"),
+  sourceSupplyRequestHash: text("source_supply_request_hash"),
+  purpose: text("purpose").default("general").notNull(),
   status: text("status").default("draft").notNull(),
   currentVersion: integer("current_version").default(1).notNull(),
   expectedAt: timestamp("expected_at", { mode: "date", withTimezone: true }).notNull(),
@@ -174,6 +178,7 @@ export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
     name: "inventory_purchase_orders_quote_fk",
   }).onDelete("restrict"),
   unique("inventory_purchase_orders_tenant_id_unique").on(table.tenantId, table.id),
+  foreignKey({ columns: [table.tenantId, table.sourceSupplyVersionId], foreignColumns: [productSupplyVersions.tenantId, productSupplyVersions.id], name: "inventory_purchase_orders_supply_fk" }),
   uniqueIndex("inventory_purchase_orders_code_unique").on(table.tenantId, table.code),
   uniqueIndex("inventory_purchase_orders_idempotency_unique").on(table.tenantId, table.idempotencyKey),
   index("inventory_purchase_orders_status_idx").on(table.tenantId, table.status, table.expectedAt),

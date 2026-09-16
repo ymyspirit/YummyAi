@@ -7,9 +7,10 @@ const playwrightCli = require.resolve("@playwright/test/cli");
 
 const filters = process.argv.slice(2).filter((value) => value !== "--");
 const joined = filters.join(" ");
+const webFilters = ["p0-flow", "tenant-isolation", "inventory", "procurement", "pod-batch-workbenches", "amazon-report", "product-development", "order-centers", "production-editor", "navigation", "canvas-bridge", "creative-studio", "creative-project-orders"];
 const configs = joined.includes("capture")
   ? ["apps/extension/playwright.config.ts"]
-  : joined.includes("p0-flow") || joined.includes("tenant-isolation") || joined.includes("inventory") || joined.includes("procurement") || joined.includes("pod-batch-workbenches") || joined.includes("amazon-report") || joined.includes("production-editor") || joined.includes("navigation") || joined.includes("canvas-bridge")
+  : webFilters.some((name) => joined.includes(name))
     ? ["apps/web/playwright.config.ts"]
     : ["apps/web/playwright.config.ts", "apps/extension/playwright.config.ts"];
 

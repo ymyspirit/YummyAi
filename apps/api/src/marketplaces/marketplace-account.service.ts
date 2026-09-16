@@ -10,7 +10,7 @@ import {
   type UpdateMarketplaceAccountInput,
 } from "@yummyai/contracts";
 import { marketplaceAccounts, marketplaceQuotaSnapshots, type DatabaseConnection, withTenant } from "@yummyai/database";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
@@ -81,6 +81,15 @@ export class MarketplaceAccountService {
 
   async update(context: TenantContext, id: string, input: UpdateMarketplaceAccountInput): Promise<MarketplaceAccountView> {
     const current = await this.get(context, id);
+    if (input.displayName !== undefined && input.displayName !== current.displayName) {
+      const [duplicate] = await withTenant(this.database.db, context, (tx) => tx.select({ id: marketplaceAccounts.id }).from(marketplaceAccounts)
+        .where(and(eq(marketplaceAccounts.platform, current.platform), eq(marketplaceAccounts.displayName, input.displayName!), ne(marketplaceAccounts.id, id))).limit(1));
+      if (duplicate) throw new ConflictException("Marketplace account name already exists for this platform");
+    }
+    if (input.authorizationMode !== undefined) {
+      if (current.hasCredential && input.authorizationMode !== current.authorizationMode) throw new ConflictException("Revoke authorization before changing its mode");
+      if ((current.platform === "amazon") !== input.authorizationMode.startsWith("amazon_")) throw new ConflictException("Authorization mode must match platform");
+    }
     const nextStatus = input.enabled === false
       ? "disabled"
       : input.enabled === true && current.status === "disabled"
@@ -88,6 +97,7 @@ export class MarketplaceAccountService {
         : current.status;
     const [updated] = await withTenant(this.database.db, context, (tx) =>
       tx.update(marketplaceAccounts).set({
+        ...(input.authorizationMode === undefined ? {} : { authorizationMode: input.authorizationMode }),
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         ...(input.marketplaceIds === undefined ? {} : { marketplaceIds: input.marketplaceIds }),
         ...(input.requestedScopes === undefined ? {} : { requestedScopes: input.requestedScopes }),

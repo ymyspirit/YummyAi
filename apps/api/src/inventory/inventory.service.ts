@@ -54,6 +54,11 @@ import {
   withTenant,
 } from "@yummyai/database";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import {
+  UpdateWarehouseInputSchema, UpdateInventoryLocationInputSchema, UpdateStockItemInputSchema,
+  InventoryWarehouseViewSchema, InventoryLocationViewSchema, InventoryStockItemViewSchema,
+  type UpdateWarehouseInput, type UpdateInventoryLocationInput, type UpdateStockItemInput,
+} from "@yummyai/contracts/inventory";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
@@ -110,6 +115,33 @@ export class InventoryService {
   listWarehouses(context: TenantContext) {
     return withTenant(this.database.db, context, (tx) =>
       tx.select().from(inventoryWarehouses).orderBy(asc(inventoryWarehouses.name)));
+  }
+
+  async updateWarehouse(context: TenantContext, id: string, rawInput: UpdateWarehouseInput) {
+    const input = UpdateWarehouseInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryWarehouses)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryWarehouses.id, id)).returning());
+    if (!row) throw new NotFoundException("Warehouse not found");
+    await this.audit.record(context, { action: "inventory.warehouse.update", resourceType: "inventory_warehouse", resourceId: id, result: "success" });
+    return InventoryWarehouseViewSchema.parse(row);
+  }
+
+  async updateLocation(context: TenantContext, id: string, rawInput: UpdateInventoryLocationInput) {
+    const input = UpdateInventoryLocationInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryLocations)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryLocations.id, id)).returning());
+    if (!row) throw new NotFoundException("Location not found");
+    await this.audit.record(context, { action: "inventory.location.update", resourceType: "inventory_location", resourceId: id, result: "success" });
+    return InventoryLocationViewSchema.parse(row);
+  }
+
+  async updateStockItem(context: TenantContext, id: string, rawInput: UpdateStockItemInput) {
+    const input = UpdateStockItemInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryStockItems)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryStockItems.id, id)).returning());
+    if (!row) throw new NotFoundException("Stock item not found");
+    await this.audit.record(context, { action: "inventory.stock_item.update", resourceType: "inventory_stock_item", resourceId: id, result: "success" });
+    return InventoryStockItemViewSchema.parse(row);
   }
 
   async createLocation(context: TenantContext, rawInput: CreateInventoryLocationInput) {

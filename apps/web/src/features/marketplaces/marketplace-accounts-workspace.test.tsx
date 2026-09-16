@@ -1,8 +1,10 @@
 import type { MarketplaceAccountView } from "@yummyai/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MarketplaceAccountDetail, MarketplaceAccountsWorkspace } from "./marketplace-accounts-workspace";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 describe("marketplace accounts workspace", () => {
   it("renders an operator-facing store ledger without exposing connection controls", () => {
@@ -22,14 +24,15 @@ describe("marketplace accounts workspace", () => {
     for (const anchor of ["#store-overview", "#store-listings", "#store-orders", "#store-health", "#store-settings"]) expect(html).toContain(anchor);
     expect(html).not.toContain("refresh-token-value");
     expect(html).not.toContain("buyer@example.test");
+    expect(html).toContain(`/orders?platform=etsy&amp;accountId=${account().id}`);
   });
 
   it("keeps the account creation command available in the empty state", () => {
     const html = renderToStaticMarkup(
       <MarketplaceAccountsWorkspace accounts={[]} publications={[]} />,
     );
-    expect(html).toContain("新增店铺连接");
-    expect(html).toContain("暂无店铺连接");
+    expect(html).toContain("新增店铺");
+    expect(html).toContain("暂无店铺档案");
   });
 
   it("renders reset-only quota windows without an undefined value", () => {

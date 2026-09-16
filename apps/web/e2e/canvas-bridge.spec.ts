@@ -12,9 +12,10 @@ test("original pinned canvas connects through its public plugin, persists images
   await page.setViewportSize({ width: 1600, height: 1100 });
   await page.goto("/navigation");
   const nav = page.getByRole("navigation", { name: "主导航", exact: true });
-  await nav.getByRole("button", { name: "创意设计", exact: true }).click();
-  await nav.getByRole("link", { name: "创意工作台", exact: true }).click();
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("创意工作台");
+  await page.getByRole("group", { name: "业务模块", exact: true }).getByRole("button", { name: "创意设计", exact: true }).click();
+  await nav.getByRole("link", { name: "创意项目", exact: true }).click();
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("创意项目");
+  await page.goto("/creative-designs/canvas?legacy=1");
   const name = `E2E Canvas ${createEntityId().slice(-8)}`;
   await page.getByRole("button", { name: /原创图案.*先选创意方向/ }).click();
   await page.getByRole("textbox", { name: "需求名称", exact: true }).fill(name);
@@ -27,7 +28,8 @@ test("original pinned canvas connects through its public plugin, persists images
   await page.reload();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("button", { name: "打开创意画布", exact: true }).click();
+  if (!(await page.getByRole("button", { name: "打开旧版画布", exact: true }).isVisible())) await page.locator(".canvas-setup > summary").click();
+  await page.getByRole("button", { name: "打开旧版画布", exact: true }).click();
   const canvas = await popupPromise;
   canvas.setDefaultTimeout(15_000);
   canvas.on("pageerror", (error) => errors.push(error.message));
@@ -99,7 +101,8 @@ test("original pinned canvas connects through its public plugin, persists images
   await page.getByRole("checkbox", { name: approved.fileName, exact: true }).check();
   await page.getByRole("button", { name: "保存创作需求", exact: true }).click();
   await expect(page.getByRole("heading", { name: `${name} reference`, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "打开创意画布", exact: true }).click();
+  if (!(await page.getByRole("button", { name: "打开旧版画布", exact: true }).isVisible())) await page.locator(".canvas-setup > summary").click();
+  await page.getByRole("button", { name: "打开旧版画布", exact: true }).click();
   await canvas.waitForLoadState("domcontentloaded");
   await canvas.getByRole("button", { name: "ERP 创作任务 ERP 创作任务", exact: true }).click();
   await canvas.getByRole("button", { name: "读取当前需求", exact: true }).click();
@@ -125,7 +128,7 @@ test("original pinned canvas connects through its public plugin, persists images
   await expect(page.getByRole("heading", { name: "创意工作台", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("button", { name: "打开全部导航", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "全部导航", exact: true }).getByRole("link", { name: "创意工作台", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("dialog", { name: "全部导航", exact: true }).getByRole("link", { name: "创意项目", exact: true })).toHaveAttribute("aria-current", "page");
   await page.screenshot({ path: testInfo.outputPath("erp-canvas-mobile.png"), fullPage: true });
   expect(errors).toEqual([]);
 });

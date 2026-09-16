@@ -27,7 +27,7 @@ describe("InventoryWorkspace", () => {
     };
     const html = renderToStaticMarkup(<InventoryWorkspace data={empty} />);
     expect(html).toContain("还没有库存事实");
-    expect(html).toContain("系统不会推测库存数量");
+    expect(html).toContain("再登记期初入库");
   });
 });
 

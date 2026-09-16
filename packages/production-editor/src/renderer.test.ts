@@ -31,6 +31,104 @@ const options = { format: "png", background: "transparent", purpose: "production
 const largeRasterTimeoutMs = process.env.CI ? 120_000 : 30_000;
 async function pixel(bytes: Buffer, x: number, y: number) { return [...await sharp(bytes).ensureAlpha().extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer()]; }
 describe("deterministic production renderer", () => {
+  it("preserves artwork inside the cut contour when the sewing inset is only a guide", async () => {
+    const document = pillow();
+    document.spec.sideMode = "double";
+    document.spec.artworkClipMode = "none";
+    const originalLayers = structuredClone(document.layers);
+    const layout = getProductionLayout(document);
+    const px = (mm: number) => Math.round(mm * 150 / 25.4);
+    const frontX = px(layout.marginMm + 2), backX = px(layout.backOffsetMm + layout.marginMm + 2), y = px(layout.marginMm + 40);
+    const retained = await renderProductionDocument(document, options, resolvers);
+    expect(await pixel(retained.bytes, frontX, y)).toEqual([255, 0, 0, 255]);
+    expect(await pixel(retained.bytes, backX, y)).toEqual([0, 0, 255, 255]);
+    // Moving the sewing guide must not erase the same pixels or change the layers.
+    document.spec.whiteBorderMm = 10;
+    const wider = await renderProductionDocument(document, options, resolvers);
+    expect(wider.bytes).toEqual(retained.bytes);
+    expect(document.layers).toEqual(originalLayers);
+    document.contour = [[0, 40], [40, 0], [80, 40], [40, 80]].map(([xMm, yMm]) => ({ xMm: xMm!, yMm: yMm!, smooth: false }));
+    const movedCut = await renderProductionDocument(document, options, resolvers);
+    expect(await pixel(movedCut.bytes, px(layout.marginMm + 10), px(layout.marginMm + 10))).toEqual([255, 0, 0, 255]);
+    expect(document.layers).toEqual(originalLayers);
+    // Saved versions that omit the mode retain their historical inset behavior.
+    delete document.spec.artworkClipMode;
+    const legacy = await renderProductionDocument(document, options, resolvers);
+    expect(await pixel(legacy.bytes, frontX, y)).toEqual([255, 255, 255, 255]);
+    expect(await pixel(legacy.bytes, backX, y)).toEqual([255, 255, 255, 255]);
+  });
+  it("exports a white sheet as RGB with white outer margins, exact geometry and density", async () => {
+    const document = pillow();
+    document.spec.sheetMarginMm = 50 * 25.4 / 150;
+    document.spec.panelGapMm = 100 * 25.4 / 150;
+    document.exportBackground = "white";
+    const rendered = await renderProductionDocument(document, { ...options, background: "white" }, resolvers);
+    const metadata = await sharp(rendered.bytes).metadata();
+    const layout = getProductionLayout(document);
+    expect([metadata.width, metadata.height, metadata.density]).toEqual([layout.widthPx, layout.heightPx, 150]);
+    expect(metadata.hasAlpha).toBe(false);
+    expect(metadata.channels).toBe(3);
+    expect(metadata.icc?.length).toBeGreaterThan(0);
+    for (const [x, y] of [[0, 0], [layout.widthPx - 1, 0], [0, layout.heightPx - 1], [layout.widthPx - 1, layout.heightPx - 1]]) {
+      expect(await pixel(rendered.bytes, x!, y!)).toEqual([255, 255, 255, 255]);
+    }
+    expect((await pixel(rendered.bytes, 200, 200)).slice(0, 3)).toEqual([255, 0, 0]);
+  });
+  it("exports exact clear sheet margins and panel gap including cut strokes and bottom tabs", async () => {
+    const mm = (px: number) => px * 25.4 / 150;
+    const document = pillow();
+    document.spec = { ...document.spec, widthMm: mm(2000), heightMm: mm(1500), declaredLongestMm: mm(2000), sheetMarginMm: mm(50), panelGapMm: mm(100), barcodeTab: { widthMm: mm(500), heightMm: mm(180), centerXMm: mm(1000) } };
+    document.contour = [[0, 0], [2000, 0], [2000, 1500], [0, 1500]].map(([x, y]) => ({ xMm: mm(x!), yMm: mm(y!), smooth: false }));
+    const rendered = await renderProductionDocument(document, options, resolvers);
+    const metadata = await sharp(rendered.bytes).metadata();
+    expect([metadata.width, metadata.height, metadata.density]).toEqual([4212, 1786, 150]);
+    const { data, info } = await sharp(rendered.bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const occupiedColumns = new Set<number>(), occupiedRows = new Set<number>();
+    for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
+      if (data[(y * info.width + x) * info.channels + 3]! > 0) { occupiedColumns.add(x); occupiedRows.add(y); }
+    }
+    expect([Math.min(...occupiedColumns), info.width - 1 - Math.max(...occupiedColumns), Math.min(...occupiedRows), info.height - 1 - Math.max(...occupiedRows)]).toEqual([50, 50, 50, 50]);
+    expect(Array.from({ length: 100 }, (_, index) => occupiedColumns.has(2056 + index)).every((value) => !value)).toBe(true);
+    expect(occupiedColumns.has(2055)).toBe(true);
+    expect(occupiedColumns.has(2156)).toBe(true);
+    expect((await pixel(rendered.bytes, 1053, 1643)).slice(0, 3)).toEqual([255, 255, 255]);
+  });
+  it("retains the original sheet geometry for saved versions without an explicit margin", () => {
+    const layout = getProductionLayout(pillow());
+    expect(layout.widthMm).toBeCloseTo(176.032);
+    expect(layout.heightMm).toBeCloseTo(93.016);
+    expect(layout.marginMm).toBeCloseTo(1.508);
+  });
+  it("keeps acute contour joins inside the allocated clear sheet margin", async () => {
+    const document = pillow();
+    document.spec.sheetMarginMm = 50 * 25.4 / 150;
+    document.spec.panelGapMm = 100 * 25.4 / 150;
+    document.contour = [[0, 40], [60, 0], [80, 40], [60, 80]].map(([xMm, yMm]) => ({ xMm: xMm!, yMm: yMm!, smooth: false }));
+    document.spec.barcodeTab.centerXMm = 60;
+    const rendered = await renderProductionDocument(document, { ...options, background: "white" }, resolvers);
+    const { data, info } = await sharp(rendered.bytes).raw().toBuffer({ resolveWithObject: true });
+    for (let y = 0; y < info.height; y++) for (let x = 0; x < 50; x++) {
+      const offset = (y * info.width + x) * info.channels;
+      expect([...data.subarray(offset, offset + 3)]).toEqual([255, 255, 255]);
+    }
+  });
+  it("keeps clear pixel margins when a contour has fractional pixel dimensions", async () => {
+    const mm = (px: number) => px * 25.4 / 150;
+    const document = pillow();
+    document.spec = { ...document.spec, widthMm: mm(700.35), heightMm: mm(800.25), declaredLongestMm: mm(800.25), sheetMarginMm: mm(50), panelGapMm: mm(100), barcodeTab: { widthMm: mm(500), heightMm: mm(180), centerXMm: mm(350.175) } };
+    document.contour = [[0, 0], [700.35, 0], [700.35, 800.25], [0, 800.25]].map(([x, y]) => ({ xMm: mm(x!), yMm: mm(y!), smooth: false }));
+    const rendered = await renderProductionDocument(document, options, resolvers);
+    const { data, info } = await sharp(rendered.bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const columns = new Set<number>(), rows = new Set<number>();
+    for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) if (data[(y * info.width + x) * info.channels + 3]! > 0) { columns.add(x); rows.add(y); }
+    expect([Math.min(...columns), info.width - 1 - Math.max(...columns), Math.min(...rows), info.height - 1 - Math.max(...rows)]).toEqual([50, 50, 50, 50]);
+    expect(Array.from({ length: 100 }, (_, index) => columns.has(757 + index)).every((value) => !value)).toBe(true);
+    expect(columns.has(756)).toBe(true); expect(columns.has(857)).toBe(true);
+    expect([info.width, info.height]).toEqual([1614, 1087]);
+    document.spec.sheetMarginMm = 0; document.spec.panelGapMm = 0;
+    expect(getProductionLayout(document).widthPx).toBe(1414);
+    expect(getProductionLayout(document).marginMm).toBe(document.spec.cutLineMm / 2);
+  });
   it("renders large photographic PNGs without truncating embedded image data", async () => {
     const bytes = await sharp(randomFillSync(Buffer.alloc(2048 * 2048 * 3)), { raw: { width: 2048, height: 2048, channels: 3 } }).png().toBuffer();
     expect(bytes.byteLength).toBeGreaterThan(10 * 1024 * 1024);
@@ -75,6 +173,16 @@ describe("deterministic production renderer", () => {
     await expect(renderProductionDocument(document, options, resolvers)).rejects.toBeInstanceOf(ProductionEditorRenderError);
     const preview = await renderProductionDocument(document, { ...options, purpose: "preview" }, resolvers);
     expect(preview.preflight.productionReady).toBe(false);
+  });
+  it("exports a full-resolution proof without bypassing manual production approval", async () => {
+    const document = cover(); document.spec.diameterMm = 300; document.spec.dpi = 150;
+    document.confirmations.visualReview = false;
+    const proof = await renderProductionDocument(document, { ...options, purpose: "preview", previewFullResolution: true }, resolvers);
+    const metadata = await sharp(proof.bytes).metadata();
+    expect([metadata.width, metadata.height, metadata.density]).toEqual([1772, 1772, 150]);
+    expect(proof.preflight.productionReady).toBe(false);
+    expect(proof.preflight.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "visual_review_required", severity: "manual" })]));
+    await expect(renderProductionDocument(document, { ...options, previewFullResolution: true }, resolvers)).rejects.toBeInstanceOf(ProductionEditorRenderError);
   });
   it("rejects JPEG transparency and produces explicit white JPEG plus density-tagged TIFF", async () => {
     await expect(renderProductionDocument(cover(), { ...options, format: "jpeg" }, resolvers)).rejects.toBeInstanceOf(ProductionEditorRenderError);
@@ -124,6 +232,15 @@ describe("deterministic production renderer", () => {
     const layout = getProductionLayout(document), px = (mm: number) => Math.round(mm * 150 / 25.4);
     expect((await pixel(output.bytes, px(layout.marginMm + 40), px(layout.marginMm + 85))).slice(0, 3)).toEqual([255, 255, 255]);
     expect((await sharp(output.bytes).metadata()).density).toBe(150);
+  });
+  it("joins a bottom tab across a concave lower edge without creating an internal cut hole", async () => {
+    const document = pillow();
+    document.contour = [[0, 0], [80, 0], [80, 80], [48, 80], [40, 60], [32, 80], [0, 80]].map(([xMm, yMm]) => ({ xMm: xMm!, yMm: yMm!, smooth: false }));
+    document.spec.barcodeTab = { widthMm: 30, heightMm: 10, centerXMm: 40 };
+    expect(buildPillowContour(document).issues).toEqual([]);
+    const output = await renderProductionDocument(document, options, resolvers);
+    const layout = getProductionLayout(document), px = (mm: number) => Math.round(mm * 150 / 25.4);
+    expect((await pixel(output.bytes, px(layout.marginMm + 40), px(layout.marginMm + 70))).slice(0, 3)).toEqual([255, 255, 255]);
   });
   it("uses real image dimensions to reject insufficient resolution", async () => {
     const low = await sharp({ create: { width: 10, height: 10, channels: 4, background: "red" } }).png().toBuffer();

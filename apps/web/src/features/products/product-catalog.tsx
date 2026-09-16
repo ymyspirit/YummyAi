@@ -13,6 +13,7 @@ import { ProductCreatePanel } from "./product-create-panel";
 import type { ProductPlanView } from "./product-editor";
 
 interface ProductCatalogProps {
+  supplierCounts?: Record<string, number>;
   items: ProductPlanView[];
   owner: string;
   query: string;
@@ -20,7 +21,7 @@ interface ProductCatalogProps {
   status: string;
 }
 
-export function ProductCatalog({ items, owner, query, selectedId, status }: ProductCatalogProps) {
+export function ProductCatalog({ items, owner, query, selectedId, status, supplierCounts }: ProductCatalogProps) {
   const filtered = filterProductPlans(items, query, status, owner);
   const owners = [...new Map(items.flatMap((item) =>
     item.ownerUserId ? [[item.ownerUserId, item.ownerName ?? item.ownerUserId] as const] : [],
@@ -118,6 +119,7 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
               <tr>
                 <th>产品企划</th>
                 <th>SPU / SKU</th>
+                <th>供货供应商</th>
                 <th>负责人</th>
                 <th>状态</th>
                 <th>目标成本</th>
@@ -139,6 +141,7 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
                     <strong className="numeric">{item.spu?.code ?? "SPU 待创建"}</strong>
                     <span>{item.spu ? `${item.spu.skus.length} 个 SKU` : "尚无 SKU"}</span>
                   </td>
+                  <td><Link href={`/products?plan=${item.id}#product-suppliers`}>{supplierCounts ? `${supplierCounts[item.id] ?? 0} 家 · 管理供货` : "查看供货资料"}</Link></td>
                   <td>
                     <strong>{item.ownerName ?? "未分配"}</strong>
                     <span>{item.ownerUserId ? item.ownerUserId.slice(0, 12) : "—"}</span>

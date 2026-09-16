@@ -27,7 +27,7 @@ test("template workflow reviews candidates, continues with approved images and o
   test.setTimeout(180_000);
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewportSize({ width: 1600, height: 1100 });
-  await page.goto("/creative-designs/canvas");
+  await page.goto("/creative-designs/canvas?legacy=1");
   const name = `E2E Workflow ${createEntityId().slice(-8)}`;
   await page.getByRole("button", { name: /备胎罩.*图案方向/ }).click();
   await page.getByRole("textbox", { name: "需求名称", exact: true }).fill(name);

@@ -1,0 +1,61 @@
+import { expect, test } from "@playwright/test";
+import type { DevelopmentOptions } from "@yummyai/contracts/catalog/development";
+import { centerApi } from "./order-centers-fixture";
+
+test("a customer print keeps its identity without a fixed master and can be archived and restored", async ({page}, info) => {
+  const code = `QA-CUSTOM-${crypto.randomUUID().slice(0,8)}`;
+  const name = `E2E Customer plan ${code}`;
+  let artworkId: string | undefined;
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  try {
+    await page.goto("/print-library");
+    await page.getByRole("button",{name:"登记印花",exact:true}).click();
+    const form = page.locator(".pd-form");
+    await form.getByLabel("印花 SKU",{exact:true}).fill(code);
+    await form.getByLabel("印花名称",{exact:true}).fill(name);
+    await form.getByRole("combobox",{name:"定制方式",exact:true}).selectOption("customer_image");
+    await expect(form.locator('select[name="creative"]')).not.toHaveAttribute("required");
+    await form.getByRole("button",{name:"添加图片字段",exact:true}).click();
+    await form.getByLabel("字段名称",{exact:true}).fill("顾客原图");
+    await form.getByLabel("设计与使用说明",{exact:true}).fill("抠图保持顾客主体原貌；生产前核对尺寸与轮廓。四周留白 50px，正反间距 100px，底部空白条码 500×180px。");
+    await form.getByRole("button",{name:"登记印花",exact:true}).click();
+    await expect(page.locator(".oc-notice")).toContainText("印花版本已登记");
+    const saved = (await centerApi<DevelopmentOptions>("product-development/options")).artworks.find(a=>a.code===code)!;
+    artworkId = saved.id;
+    expect(saved.creativeVersionId).toBeNull();
+    expect(saved.assetId).toBeNull();
+    expect(saved.materials).toEqual([]);
+    await page.getByLabel("搜索编号或名称").fill(code);
+    await page.getByRole("button",{name:"搜索",exact:true}).click();
+    const row = page.locator(`#artwork-${saved.id}`);
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("无固定主图");
+    await expect(row.locator("img")).toHaveCount(0);
+    await row.getByRole("button",{name:"制作说明与素材（0）",exact:true}).click();
+    const notes = page.locator(`#artwork-notes-${saved.id}`);
+    await expect(notes).toContainText("500×180px");
+    await page.screenshot({path:info.outputPath("customer-print-desktop.png"),fullPage:true});
+    await row.getByRole("button",{name:"归档印花",exact:true}).click();
+    await expect(page.locator(".oc-notice")).toContainText("印花已归档");
+    await expect(row).toHaveCount(0);
+    await page.getByLabel("印花状态",{exact:true}).selectOption("archived");
+    await expect(row).toHaveCount(1);
+    await expect(row.getByRole("link",{name:"组合商品"})).toHaveCount(0);
+    await page.reload();
+    await expect(row).toHaveCount(1);
+    await row.getByRole("button",{name:"恢复印花",exact:true}).click();
+    await expect(page.locator(".oc-notice")).toContainText("印花已恢复");
+    await page.getByLabel("印花状态",{exact:true}).selectOption("active");
+    await expect(row).toHaveCount(1);
+    await page.setViewportSize({width:390,height:844});
+    await row.getByRole("button",{name:"制作说明与素材（0）",exact:true}).click();
+    await expect(notes).toContainText("500×180px");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:info.outputPath("customer-print-mobile.png"),fullPage:true});
+    expect(errors).toEqual([]);
+  } finally {
+    if (!artworkId) artworkId = (await centerApi<DevelopmentOptions>("product-development/options")).artworks.find(a=>a.code===code)?.id;
+    if (artworkId) await centerApi(`product-development/artworks/${artworkId}/archive`,{archived:true,expectedVersion:1,reason:"Archive completed synthetic browser check",idempotencyKey:crypto.randomUUID()});
+  }
+});

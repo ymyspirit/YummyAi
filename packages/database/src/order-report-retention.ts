@@ -1,12 +1,14 @@
 import type { TenantContext } from "@yummyai/contracts";
-import { and, eq, inArray, isNotNull, lte, ne, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, ne, or } from "drizzle-orm";
 
 import type { DatabaseConnection } from "./client.js";
 import {
   amazonOrderReportBatches as batches, amazonOrderReportBatchItems as batchItems,
   amazonOrderReportLines as reportLines, amazonOrderReportVersions as versions,
+  amazonOrderReportReadModels as readModels,
 } from "./schema/order-report.js";
-import { orderProtectedDetails, orders } from "./schema/order.js";
+import { orderProtectedDetails, orders, orderLines } from "./schema/order.js";
+import { orderWorkItems } from "./schema/order-workspace.js";
 import { productionEditorProjects } from "./schema/production-editor.js";
 import { withTenant } from "./tenant-transaction.js";
 
@@ -57,6 +59,14 @@ export async function purgeExpiredAmazonOrderReports(database: DatabaseConnectio
       .where(or(eq(orders.addressStatus, "anonymized"), eq(reportLines.state, "expired"), lte(reportLines.expiresAt, now)));
     if (affectedBatches.length) await tx.update(batches).set({ encryptedReport: null })
       .where(and(inArray(batches.id, affectedBatches.map((row) => row.id)), isNotNull(batches.encryptedReport)));
+    const expiredWork = await tx.select({ id: orderWorkItems.id }).from(orderWorkItems)
+      .innerJoin(orderLines, eq(orderLines.id, orderWorkItems.id)).innerJoin(orders, eq(orders.id, orderLines.orderId))
+      .where(or(lte(orderWorkItems.expiresAt, now), eq(orders.addressStatus, "anonymized")));
+    if (expiredWork.length) {
+      const workIds = expiredWork.map((work) => work.id);
+      await tx.update(orderWorkItems).set({ encryptedDataKey: null }).where(and(inArray(orderWorkItems.id, workIds), isNotNull(orderWorkItems.encryptedDataKey)));
+      await tx.update(productionEditorProjects).set({ encryptedDataKey: null, status: "expired", name: "已到期生产项目", updatedAt: now }).where(and(inArray(productionEditorProjects.sourceWorkItemId, workIds), isNotNull(productionEditorProjects.encryptedDataKey)));
+    }
     // Production copies inherit their source order's deadline. Erasing the
     // per-project key also makes encrypted original/preview/render blobs unreadable.
     const expiredSourceLines = await tx.select({ id: reportLines.id }).from(reportLines)
@@ -67,5 +77,10 @@ export async function purgeExpiredAmazonOrderReports(database: DatabaseConnectio
         lte(productionEditorProjects.expiresAt, now),
         expiredSourceLines.length ? inArray(productionEditorProjects.sourceReportLineId, expiredSourceLines.map((row) => row.id)) : undefined,
       )));
+    await tx.update(readModels).set({ encryptedMetadata: null, encryptedThumbnails: null })
+      .where(and(
+        or(isNotNull(readModels.encryptedMetadata), isNotNull(readModels.encryptedThumbnails)),
+        inArray(readModels.versionId, tx.select({ id: versions.id }).from(versions).where(isNull(versions.encryptedDocument))),
+      ));
   });
 }

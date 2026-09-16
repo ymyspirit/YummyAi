@@ -497,6 +497,14 @@ try {
     Write-Step "Reusing the running API on port $apiPort."
   }
 
+  Write-Step "Building the integrated canvas runtime..."
+  Invoke-Checked -FilePath "node" -Arguments @("tools/scripts/build-canvas-runtime.mjs")
+  if (-not (Test-HttpOk "http://127.0.0.1:4176/health")) {
+    Start-LoggedProcess -Name "creative-studio" -FilePath "node.exe" `
+      -Arguments @("--env-file-if-exists=.env", "tools/scripts/serve-canvas-runtime.mjs") -WorkingDirectory $RepoRoot | Out-Null
+    if (-not (Wait-HttpOk "http://127.0.0.1:4176/health" 45)) { throw "Integrated canvas runtime did not start. Check $LogRoot." }
+  }
+
   $webPort = 3000
   $webBase = "http://127.0.0.1:3000"
   $standardWebUsable = (Test-HttpOk "$webBase/") -and `

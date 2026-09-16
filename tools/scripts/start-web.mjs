@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
+import { startCanvasRuntime } from "./serve-canvas-runtime.mjs";
 
 const mode = process.argv[2];
 if (!["dev", "start"].includes(mode)) {
@@ -12,6 +13,7 @@ const nextCli = fileURLToPath(
   new URL("../../apps/web/node_modules/next/dist/bin/next", import.meta.url),
 );
 const webRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url));
+const studioServer = mode === "dev" ? await startCanvasRuntime() : null;
 const child = spawn(process.execPath, [nextCli, mode, ...process.argv.slice(3)], {
   cwd: webRoot,
   env: process.env,
@@ -31,6 +33,7 @@ child.once("error", (error) => {
 });
 
 child.once("exit", (code, signal) => {
+  studioServer?.close();
   if (signal) {
     process.stderr.write(`Next.js exited after receiving ${signal}.\n`);
     process.exitCode = 1;

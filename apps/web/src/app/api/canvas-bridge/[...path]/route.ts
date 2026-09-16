@@ -15,10 +15,10 @@ async function proxy(request: Request, context: Context, method: "GET" | "POST")
   if (process.env.NODE_ENV === "production" || !["localhost", "127.0.0.1", "[::1]"].includes(incoming.hostname)) return failure(403, "此接入入口仅用于本地 ERP；部署时需要用户 OIDC 会话");
   if (request.headers.get("sec-fetch-site") === "cross-site") return failure(403);
   if (method === "POST" && request.headers.get("origin") !== incoming.origin) return failure(403);
-  const valid = ["options", "production-templates"].includes(path[0] ?? "") && path.length === 1 && method === "GET"
+  const valid = ["options", "production-templates", "projects"].includes(path[0] ?? "") && path.length === 1 && method === "GET"
     || path[0] === "briefs" && (path.length === 1
       || path.length === 2 && id.test(path[1] ?? "") && method === "GET"
-      || path.length === 3 && id.test(path[1] ?? "") && (path[2] === "results" || ["review", "continue", "production"].includes(path[2] ?? "") && method === "POST")
+      || path.length === 3 && id.test(path[1] ?? "") && (path[2] === "results" || path[2] === "thumbnail" && method === "GET" || ["review", "continue", "production"].includes(path[2] ?? "") && method === "POST")
       || path.length === 5 && id.test(path[1] ?? "") && path[2] === "results" && id.test(path[3] ?? "") && path[4] === "preview" && method === "GET"
       || path.length === 4 && id.test(path[1] ?? "") && path[2] === "assets" && id.test(path[3] ?? "") && method === "GET");
   if (!valid) return failure(404);
@@ -46,7 +46,7 @@ async function proxy(request: Request, context: Context, method: "GET" | "POST")
       method, body, cache: "no-store", headers: body ? { "content-type": "application/json" } : undefined, signal: AbortSignal.timeout(100_000),
     });
     if (!response.ok) return failure(response.status);
-    return new Response(response.body, { status: response.status, headers: { "content-type": path[4] === "preview" ? "image/webp" : "application/json", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+    return new Response(response.body, { status: response.status, headers: { "content-type": path[4] === "preview" || path[2] === "thumbnail" ? "image/webp" : "application/json", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
   } catch { return failure(502); }
 }
 function failure(status: number, message?: string) {

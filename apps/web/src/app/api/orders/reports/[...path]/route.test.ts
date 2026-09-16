@@ -58,4 +58,19 @@ describe("Amazon report authenticated proxy", () => {
     expect(response.status).toBe(400);
     expect(apiFetchMock).not.toHaveBeenCalled();
   });
+
+  it("forwards only the supported thumbnail flag and keeps the response private", async () => {
+    const id = createEntityId(), versionId = createEntityId();
+    const path = ["lines", id, "files", "preview-1"];
+    const url = `http://web.test/api/orders/reports/lines/${id}/files/preview-1?versionId=${versionId}`;
+    const invalid = await GET(new Request(`${url}&thumbnail=large`), { params: Promise.resolve({ path }) });
+    expect(invalid.status).toBe(400);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    apiFetchMock.mockResolvedValue(new Response("thumbnail", { headers: { "content-type": "image/png" } }));
+    const response = await GET(new Request(`${url}&thumbnail=1`), { params: Promise.resolve({ path }) });
+    expect(apiFetchMock).toHaveBeenCalledWith(new URL(`http://api.test/v1/orders/reports/lines/${id}/files/preview-1?versionId=${versionId}&thumbnail=1`), expect.objectContaining({ cache: "no-store" }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 });

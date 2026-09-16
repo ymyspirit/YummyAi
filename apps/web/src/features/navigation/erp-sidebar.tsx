@@ -1,17 +1,21 @@
 "use client";
 
 import {
-  ArrowRight, ChevronDown, Layers3, LayoutGrid, Menu, Search, Star, Truck, X,
+  ArrowRight, Layers3, LayoutGrid, Menu, PanelLeftClose, Search, Star, Truck, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
-  DIRECTORY_DESTINATION, FUNCTION_DESTINATIONS, QUICK_DESTINATION_IDS, SIDEBAR_GROUPS, SIDEBAR_SHORTCUTS,
-  resolveNavigationLocation, searchDestinations, type ErpSection, type NavigationGroupId,
+  DIRECTORY_DESTINATION, FUNCTION_DESTINATIONS, PRIMARY_DESTINATIONS, QUICK_DESTINATION_IDS, SIDEBAR_GROUPS, SIDEBAR_SHORTCUTS,
+  resolveNavigationLocation, searchDestinations, type ErpSection, type NavigationDestination, type NavigationGroupId,
 } from "./navigation-registry";
 import { destinationIcons, groupIcons } from "./navigation-icons";
+import { setSidebarCompact } from "./appearance-preferences";
+import { useFavoritePages } from "./favorite-pages";
+
+type NavigationPanel = NavigationGroupId | "favorites";
 
 function Shortcuts({ onNavigate }: { onNavigate?: () => void }) {
   return <nav aria-label="常用任务快捷入口" className="erp-sidebar-shortcuts">
@@ -26,20 +30,15 @@ function Shortcuts({ onNavigate }: { onNavigate?: () => void }) {
   </nav>;
 }
 
-function NavigationLinks({ activeId, onNavigate, mobile = false }: {
-  activeId?: string; onNavigate?: () => void; mobile?: boolean;
+function SplitNavigation({ activeId, pathname, panel, onSelectPanel, favorites, onToggleFavorite, onNavigate, onSearch, mobile = false }: {
+  activeId?: string; pathname: string; panel: NavigationPanel; onSelectPanel: (panel: NavigationPanel) => void;
+  favorites: string[]; onToggleFavorite: (item: NavigationDestination) => void;
+  onNavigate: () => void; onSearch: () => void; mobile?: boolean;
 }) {
-  const container = useRef<HTMLElement>(null);
+  const container = useRef<HTMLDivElement>(null);
   const activeGroup = SIDEBAR_GROUPS.find((group) => group.items.some((item) => item.id === activeId))?.id;
-  const [openGroup, setOpenGroup] = useState<NavigationGroupId | null>(activeGroup ?? "commerce");
-  const previousActive = useRef(activeId);
-  useEffect(() => {
-    // Do not overwrite a user's early click when hydration runs the mount effect.
-    if (previousActive.current !== activeId) {
-      previousActive.current = activeId;
-      setOpenGroup(activeGroup ?? "commerce");
-    }
-  }, [activeGroup, activeId]);
+  const selectedGroup = SIDEBAR_GROUPS.find((group) => group.id === panel);
+  const prefix = mobile ? "mobile-" : "";
   useEffect(() => {
     const nav = container.current;
     const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
@@ -48,33 +47,75 @@ function NavigationLinks({ activeId, onNavigate, mobile = false }: {
     const item = active.getBoundingClientRect();
     if (item.bottom > bounds.bottom) nav.scrollTop += item.bottom - bounds.bottom + 8;
     else if (item.top < bounds.top) nav.scrollTop -= bounds.top - item.top + 8;
-  }, [activeId, openGroup]);
-  return <nav ref={container} className="erp-navigation-links" aria-label="主导航">
-    <p className="erp-navigation-caption">业务模块</p>
-    {SIDEBAR_GROUPS.map((group) => {
-      const prefix = mobile ? "mobile-" : "";
-      const expanded = openGroup === group.id;
-      const GroupIcon = groupIcons[group.id];
-      const links = group.items.map((item) => {
-        const Icon = destinationIcons[item.id];
-        return <Link key={item.id} href={item.href} onClick={onNavigate} prefetch={false}
-          title={`${item.label} · ${item.description}`} aria-current={activeId === item.id ? "page" : undefined}>
-          <Icon aria-hidden="true" size={17} /><span>{item.label}</span>
-        </Link>;
-      });
-      if (group.id === "overview") return <div className="erp-navigation-home" key={group.id}>{links}</div>;
-      return <section aria-labelledby={`${prefix}rail-group-${group.id}`} className="erp-navigation-group" key={group.id}>
-        <button type="button" id={`${prefix}rail-group-${group.id}`}
-          title={group.label} aria-expanded={expanded} aria-controls={`${prefix}rail-items-${group.id}`}
-          data-active={activeGroup === group.id || undefined}
-          onClick={() => setOpenGroup((open) => open === group.id ? null : group.id)}>
-          <GroupIcon size={18} aria-hidden="true" /><span>{group.label}</span>
-          <ChevronDown size={15} aria-hidden="true" />
+  }, [activeId, panel]);
+
+  function selectPanel(value: NavigationPanel) {
+    onSelectPanel(value);
+    // A mobile selection must not overwrite the desktop's saved collapse choice.
+    if (!mobile) setSidebarCompact(false);
+  }
+  function pageRow(item: NavigationDestination, visible: boolean) {
+    const Icon = destinationIcons[item.id as ErpSection] ?? Layers3;
+    const saved = favorites.includes(item.id);
+    return <div className="erp-page-link-row" key={item.id} data-current={activeId === item.id || undefined}>
+      <Link href={item.href} prefetch={false} title={`${item.label} · ${item.description}`} onClick={onNavigate}
+        aria-current={visible && activeId === item.id ? "page" : undefined}>
+        <Icon size={16} aria-hidden="true" /><span>{item.label}</span>
+      </Link>
+      <button type="button" title={saved ? "取消收藏" : "收藏到常用"} aria-label={`${saved ? "取消收藏" : "收藏"}${item.label}`} aria-pressed={saved} onClick={() => onToggleFavorite(item)}>
+        <Star size={14} aria-hidden="true" fill={saved ? "currentColor" : "none"} />
+      </button>
+    </div>;
+  }
+
+  return <div className="erp-split-navigation">
+    <div className="erp-module-rail">
+      <Link href="/" className="erp-module-brand" aria-label="YummyAI 运营总览" title="YummyAI 运营总览" onClick={onNavigate}>
+        <Layers3 size={23} aria-hidden="true" /><strong>YummyAI</strong>
+      </Link>
+      <div className="erp-module-nav" role="group" aria-label="业务模块">
+        <button type="button" aria-pressed={panel === "favorites"} aria-controls={`${prefix}rail-favorites`} onClick={() => selectPanel("favorites")}>
+          <Star size={20} aria-hidden="true" /><span>常用</span>
         </button>
-        <div className="erp-navigation-children" id={`${prefix}rail-items-${group.id}`} hidden={!expanded}>{links}</div>
-      </section>;
-    })}
-  </nav>;
+        {SIDEBAR_GROUPS.map((group) => {
+          const Icon = groupIcons[group.id];
+          return <button type="button" key={group.id} id={`${prefix}rail-group-${group.id}`} aria-controls={`${prefix}rail-items-${group.id}`}
+            aria-pressed={panel === group.id} data-active={activeGroup === group.id || undefined}
+            title={activeGroup === group.id ? `${group.label} · 当前页面所属模块` : group.label} onClick={() => selectPanel(group.id)}>
+            <Icon size={20} aria-hidden="true" /><span>{group.label}</span>
+          </button>;
+        })}
+      </div>
+      <div className="erp-module-tools">
+        <button type="button" aria-label="找功能" title="找功能（Ctrl K）" aria-keyshortcuts="Control+k Meta+k" onClick={onSearch}><Search size={18} aria-hidden="true" /><span>找功能</span></button>
+        <Link href={DIRECTORY_DESTINATION.href} title="全部功能" onClick={onNavigate} aria-current={pathname === "/navigation" ? "page" : undefined}>
+          <LayoutGrid size={18} aria-hidden="true" /><span>全部功能</span>
+        </Link>
+      </div>
+    </div>
+    <div className="erp-page-panel">
+      <header><h2>{panel === "favorites" ? "常用页面" : selectedGroup?.label}</h2>
+        {mobile ? <button type="button" aria-label="关闭导航" data-initial-focus onClick={onNavigate}><X size={20} /></button>
+          : <button type="button" aria-label="收起页面栏" title="收起页面栏" onClick={(event) => {
+            event.currentTarget.closest(".erp-split-navigation")?.querySelector<HTMLButtonElement>('.erp-module-nav button[aria-pressed="true"]')?.focus();
+            setSidebarCompact(true);
+          }}><PanelLeftClose size={18} /></button>}
+      </header>
+      <p className="erp-page-panel-description">{panel === "favorites" ? "收藏常用入口，跨模块直接进入。" : selectedGroup?.description}</p>
+      <div className="erp-page-panel-scroll" ref={container}>
+        <nav className="erp-navigation-links" aria-label="主导航" hidden={panel === "favorites"}>
+          {SIDEBAR_GROUPS.map((group) => <section key={group.id} id={`${prefix}rail-items-${group.id}`} aria-labelledby={`${prefix}rail-group-${group.id}`} hidden={panel !== group.id}>
+            {group.items.map((item) => pageRow(item, panel === group.id))}
+          </section>)}
+        </nav>
+        <nav aria-label="常用页面" id={`${prefix}rail-favorites`} hidden={panel !== "favorites"}>
+          {panel === "favorites" && favorites.flatMap((id) => PRIMARY_DESTINATIONS.find((item) => item.id === id) ?? []).map((item) => pageRow(item, true))}
+          {!favorites.length && <div className="erp-favorites-empty"><Star size={22} aria-hidden="true" /><strong>还没有常用页面</strong><p>选择业务模块，点击页面旁的星标即可收藏。</p></div>}
+        </nav>
+      </div>
+      <Shortcuts onNavigate={onNavigate} />
+    </div>
+  </div>;
 }
 
 function NavigationDialog({ label, onClose, children, className = "" }: {
@@ -150,6 +191,11 @@ function FunctionSearch({ onClose }: { onClose: () => void }) {
 export function ErpSidebar() {
   const pathname = usePathname() ?? "/";
   const location = resolveNavigationLocation(pathname);
+  const activeGroup = SIDEBAR_GROUPS.find((group) => group.items.some((item) => item.id === location.primaryId))?.id;
+  const [panel, setPanel] = useState<NavigationPanel>(activeGroup ?? "commerce");
+  const previousPath = useRef(pathname);
+  const { favorites, toggleFavorite } = useFavoritePages();
+  const [feedback, setFeedback] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -164,17 +210,24 @@ export function ErpSidebar() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
   useEffect(() => { setMenuOpen(false); setSearchOpen(false); }, [pathname]);
-  const directoryLink = <Link className="erp-directory-link" href={DIRECTORY_DESTINATION.href} title="全部功能"
-    onClick={() => setMenuOpen(false)} aria-current={pathname === "/navigation" ? "page" : undefined}>
-    <LayoutGrid size={17} aria-hidden="true" /><span>全部功能</span><ArrowRight size={14} aria-hidden="true" />
-  </Link>;
+  useEffect(() => {
+    if (previousPath.current === pathname) return;
+    previousPath.current = pathname;
+    setPanel((current) => current === "favorites" && favorites.includes(location.primaryId ?? "") ? current : activeGroup ?? "commerce");
+  }, [activeGroup, favorites, location.primaryId, pathname]);
+  function togglePageFavorite(item: NavigationDestination) {
+    setFeedback(`${item.label}${favorites.includes(item.id) ? "已从常用移除" : "已收藏到常用"}`);
+    toggleFavorite(item.id);
+  }
+  function openSearch() { setMenuOpen(false); setSearchOpen(true); }
+  const navigationProps = {
+    activeId: location.primaryId, pathname, panel, onSelectPanel: setPanel,
+    favorites, onToggleFavorite: togglePageFavorite,
+    onNavigate: () => setMenuOpen(false), onSearch: openSearch,
+  };
   return <>
     <aside aria-label="ERP 主导航" className="erp-sidebar">
-      <Link href="/" className="erp-brand" aria-label="YummyAI 运营总览" title="YummyAI 运营总览"><Layers3 size={22} aria-hidden="true" /><span><strong>YummyAI</strong><small>电商与生产工作台</small></span></Link>
-      <button className="erp-find-trigger" type="button" title="找功能（Ctrl K）" onClick={() => setSearchOpen(true)} aria-keyshortcuts="Control+k Meta+k"><Search size={17} aria-hidden="true" /><span>找功能</span><kbd>Ctrl K</kbd></button>
-      <Shortcuts />
-      <NavigationLinks activeId={location.primaryId} />
-      <div className="erp-rail-footer">{directoryLink}</div>
+      <SplitNavigation {...navigationProps} />
     </aside>
     <div className="erp-mobile-bar">
       <Link href="/" aria-label="YummyAI 运营总览"><Layers3 size={22} /><strong>YummyAI</strong></Link>
@@ -183,11 +236,9 @@ export function ErpSidebar() {
       <button type="button" aria-label="打开全部导航" aria-expanded={menuOpen} aria-haspopup="dialog" onClick={() => setMenuOpen(true)}><Menu size={19} />菜单</button>
     </div>
     {menuOpen && <NavigationDialog label="全部导航" onClose={() => setMenuOpen(false)} className="erp-mobile-menu">
-      <header><h2>全部导航</h2><button type="button" aria-label="关闭导航" onClick={() => setMenuOpen(false)}><X size={20} /></button></header>
-      <Shortcuts onNavigate={() => setMenuOpen(false)} />
-      <NavigationLinks activeId={location.primaryId} mobile onNavigate={() => setMenuOpen(false)} />
-      <div className="erp-rail-footer">{directoryLink}</div>
+      <SplitNavigation {...navigationProps} mobile />
     </NavigationDialog>}
     {searchOpen && <FunctionSearch onClose={() => setSearchOpen(false)} />}
+    <span className="erp-nav-announcement" aria-live="polite" aria-atomic="true">{feedback}</span>
   </>;
 }

@@ -6,7 +6,6 @@ import { Check, ChevronLeft, ChevronRight, Download, FileArchive, FileUp, ImageO
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ProductionEditorSession } from "../production-editor/production-editor-session";
 
 const reportLimit = 5 * 1024 * 1024;
 const zipLimit = 20 * 1024 * 1024;
@@ -36,8 +35,6 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
-  const [editing, setEditing] = useState(false);
-  const editButton = useRef<HTMLButtonElement>(null);
   const context = useRef(0);
   const selection = useRef(0);
   const selectedRef = useRef("");
@@ -136,10 +133,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
     finally { if (token === selection.current) setLineBusy(false); if (zipInput.current) zipInput.current.value = ""; }
   }
 
-  if (editing && detail) return <ProductionEditorSession title={`订单 ${detail.line.externalOrderId} · 生产作图`}
-    subtitle={`${detail.line.title} · SKU ${detail.line.skuCode ?? "未提供"} · 数量 ${detail.line.quantity} · 定制版本 V${detail.line.versionNumber}`}
-    returnLabel="返回当前订单" reportLineId={detail.line.id} context={<AmazonReportDetail detail={detail} />}
-    onClose={() => { setEditing(false); requestAnimationFrame(() => editButton.current?.focus()); }} />;
+
 
   return <div className="ar-workspace">
     {error && <p className="ar-alert" role="alert">{error}</p>}
@@ -185,7 +179,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
             {detailError && <p className="ar-alert" role="alert">{detailError}</p>}
             {detail && <><AmazonReportDetail detail={detail} />
               <div className="ar-detail-actions">
-                {detail.line.reviewed && detail.versionId && <button ref={editButton} className="ar-button" disabled={lineBusy || queueActive} onClick={() => setEditing(true)}>制作生产图</button>}
+                <Link className="ar-button primary" href={`/orders?line=${detail.line.orderLineId}`}>去订单中心审单</Link>
                 <button className="ar-button primary" disabled={lineBusy || detail.line.reviewed || !detail.versionId || !["ready", "partial"].includes(detail.line.state)} onClick={() => void lineAction("review")}><Check size={15} />{detail.line.reviewed ? "当前版本已核对" : "标记已核对"}</button>
                 <button className="ar-button" disabled={lineBusy || queueActive || detail.line.state === "none"} onClick={() => void lineAction("process")}><RefreshCw size={15} />重新获取附件</button>
                 <button className="ar-button" disabled={lineBusy || queueActive} onClick={() => zipInput.current?.click()}><Upload size={15} />补传 ZIP</button>

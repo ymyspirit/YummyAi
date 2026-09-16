@@ -1,8 +1,10 @@
 export const QueueName = {
   AiAnalysis: "ai-analysis",
+  AiAssist: "ai-assist",
   Capture: "capture",
   CustomizationFileScan: "customization-file-scan",
   CreativeDesign: "creative-design",
+  StudioGeneration: "studio-generation",
   CreativeDesignAdaptation: "creative-design-adaptation",
   Export: "export",
   Media: "media",

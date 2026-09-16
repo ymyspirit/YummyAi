@@ -3,7 +3,7 @@
 import type { ListingReplicationView, MarketplaceAccountView, MarketplaceListingSyncRequestView } from "@yummyai/contracts";
 import type { ListingDraft, ListingValidation } from "@yummyai/platform-rules";
 import { Archive, BadgeCheck, Boxes, CircleDot, FileClock, Image, ListTree, LoaderCircle, Monitor, Plus, RadioTower, Save, Send, ShieldCheck, Sparkles, Trash2, Workflow } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { ListingChannelOperations, type AutomationWorkspaceView } from "../marketplaces/listing-channel-operations";
@@ -11,6 +11,11 @@ import { PublicationPanel, type PublicationWorkspaceView } from "../marketplaces
 import { ReviewDrawer, type ReviewDrawerView } from "../reviews/review-drawer";
 import { saveListingVersion, type ListingSaveResult } from "./listing-actions";
 import { ValidationPanel } from "./validation-panel";
+import { AssistPanel } from "../ai-assist/assist-panel";
+import { adoptListingCopy } from "../ai-assist/listing-adoption";
+import { AssistListingCopySchema } from "@yummyai/contracts/ai/assist";
+import { readQueue, returnHref, workflowHref } from "../navigation/workflow-href";
+import { useLeaveGuard } from "../navigation/use-leave-guard";
 
 export interface ListingEditorView {
   id: string; platform: "amazon" | "etsy"; marketplaceId?: string; locale: string; status: "draft" | "in_review" | "approved" | "archived";
@@ -24,6 +29,11 @@ type Tab = typeof tabs[number];
 
 export function ListingEditor({ accounts = [], automations = [], listing, operationsError, publicationError, publications = [], replications = [], review, syncs = [] }: { accounts?: MarketplaceAccountView[]; automations?: AutomationWorkspaceView[]; listing: ListingEditorView; operationsError?: string; publicationError?: string; publications?: PublicationWorkspaceView[]; replications?: ListingReplicationView[]; review?: ReviewDrawerView; syncs?: MarketplaceListingSyncRequestView[] }) {
   const router = useRouter();
+  const params = useSearchParams();
+  const queue = readQueue(params.get("queue"), listing.id) ?? [];
+  const index = queue.indexOf(listing.id);
+  const back = returnHref(params.get("returnTo")) ?? "/listings";
+  const itemHref = (id: string) => workflowHref(`/listings/${id}?${new URLSearchParams({ queue: queue.join(",") })}`, back);
   const [hydrated, setHydrated] = useState(false);
   const [tab, setTab] = useState<Tab>("Content");
   const [baseline, setBaseline] = useState(() => copyDraft(listing.content));
@@ -32,32 +42,32 @@ export function ListingEditor({ accounts = [], automations = [], listing, operat
   const [saveResult, setSaveResult] = useState<ListingSaveResult>();
   const [saving, startSaving] = useTransition();
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(baseline), [baseline, draft]);
+  const mayLeave = useLeaveGuard(dirty, saving);
+  const go = (href: string) => { if (mayLeave()) router.push(href); };
 
   useEffect(() => setHydrated(true), []);
   useEffect(() => { const next = copyDraft(listing.content); setBaseline(next); setDraft(copyDraft(next)); setSaveResult(undefined); }, [listing.content, listing.versionId]);
-  useEffect(() => {
-    if (!dirty) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
-    const guardLink = (event: MouseEvent) => { const target = event.target as Element | null; const anchor = target?.closest("a[href]") as HTMLAnchorElement | null; if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return; if (!window.confirm("当前 Listing 有未保存改动，确定离开吗？")) { event.preventDefault(); event.stopImmediatePropagation(); } };
-    window.addEventListener("beforeunload", beforeUnload); document.addEventListener("click", guardLink, true);
-    return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", guardLink, true); };
-  }, [dirty]);
-
-  const save = () => startSaving(async () => {
-    const result = await saveListingVersion(listing.id, draft);
+  const save = (advance = false) => startSaving(async () => {
+    const result = await saveListingVersion(listing.id, draft, listing.versionId);
     setSaveResult(result);
-    if (result.status === "success") { setBaseline(copyDraft(draft)); router.refresh(); }
+    if (result.status === "success") { setBaseline(copyDraft(draft)); if (advance) router.push(queue[index + 1] ? itemHref(queue[index + 1]!) : back); else router.refresh(); }
   });
 
   return <div aria-busy={!hydrated} className="listing-workbench" data-hydrated={hydrated ? "true" : "false"}>
+    {queue.length > 0 && <nav className="listing-toolbar-actions listing-queue" aria-label="Listing 修订队列"><span>本页 {index + 1} / {queue.length}</span><button disabled={!hydrated || saving || index <= 0} onClick={() => go(itemHref(queue[index - 1]!))}>上一条</button><button disabled={!hydrated || saving || index >= queue.length - 1} onClick={() => go(itemHref(queue[index + 1]!))}>下一条</button><button disabled={!hydrated || saving || !dirty} onClick={() => save(true)}>{index < queue.length - 1 ? "保存并下一条" : "保存并返回列表"}</button></nav>}
     <header className="listing-header"><div><p className="kicker">{listing.platform.toUpperCase()} / LISTING CONTROL</p><h1>{listing.spuCode}</h1><p>平台内容、媒体、变体映射与合规校验固定在同一版本中。</p></div><div className="channel-stamp"><strong>{listing.platform === "amazon" ? "AMZ" : "ETSY"}</strong><span>{listing.locale}</span><b>{statusLabel(listing.status)}</b></div></header>
-    <div className="listing-toolbar"><div><span className="mono">VERSION {String(listing.versionNumber).padStart(2, "0")}</span><b>{listing.source === "ai" ? <Sparkles size={13} /> : <CircleDot size={13} />}{listing.source === "ai" ? "AI 草稿" : "人工草稿"}</b>{dirty && <em>● 未保存</em>}</div><div className="listing-toolbar-actions"><button disabled={!hydrated || !dirty || saving} onClick={save} type="button">{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{saving ? "保存中" : "保存为新版本"}</button>{review && <button type="button" className="review-open" disabled={!hydrated} onClick={() => setReviewOpen(true)}><Send size={16} />查看审核</button>}</div></div>
+    <div className="listing-toolbar"><div><span className="mono">VERSION {String(listing.versionNumber).padStart(2, "0")}</span><b>{listing.source === "ai" ? <Sparkles size={13} /> : <CircleDot size={13} />}{listing.source === "ai" ? "AI 草稿" : "人工草稿"}</b>{dirty && <em>● 未保存</em>}</div><div className="listing-toolbar-actions"><button disabled={!hydrated || !dirty || saving} onClick={() => save()} type="button">{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}{saving ? "保存中" : "保存为新版本"}</button>{review && <button type="button" className="review-open" disabled={!hydrated} onClick={() => setReviewOpen(true)}><Send size={16} />查看审核</button>}</div></div>
     {saveResult && <p className={`listing-save-notice ${saveResult.status}`} role="status">{saveResult.message}</p>}
     <nav className="listing-tabs" aria-label="刊登编辑区">{tabs.map((item) => <button key={item} type="button" aria-current={tab === item ? "page" : undefined} disabled={!hydrated} onClick={() => setTab(item)}>{tabIcon(item)}{item}</button>)}</nav>
     <div className="listing-layout">
       <main className="listing-canvas">
-        {tab === "Content" && <ContentEditor draft={draft} interactive={hydrated} platform={listing.platform} setDraft={setDraft} />}
-        {tab === "Media" && <section className="listing-panel"><header><p className="section-code">AUTHORIZED MEDIA</p><h2>媒体与 A+ 计划</h2></header><div className="media-grid">{draft.mediaAssetIds.map((id, index) => <article key={id}><span><Image size={22} /></span><strong>{id === draft.mainImageId ? "MAIN IMAGE" : `MEDIA ${index + 1}`}</strong><code>{id.slice(0, 16)}…</code><b><ShieldCheck size={13} />授权域</b></article>)}</div>{!draft.mediaAssetIds.length && <p className="listing-panel-empty">尚未关联可发布媒体。</p>}</section>}
+        {tab === "Content" && <><AssistPanel kind="sku_package" scope={`listing:${listing.id}`} input={{ kind: "sku_package", listingId: listing.id, expectedVersionId: listing.versionId }} disabledReason={listing.status === "archived" ? "Listing 已归档。" : dirty || saving ? "请先保存当前改动，再根据最新版本分析。" : undefined} onListingCopy={(copy, fields) => {
+          const parsed = AssistListingCopySchema.safeParse(copy);
+          if (!parsed.success || (listing.platform === "etsy" && copy.title.length > 140)) { setSaveResult({ status: "error", message: "建议内容超出字段限制，请检查标题、标签和描述长度。" }); return false; }
+          if (fields.includes("personalizationInstructions") && !draft.personalization?.enabled) { setSaveResult({ status: "error", message: "请先启用并保存定制设置，或取消勾选定制说明。" }); return false; }
+          setDraft((current) => adoptListingCopy(current, parsed.data, fields));
+        }} /><ContentEditor draft={draft} interactive={hydrated && !saving} platform={listing.platform} setDraft={setDraft} /></>}
+        {tab === "Media" && <section className="listing-panel"><header><p className="section-code">AUTHORIZED MEDIA</p><h2>媒体与 A+ 计划</h2></header><div className="media-grid">{draft.mediaAssetIds.map((id, index) => <article key={id}><span><Image size={22} /></span><strong>{id === draft.mainImageId ? "MAIN IMAGE" : `MEDIA ${index + 1}`}</strong><code>{id.slice(0, 16)}…</code><b><ShieldCheck size={13} />授权域</b><label>图片说明<textarea disabled={saving} aria-label={`媒体 ${index + 1} 图片说明`} maxLength={500} value={draft.mediaDescriptions?.[id] ?? ""} onChange={(e) => setDraft((current) => ({ ...current, mediaDescriptions: { ...current.mediaDescriptions, [id]: e.target.value } }))} /></label></article>)}</div>{!draft.mediaAssetIds.length && <p className="listing-panel-empty">尚未关联可发布媒体。</p>}</section>}
         {tab === "Variants" && <section className="listing-panel"><header><p className="section-code">SKU MAPPING</p><h2>变体映射</h2></header><table><thead><tr><th>SKU</th><th>平台选项</th><th>映射状态</th></tr></thead><tbody>{draft.variants.map((variant) => <tr key={variant.skuId}><td><code>{variant.skuCode}</code></td><td>{Object.entries(variant.optionValues).map(([key, value]) => `${key}: ${value}`).join(" · ") || "标准款"}</td><td><span className="mapping-ok"><BadgeCheck size={14} />已映射</span></td></tr>)}</tbody></table></section>}
         {tab === "Attributes" && <ReadOnlyRecord title="平台属性" code="CATALOG ATTRIBUTES" values={draft.attributes} source="PRODUCT MASTER" />}
         {tab === "Compliance" && <ReadOnlyRecord title="合规声明" code="COMPLIANCE" values={draft.compliance} source="VERIFIED" />}
@@ -82,6 +92,7 @@ function ContentEditor({ draft, interactive, platform, setDraft }: { draft: List
     <FieldMeta label="商品标题" source="HUMAN"><textarea disabled={!interactive} value={draft.title} maxLength={titleLimit} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} /><small>{draft.title.length} / {titleLimit}</small></FieldMeta>
     {platform === "amazon" && <div className="listing-bullet-editor">{draft.bullets.map((bullet, index) => <FieldMeta key={index} label={`卖点 ${index + 1}`} source={index === 0 ? "AI SUGGESTION" : "HUMAN"}><div className="listing-inline-field"><input disabled={!interactive} value={bullet} onChange={(event) => setDraft((current) => ({ ...current, bullets: current.bullets.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} /><button aria-label={`删除卖点 ${index + 1}`} disabled={!interactive} onClick={() => setDraft((current) => ({ ...current, bullets: current.bullets.filter((_, itemIndex) => itemIndex !== index) }))} type="button"><Trash2 size={14} /></button></div></FieldMeta>)}<button className="listing-add-bullet" disabled={!interactive || draft.bullets.length >= 5} onClick={() => setDraft((current) => ({ ...current, bullets: [...current.bullets, ""] }))} type="button"><Plus size={14} />新增卖点</button></div>}
     <FieldMeta label="商品描述" source="HUMAN"><textarea disabled={!interactive} value={draft.description} rows={6} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} /></FieldMeta>
+    <div className="listing-field"><strong>定制设置</strong><label><input type="checkbox" checked={draft.personalization?.enabled ?? false} disabled={!interactive} onChange={(e) => setDraft((current) => ({ ...current, personalization: { ...current.personalization, enabled: e.target.checked } }))} />允许顾客定制</label>{draft.personalization?.enabled && <textarea disabled={!interactive} aria-label="定制说明" value={draft.personalization.instructions ?? ""} maxLength={1024} onChange={(e) => setDraft((current) => ({ ...current, personalization: { ...current.personalization, enabled: true, instructions: e.target.value } }))} />}</div>
     {platform === "etsy" && <FieldMeta label="标签" source="HUMAN"><input disabled={!interactive} value={draft.tags.join(", ")} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) }))} /><small>{draft.tags.length} / 13 个标签</small></FieldMeta>}
   </section>;
 }
@@ -93,4 +104,4 @@ function FieldMeta({ label, source, children }: { label: string; source: string;
 function tabIcon(tab: Tab) { return ({ Content: <Archive size={15} />, Media: <Image size={15} />, Variants: <Boxes size={15} />, Attributes: <ListTree size={15} />, Compliance: <ShieldCheck size={15} />, Publish: <RadioTower size={15} />, Channels: <Workflow size={15} />, History: <FileClock size={15} /> })[tab]; }
 function statusLabel(status: ListingEditorView["status"]) { return ({ draft: "草稿", in_review: "评审中", approved: "已审批", archived: "已归档" })[status]; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
-function copyDraft(content: ListingDraft): ListingDraft { return { ...content, bullets: [...content.bullets], tags: [...content.tags], mediaAssetIds: [...content.mediaAssetIds], variants: content.variants.map((variant) => ({ ...variant, optionValues: { ...variant.optionValues } })), attributes: { ...content.attributes }, compliance: { ...content.compliance }, ...(content.aPlusModules ? { aPlusModules: content.aPlusModules.map((module) => ({ ...module, assetIds: [...module.assetIds] })) } : {}), ...(content.personalization ? { personalization: { ...content.personalization } } : {}) }; }
+function copyDraft(content: ListingDraft): ListingDraft { return { ...content, ...(content.mediaDescriptions ? { mediaDescriptions: { ...content.mediaDescriptions } } : {}), bullets: [...content.bullets], tags: [...content.tags], mediaAssetIds: [...content.mediaAssetIds], variants: content.variants.map((variant) => ({ ...variant, optionValues: { ...variant.optionValues } })), attributes: { ...content.attributes }, compliance: { ...content.compliance }, ...(content.aPlusModules ? { aPlusModules: content.aPlusModules.map((module) => ({ ...module, assetIds: [...module.assetIds] })) } : {}), ...(content.personalization ? { personalization: { ...content.personalization } } : {}) }; }

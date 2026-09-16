@@ -16,9 +16,9 @@ export function scalePillowArtwork(document: ProductionEditorDocument, scale: nu
 }
 
 export function createProductionDocument(kind: ProductionKind): ProductionEditorDocument {
-  const common = { schemaVersion: 1 as const, name: kind === "shaped_pillow" ? "异形抱枕生产稿" : "圆形胎罩生产稿", layers: [], confirmations: { physicalSize: false, whiteBorderRule: false, narrowParts: false, barcodeTab: false, backText: false, visualReview: false } };
+  const common = { schemaVersion: 1 as const, name: kind === "shaped_pillow" ? "异形抱枕生产稿" : "圆形胎罩生产稿", exportBackground: kind === "shaped_pillow" ? "white" as const : "transparent" as const, layers: [], confirmations: { physicalSize: false, whiteBorderRule: false, narrowParts: false, barcodeTab: false, backText: false, visualReview: false } };
   return kind === "shaped_pillow" ? {
-    ...common, productType: "shaped_pillow", spec: { widthMm: 300, heightMm: 400, dpi: 150, sideMode: "single", declaredLongestMm: null, sizeBasis: "unconfirmed", whiteBorderMm: 200 * 25.4 / 150, cutLineMm: 6 * 25.4 / 150, minimumNeckMm: 50, minimumNeckBasis: "unconfirmed", panelGapMm: 20, barcodeTab: { widthMm: null, heightMm: null, centerXMm: 150 } },
+    ...common, productType: "shaped_pillow", spec: { widthMm: 300, heightMm: 400, dpi: 150, sideMode: "single", declaredLongestMm: null, sizeBasis: "unconfirmed", whiteBorderMm: 200 * 25.4 / 150, cutLineMm: 6 * 25.4 / 150, minimumNeckMm: 50, minimumNeckBasis: "unconfirmed", panelGapMm: 100 * 25.4 / 150, sheetMarginMm: 50 * 25.4 / 150, barcodeTab: { widthMm: null, heightMm: null, centerXMm: 150 } },
     contour: [{ xMm: 0, yMm: 0, smooth: false }, { xMm: 300, yMm: 0, smooth: false }, { xMm: 300, yMm: 400, smooth: false }, { xMm: 0, yMm: 400, smooth: false }],
   } : { ...common, productType: "tire_cover", spec: { diameterMm: 670, dpi: 300, safeInsetMm: 15, opening: null }, contour: [] };
 }

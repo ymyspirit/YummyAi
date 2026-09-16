@@ -58,6 +58,7 @@ export interface ListingDraft {
   tags: string[];
   mainImageId?: string;
   mediaAssetIds: string[];
+  mediaDescriptions?: Record<string, string>;
   variants: ListingVariant[];
   attributes: Record<string, string | number | boolean>;
   compliance: Record<string, string | boolean>;

@@ -27,7 +27,7 @@ import {
 import {
   assetFiles,
   canvasPrintSpecVersions,
-  creativeDesignSkuBindings,
+  creativeDesignSkuBindings, salesRecipeVersions, productSpecificationVersions, artworkMasterVersions,
   designTasks,
   designVersionFiles,
   designVersions,
@@ -236,7 +236,9 @@ export class PodMockupBatchService {
       if (versions.length !== designVersionIds.length) throw new NotFoundException("One or more formal design versions were not found");
       const versionById = new Map(versions.map((row) => [row.version.id, row]));
       const bindings = await tx.select().from(creativeDesignSkuBindings).where(inArray(creativeDesignSkuBindings.designVersionId, designVersionIds));
-      const bindingByVersion = new Map(bindings.map((binding) => [binding.designVersionId, binding]));
+      const salesBindings = await tx.select({designVersionId:salesRecipeVersions.designVersionId,skuId:salesRecipeVersions.skuId,printSpecVersionId:productSpecificationVersions.canvasPrintSpecVersionId}).from(salesRecipeVersions).innerJoin(productSpecificationVersions,eq(productSpecificationVersions.id,salesRecipeVersions.specificationVersionId)).where(and(inArray(salesRecipeVersions.designVersionId,designVersionIds),eq(salesRecipeVersions.status,"approved")));
+      const bindingByVersion = new Map<string,{skuId:string;printSpecVersionId:string}>(bindings.map(binding=>[binding.designVersionId,binding]));
+      for(const binding of salesBindings) if(binding.designVersionId && binding.printSpecVersionId) bindingByVersion.set(binding.designVersionId,{skuId:binding.skuId,printSpecVersionId:binding.printSpecVersionId});
       const artworkRows = await tx.select({ versionId: designVersionFiles.versionId, asset: assetFiles }).from(designVersionFiles)
         .innerJoin(assetFiles, eq(designVersionFiles.assetFileId, assetFiles.id))
         .where(and(inArray(designVersionFiles.versionId, designVersionIds), eq(designVersionFiles.role, "production"), isNull(assetFiles.deletedAt)));
@@ -330,6 +332,9 @@ export class PodMockupBatchService {
         .innerJoin(skus, eq(creativeDesignSkuBindings.skuId, skus.id))
         .where(and(eq(designVersions.status, "approved"), eq(designTasks.status, "approved")))
         .orderBy(asc(designTasks.title), asc(skus.code)).limit(500);
+      const salesDesigns = await tx.select({designVersionId:designVersions.id,designTaskId:designTasks.id,title:designTasks.title,skuId:skus.id,skuCode:skus.code,spuId:skus.spuId,printSpecVersionId:productSpecificationVersions.canvasPrintSpecVersionId,creativeDesignVersionId:artworkMasterVersions.creativeVersionId}).from(salesRecipeVersions)
+        .innerJoin(designVersions,eq(designVersions.id,salesRecipeVersions.designVersionId)).innerJoin(designTasks,eq(designTasks.id,designVersions.taskId)).innerJoin(skus,eq(skus.id,salesRecipeVersions.skuId)).innerJoin(productSpecificationVersions,eq(productSpecificationVersions.id,salesRecipeVersions.specificationVersionId)).innerJoin(artworkMasterVersions,eq(artworkMasterVersions.id,salesRecipeVersions.artworkVersionId)).where(eq(salesRecipeVersions.status,"approved"));
+      for(const design of salesDesigns) if(design.printSpecVersionId && design.creativeDesignVersionId && !formalDesigns.some(d=>d.designVersionId===design.designVersionId)) formalDesigns.push({...design,printSpecVersionId:design.printSpecVersionId,creativeDesignVersionId:design.creativeDesignVersionId});
       const listingRows = await tx.select({
         listingVersionId: listingVersions.id, versionNumber: listingVersions.versionNumber,
         status: listingVersions.status, listingId: listings.id, platform: listings.platform,

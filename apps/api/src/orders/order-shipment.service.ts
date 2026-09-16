@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type { SecretVault } from "@yummyai/ai-core";
+import { authorize, Permission } from "@yummyai/authz";
+import { encryptProductionBytes } from "@yummyai/production-editor";
 import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from "@nestjs/common";
 import {
   AppendShipmentVersionInputSchema, CreateShipmentInputSchema, RecordShipmentWritebackEventInputSchema,
@@ -10,7 +12,7 @@ import {
   type ShipmentPackageInput, type TenantContext,
 } from "@yummyai/contracts";
 import {
-  assetFiles, orderLines, orders, shipmentPackageLines, shipmentPackages, shipmentTrackingEvents,
+  assetFiles, orderLines, orders, orderWorkItems, orderWorkEvents, shipmentPackageLines, shipmentPackages, shipmentTrackingEvents,
   shipmentVersionReviews, shipmentVersions, shipmentWritebackEvents, shipmentWritebackRequests, shipments,
   type DatabaseConnection, type TenantTransaction, withTenant,
 } from "@yummyai/database";
@@ -19,6 +21,23 @@ import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT, SHIPMENT_WRITEBACK_ENQUEUER } from "../platform.tokens.js";
 import { OrderService } from "./order.service.js";
+import { DispatchOrderShipmentInputSchema } from "@yummyai/contracts/order/workspace";
+
+async function assertArtworkReady(tx: TenantTransaction, orderId: string, lines: Array<{ orderLineId: string; quantity: number }>, excludeShipmentId?: string) {
+  const quantities = new Map<string, number>();
+  for (const line of lines) quantities.set(line.orderLineId, (quantities.get(line.orderLineId) ?? 0) + line.quantity);
+  for (const [lineId, quantity] of [...quantities].sort(([a], [b]) => a.localeCompare(b))) {
+    await lock(tx, `order-work:${lineId}`);
+    const scope = await tx.execute(sql`select ol.quantity,w.held from order_lines ol join order_work_items w on w.id=ol.id where ol.id=${lineId} and ol.order_id=${orderId}`);
+    if (!scope.length || scope[0]!.held) throw new ConflictException("商品尚未完成生产或已经暂停");
+    const ready = await tx.execute(sql`select coalesce(sum(pv.quantity),0)::int as quantity from production_orders p join production_order_versions pv on pv.production_order_id=p.id and pv.version_number=p.current_version_number
+      where p.order_line_id=${lineId} and p.status='completed' and (select qi.result from quality_inspections qi where qi.production_order_id=p.id order by qi.created_at desc,qi.id desc limit 1)='passed'
+      and not exists(select 1 from production_orders child where child.parent_production_order_id=p.id and child.status<>'cancelled')`);
+    const allocated = await tx.execute(sql`select coalesce(sum(pl.quantity),0)::int as quantity from shipment_package_lines pl join shipment_versions sv on sv.id=pl.shipment_version_id join shipments s on s.id=sv.shipment_id
+      where pl.order_line_id=${lineId} and sv.version_number=s.approved_version_number and s.status<>'cancelled' and (${excludeShipmentId ?? null}::uuid is null or s.id<>${excludeShipmentId ?? null}::uuid)`);
+    if (quantity + Number(allocated[0]?.quantity ?? 0) > Math.min(Number(ready[0]?.quantity ?? 0), Number(scope[0]!.quantity))) throw new ConflictException("发货数量超过已经质检通过的可发数量");
+  }
+}
 
 @Injectable()
 export class OrderShipmentService {
@@ -40,7 +59,8 @@ export class OrderShipmentService {
       if (replayed) return replayed.id;
       const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1);
       if (!order) throw new NotFoundException("Order not found");
-      if (order.workflowState !== "awaiting_shipment" || order.sideState) throw new ConflictException("Order must be active and awaiting shipment");
+      if (order.sideState || order.addressStatus === "anonymized") throw new ConflictException("Order must be active before shipment");
+      if (order.workflowState !== "awaiting_shipment") await assertArtworkReady(tx, orderId, input.packages.flatMap((pkg) => pkg.lines));
       await assertVersionContent(tx, orderId, input.packages);
       const id = createEntityId(); const versionId = createEntityId();
       await tx.insert(shipments).values({ id, tenantId: context.tenantId, orderId, idempotencyKey: input.idempotencyKey, createdBy: context.userId });
@@ -70,6 +90,40 @@ export class OrderShipmentService {
         .where(and(eq(shipments.id, shipmentId), eq(shipments.currentVersionNumber, input.expectedCurrentVersion)));
     });
     await this.audit.record(context, { action: "shipment.version.append", resourceType: "shipment", resourceId: shipmentId, result: "success", metadata: {} });
+    return this.get(context, shipmentId);
+  }
+
+  /** Record actual handover evidence independently of marketplace writeback. */
+  async dispatch(context: TenantContext, shipmentId: string, raw: unknown) {
+    authorize(context, Permission.OrderWrite); authorize(context, Permission.OrderPiiRead);
+    const input = DispatchOrderShipmentInputSchema.parse(raw);
+    await withTenant(this.database.db, context, async (tx) => {
+      await lock(tx, `shipment:${shipmentId}`);
+      const [shipment] = await tx.select().from(shipments).where(eq(shipments.id, shipmentId));
+      if (!shipment) throw new NotFoundException("发货单不存在");
+      const [replayed] = await tx.select().from(shipmentTrackingEvents).where(and(eq(shipmentTrackingEvents.shipmentId, shipmentId), eq(shipmentTrackingEvents.externalEventId, input.idempotencyKey)));
+      if (replayed) { if (replayed.detailCode !== `HANDOVER_${checksum(JSON.stringify(input))}`) throw new ConflictException("同一次交运重试的内容不能改变"); return; }
+      if (shipment.status !== "approved" || shipment.approvedVersionNumber !== input.expectedVersion || shipment.currentVersionNumber !== input.expectedVersion) throw new ConflictException("请先审核当前包裹版本");
+      const [order] = await tx.select().from(orders).where(eq(orders.id, shipment.orderId));
+      if (!order || order.sideState) throw new ConflictException("订单已暂停或取消");
+      const [version] = await tx.select().from(shipmentVersions).where(and(eq(shipmentVersions.shipmentId, shipmentId), eq(shipmentVersions.versionNumber, input.expectedVersion)));
+      const allocations = await tx.select().from(shipmentPackageLines).where(eq(shipmentPackageLines.shipmentVersionId, version!.id));
+      if (order.workflowState !== "awaiting_shipment") await assertArtworkReady(tx, order.id, allocations, shipmentId);
+      const packages = await tx.select().from(shipmentPackages).where(eq(shipmentPackages.shipmentVersionId, version!.id));
+      await tx.insert(shipmentTrackingEvents).values(packages.map((pkg, index) => ({ id: createEntityId(), tenantId: context.tenantId,
+        shipmentId, packageId: pkg.id, status: "picked_up", provider: "manual", externalEventId: index ? `${input.idempotencyKey}:${index}` : input.idempotencyKey,
+        detailCode: `HANDOVER_${checksum(JSON.stringify(input))}`, occurredAt: new Date(input.occurredAt) })));
+      for (const lineId of [...new Set(allocations.map((allocation) => allocation.orderLineId))].sort()) {
+        await lock(tx, `order-work:${lineId}`);
+        const [work] = await tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, lineId));
+        if (!work?.encryptedDataKey) continue;
+        const reason = this.vault.withSecret(work.encryptedDataKey, (value) => { const key = Buffer.from(value, "base64"); try { return Buffer.from(encryptProductionBytes(key, Buffer.from(JSON.stringify(`发货单 ${shipmentId} · ${input.reason}`)))).toString("base64"); } finally { key.fill(0); } });
+        await tx.insert(orderWorkEvents).values({ id: createEntityId(), tenantId: context.tenantId, workItemId: lineId, revision: work.revision, action: "dispatch", fromState: "approved", toState: "shipped", actorId: context.userId, encryptedReason: reason, idempotencyKey: input.idempotencyKey, requestHash: checksum(JSON.stringify(input)), occurredAt: new Date(input.occurredAt) });
+        await tx.update(orderWorkItems).set({ projectionVersion: work.projectionVersion + 1, updatedAt: new Date() }).where(eq(orderWorkItems.id, lineId));
+      }
+      await tx.update(shipments).set({ status: "shipped", updatedAt: new Date() }).where(eq(shipments.id, shipmentId));
+      await this.audit.recordInTransaction(tx, context, { action: "shipment.manual_handover", resourceType: "shipment", resourceId: shipmentId, result: "success", metadata: { reasonChecksum: checksum(input.reason), version: input.expectedVersion } });
+    });
     return this.get(context, shipmentId);
   }
 

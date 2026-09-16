@@ -24,6 +24,13 @@ describe("isolated public SDK adapter", () => {
     expect(canvasVersionSupported("v0.19.0", "1.0.0")).toBe(false);
     expect(canvasVersionSupported("v0.18.0", "2.0.0")).toBe(false);
   });
+  it("passes the fixed research and specification requirements into the canvas text resource", () => {
+    const task = { ...brief, designInstructions: "Confirmed original artwork\nResearch V1: improve name contrast\nSPU: confirmed specification" };
+    const operations = briefOperations(task, node, [], []);
+    const text = operations.find((op) => op.type === "add_node" && op.nodeType === "text");
+    expect(text?.type === "add_node" && text.metadata?.content).toBe(task.designInstructions);
+    expect(operations.some((op) => op.type === "add_node" && op.nodeType === "image")).toBe(false);
+  });
   it("accepts exact HTTPS or loopback origins and rejects opaque origins and userinfo", () => {
     const hash = (origin: string) => new URLSearchParams({ yummyaiOrigin: origin, yummyaiChannel: "ee34b909-4539-42b8-a2ef-2b41322ba68b" }).toString();
     expect(bridgeLocation(hash("http://localhost:3000"))?.origin).toBe("http://localhost:3000");

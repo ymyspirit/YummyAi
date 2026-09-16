@@ -9,6 +9,7 @@ export interface ModelRouteTargetRecord {
   providerConfigId: string;
   providerModel: string;
   timeoutMs: number;
+  analysisPricing?: { inputUsdPerMillion: number; outputUsdPerMillion: number; maxTaskCostUsd: number };
 }
 
 export const modelProviderConfigs = pgTable(
@@ -28,8 +29,8 @@ export const modelProviderConfigs = pgTable(
   (table) => [
     check("model_provider_configs_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("model_provider_configs_provider_check", sql`${table.provider} in ('openai', 'anthropic', 'openai-compatible')`),
-    check("model_provider_configs_status_check", sql`${table.status} in ('enabled', 'disabled')`),
-    uniqueIndex("model_provider_configs_tenant_label_unique").on(table.tenantId, table.label),
+    check("model_provider_configs_status_check", sql`${table.status} in ('enabled', 'disabled', 'deleted')`),
+    uniqueIndex("model_provider_configs_tenant_label_unique").on(table.tenantId, table.label).where(sql`${table.status} <> 'deleted'`),
     uniqueIndex("model_provider_configs_tenant_id_unique").on(table.tenantId, table.id),
     index("model_provider_configs_tenant_status_idx").on(table.tenantId, table.status),
   ],

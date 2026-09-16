@@ -2,7 +2,7 @@
 
 import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
-import { sidebarKey, themeKey } from "./appearance-preferences";
+import { setSidebarCompact, sidebarChangeEvent, sidebarKey, themeKey } from "./appearance-preferences";
 
 type Theme = "light" | "dark" | "system";
 
@@ -33,11 +33,14 @@ export function ErpAppearance() {
       try { document.documentElement.dataset.sidebar = localStorage.getItem(sidebarKey) === "compact" ? "compact" : "expanded"; } catch { /* Use the current layout. */ }
     }
     readPreferences();
+    function readCurrentSidebar() { setCompact(document.documentElement.dataset.sidebar === "compact"); }
     media.addEventListener("change", readPreferences);
     window.addEventListener("storage", readPreferences);
+    window.addEventListener(sidebarChangeEvent, readCurrentSidebar);
     return () => {
       media.removeEventListener("change", readPreferences);
       window.removeEventListener("storage", readPreferences);
+      window.removeEventListener(sidebarChangeEvent, readCurrentSidebar);
     };
   }, []);
 
@@ -48,14 +51,11 @@ export function ErpAppearance() {
   }
 
   function toggleSidebar() {
-    const next = !compact;
-    setCompact(next);
-    document.documentElement.dataset.sidebar = next ? "compact" : "expanded";
-    try { localStorage.setItem(sidebarKey, next ? "compact" : "expanded"); } catch { /* Current-tab selection still applies. */ }
+    setSidebarCompact(document.documentElement.dataset.sidebar !== "compact");
   }
 
   return <div className="erp-appearance">
-    <button type="button" className="erp-sidebar-toggle" aria-label={compact ? "展开侧边栏" : "收起侧边栏"} title={compact ? "展开侧边栏" : "收起侧边栏"} aria-pressed={compact} onClick={toggleSidebar}>
+    <button type="button" className="erp-sidebar-toggle" aria-label={compact ? "展开页面栏" : "收起页面栏"} title={compact ? "展开页面栏" : "收起页面栏"} aria-pressed={compact} onClick={toggleSidebar}>
       {compact ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
     </button>
     <div className="erp-theme-options" role="group" aria-label="界面主题">

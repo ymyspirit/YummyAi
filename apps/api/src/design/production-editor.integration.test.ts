@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { ConflictException, NotFoundException, UnprocessableEntityException, ServiceUnavailableException } from "@nestjs/common";
 import { SecretVault } from "@yummyai/ai-core";
 import { createEntityId, type ProductionEditorImageView, type ProductionEditorDocument, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, marketplaceAccounts, migrateDatabase, orderProtectedDetails, productionEditorProjects, productionEditorVersions, productionEditorImages, productionEditorRenders, withTenant } from "@yummyai/database";
+import { connectDatabase, marketplaceAccounts, migrateDatabase, modelProviderConfigs, modelRoutes, orderProtectedDetails, productionEditorProjects, productionEditorVersions, productionEditorImages, productionEditorRenders, withTenant } from "@yummyai/database";
 import { JobEnvelopeSchema } from "@yummyai/jobs";
 import { getBuiltinFont } from "@yummyai/production-editor";
 import { assertAssetAccess, type Storage, type PutPrivateInput, type StoredAsset, type AssetDomain } from "@yummyai/storage";
@@ -11,6 +11,7 @@ import JSZip from "jszip";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProductionEditorRenderProcessor } from "../../../worker/src/processors/production-editor.processor.js";
+import type { StudioGateway } from "../../../worker/src/processors/studio-generation.gateway.js";
 import { AuditService } from "../audit/audit.service.js";
 import { AmazonOrderReportService } from "../orders/amazon-order-report.service.js";
 import { OrderService } from "../orders/order.service.js";
@@ -78,6 +79,50 @@ describe("production editor persistence and private rendering", () => {
     const preview = await service.image(contextA, project.project.id, asset.id, "preview");
     expect(preview).toMatchObject({ mediaType: "image/png", inline: true });
     expect((await sharp(preview.body).metadata()).width).toBe(48);
+  });
+
+  it("uses the selected model for private order cutouts, never reruns a billed request and applies only real alpha", async () => {
+    const evidence = await source(); await reports.review(contextA, evidence.line.id, evidence.parsed.versionId!);
+    const project = await service.create(contextA, { name: "Synthetic model-cutout order", document: draft(), source: evidence.source });
+    const providerId = createEntityId(), modelId = createEntityId(), modelVault = new SecretVault(Buffer.alloc(32, 87));
+    await withTenant(database.db, contextA, async tx => {
+      await tx.insert(modelProviderConfigs).values({ id: providerId, tenantId: tenantA, provider: "openai-compatible", label: "Synthetic image model", endpoint: "https://example.test/v1", encryptedApiKey: modelVault.encrypt("synthetic-model-key"), createdBy: userA });
+      await tx.insert(modelRoutes).values({ id: modelId, tenantId: tenantA, modelKey: `cutout-${modelId}`, taskType: "studio_image", targets: [{ providerConfigId: providerId, providerModel: "gpt-image-2.5", timeoutMs: 600000 }] });
+    });
+    const generate = vi.fn<StudioGateway["generate"]>(async () => ({ bytes: await image(512, 512, true), mediaType: "image/png" }));
+    const modelWorker = new ProductionEditorRenderProcessor(database, storage, vault, modelVault, { generate });
+    const input = { requestId: createEntityId(), expectedVersionId: project.version.id, modelId, prompt: "Synthetic private customer cutout instruction", size: "2048x2048" };
+    const sourceImageId = project.images[0]!.id;
+    await expect(service.editImageWithModel(contextB, project.project.id, sourceImageId, input)).rejects.toBeInstanceOf(NotFoundException);
+    const job = await service.editImageWithModel(contextA, project.project.id, sourceImageId, input);
+    expect(job).toMatchObject({ id: input.requestId, purpose: "image_edit", status: "queued" });
+    expect((await service.editImageWithModel(contextA, project.project.id, sourceImageId, input)).id).toBe(job.id);
+    await expect(service.editImageWithModel(contextA, project.project.id, sourceImageId, { ...input, prompt: "Changed request" })).rejects.toBeInstanceOf(ConflictException);
+    await modelWorker.process(envelope(job.id)); await modelWorker.process(envelope(job.id));
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate.mock.calls[0]![0]).toMatchObject({ model: "gpt-image-2.5", capability: "image", input: { background: "transparent", size: "2048x2048" }, references: [{ mediaType: "image/png" }] });
+    const done = await service.getRender(contextA, project.project.id, job.id);
+    expect(done).toMatchObject({ purpose: "image_edit", status: "completed", preflight: { productionReady: false } });
+    expect(done.preflight?.issues).toContainEqual(expect.objectContaining({ code: "model_image_size_mismatch", severity: "warning" }));
+    const applied = await service.applyModelImage(contextA, project.project.id, job.id, project.version.id);
+    expect(applied).toMatchObject({ actualAlpha: true, name: "gpt-image-2.5-抠图.png" });
+    expect((await service.applyModelImage(contextA, project.project.id, job.id, project.version.id)).id).toBe(applied.id);
+    const [asset] = await withTenant(database.db, contextA, tx => tx.select().from(productionEditorImages).where(eq(productionEditorImages.id, applied.id)));
+    expect(asset!.originalObjectKey).toContain(`/${tenantA}/order/`);
+    expect((await service.get(contextA, project.project.id)).version.document.layers).toHaveLength(0);
+    await expect(service.renderFile(contextB, project.project.id, job.id, "result")).rejects.toBeInstanceOf(NotFoundException);
+    const rows = await withTenant(database.db, contextA, tx => tx.select().from(productionEditorRenders).where(eq(productionEditorRenders.id, job.id)));
+    expect(JSON.stringify(rows)).not.toContain(input.prompt); expect(JSON.stringify(rows)).not.toContain("synthetic-model-key");
+    const interrupted = await service.editImageWithModel(contextA, project.project.id, sourceImageId, { ...input, requestId: createEntityId() });
+    await withTenant(database.db, contextA, tx => tx.update(productionEditorRenders).set({ status: "processing" }).where(eq(productionEditorRenders.id, interrupted.id)));
+    await expect(modelWorker.process(envelope(interrupted.id))).rejects.toThrow("production_image_submission_interrupted");
+    expect(generate).toHaveBeenCalledTimes(1);
+    generate.mockImplementationOnce(async () => ({ bytes: await image(), mediaType: "image/png" }));
+    const opaque = await service.editImageWithModel(contextA, project.project.id, sourceImageId, { ...input, requestId: createEntityId() });
+    await modelWorker.process(envelope(opaque.id));
+    await expect(service.applyModelImage(contextA, project.project.id, opaque.id, project.version.id)).rejects.toBeInstanceOf(UnprocessableEntityException);
+    const changed = await service.save(contextA, project.project.id, { expectedVersionId: project.version.id, document: { ...project.version.document, exportBackground: "white" } });
+    await expect(service.applyModelImage(contextA, project.project.id, job.id, changed.version.id)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("normalizes EXIF dimensions for display while preserving original JPEG bytes", async () => {
@@ -225,6 +270,25 @@ describe("production editor persistence and private rendering", () => {
     await expect(service.upload(contextA, project.project.id, "invalid.ttf", Buffer.from("not a font"), "font")).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
+  it("persists the independent cut contour and preserves border artwork through the worker", async () => {
+    const document: ProductionEditorDocument = { schemaVersion: 1, name: "Synthetic preserved pillow", productType: "shaped_pillow", exportBackground: "white", spec: { widthMm: 80, heightMm: 80, dpi: 150, sideMode: "single", declaredLongestMm: 80, sizeBasis: "cut_contour", whiteBorderMm: 10, artworkClipMode: "none", cutLineMm: 1.016, minimumNeckMm: 50, minimumNeckBasis: "cut_contour", panelGapMm: 10, barcodeTab: { widthMm: 20, heightMm: 10, centerXMm: 40 } }, contour: [[0, 0], [80, 0], [80, 80], [0, 80]].map(([xMm, yMm]) => ({ xMm: xMm!, yMm: yMm!, smooth: false })), layers: [], confirmations: draft().confirmations };
+    const project = await service.create(contextA, { name: document.name, document });
+    const asset = await service.upload(contextA, project.project.id, "synthetic.png", await image(), "image") as ProductionEditorImageView;
+    const layer = { ...imageLayer(asset), xMm: 0, yMm: 0, widthMm: 80, heightMm: 80 };
+    document.layers = [layer];
+    const saved = await service.save(contextA, project.project.id, { expectedVersionId: project.version.id, document });
+    const reloaded = await service.get(contextA, project.project.id);
+    expect(reloaded.version.document).toEqual(document);
+    const render = await service.render(contextA, project.project.id, { expectedVersionId: saved.version.id, format: "png", background: "white", purpose: "preview", previewFullResolution: true });
+    await worker.process(envelope(render.id));
+    const file = await service.renderFile(contextA, project.project.id, render.id, "result");
+    const bytes = await sharp(file.body).extract({ left: 21, top: 240, width: 1, height: 1 }).raw().toBuffer();
+    expect([...bytes]).not.toEqual([255, 255, 255]);
+    expect((await service.get(contextA, project.project.id)).version.document.layers).toEqual([layer]);
+    expect((await service.get(contextA, project.project.id, project.version.id)).version.document).toEqual(project.version.document);
+    await expect(service.renderFile(contextB, project.project.id, render.id, "result")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("requires manual review and trusted production preflight but still permits draft preview", async () => {
     const { project } = await prepared();
     const request = { expectedVersionId: project.version.id, format: "png", background: "transparent", purpose: "production" };
@@ -240,6 +304,15 @@ describe("production editor persistence and private rendering", () => {
     const file = await service.renderFile(contextA, project.project.id, preview.id, "result");
     const dimensions = await sharp(file.body).metadata();
     expect(Math.max(dimensions.width!, dimensions.height!)).toBeLessThanOrEqual(1600);
+    const proof = await service.render(contextA, project.project.id, { ...request, purpose: "preview", previewFullResolution: true });
+    await worker.process(envelope(proof.id));
+    const proofResult = await service.getRender(contextA, project.project.id, proof.id);
+    expect(proofResult).toMatchObject({ status: "completed", purpose: "preview", preflight: { productionReady: false } });
+    const proofFile = await service.renderFile(contextA, project.project.id, proof.id, "result");
+    expect(proofFile.name).toMatch(/^proof-/);
+    const proofMetadata = await sharp(proofFile.body).metadata();
+    expect([proofMetadata.width, proofMetadata.height, proofMetadata.density]).toEqual([proofResult.preflight!.widthPx, proofResult.preflight!.heightPx, project.version.document.spec.dpi]);
+    await expect(service.render(contextA, project.project.id, { ...request, previewFullResolution: true })).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
   it("renders reviewed confirmed versions asynchronously, deduplicates retries and blocks stale jobs", async () => {

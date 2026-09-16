@@ -17,6 +17,13 @@ Documents use millimetres for geometry and a separate output DPI. Draft settings
 are not supplier approvals. Save the exact specification and confirmation state
 in each immutable version.
 
+New pillow documents record `sheetMarginMm` (50 px at 150 DPI by default) and a
+100 px clear panel gap. The margin and gap are measured outside the black cutting
+strokes, including each bottom tab. The shared browser/worker geometry makes the
+sheet fit those complete panel bounds. Older immutable documents without this
+optional field retain their original layout. The supplied pillow workflow uses
+500 x 180 px bottom tabs; their dimensions remain explicit document inputs.
+
 - Shaped pillows have a manually editable, closed contour, a white sewing margin,
   an external black cutting line, a bottom blank barcode tab and a paired back
   panel. The supplier's supplied example uses 150 DPI, a 200 px white margin and
@@ -37,6 +44,46 @@ designs. Designers supply source images, fonts and contour data. The editor does
 not claim automatic photographic retouching or automatic factory approval.
 
 ## Pillow preparation workflow
+
+### Independent manufacturing contour preview
+
+After model cutout, select the transparent image and open **优化工艺轮廓**.
+For an existing shaped contour, the default **沿当前刀线圆滑** preserves the current
+silhouette and rounds only its exterior within the selected allowance. This
+retains an operator-reviewed face/body boundary even when long whiskers extend
+past it. It does not reinterpret the cutout. The starting rectangle instead
+defaults to **按图片主体重建**, also available as an explicit choice. That mode
+computes a separate manufacturing silhouette: a small morphological
+opening ignores narrow whisker/fur protrusions only in the contour reference,
+followed by the configured sewing allowance and limited local rounding. It does
+not edit RGB, alpha, source asset/version, image size or transforms. Defaults are
+12 px fine-detail width and 20 px rounding allowance at 150 DPI. A 0 px detail
+width retains the full silhouette. Large concavities are retained; this is not
+a convex hull or another cutout model.
+
+Both modes run in a cancellable Web Worker. The actual interpolated curve is
+checked against the rounding allowance and, for rebuilding, sampled visible
+artwork. Existing-contour smoothing preserves the original filled silhouette.
+Disconnected
+bodies, excessive silhouette removal, clipped artwork, self-intersections and
+invalid barcode joins are rejected. Preview supports overlaid old/new cutting
+lines and paired-sheet layout. Parameter edits discard stale candidates; closing
+the dialog or changing the project/version cancels pending work. Preview writes
+no database version. Temporarily show only the subject image for this operation;
+composite designs still require checking every visible layer and text afterward.
+
+**应用新刀线** records one undoable edit. It retains complete artwork without an
+inset clipping mask, translates all layers together when rebasing the contour,
+recomputes bounds, moves the existing barcode tab to the lowest body point and
+uses a 50 px outer sheet margin / 100 px panel gap. It does not resize the barcode
+or image. Saving uses the existing immutable-version API; all manufacturing and
+visual confirmations are invalidated. Settings are local preview controls; the
+saved document pins the resulting contour. The factory still checks finished
+size, seam allowance and the 5 cm minimum narrow parts before production release.
+
+`production-editor-contour.spec.ts` covers real source preservation, preview-only
+version stability, candidate invalidation, cancel/apply/undo, persisted geometry,
+desktop/mobile layout and exact project/resource teardown.
 
 ### Customer requirements and cutout tools
 
@@ -257,3 +304,39 @@ mirrored back panels, preserved text direction, font failures, save conflicts,
 cross-tenant reads, order-source version changes and cryptographic expiry. Browser
 checks must exercise real editing and visible downloads at desktop and 390 px,
 using labelled synthetic data instead of committing customer order files.
+
+`previewFullResolution: true` on a preview render produces an original-size
+proof with the document's pixel dimensions and DPI. It keeps `purpose: preview`,
+uses a `proof-` filename, and does not approve the editor version or order artwork.
+The UI exposes this as 生成原尺寸待审稿; ordinary 校对预览 remains limited to 1600 px.
+Production export continues to require version review and production preflight.
+
+## Configured image-model cutouts
+
+`POST /v1/production-editor/projects/:id/images/:imageId/model-cutout` accepts
+`requestId`, `expectedVersionId`, `modelId`, `prompt` and `size`. The enabled
+single-target `studio_image` route and provider are pinned in encrypted job
+options. The worker uses the existing image-edit gateway with the original image,
+transparent PNG output and the dedicated `MODEL_CREDENTIAL_ENCRYPTION_KEY` vault.
+Segmentation is performed by the selected model; this route never falls back to
+local segmentation or matting. Requested dimensions are checked against actual
+output dimensions, and a mismatch is shown as a warning.
+
+The task uses the existing render queue with `purpose: image_edit`, one external
+submission and a request ID that cannot be reused with different inputs. A stalled
+or interrupted request is not submitted again because it may have been billed.
+Image-model results are private source assets, not layout proofs or reviewed
+production files. Order sources retain order-domain storage, per-project encryption,
+tenant authorization, source-version checks and cryptographic expiry.
+
+`POST /v1/production-editor/projects/:id/renders/:renderId/apply-image` requires
+`expectedVersionId`, a completed result from that same project and version, and
+real alpha. Applying passes through the normal upload scanner and records the
+source image, model and render identity in encrypted image metadata. The user
+then places the image, checks physical resolution and generates a separate proof.
+
+The optional document field `exportBackground` persists the selected background
+with each immutable version. New shaped-pillow documents default to `white`.
+Both full-size proofs and production output honor the selected background; white
+PNG/TIFF output is flattened to RGB, while transparent output retains alpha.
+Existing documents without the field retain their previous transparent setting.

@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
 import { ResearchClassificationService } from "../research/research-classification.service.js";
 import { ResearchController } from "../research/research.controller.js";
+import { ResearchStudyService } from "../research/research-study.service.js";
+import { ResearchArchiveService } from "../research/research-archive.service.js";
 import { ResearchRepository } from "../research/research.repository.js";
 import { CaptureService, type CaptureMediaEnqueuer } from "./capture.service.js";
 
@@ -32,7 +34,7 @@ describe("capture ingestion and research library", () => {
   const classifications = new ResearchClassificationService(database, audit);
   const service = new CaptureService(database, enqueuer, audit, classifications);
   const repository = new ResearchRepository(database);
-  const controller = new ResearchController(repository, classifications);
+const controller = new ResearchController(repository, classifications, new ResearchStudyService(database, audit), new ResearchArchiveService(database, audit));
 
   beforeAll(async () => {
     await migrateDatabase(database);

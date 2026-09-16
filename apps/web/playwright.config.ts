@@ -29,7 +29,7 @@ export default defineConfig({
       url: "http://localhost:3100",
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { ...process.env, NODE_OPTIONS: "", DASHBOARD_DEMO_MODE: "1", ANALYSIS_DEMO_MODE: "1", PRODUCT_DEMO_MODE: "1", DESIGN_DEMO_MODE: "1", LISTING_DEMO_MODE: "1" },
+      env: { ...process.env, NODE_OPTIONS: "", DASHBOARD_DEMO_MODE: "1", ANALYSIS_DEMO_MODE: "1", PRODUCT_DEMO_MODE: process.env.E2E_REAL_PRODUCTS === "1" ? "0" : "1", DESIGN_DEMO_MODE: "1", LISTING_DEMO_MODE: "1" },
     },
   ],
 });

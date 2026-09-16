@@ -55,8 +55,9 @@ export class AmazonOrderReportController {
   @Get("lines/:id/files/:key")
   @RequiresPermission(Permission.OrderPiiRead)
   async file(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("key") key: string, @Query("versionId") versionId: unknown,
+    @Query("thumbnail") thumbnail: unknown,
     @Res({ passthrough: true }) response: { setHeader(name: string, value: string): void }) {
-    const file = await this.reports.file(context(request), z.uuidv7().parse(id), z.string().regex(/^[A-Za-z0-9._-]{1,200}$/).parse(key), z.uuidv7().parse(versionId));
+    const file = await this.reports.file(context(request), z.uuidv7().parse(id), z.string().regex(/^[A-Za-z0-9._-]{1,200}$/).parse(key), z.uuidv7().parse(versionId), z.literal("1").optional().parse(thumbnail) === "1");
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");

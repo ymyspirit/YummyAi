@@ -1,8 +1,10 @@
 import { createEntityId, type ProcurementWorkspaceView } from "@yummyai/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProcurementWorkspace } from "./procurement-workspace";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 describe("ProcurementWorkspace", () => {
   it("renders versioned purchase, receipt, invoice, and replenishment evidence", () => {
@@ -30,7 +32,7 @@ describe("ProcurementWorkspace", () => {
     };
     const html = renderToStaticMarkup(<ProcurementWorkspace data={empty} />);
     expect(html).toContain("还没有采购证据");
-    expect(html).toContain("不会根据库存缺口自动批准采购");
+    expect(html).toContain("保存并审核后，可以登记收货");
   });
 });
 

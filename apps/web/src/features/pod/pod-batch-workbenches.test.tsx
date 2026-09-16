@@ -103,8 +103,8 @@ describe("canvas batch workbenches", () => {
       }}
     />);
 
-    expect(html).toContain('href="/creative-designs"');
-    expect(html).toContain("画图设计来源");
+    expect(html).toContain('href="/product-development"');
+    expect(html).toContain("产品开发");
     expect(html).toContain("ROW × SLOT REVIEW");
     expect(html).toContain('data-slot="主图"');
     expect(html).toContain('data-slot="客厅场景"');

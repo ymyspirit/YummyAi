@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import {
   CreateFulfillmentSupplierInputSchema, CreateRoutingPolicyInputSchema,
+  UpdateFulfillmentSupplierInputSchema, FulfillmentSupplierViewSchema, type UpdateFulfillmentSupplierInput,
   CreateSupplierCapacityWindowInputSchema, CreateSupplierCapabilitySnapshotInputSchema,
   CreateSupplierQuoteInputSchema, ManualRoutingOverrideInputSchema, ReviewRoutingDecisionInputSchema,
   RouteOrderLineInputSchema, createEntityId,
@@ -44,6 +45,15 @@ export class OrderRoutingService {
   listSuppliers(context: TenantContext) {
     return withTenant(this.database.db, context, (tx) => tx.select().from(fulfillmentSuppliers)
       .orderBy(asc(fulfillmentSuppliers.priority), asc(fulfillmentSuppliers.name)));
+  }
+
+  async updateSupplier(context: TenantContext, id: string, rawInput: UpdateFulfillmentSupplierInput) {
+    const input = UpdateFulfillmentSupplierInputSchema.parse(rawInput);
+    const [updated] = await withTenant(this.database.db, context, (tx) => tx.update(fulfillmentSuppliers)
+      .set({ ...input, updatedAt: new Date() }).where(eq(fulfillmentSuppliers.id, id)).returning());
+    if (!updated) throw new NotFoundException("Supplier not found");
+    await this.audit.record(context, { action: "supplier.update", resourceType: "fulfillment_supplier", resourceId: id, result: "success" });
+    return FulfillmentSupplierViewSchema.parse(updated);
   }
 
   async addCapability(context: TenantContext, rawInput: CreateSupplierCapabilitySnapshotInput) {

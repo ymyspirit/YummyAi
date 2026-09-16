@@ -5,6 +5,7 @@ import {
 import { BadgeDollarSign, ShieldAlert } from "lucide-react";
 
 import { FinanceWorkspace } from "../../../features/finance/finance-workspace";
+import { FinanceAssist } from "../../../features/ai-assist/business-assist";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export default async function FinancePage() {
               <span>{result.error}</span>
             </div>
           </section>
-        ) : <FinanceWorkspace data={result.data} />}
+        ) : <><FinanceAssist data={result.data} /><FinanceWorkspace data={result.data} /></>}
       </main>
     </div>
   );

@@ -38,7 +38,18 @@ describe("Listing catalog database aggregation", () => {
       const validation = { completeness: version === 2 ? 72 : 100, blockers: version === 2 ? [{ severity: "blocker", code: "test.blocker", path: "attributes.brand", message: "Brand is required", ruleVersion: "amazon-test" }] : [], warnings: [] };
       await database.client.unsafe(`insert into listing_versions (id,tenant_id,listing_id,version_number,rule_version,content,validation,created_by) values ($1,$2,$3,$4,'amazon-test',$5::jsonb,$6::jsonb,$7)`, [createEntityId(), context.tenantId, listingId, version, JSON.stringify(content), JSON.stringify(validation), userId]);
     }
+    return listingId;
   }
+  it("serializes saves and rejects a stale AI or operator draft without losing either version", async () => {
+    const id = await seed(first, "CONFLICT-CHECK", "Version check", 1);
+    const original = (await service.getWorkspace(first, id)).version;
+    const writes = await Promise.allSettled(["First edit", "Second edit"].map((title) => service.saveVersion(first, id, { ...original.content, title }, "human", original.id)));
+    expect(writes.filter((w) => w.status === "fulfilled")).toHaveLength(1);
+    expect(writes.filter((w) => w.status === "rejected")).toHaveLength(1);
+    expect(await service.listVersions(first, id)).toHaveLength(2);
+    await expect(service.saveVersion(first, id, { ...original.content, mediaDescriptions: { [createEntityId()]: "Unrelated image" } }, "human", original.id)).rejects.toThrow("图片说明");
+    await expect(service.saveVersion(second, id, original.content, "human", original.id)).rejects.toThrow();
+  });
 });
 
 function tenant(tenantId: string, userId: string): TenantContext { return { tenantId, userId, permissions: [], dataScope: "tenant" }; }

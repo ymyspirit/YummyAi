@@ -19,8 +19,9 @@ function routeType(path: string[], method: Method): "json" | "file" | null {
   if (path.length === 1) return method === "DELETE" ? null : "json";
   if (!entityId.test(path[1] ?? "")) return null;
   if (path.length === 2) return method === "GET" || method === "DELETE" ? "json" : null;
-  if (path.length === 5 && path[2] === "images" && entityId.test(path[3] ?? "")) return path[4] === "cutout" && (method === "GET" || method === "POST") || ["segment", "refine"].includes(path[4] ?? "") && method === "POST" ? "json" : null;
-  if (method === "POST") return path.length === 3 && ["versions", "review", "images", "fonts", "preflight", "renders"].includes(path[2] ?? "") ? "json" : null;
+  if (path.length === 5 && path[2] === "images" && entityId.test(path[3] ?? "")) return path[4] === "cutout" && (method === "GET" || method === "POST") || ["segment", "refine", "model-cutout"].includes(path[4] ?? "") && method === "POST" ? "json" : null;
+  if (path.length === 5 && path[2] === "renders" && entityId.test(path[3] ?? "") && path[4] === "apply-image" && method === "POST") return "json";
+  if (method === "POST") return path.length === 3 && ["versions", "review", "images", "fonts", "preflight", "renders", "enhance-order-images"].includes(path[2] ?? "") ? "json" : null;
   if (method !== "GET") return null;
   if (path.length === 3 && ["images", "fonts"].includes(path[2] ?? "")) return "json";
   if (path.length === 4) {
@@ -37,11 +38,13 @@ async function proxy(request: Request, context: RouteContext, method: Method): P
   const type = routeType(path, method);
   if (!type) return failure(404);
   const url = new URL(request.url);
+  if (method === "GET" && path.length === 1 && url.searchParams.has("scope") && url.searchParams.get("scope") !== "templates") return failure(400);
   if (method !== "GET" && !isSameOriginRequest(request)) return failure(403);
   if (method === "POST" && !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return failure(415);
   const base = process.env.API_BASE_URL?.replace(/\/$/, "");
   if (!base) return failure(503);
   const upstream = new URL(`${base}/v1/production-editor/${path.map(encodeURIComponent).join("/")}`);
+  if (method === "GET" && path.length === 1 && url.searchParams.get("scope") === "templates") upstream.searchParams.set("scope", "templates");
   if (method === "GET" && path.length === 2) {
     const versionId = url.searchParams.get("versionId");
     if (versionId && !entityId.test(versionId)) return failure(400);

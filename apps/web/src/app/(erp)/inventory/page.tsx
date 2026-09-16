@@ -2,6 +2,7 @@ import type { InventoryWorkspaceView } from "@yummyai/contracts";
 import { PackageSearch, ShieldCheck } from "lucide-react";
 
 import { InventoryWorkspace } from "../../../features/inventory/inventory-workspace";
+import { InventoryOperations } from "../../../features/inventory/inventory-operations";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function InventoryPage() {
               <span>{result.error}</span>
             </div>
           </section>
-        ) : <InventoryWorkspace data={result.data} />}
+        ) : <><InventoryOperations data={result.data} /><InventoryWorkspace data={result.data} /></>}
       </main>
     </div>
   );

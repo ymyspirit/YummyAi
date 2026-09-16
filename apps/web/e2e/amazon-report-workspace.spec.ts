@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createEntityId, type AmazonReportBatchView, type AmazonReportDetailView, type AmazonReportLineView, type MarketplaceAccountView, type ProductionEditorDetailView } from "@yummyai/contracts";
 import JSZip from "jszip";
+import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
+import { centerApi, createCenterProfile } from "./order-centers-fixture";
 
 import { apiFetch } from "../src/server-api";
 import { syntheticProductionPng } from "./production-editor-fixture";
@@ -20,8 +22,8 @@ test("manual report UI imports, isolates ZIP failures, previews, reviews and ded
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/orders");
-    await page.getByRole("link", { name: "导入亚马逊报告" }).click();
-    await expect(page.getByRole("heading", { name: "订单工作台", exact: true })).toBeVisible();
+    await page.locator("#erp-page-content").getByRole("link", { name: "导入订单报告" }).click();
+    await expect(page.getByRole("heading", { name: "订单报告导入", exact: true })).toBeVisible();
     await page.getByLabel("订单所属店铺").selectOption(account.id);
     await expect(page.getByRole("heading", { name: "暂无导入订单" })).toBeVisible();
     await page.locator("#ar-report-file").setInputFiles({ name: "synthetic-orders.txt", mimeType: "text/plain", buffer: Buffer.from(fixture.report) });
@@ -49,25 +51,8 @@ test("manual report UI imports, isolates ZIP failures, previews, reviews and ded
     await expect(readyRow).toContainText("已核对");
 
     await page.getByLabel("搜索订单、SKU 或商品").fill("E2E-REPORT-READY");
-    const sourceUrl = page.url();
-    await detail.getByRole("button", { name: "制作生产图" }).click();
-    const editor = page.getByRole("region", { name: "当前任务生产作图" });
-    await expect(editor).toBeVisible();
-    await expect(page).toHaveURL(sourceUrl);
-    await expect(editor.getByRole("button", { name: "创建生产草稿" })).toBeEnabled();
-    await expect(editor.getByRole("checkbox", { name: /使用当前订单买家原图/ })).toBeChecked();
-    await expect(editor.getByRole("checkbox", { name: /使用当前订单买家原图/ })).toBeDisabled();
-    await editor.getByText("查看当前订单的定制要求与原图", { exact: true }).click();
-    await expect(editor).toContainText("E2E buyer text");
-    await page.screenshot({ path: testInfo.outputPath("order-inline-production-desktop.png"), fullPage: true });
-    await page.setViewportSize({ width: 390, height: 844 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath("order-inline-production-mobile.png"), fullPage: true });
-    // This fixture owns only report UI: real source-pinned creation is covered in API integration.
-    await page.goBack();
-    await expect(detail).toContainText("E2E buyer text");
-    await expect(page.getByLabel("搜索订单、SKU 或商品")).toHaveValue("E2E-REPORT-READY");
-    await expect(readyRow).toHaveAttribute("aria-pressed", "true");
+    await expect(detail.getByRole("link", { name: "去订单中心审单" })).toHaveAttribute("href", /\/orders\?line=/);
+    await expect(detail.getByRole("button", { name: "制作生产图" })).toHaveCount(0);
     await page.getByLabel("搜索订单、SKU 或商品").fill("");
     await page.setViewportSize({ width: 1440, height: 1000 });
 
@@ -90,6 +75,7 @@ test("manual report UI imports, isolates ZIP failures, previews, reviews and ded
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(detail.getByRole("heading", { name: "买家定制要求" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath("report-mobile.png"), fullPage: true });
     await page.getByRole("button", { name: "关闭订单详情" }).click();
     await page.getByLabel("搜索订单、SKU 或商品").fill("E2E-REPORT-FAILED");
     await expect(page.locator(".ar-line")).toHaveCount(1);
@@ -105,7 +91,7 @@ test("manual report UI imports, isolates ZIP failures, previews, reviews and ded
 });
 
 for (const productType of ["tire_cover", "shaped_pillow"] as const) {
-test(`real report ZIP and ${productType} source-pinned draft stay in one order and resume without duplication`, async ({ page }, testInfo) => {
+test(`real ${productType} report requires operator push and preserves original materials when reopening`, async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(15_000);
   const api = process.env.API_BASE_URL;
@@ -140,49 +126,50 @@ test(`real report ZIP and ${productType} source-pinned draft stay in one order a
     await page.getByRole("button", { name: "标记已核对", exact: true }).click();
     const source = await (await reviewResponse).json() as AmazonReportDetailView;
     await expect(page.getByRole("button", { name: "当前版本已核对" })).toBeDisabled();
-    await page.getByLabel("搜索订单、SKU 或商品").fill(orderId);
-    await page.getByRole("button", { name: "制作生产图", exact: true }).click();
+    const profile = await createCenterProfile(productType, suffix);
+    await page.getByRole("link", { name: "去订单中心审单" }).click();
+    await expect(page.getByRole("heading", { name: orderId, exact: true })).toBeVisible();
+    await page.getByLabel("销售 SKU 制作版本").selectOption(profile.recipeId);
+    await page.getByRole("checkbox", { name: /synthetic-buyer|buyer.png/ }).check();
+    await page.getByRole("button", { name: "确认审单并保存" }).click();
+    await expect(page.getByRole("status")).toContainText("审单已保存");
+    let work = await centerApi<OrderWorkDetail>(`order-centers/lines/${source.line.orderLineId}`);
+    expect(work.line).toMatchObject({ artwork: "not_pushed", editorProjectId: null });
+    await page.getByRole("button", { name: "推送制图", exact: true }).click();
+    await expect(page.getByRole("button", { name: "撤回并修改需求" })).toBeVisible();
+    await page.getByRole("link", { name: /制图：/ }).click();
+    const started = page.waitForResponse((response) => response.url().endsWith("/actions") && response.request().postDataJSON().action === "start_artwork");
+    await page.getByRole("button", { name: "领取并开始制作" }).click();
+    work = await (await started).json() as OrderWorkDetail;
+    projectId = work.line.editorProjectId!;
+    const project = await centerApi<ProductionEditorDetailView>(`production-editor/projects/${projectId}`);
+    expect(project.project.workSource?.workItemId).toBe(source.line.orderLineId);
+    expect(project.images.find((image) => image.name.includes("正面"))?.width).toBe(512);
     const editor = page.getByRole("region", { name: "当前任务生产作图" });
-    await editor.getByRole("combobox", { name: "产品类型", exact: true }).selectOption(productType);
-    await editor.getByLabel("新项目名称").fill(`E2E Inline draft ${suffix}`);
-    const created = page.waitForResponse((result) => result.url().endsWith("/api/production-editor/projects") && result.request().method() === "POST");
-    await editor.getByRole("button", { name: "创建生产草稿" }).click();
-    const createdResponse = await created; expect(createdResponse.ok()).toBe(true);
-    const project = await createdResponse.json() as ProductionEditorDetailView;
-    projectId = project.project.id;
-    expect(project.project.source).toEqual({ reportLineId: source.line.id, reportVersionId: source.versionId });
-    expect(project.images).toHaveLength(1);
-    expect(project.images[0]!.width).toBe(512); // Buyer original, not the one-pixel Amazon preview.
     if (productType === "tire_cover") await expect(editor.getByLabel("圆形直径（mm）")).toBeVisible();
     else {
-      expect(project.version.document.spec).toMatchObject({ declaredLongestMm: 254, sideMode: "single", barcodeTab: { widthMm: null, heightMm: null } });
+      expect(project.version.document.spec).toMatchObject({ declaredLongestMm: 254, sideMode: "single" });
       await expect(editor.getByRole("region", { name: "顾客制作要求" })).toContainText("仅保留完整头部");
       await expect(editor.getByRole("region", { name: "顾客制作要求" })).toContainText("10 英寸");
     }
     await expect(editor.locator("canvas.upper-canvas")).toBeVisible();
+    await editor.getByRole("textbox", { name: "图稿名称" }).fill(`E2E Operator draft ${suffix}`);
     await editor.getByRole("button", { name: "保存新版本", exact: true }).click();
     await expect(editor.getByRole("status")).toContainText("已保存版本");
-    await page.screenshot({ path: testInfo.outputPath("real-order-inline-draft.png"), fullPage: true });
-    await editor.getByRole("button", { name: "返回当前订单" }).click();
-    await expect(page.getByLabel("搜索订单、SKU 或商品")).toHaveValue(orderId);
-    await expect(row).toHaveAttribute("aria-pressed", "true");
-    let extraCreates = 0;
-    page.on("request", (request) => { if (request.url().endsWith("/api/production-editor/projects") && request.method() === "POST") extraCreates += 1; });
-    await page.getByRole("button", { name: "制作生产图", exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath("real-order-pushed-draft.png"), fullPage: true });
+    await editor.getByRole("button", { name: "返回制图任务" }).click();
+    await expect(page.getByRole("button", { name: "打开生产文件" })).toBeVisible();
+    await page.getByRole("button", { name: "打开生产文件" }).click();
     await expect(editor.getByRole("combobox", { name: "打开生产项目" })).toHaveValue(projectId);
-    await expect(editor.getByRole("textbox", { name: "图稿名称" })).toHaveValue(`E2E Inline draft ${suffix}`);
+    await expect(editor.getByRole("textbox", { name: "图稿名称" })).toHaveValue(`E2E Operator draft ${suffix}`);
     await expect(editor.getByRole("button", { name: "创建生产草稿" })).toHaveCount(0);
-    expect(extraCreates).toBe(0);
     if (productType === "shaped_pillow") {
-      await expect(editor.getByRole("region", { name: "顾客制作要求" })).toContainText("仅保留完整头部");
       await page.goto(`/pod-workbench/production-editor?projectId=${projectId}`);
-      // The standalone route must retain requirements even without a reportLineId prop.
       await expect(page.getByRole("region", { name: "顾客制作要求" })).toContainText("仅保留完整头部");
-      return;
+      await expect(page.getByRole("link", { name: "返回制图中心提交审核" })).toBeVisible();
     }
-    await editor.getByRole("button", { name: "返回当前订单" }).click();
   } finally {
-    if (projectId) expect((await apiFetch(`${api}/v1/production-editor/projects/${projectId}`, { method: "DELETE" })).ok).toBe(true);
+    // Pushed versions remain immutable audit evidence; only disable the synthetic shop.
     expect((await apiFetch(`${api}/v1/marketplace-accounts/${account.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) })).ok).toBe(true);
   }
 });

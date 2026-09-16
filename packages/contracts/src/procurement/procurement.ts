@@ -169,12 +169,14 @@ export const ProcurementStockItemViewSchema = z.object({
   code: CodeSchema,
   name: z.string(),
   baseUnit: ProcurementUnitSchema,
+  status: z.enum(["active", "inactive"]).optional(),
 });
 
 export const ProcurementLocationViewSchema = z.object({
   id: EntityIdSchema,
   code: CodeSchema,
   name: z.string(),
+  status: z.enum(["active", "inactive"]).optional(),
 });
 
 export const ProcurementRequisitionViewSchema = z.object({
@@ -216,6 +218,8 @@ export const InventoryPurchaseOrderViewSchema = z.object({
   supplierId: EntityIdSchema,
   requisitionId: EntityIdSchema.nullable(),
   quoteId: EntityIdSchema.nullable(),
+  sourceSupplyVersionId: EntityIdSchema.nullable().optional(),
+  purpose: z.enum(["general", "custom_order", "fba_replenishment"]).optional(),
   status: InventoryPurchaseOrderStatusSchema,
   currentVersion: z.number().int().positive(),
   currency: CurrencySchema,

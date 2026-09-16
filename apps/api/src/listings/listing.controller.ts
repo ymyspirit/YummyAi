@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import { CreateListingReplicationInputSchema } from "@yummyai/contracts";
 import type { ListingDraft, ListingPlatform } from "@yummyai/platform-rules";
@@ -41,7 +41,7 @@ export class ListingController {
 
   @Post(":id/versions")
   @RequiresPermission(Permission.ListingWrite)
-  save(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.saveVersion(context, z.uuidv7().parse(id), ListingDraftSchema.parse(body) as ListingDraft); }
+  save(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown, @Headers("if-match") expectedVersionId?: string) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.saveVersion(context, z.uuidv7().parse(id), ListingDraftSchema.parse(body) as ListingDraft, "human", z.uuidv7().optional().parse(expectedVersionId)); }
 
   @Post(":id/ai-versions")
   @RequiresPermission(Permission.ListingWrite)

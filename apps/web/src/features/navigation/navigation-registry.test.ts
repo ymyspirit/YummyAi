@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PodModuleKeySchema } from "@yummyai/contracts/pod";
+import { StudioToolSchema } from "@yummyai/contracts/pod/creative-studio";
 import { describe, expect, it } from "vitest";
 
 import { DIRECTORY_DESTINATION, FUNCTION_DESTINATIONS, PRIMARY_DESTINATIONS, resolveNavigationLocation, searchDestinations } from "./navigation-registry";
@@ -12,7 +13,11 @@ describe("navigation destinations", () => {
     const root = fileURLToPath(new URL("../../app/(erp)", import.meta.url));
     const destinations = [...FUNCTION_DESTINATIONS, DIRECTORY_DESTINATION];
     const paths = new Set(destinations.map((item) => new URL(item.href, "https://erp.local").pathname));
-    for (const path of paths) expect(existsSync(join(root, path, "page.tsx")), path).toBe(true);
+    for (const path of paths) {
+      const studio = /^\/creative-designs\/studio\/([^/]+)$/.exec(path);
+      if (studio) { expect(StudioToolSchema.safeParse(studio[1]).success).toBe(true); expect(existsSync(join(root, "creative-designs/studio/[tool]/page.tsx"))).toBe(true); }
+      else expect(existsSync(join(root, path, "page.tsx")), path).toBe(true);
+    }
     const redirects = ["/amazon-custom-sop", "/pod-workbench/batch-designs", "/orders/import"];
     for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
       const normalized = file.replaceAll("\\", "/");
@@ -44,7 +49,30 @@ describe("navigation destinations", () => {
   });
 
   it.each(PRIMARY_DESTINATIONS)("selects exactly the primary destination for $href", (item) => {
-    expect(resolveNavigationLocation(item.href).primaryId).toBe(item.id);
+    const location = resolveNavigationLocation(item.href);
+    expect(location.primaryId).toBe(item.id);
+    expect(location.breadcrumbs).toEqual(item.href === "/" ? [{ label: "运营总览" }] : [
+      { label: "运营总览", href: "/" },
+      { label: item.groupLabel, href: `/navigation?group=${item.groupId}` },
+      { label: item.label },
+    ]);
+  });
+
+  it.each([
+    ["/product-specifications", "spu", "商品 SPU", "SPU 详情"],
+    ["/product-development", "sku", "产品开发", "销售 SKU 详情"],
+  ])("includes query-selected details on %s and preserves the list state", (path, parameter, label, detailLabel) => {
+    const location = resolveNavigationLocation(path, `q=blanket&page=2&status=draft&${parameter}=private-record&queue=private-queue&form=1&editSpu=1&compose=1&specificationVersionId=private-spec&artworkVersionId=private-art`);
+    expect(location.detailKey).toBe(`${path}:private-record`);
+    expect(location.breadcrumbs).toEqual([
+      { label: "运营总览", href: "/" },
+      { label: "商品与刊登", href: "/navigation?group=catalog" },
+      { label, href: `${path}?q=blanket&page=2&status=draft` },
+      { label: detailLabel },
+    ]);
+    expect(JSON.stringify(location.breadcrumbs)).not.toContain("private-record");
+    expect(resolveNavigationLocation(path, "page=2&q=blanket&status=draft").breadcrumbs).toHaveLength(3);
+    expect(resolveNavigationLocation(path, `${parameter}=`).detailKey).toBeUndefined();
   });
 
   it("matches query values and detail boundaries without leaking record identifiers", () => {
@@ -52,11 +80,17 @@ describe("navigation destinations", () => {
     expect(pillow.primaryId).toBe("production-editor");
     expect(pillow.breadcrumbs).toEqual([
       { label: "运营总览", href: "/" },
+      { label: "创意设计", href: "/navigation?group=creative" },
       { label: "生产文件与底稿", href: "/pod-workbench/production-editor" }, { label: "异形抱枕生产图" },
     ]);
-    expect(resolveNavigationLocation("/orders", "workflowState=awaiting_shipment").current.label).toBe("待发货订单");
+    expect(resolveNavigationLocation("/shipments", "shipment=unshipped").current.label).toBe("待发货订单");
     expect(resolveNavigationLocation("/pod-workbench", "module=not-a-module").current.id).toBe("pod-workbench");
-    expect(resolveNavigationLocation("/listings/private-id").breadcrumbs).toContainEqual({ label: "刊登控制台", href: "/listings" });
+    expect(resolveNavigationLocation("/listings/private-id").breadcrumbs).toEqual([
+      { label: "运营总览", href: "/" },
+      { label: "商品与刊登", href: "/navigation?group=catalog" },
+      { label: "刊登控制台", href: "/listings" },
+      { label: "刊登编辑" },
+    ]);
     expect(JSON.stringify(resolveNavigationLocation("/analysis/private-id").breadcrumbs)).not.toContain("private-id");
     expect(resolveNavigationLocation("/orders-unknown").primaryId).toBeUndefined();
     expect(resolveNavigationLocation("/workflows/runs/private-id").primaryId).toBe("workflows");

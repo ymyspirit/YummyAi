@@ -13,7 +13,7 @@ export function pillowSubjectLongest(mask: PillowAlphaMask): number {
 
 /** Generate a draft cut boundary from the placed image's alpha, never its RGB background. */
 export function tracePillowOutline(mask: PillowAlphaMask, whiteBorderMm: number): ProductionEditorPoint[] {
-  const { width, height, alpha, mmPerPixel, originX, originY } = mask;
+  const { width, height, alpha, mmPerPixel } = mask;
   if (width < 3 || height < 3 || width * height > 1_200_000 || alpha.length !== width * height || !Number.isFinite(mmPerPixel) || mmPerPixel <= 0) throw new Error("图稿轮廓采样超限，请缩小图片后重试。");
   if (!alpha.some((value) => value >= 32)) throw new Error("图稿没有可识别的可见主体，请检查图片透明度。");
   // Two extra sample cells protect the subject against raster and simplification error.
@@ -31,10 +31,31 @@ export function tracePillowOutline(mask: PillowAlphaMask, whiteBorderMm: number)
     const column = squaredDistance(line.subarray(0, height));
     for (let y = 0; y < height; y++) expanded[y * width + x] = column[y]! <= radius * radius ? 1 : 0;
   }
-  const loops = boundaryLoops(expanded, width, height).filter((points) => polygonArea(points) > 0);
+  return tracePillowMask({ ...mask, alpha: expanded });
+}
+
+/** Trace a manufacturing mask, without writing to the source image. */
+export function tracePillowMask(mask: PillowAlphaMask, uniform?: { maxPoints: number; smoothing: number }): ProductionEditorPoint[] {
+  const { width, height, alpha, mmPerPixel, originX, originY } = mask;
+  const loops = boundaryLoops(alpha, width, height).filter((points) => polygonArea(points) > 0);
   if (loops.length !== 1) throw new Error("图稿有多个分离的主体，请手动连接轮廓，或调整主体间距后重新生成。");
   const loop = loops[0]!;
   if (loop.some(([x, y]) => x === 0 || y === 0 || x === width || y === height)) throw new Error("图稿轮廓超出采样边界，请缩小白边或图片后重试。");
+  if (uniform) {
+    // Even knot spacing prevents Catmull-Rom loops at a short segment next to a
+    // long segment. Each boundary edge is one sample cell long.
+    const count = Math.min(uniform.maxPoints, Math.max(32, Math.ceil(loop.length / 12)));
+    const knots = Array.from({ length: count }, (_, index) => {
+      const offset = index * loop.length / count, at = Math.floor(offset), t = offset - at;
+      const a = loop[at]!, b = loop[(at + 1) % loop.length]!;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] as Point;
+    });
+    return knots.map((point, index) => {
+      const previous = knots[(index + count - 1) % count]!, next = knots[(index + 1) % count]!;
+      const weight = uniform.smoothing;
+      return { xMm: originX + (previous[0] * weight + point[0] * (1 - 2 * weight) + next[0] * weight) * mmPerPixel, yMm: originY + (previous[1] * weight + point[1] * (1 - 2 * weight) + next[1] * weight) * mmPerPixel, smooth: true };
+    });
+  }
   // Split a closed ring at its farthest vertex. Final bounds are measured after smoothing.
   let farthest = 1;
   for (let i = 2; i < loop.length; i++) if (squaredLength(loop[0]!, loop[i]!) > squaredLength(loop[0]!, loop[farthest]!)) farthest = i;
@@ -87,7 +108,7 @@ export async function samplePillowImage(url: string, layer: ProductionEditorImag
   return { alpha, width, height, mmPerPixel, originX, originY };
 }
 
-function squaredDistance(values: Float64Array): Float64Array {
+export function squaredDistance(values: Float64Array): Float64Array {
   const length = values.length, result = new Float64Array(length), sites = new Int32Array(length), edges = new Float64Array(length + 1);
   let k = 0; sites[0] = 0; edges[0] = -Infinity; edges[1] = Infinity;
   for (let q = 1; q < length; q++) {

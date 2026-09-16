@@ -2,7 +2,7 @@ import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { createEntityId, type AmazonReportImportInput, type AmazonReportLineView, type RecordCustomizationFileScanInput, type TenantContext } from "@yummyai/contracts";
 import {
-  amazonOrderReportBatches, amazonOrderReportLines, amazonOrderReportVersions,
+  amazonOrderReportBatches, amazonOrderReportLines, amazonOrderReportVersions, amazonOrderReportReadModels,
   connectDatabase, marketplaceAccounts, migrateDatabase, orderLines, orderProtectedAccessEvents,
   orderProtectedDetails, orders, withTenant,
 } from "@yummyai/database";
@@ -27,7 +27,7 @@ function sourceUrl(row: SourceRow) { return row.url ?? `https://zme-caps.amazon.
 function tsv(rows: SourceRow[]) {
   return [tsvHeaders.join("\t"), ...rows.map((row) => [row.orderId, row.lineId, "2026-09-01T12:00:00Z", row.sku ?? "SYNTHETIC-SAME-SKU", "Synthetic custom product", String(row.quantity ?? 1), "USD", "29.99", row.custom ? sourceUrl(row) : "", "Synthetic Buyer", "Synthetic Recipient", "Synthetic Private Address", "Synthetic City", "CA", "00000", "US"].join("\t"))].join("\r\n");
 }
-async function customZip(row: SourceRow, value = "Synthetic buyer choice", overrides: Record<string, unknown> = {}, withPreview = true) {
+async function customZip(row: SourceRow, value = "Synthetic buyer choice", overrides: Record<string, unknown> = {}, withPreview = true, dimensions = { width: 16, height: 12 }) {
   const zip = new JSZip();
   const fixedDate = new Date("2026-09-01T12:00:00Z");
   const content = {
@@ -39,7 +39,7 @@ async function customZip(row: SourceRow, value = "Synthetic buyer choice", overr
     ...overrides,
   };
   zip.file("order.json", JSON.stringify(content), { date: fixedDate });
-  const picture = await sharp({ create: { width: 16, height: 12, channels: 3, background: "blue" } }).jpeg().toBuffer();
+  const picture = await sharp({ create: { ...dimensions, channels: 3, background: "blue" } }).jpeg().toBuffer();
   zip.file("buyer.jpg", picture, { date: fixedDate });
   if (withPreview) zip.file("preview.jpg", picture, { date: fixedDate });
   zip.file("layout.svg", '<svg xmlns="http://www.w3.org/2000/svg"><script>synthetic()</script></svg>', { date: fixedDate });
@@ -237,12 +237,70 @@ describe("manual Amazon order reports and private customization files", () => {
     expect(accesses.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("reads small encrypted summaries and thumbnails without decrypting or changing the source document", async () => {
+    const fixture = await importedLine();
+    const detail = await service.process(contextA, fixture.line.id, null, await customZip(fixture.row, "Synthetic buyer choice", {}, true, { width: 1200, height: 900 }));
+    const key = detail.surfaces[0].previewFileKey!;
+    const [before] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.id, detail.versionId!)));
+    const original = await service.file(contextA, fixture.line.id, key, detail.versionId!);
+    const decrypt = vi.spyOn(vault, "withSecret");
+    try {
+      const reviews = await service.reviewDetails(contextA, [fixture.line.id]);
+      expect(reviews[0]).toEqual(detail);
+      expect(JSON.stringify(reviews)).not.toContain("contentBase64");
+      const thumbnail = await service.file(contextA, fixture.line.id, key, detail.versionId!, true);
+      expect(await sharp(thumbnail.body).metadata()).toMatchObject({ width: 320, height: 240, format: "png" });
+      expect(thumbnail.body.byteLength).toBeLessThan(original.body.byteLength);
+      expect(decrypt.mock.calls.map(call => call[0])).not.toContain(before.encryptedDocument);
+      expect(decrypt.mock.calls.map(call => call[0])).not.toContain(before.encryptedArchive);
+    } finally { decrypt.mockRestore(); }
+    const [after] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.id, detail.versionId!)));
+    expect(after).toEqual(before);
+    expect((await service.file(contextA, fixture.line.id, key, detail.versionId!)).body).toEqual(original.body);
+    const [projection] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportReadModels).where(eq(amazonOrderReportReadModels.versionId, detail.versionId!)));
+    expect(projection.encryptedMetadata).toBeTruthy();
+    expect(projection.encryptedThumbnails).toBeTruthy();
+    expect(JSON.stringify(projection)).not.toContain("Synthetic buyer choice");
+    expect(JSON.stringify(projection)).not.toContain("contentBase64");
+  });
+
+  it("backfills an existing immutable version once and keeps its evidence unchanged", async () => {
+    const fixture = await importedLine();
+    const detail = await service.process(contextA, fixture.line.id, null);
+    // Insert a pre-migration version with no derived row; never rewrite an immutable payload.
+    const legacyId = createEntityId();
+    const legacy = await withTenant(database.db, contextA, async (tx) => {
+      const [source] = await tx.select().from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.id, detail.versionId!));
+      const [version] = await tx.insert(amazonOrderReportVersions).values({ ...source, id: legacyId, versionNumber: 2 }).returning();
+      await tx.update(amazonOrderReportLines).set({ currentVersionId: legacyId, versionNumber: 2 }).where(eq(amazonOrderReportLines.id, fixture.line.id));
+      return version;
+    });
+    const decrypt = vi.spyOn(vault, "withSecret");
+    try {
+      const first = await service.detail(contextA, fixture.line.id);
+      expect(first.versionId).toBe(legacyId);
+      expect(first.surfaces).toEqual(detail.surfaces);
+      expect(decrypt.mock.calls.filter(call => call[0] === legacy.encryptedDocument)).toHaveLength(1);
+      decrypt.mockClear();
+      expect(await service.detail(contextA, fixture.line.id)).toEqual(first);
+      await service.file(contextA, fixture.line.id, first.surfaces[0].previewFileKey!, legacyId, true);
+      expect(decrypt.mock.calls.map(call => call[0])).not.toContain(legacy.encryptedDocument);
+    } finally { decrypt.mockRestore(); }
+    const stored = await withTenant(database.db, contextA, async (tx) => ({
+      versions: await tx.select().from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.id, legacyId)),
+      projections: await tx.select().from(amazonOrderReportReadModels).where(eq(amazonOrderReportReadModels.versionId, legacyId)),
+    }));
+    expect(stored.versions).toEqual([legacy]);
+    expect(stored.projections).toHaveLength(1);
+  });
+
   it("rejects a stale version pinned file request after a newer ZIP is accepted", async () => {
     const fixture = await importedLine();
     const first = await service.process(contextA, fixture.line.id, null);
     const latest = await service.process(contextA, fixture.line.id, first.versionId!, await customZip(fixture.row, "Synthetic replacement"));
     expect(latest.versionId).not.toBe(first.versionId);
     await expect(service.file(contextA, fixture.line.id, first.surfaces[0].previewFileKey!, first.versionId!)).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.file(contextA, fixture.line.id, first.surfaces[0].previewFileKey!, first.versionId!, true)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.file(contextA, fixture.line.id, latest.surfaces[0].previewFileKey!, latest.versionId!)).resolves.toMatchObject({ mediaType: "image/png", inline: true });
   });
 
@@ -258,11 +316,14 @@ describe("manual Amazon order reports and private customization files", () => {
       idempotencyKey: `synthetic-erasure-${createEntityId()}`, reason: "Synthetic erasure request",
     });
     await expect(service.file(contextA, fixture.line.id, detail.surfaces[0].previewFileKey!, detail.versionId!)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.file(contextA, fixture.line.id, detail.surfaces[0].previewFileKey!, detail.versionId!, true)).rejects.toBeInstanceOf(NotFoundException);
     const erased = await service.detail(contextA, fixture.line.id);
     expect(erased.line).toMatchObject({ state: "expired", hasPreview: false });
     expect(erased.files).toEqual([]); expect(erased.surfaces).toEqual([]);
     const [version] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.id, detail.versionId!)));
     expect(version.encryptedArchive).toBeNull(); expect(version.encryptedDocument).toBeNull();
+    const [projection] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportReadModels).where(eq(amazonOrderReportReadModels.versionId, detail.versionId!)));
+    expect(projection).toMatchObject({ encryptedMetadata: null, encryptedThumbnails: null });
     await expect(service.process(contextA, fixture.line.id, detail.versionId!)).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -304,6 +365,8 @@ describe("manual Amazon order reports and private customization files", () => {
     await expect(service.workspace(contextB, { batchId: fixture.batch.id })).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.detail(contextB, fixture.line.id)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.file(contextB, fixture.line.id, detail.surfaces[0].previewFileKey!)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.file(contextB, fixture.line.id, detail.surfaces[0].previewFileKey!, detail.versionId!, true)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await withTenant(database.db, contextB, (tx) => tx.select().from(amazonOrderReportReadModels).where(eq(amazonOrderReportReadModels.versionId, detail.versionId!)))).toEqual([]);
     await expect(service.review(contextB, fixture.line.id, detail.versionId!)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.process(contextB, fixture.line.id, detail.versionId!)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.importReport(contextB, input([sourceRow()], accountA))).rejects.toBeInstanceOf(NotFoundException);
@@ -314,8 +377,10 @@ describe("manual Amazon order reports and private customization files", () => {
 
   it("requires PII permission for private details and every modifying action", async () => {
     const fixture = await importedLine();
+    const detail = await service.process(contextA, fixture.line.id, null);
     const restricted = { ...contextA, permissions: ["order:read", "order:write"] };
     await expect(service.detail(restricted, fixture.line.id)).rejects.toThrow();
+    await expect(service.file(restricted, fixture.line.id, detail.surfaces[0].previewFileKey!, detail.versionId!, true)).rejects.toThrow();
     await expect(service.process(restricted, fixture.line.id, null)).rejects.toThrow();
     await expect(service.importReport(restricted, input([sourceRow()]))).rejects.toThrow();
     const publicWorkspace = await service.workspace(restricted);
@@ -397,6 +462,7 @@ describe("manual Amazon order reports and private customization files", () => {
     expect(expired.line).toMatchObject({ state: "expired", hasPreview: false });
     expect(expired.files).toEqual([]); expect(expired.surfaces).toEqual([]);
     await expect(service.file(contextA, fixture.line.id, detail.surfaces[0].previewFileKey!)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.file(contextA, fixture.line.id, detail.surfaces[0].previewFileKey!, detail.versionId!, true)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.process(contextA, fixture.line.id, detail.versionId!)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.review(contextA, fixture.line.id, detail.versionId!)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.importReport(contextA, input([fixture.row]))).rejects.toBeInstanceOf(ConflictException);
@@ -409,6 +475,8 @@ describe("manual Amazon order reports and private customization files", () => {
     }));
     expect(stored.batch.encryptedReport).toBeNull(); expect(stored.line.encryptedSource).toBeNull();
     expect(stored.version.encryptedDocument).toBeNull(); expect(stored.version.encryptedArchive).toBeNull();
+    const [projection] = await withTenant(database.db, contextA, (tx) => tx.select().from(amazonOrderReportReadModels).where(eq(amazonOrderReportReadModels.versionId, detail.versionId!)));
+    expect(projection).toMatchObject({ encryptedMetadata: null, encryptedThumbnails: null });
     expect(stored.details.encryptedEnvelope).toBeNull();
     expect((await orderService.get(contextA, fixture.line.orderId)).address.status).toBe("anonymized");
     } finally { vi.useRealTimers(); }

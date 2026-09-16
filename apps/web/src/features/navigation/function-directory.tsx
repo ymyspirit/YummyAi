@@ -14,9 +14,9 @@ const quickTasks: Record<string, { icon: typeof FileUp; hint: string }> = {
   "orders-shipment": { icon: Truck, hint: "发货安排" },
 };
 
-export function FunctionDirectory() {
+export function FunctionDirectory({ initialGroup = "commerce" }: { initialGroup?: NavigationGroupId }) {
   const [query, setQuery] = useState("");
-  const [selectedGroup, setSelectedGroup] = useState<NavigationGroupId | "all">("commerce");
+  const [selectedGroup, setSelectedGroup] = useState<NavigationGroupId | "all">(initialGroup);
   const filtered = query.trim().length > 0;
   // Search spans every category, regardless of the current category selection.
   const matches = searchDestinations(query).filter((item) => filtered || selectedGroup === "all" || item.groupId === selectedGroup);

@@ -1,5 +1,29 @@
 # Local development
 
+The ERP creative pages use an isolated canvas runtime on loopback port 4176.
+`pnpm start:local` and the Web dev launcher build/start it; `pnpm studio:start`
+runs it separately. The legacy canvas on 4175 remains available for ZIP export.
+See [creative studio integration](../integration/creative-studio.md) for model
+credentials, supported protocols, persistence and recovery.
+Model configuration reuses the pinned runtime on this same port. Use
+`pnpm canvas:check-upstream` for a read-only release check; upgrades follow the
+[candidate and rollback runbook](creative-studio-upgrades.md).
+
+The eight ERP AI assistants (creative, order, artwork, PSD, SKU package,
+business, procurement and after-sales) also need
+the Worker and Redis; when using `dev:lite`, start `pnpm dev:worker` separately.
+Configure their models in `/settings/ai`; see [AI assistance](../integration/ai-assists.md)
+for migration, retention, budget and task recovery details.
+
+The third-batch browser suite owns an isolated read-only transport fixture for
+synthetic finance/procurement data, using ports 3311 (fixture), 8000 (API) and
+3100 (Web). Stop the active dev server first, then run
+`pnpm exec playwright test --config apps/web/playwright.ai-business.config.ts`.
+It uses actual ERP routes and mocked analysis transport; it never writes business
+records or calls a provider. Tenant-backed behavior is covered separately by
+`apps/api/src/ai/assist.integration.test.ts`. Run the original assistant browser
+regressions with `pnpm exec playwright test --config apps/web/playwright.config.ts ai-assist.spec.ts`.
+
 ## Prerequisites
 
 - Node.js 24.17.x and pnpm 11.10.x

@@ -24,6 +24,7 @@ export const ProductionEditorConfirmationsSchema = z.object({
 }).strict();
 const BaseDocument = z.object({
   schemaVersion: z.literal(1), name: z.string().trim().min(1).max(160),
+  exportBackground: z.enum(["transparent", "white"]).optional(),
   layers: z.array(ProductionEditorLayerSchema).max(100),
   confirmations: ProductionEditorConfirmationsSchema,
 }).strict();
@@ -34,8 +35,12 @@ export const ShapedPillowDocumentSchema = BaseDocument.extend({
     widthMm: SizeMm, heightMm: SizeMm, dpi: z.literal(150), sideMode: z.enum(["single", "double"]),
     declaredLongestMm: SizeMm.nullable(), sizeBasis: z.enum(["unconfirmed", "artwork", "cut_contour", "finished"]),
     whiteBorderMm: z.number().min(0).max(200), cutLineMm: z.number().positive().max(10),
+    /** No clipping keeps the source artwork independent of the cutting path. Omitted legacy versions retain the white-border inset mask. */
+    artworkClipMode: z.enum(["white_border", "none"]).optional(),
     minimumNeckMm: z.number().positive().max(500), minimumNeckBasis: z.enum(["unconfirmed", "cut_contour", "finished"]),
     panelGapMm: z.number().min(0).max(500),
+    /** Clear sheet margin outside the cut stroke; when present panelGapMm is also a clear stroke-to-stroke gap. Omitted legacy versions keep their original layout. */
+    sheetMarginMm: z.number().min(0).max(500).optional(),
     barcodeTab: z.object({ widthMm: SizeMm.nullable(), heightMm: SizeMm.nullable(), centerXMm: Mm }).strict(),
   }).strict(),
   /** Closed body contour BEFORE barcode tab. Final cut boundary, not photo alpha tracing. */
@@ -57,7 +62,11 @@ export const ProductionEditorDocumentSchema = z.discriminatedUnion("productType"
     if (layer.kind === "text" && layer.arc && layer.arc.endAngleDeg <= layer.arc.startAngleDeg) ctx.addIssue({ code: "custom", path: ["layers", index, "arc"], message: "Arc end must be greater than start" });
   }
 });
-export const ProductionEditorExportOptionsSchema = z.object({ format: z.enum(["png", "jpeg", "tiff"]), background: z.enum(["transparent", "white"]), purpose: z.enum(["preview", "production"]) }).strict();
+export const ProductionEditorExportOptionsSchema = z.object({
+  format: z.enum(["png", "jpeg", "tiff"]), background: z.enum(["transparent", "white"]), purpose: z.enum(["preview", "production"]),
+  /** Full-size proof retains draft status and never grants production approval. */
+  previewFullResolution: z.boolean().optional(),
+}).strict();
 export const ProductionEditorPreflightIssueSchema = z.object({ code: Key, severity: z.enum(["error", "warning", "manual"]), message: z.string().min(1).max(500), layerId: Key.optional() }).strict();
 export const ProductionEditorPreflightSchema = z.object({ productionReady: z.boolean(), widthPx: z.int().positive(), heightPx: z.int().positive(), issues: z.array(ProductionEditorPreflightIssueSchema) }).strict();
 

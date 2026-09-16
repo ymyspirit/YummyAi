@@ -24,7 +24,7 @@ export default async function StoresPage({
           <div>
             <p className="kicker">MARKETPLACE / CONNECTION CONTROL</p>
             <h1>店铺运营</h1>
-            <p>先在台账中识别授权、能力新鲜度与发布异常，再进入单店处理连接设置。</p>
+            <p>建立店铺档案，归集订单；在单店详情管理平台连接与授权状态。</p>
           </div>
           <span><ShieldCheck size={18} />TENANT ISOLATED</span>
         </header>

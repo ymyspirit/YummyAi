@@ -656,6 +656,10 @@ export {
 } from "./order/shipment.js";
 export {
   CreateFulfillmentSupplierInputSchema,
+  UpdateFulfillmentSupplierInputSchema,
+  FulfillmentSupplierViewSchema,
+  type UpdateFulfillmentSupplierInput,
+  type FulfillmentSupplierView,
   CreateRoutingPolicyInputSchema,
   CreateSupplierCapacityWindowInputSchema,
   CreateSupplierCapabilitySnapshotInputSchema,
@@ -822,3 +826,4 @@ export {
 export * from "./pod/production-editor.js";
 export * from "./pod/production-editor-api.js";
 export * from "./pod/production-cutout.js";
+export * from "./order/workspace.js";

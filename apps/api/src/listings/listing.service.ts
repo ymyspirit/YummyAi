@@ -6,9 +6,9 @@ import {
   type ListingReplicationView,
   type TenantContext,
 } from "@yummyai/contracts";
-import { listingReplications, listingVersions, listings, spus, type DatabaseConnection, withTenant } from "@yummyai/database";
+import { listingReplications, listingVersions, listings, spus, type DatabaseConnection, type TenantTransaction, withTenant } from "@yummyai/database";
 import { amazonRules, etsyRules, validateListing, type ListingDraft, type ListingPlatform, type ListingValidation } from "@yummyai/platform-rules";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { DATABASE_CONNECTION, LISTING_REPOSITORY, MARKETPLACE_AUTOMATION_DISPATCHER, REVIEW_APPROVAL_INVALIDATOR } from "../platform.tokens.js";
@@ -70,16 +70,17 @@ export const ListingDraftSchema = z.object({
   attributes: z.record(z.string(), scalar), compliance: z.record(z.string(), scalar),
   publication: publication.optional(),
   aPlusModules: z.array(z.object({ type: z.string(), assetIds: z.array(z.string()), headline: z.string().optional() })).optional(),
+  mediaDescriptions: z.record(z.uuidv7(), z.string().max(500)).optional(),
   personalization: z.object({
     enabled: z.boolean(),
     instructions: z.string().optional(),
     required: z.boolean().optional(),
     maxAllowedCharacters: z.number().int().min(1).max(1_024).optional(),
   }).optional(),
-});
+}).refine((draft) => Object.keys(draft.mediaDescriptions ?? {}).every((id) => draft.mediaAssetIds.includes(id)), { message: "图片说明必须关联当前媒体" });
 
 export interface ListingRecord {
-  id: string; tenantId: string; spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string;
+  id: string; tenantId: string; spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId?: string; locale: string;
   status: "draft" | "in_review" | "approved" | "archived"; primaryVersionId?: string;
 }
 
@@ -126,15 +127,15 @@ export interface ListingCatalogItem {
 }
 
 export interface ListingRepository {
-  create(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }): Promise<{ listing: ListingRecord; version: ListingVersionRecord }>;
+  create(context: TenantContext, input: { spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }): Promise<{ listing: ListingRecord; version: ListingVersionRecord }>;
   get(context: TenantContext, id: string): Promise<ListingRecord | undefined>;
   list(context: TenantContext): Promise<ListingRecord[]>;
   listCatalog(context: TenantContext): Promise<ListingCatalogItem[]>;
   listVersions(context: TenantContext, listingId: string): Promise<ListingVersionRecord[]>;
-  createVersion(context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai" }): Promise<ListingVersionRecord>;
+  createVersion(context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai"; expectedVersionId?: string }): Promise<ListingVersionRecord>;
   approveVersion(context: TenantContext, listingId: string, versionId: string): Promise<ListingVersionRecord>;
-  findChannel(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId: string; locale: string }): Promise<ListingRecord | undefined>;
-  createReplica(context: TenantContext, input: { sourceListingId: string; sourceVersionId: string; spuId: string; platform: ListingPlatform; targetMarketplaceId: string; targetLocale: string; overrides: CreateListingReplicationInput["overrides"]; content: ListingDraft; validation: ListingValidation; ruleVersion: string }): Promise<ListingReplicationView>;
+  findChannel(context: TenantContext, input: { spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId: string; locale: string }): Promise<ListingRecord | undefined>;
+  createReplica(context: TenantContext, input: { sourceListingId: string; sourceVersionId: string; spuId: string; styleId?: string; platform: ListingPlatform; targetMarketplaceId: string; targetLocale: string; overrides: CreateListingReplicationInput["overrides"]; content: ListingDraft; validation: ListingValidation; ruleVersion: string }): Promise<ListingReplicationView>;
   listReplications(context: TenantContext, listingId: string): Promise<ListingReplicationView[]>;
 }
 
@@ -146,11 +147,19 @@ export class ListingService {
     @Optional() @Inject(MARKETPLACE_AUTOMATION_DISPATCHER) private readonly automationDispatcher?: MarketplaceAutomationDispatcher,
   ) {}
 
-  async create(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft }) {
+  async create(context: TenantContext, input: { spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft }) {
     const content = ListingDraftSchema.parse(input.content) as ListingDraft;
     assertChannel(input.platform, input.locale, content);
     const rules = rulesFor(input.platform);
     return this.repository.create(context, { ...input, content, validation: validateListing(rules, content), ruleVersion: rules.version });
+  }
+
+  async createDevelopmentDraft(tx:TenantTransaction,context:TenantContext,input:{spuId:string;styleId:string;platform:ListingPlatform;marketplaceId:string;locale:string;content:ListingDraft}) {
+    const content=ListingDraftSchema.parse(input.content) as ListingDraft; assertChannel(input.platform,input.locale,content);
+    const rules=rulesFor(input.platform),id=createEntityId(),versionId=createEntityId();
+    await tx.insert(listings).values({id,tenantId:context.tenantId,spuId:input.spuId,styleId:input.styleId,platform:input.platform,marketplaceId:input.marketplaceId,locale:input.locale,createdBy:context.userId});
+    await tx.insert(listingVersions).values({id:versionId,tenantId:context.tenantId,listingId:id,versionNumber:1,ruleVersion:rules.version,content,validation:validateListing(rules,content),createdBy:context.userId});
+    return {listingId:id,listingVersionId:versionId};
   }
 
   list(context: TenantContext) { return this.repository.list(context); }
@@ -188,13 +197,13 @@ export class ListingService {
     return { listing, version, history };
   }
 
-  async saveVersion(context: TenantContext, listingId: string, rawContent: ListingDraft, source: "human" | "ai" = "human") {
+  async saveVersion(context: TenantContext, listingId: string, rawContent: ListingDraft, source: "human" | "ai" = "human", expectedVersionId?: string) {
     const listing = await this.repository.get(context, listingId);
     if (!listing) throw new NotFoundException("Listing not found");
     const content = ListingDraftSchema.parse(rawContent) as ListingDraft;
     assertChannel(listing.platform, listing.locale, content);
     const rules = rulesFor(listing.platform);
-    const version = await this.repository.createVersion(context, listingId, { content, validation: validateListing(rules, content), ruleVersion: rules.version, source });
+    const version = await this.repository.createVersion(context, listingId, { content, validation: validateListing(rules, content), ruleVersion: rules.version, source, ...(expectedVersionId ? { expectedVersionId } : {}) });
     await this.approvalInvalidator?.invalidateListingApprovals(context, listingId, version.id);
     return version;
   }
@@ -224,7 +233,7 @@ export class ListingService {
       throw new ConflictException("Only the current approved Listing version can be replicated");
     }
     const existing = await this.repository.findChannel(context, {
-      spuId: listing.spuId,
+      spuId: listing.spuId, styleId: listing.styleId,
       platform: listing.platform,
       marketplaceId: input.targetMarketplaceId,
       locale: input.targetLocale,
@@ -242,7 +251,7 @@ export class ListingService {
     return this.repository.createReplica(context, {
       sourceListingId: listing.id,
       sourceVersionId: source.id,
-      spuId: listing.spuId,
+      spuId: listing.spuId, styleId: listing.styleId,
       platform: listing.platform,
       targetMarketplaceId: input.targetMarketplaceId,
       targetLocale: input.targetLocale,
@@ -262,10 +271,10 @@ export class ListingService {
 export class DrizzleListingRepository implements ListingRepository {
   constructor(@Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection) {}
 
-  async create(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
+  async create(context: TenantContext, input: { spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId?: string; locale: string; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
     const listingId = createEntityId(); const versionId = createEntityId();
     await withTenant(this.database.db, context, async (tx) => {
-      await tx.insert(listings).values({ id: listingId, tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.marketplaceId, locale: input.locale, createdBy: context.userId });
+      await tx.insert(listings).values({ id: listingId, tenantId: context.tenantId, spuId: input.spuId, styleId: input.styleId, platform: input.platform, marketplaceId: input.marketplaceId, locale: input.locale, createdBy: context.userId });
       await tx.insert(listingVersions).values({ id: versionId, tenantId: context.tenantId, listingId, versionNumber: 1, ruleVersion: input.ruleVersion, content: input.content, validation: input.validation, createdBy: context.userId });
     });
     return { listing: (await this.get(context, listingId))!, version: (await this.getVersion(context, versionId))! };
@@ -333,10 +342,14 @@ export class DrizzleListingRepository implements ListingRepository {
     return rows.map(mapVersion);
   }
 
-  async createVersion(context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai" }) {
+  async createVersion(context: TenantContext, listingId: string, input: { content: ListingDraft; validation: ListingValidation; ruleVersion: string; source: "human" | "ai"; expectedVersionId?: string }) {
     const id = createEntityId();
     await withTenant(this.database.db, context, async (tx) => {
-      const [latest] = await tx.select({ number: listingVersions.versionNumber }).from(listingVersions).where(eq(listingVersions.listingId, listingId)).orderBy(desc(listingVersions.versionNumber)).limit(1);
+      const [listing] = await tx.select({ status: listings.status }).from(listings).where(eq(listings.id, listingId)).for("update");
+      if (!listing) throw new NotFoundException("Listing not found");
+      if (listing.status === "archived") throw new ConflictException("Listing 已归档");
+      const [latest] = await tx.select({ id: listingVersions.id, number: listingVersions.versionNumber }).from(listingVersions).where(eq(listingVersions.listingId, listingId)).orderBy(desc(listingVersions.versionNumber)).limit(1);
+      if (input.expectedVersionId && latest?.id !== input.expectedVersionId) throw new ConflictException("Listing 已有新版本，请刷新后合并改动再保存");
       await tx.insert(listingVersions).values({ id, tenantId: context.tenantId, listingId, versionNumber: (latest?.number ?? 0) + 1, ruleVersion: input.ruleVersion, content: input.content, validation: input.validation, source: input.source, createdBy: context.userId });
       await tx.update(listings).set({ status: "draft", updatedAt: new Date() }).where(eq(listings.id, listingId));
     });
@@ -351,9 +364,9 @@ export class DrizzleListingRepository implements ListingRepository {
     return (await this.getVersion(context, versionId))!;
   }
 
-  async findChannel(context: TenantContext, input: { spuId: string; platform: ListingPlatform; marketplaceId: string; locale: string }) {
+  async findChannel(context: TenantContext, input: { spuId: string; styleId?: string; platform: ListingPlatform; marketplaceId: string; locale: string }) {
     const [row] = await withTenant(this.database.db, context, (tx) => tx.select().from(listings).where(and(
-      eq(listings.spuId, input.spuId),
+      eq(listings.spuId, input.spuId), input.styleId ? eq(listings.styleId,input.styleId) : isNull(listings.styleId),
       eq(listings.platform, input.platform),
       eq(listings.marketplaceId, input.marketplaceId),
       eq(listings.locale, input.locale),
@@ -361,12 +374,12 @@ export class DrizzleListingRepository implements ListingRepository {
     return row ? mapListing(row) : undefined;
   }
 
-  async createReplica(context: TenantContext, input: { sourceListingId: string; sourceVersionId: string; spuId: string; platform: ListingPlatform; targetMarketplaceId: string; targetLocale: string; overrides: CreateListingReplicationInput["overrides"]; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
+  async createReplica(context: TenantContext, input: { sourceListingId: string; sourceVersionId: string; spuId: string; styleId?: string; platform: ListingPlatform; targetMarketplaceId: string; targetLocale: string; overrides: CreateListingReplicationInput["overrides"]; content: ListingDraft; validation: ListingValidation; ruleVersion: string }) {
     const replicationId = createEntityId();
     const targetListingId = createEntityId();
     const targetVersionId = createEntityId();
     await withTenant(this.database.db, context, async (tx) => {
-      await tx.insert(listings).values({ id: targetListingId, tenantId: context.tenantId, spuId: input.spuId, platform: input.platform, marketplaceId: input.targetMarketplaceId, locale: input.targetLocale, status: "draft", createdBy: context.userId });
+      await tx.insert(listings).values({ id: targetListingId, tenantId: context.tenantId, spuId: input.spuId, styleId: input.styleId, platform: input.platform, marketplaceId: input.targetMarketplaceId, locale: input.targetLocale, status: "draft", createdBy: context.userId });
       await tx.insert(listingVersions).values({ id: targetVersionId, tenantId: context.tenantId, listingId: targetListingId, versionNumber: 1, ruleVersion: input.ruleVersion, status: "draft", source: "human", content: input.content, validation: input.validation, createdBy: context.userId });
       await tx.insert(listingReplications).values({ id: replicationId, tenantId: context.tenantId, sourceListingId: input.sourceListingId, sourceVersionId: input.sourceVersionId, targetListingId, targetVersionId, platform: input.platform, targetMarketplaceId: input.targetMarketplaceId, targetLocale: input.targetLocale, overrides: input.overrides, createdBy: context.userId });
     });
@@ -391,7 +404,7 @@ function assertChannel(platform: ListingPlatform, locale: string, content: Listi
     throw new Error("Listing content and publication settings must match its platform and locale");
   }
 }
-function mapListing(row: typeof listings.$inferSelect): ListingRecord { return { id: row.id, tenantId: row.tenantId, spuId: row.spuId, platform: row.platform as ListingPlatform, marketplaceId: row.marketplaceId ?? undefined, locale: row.locale, status: row.status as ListingRecord["status"], primaryVersionId: row.primaryVersionId ?? undefined }; }
+function mapListing(row: typeof listings.$inferSelect): ListingRecord { return { id: row.id, tenantId: row.tenantId, spuId: row.spuId, styleId: row.styleId ?? undefined, platform: row.platform as ListingPlatform, marketplaceId: row.marketplaceId ?? undefined, locale: row.locale, status: row.status as ListingRecord["status"], primaryVersionId: row.primaryVersionId ?? undefined }; }
 function mapVersion(row: typeof listingVersions.$inferSelect): ListingVersionRecord { return { id: row.id, tenantId: row.tenantId, listingId: row.listingId, versionNumber: row.versionNumber, ruleVersion: row.ruleVersion, status: row.status as ListingVersionRecord["status"], source: row.source as ListingVersionRecord["source"], content: row.content, validation: row.validation, createdAt: row.createdAt }; }
 function mapReplication(row: typeof listingReplications.$inferSelect): ListingReplicationView { return ListingReplicationViewSchema.parse({ id: row.id, sourceListingId: row.sourceListingId, sourceVersionId: row.sourceVersionId, targetListingId: row.targetListingId, targetVersionId: row.targetVersionId, platform: row.platform, targetMarketplaceId: row.targetMarketplaceId, targetLocale: row.targetLocale, overrides: row.overrides, createdBy: row.createdBy, createdAt: row.createdAt.toISOString() }); }
 function compareCatalogItems(left: ListingCatalogItem, right: ListingCatalogItem, sort: ListingCatalogQuery["sort"], direction: ListingCatalogQuery["direction"]) {

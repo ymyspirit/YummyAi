@@ -22,7 +22,7 @@ export function briefOperations(brief: CanvasBrief, anchor: CanvasNodeData, exis
   }
   const promptId = `yummyai-${brief.id}-prompt`;
   if (!occupied.has(promptId)) {
-    ops.push({ type: "add_node", id: promptId, nodeType: "text", title: brief.name, position: { x: left, y: top }, width: 420, height: 280, metadata: { content: brief.prompt + (brief.negativePrompt ? `\n\n避免：${brief.negativePrompt}` : ""), yummyai: { schemaVersion: 1, briefId: brief.id, role: "brief" } } });
+    ops.push({ type: "add_node", id: promptId, nodeType: "text", title: brief.name, position: { x: left, y: top }, width: 420, height: 280, metadata: { content: brief.designInstructions ?? (brief.prompt + (brief.negativePrompt ? `\n\n避免：${brief.negativePrompt}` : "")), yummyai: { schemaVersion: 1, briefId: brief.id, role: "brief" } } });
     ops.push({ type: "connect_nodes", fromNodeId: workflow ? `yummyai-${brief.id}-step-${workflow.stepIndex}` : anchor.id, toNodeId: promptId });
   }
   assets.forEach((asset, index) => {

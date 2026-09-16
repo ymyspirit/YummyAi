@@ -22,7 +22,7 @@ export interface OpenAiCompatibleProviderConfig {
   providerId: string;
   apiKey: string;
   endpoint: string;
-  pricing: ProviderPricing;
+  pricing: ProviderPricing | null;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -38,6 +38,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   async generate<T>(request: ResolvedModelRequest<T>, signal: AbortSignal): Promise<ModelResult<T>> {
     const response = await this.request(normalizeEndpoint(this.config.endpoint, "/v1/chat/completions"), {
       method: "POST",
+      redirect: "error",
       signal,
       headers: {
         authorization: `Bearer ${this.config.apiKey}`,
@@ -45,10 +46,15 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       },
       body: JSON.stringify({
         model: request.providerModel,
-        max_tokens: request.maxOutputTokens ?? 1_024,
+        ...(/^(gpt-[5-9]|o[1-9])/.test(request.providerModel)
+          ? { max_completion_tokens: request.maxOutputTokens ?? 1_024 }
+          : { max_tokens: request.maxOutputTokens ?? 1_024 }),
         messages: [
           { role: "system", content: request.systemInstructions },
-          { role: "user", content: untrustedUserMessage(request.untrustedSourceData) },
+          { role: "user", content: request.images?.length ? [
+            { type: "text", text: untrustedUserMessage(request.untrustedSourceData) },
+            ...request.images.flatMap(image => [{ type: "text", text: `Evidence image: ${image.sourceId}` }, { type: "image_url", image_url: { url: image.dataUrl, detail: "auto" } }]),
+          ] : untrustedUserMessage(request.untrustedSourceData) },
         ],
         response_format: {
           type: "json_schema",
@@ -74,29 +80,30 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       value,
       inputTokens,
       outputTokens,
-      costUsd: calculateCostUsd(
+      usageReported: typeof payload.usage?.prompt_tokens === "number" && typeof payload.usage?.completion_tokens === "number",
+      costUsd: this.config.pricing ? calculateCostUsd(
         inputTokens,
         outputTokens,
         this.config.pricing.inputUsdPerMillion,
         this.config.pricing.outputUsdPerMillion,
-      ),
+      ) : null,
       providerRequestId: response.headers.get("x-request-id") ?? payload.id,
       completedAt: new Date(),
     };
   }
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
-    const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData);
+    const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData) + (request.images?.length ?? 0) * 4096;
     const maxOutputTokens = request.maxOutputTokens ?? 1_024;
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: calculateCostUsd(
+      costUsd: this.config.pricing ? calculateCostUsd(
         estimatedInputTokens,
         maxOutputTokens,
         this.config.pricing.inputUsdPerMillion,
         this.config.pricing.outputUsdPerMillion,
-      ),
+      ) : null,
     };
   }
 

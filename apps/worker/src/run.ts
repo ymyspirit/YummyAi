@@ -9,6 +9,8 @@ import {
 import { createStorageFromEnvironment } from "@yummyai/storage";
 
 import { createWorker } from "./main.js";
+import { StudioGenerationProcessor } from "./processors/studio-generation.processor.js";
+import { AiAssistProcessor } from "./processors/ai-assist.processor.js";
 import {
   DrizzleListingSyncExecutionRepository,
   MarketplaceListingSyncProcessor,
@@ -62,6 +64,10 @@ import {
 
 const database = connectDatabase();
 const storage = createStorageFromEnvironment();
+const aiAssistProcessor = new AiAssistProcessor(database, createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:model-config"), createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:ai-assist"));
+const aiAssistWorker = createWorker(QueueName.AiAssist, envelope => aiAssistProcessor.process(envelope));
+const studioGenerationProcessor = new StudioGenerationProcessor(database, storage, createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:model-config"));
+const studioGenerationWorker = createWorker(QueueName.StudioGeneration, envelope => studioGenerationProcessor.process(envelope));
 const publicationRepository = new DrizzlePublicationExecutionRepository(
   database,
   createMarketplaceSecretVault(),
@@ -116,7 +122,7 @@ const fulfillmentAutomationProcessor = new FulfillmentAutomationProcessor(new Dr
 const fulfillmentAutomationWorker = createWorker(QueueName.FulfillmentAutomation, (envelope) => fulfillmentAutomationProcessor.process(envelope));
 const amazonOrderReportRetentionProcessor = new AmazonOrderReportRetentionProcessor(new DrizzleAmazonOrderReportRetentionRepository(database));
 const amazonOrderReportRetentionWorker = createWorker(QueueName.AmazonOrderReportRetention, (envelope) => amazonOrderReportRetentionProcessor.process(envelope));
-const productionEditorProcessor = new ProductionEditorRenderProcessor(database, storage, createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"));
+const productionEditorProcessor = new ProductionEditorRenderProcessor(database, storage, createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"), createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:model-config"));
 const productionEditorWorker = createWorker(QueueName.ProductionEditorRender, (envelope) => productionEditorProcessor.process(envelope));
 const webhookDeliveryProcessor = new WebhookDeliveryProcessor(new DrizzleWebhookDeliveryRepository(database, createEnvironmentSecretVault("INTEGRATION_SECRET_ENCRYPTION_KEY", "yummyai-integration-v1")), new HttpWebhookGateway());
 const webhookDeliveryWorker = createWorker(QueueName.WebhookDelivery, (envelope) => webhookDeliveryProcessor.process(envelope));
@@ -225,6 +231,8 @@ mockupRenderWorker?.on("completed", (job) => { process.stdout.write(`Mockup rend
 mockupRenderWorker?.on("failed", (job, error) => { process.stderr.write(`Mockup render failed: ${job?.id ?? "unknown"} (${error.name})\n`); });
 
 async function shutdown() {
+  await studioGenerationWorker.close();
+  await aiAssistWorker.close();
   await worker.close();
   await listingSyncWorker.close();
   await publicationReconciliationWorker.close();

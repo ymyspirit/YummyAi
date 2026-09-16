@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   CancelInventoryTransferInputSchema,
@@ -15,6 +15,7 @@ import {
   ReleaseInventoryReservationInputSchema,
 } from "@yummyai/contracts";
 import { z } from "zod";
+import { UpdateWarehouseInputSchema, UpdateInventoryLocationInputSchema, UpdateStockItemInputSchema } from "@yummyai/contracts/inventory";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
@@ -86,6 +87,27 @@ export class InventoryController {
     const context = requireContext(request);
     authorize(context, Permission.InventoryRead);
     return this.service.listLots(context);
+  }
+
+  @Patch("warehouses/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateWarehouse(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateWarehouse(context, z.uuidv7().parse(id), UpdateWarehouseInputSchema.parse(body));
+  }
+
+  @Patch("locations/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateLocation(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateLocation(context, z.uuidv7().parse(id), UpdateInventoryLocationInputSchema.parse(body));
+  }
+
+  @Patch("stock-items/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateStockItem(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateStockItem(context, z.uuidv7().parse(id), UpdateStockItemInputSchema.parse(body));
   }
 
   @Post("lots")

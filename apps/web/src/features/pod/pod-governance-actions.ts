@@ -179,6 +179,7 @@ export async function confirmTemplateSourceInspection(
     fillMode: value(formData, `slot.${index}.fillMode`),
     replaceable: formData.has(`slot.${index}.replaceable`),
     reuseLabel: value(formData, `slot.${index}.reuseLabel`) || undefined,
+    suggestedFieldKey: value(formData, `slot.${index}.suggestedFieldKey`) || undefined,
   }));
   const parsed = ConfirmTemplateSourceInspectionInputSchema.safeParse({
     name: value(formData, "name"),

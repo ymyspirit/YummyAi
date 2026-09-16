@@ -136,6 +136,7 @@ export const ConfirmTemplateSourceInspectionSlotInputSchema = z.object({
   fillMode: z.enum(["contain", "cover", "stretch", "tile", "none"]),
   replaceable: z.boolean(),
   reuseLabel: z.string().trim().min(1).max(120).optional(),
+  suggestedFieldKey: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).optional(),
 }).strict();
 
 export const ConfirmTemplateSourceInspectionInputSchema = z.object({

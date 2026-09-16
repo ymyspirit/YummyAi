@@ -6,8 +6,13 @@
     "node": ">=24.17 <25"
   },
   "scripts": {
+    "canvas:verify-upstream": "node tools/scripts/canvas-upstream.mjs verify",
+    "canvas:check-upstream": "node tools/scripts/canvas-upstream.mjs check",
+    "canvas:compare-upstream": "node tools/scripts/canvas-upstream.mjs compare",
+    "canvas:record-upstream": "node tools/scripts/canvas-upstream.mjs record",
     "canvas:build": "node tools/scripts/build-canvas-plugin.mjs",
     "canvas:start": "docker compose -f infra/infinite-canvas.compose.yml up -d",
+    "studio:start": "node --env-file-if-exists=.env tools/scripts/serve-canvas-runtime.mjs",
     "start:local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools/scripts/start-local.ps1",
     "dev": "node --env-file=.env node_modules/turbo/bin/turbo dev",
     "dev:lite": "node --env-file=.env node_modules/turbo/bin/turbo dev --filter=@yummyai/api --filter=@yummyai/web",
@@ -29,7 +34,7 @@
     "typecheck": "turbo typecheck",
     "test": "pnpm check:rules && pnpm test:tools && turbo test",
     "test:integration": "turbo test:integration",
-    "test:tools": "node --test tools/tests/workspace.test.mjs tools/tests/release-candidate-manifest.test.mjs",
+    "test:tools": "node --test tools/tests/workspace.test.mjs tools/tests/release-candidate-manifest.test.mjs tools/tests/canvas-upstream.test.mjs",
     "test:e2e": "node tools/scripts/run-e2e.mjs"
   },
   "devDependencies": {

@@ -101,6 +101,18 @@ describe.sequential("inventory kernel", () => {
     await database.client.end();
   });
 
+  it("edits master metadata through tenant scope without changing identifiers or units", async () => {
+    const warehouse = await service.createWarehouse(contextA, { code: "EDIT-WH", name: "Before", type: "owned", countryCode: "CN", timeZone: "Asia/Shanghai" });
+    const location = await service.createLocation(contextA, { warehouseId: warehouse.id, code: "EDIT-LOC", name: "Before" });
+    const item = await service.createStockItem(contextA, { code: "EDIT-MAT", name: "Before", skuId: null, baseUnit: "each" });
+    await expect(service.updateWarehouse(contextB, warehouse.id, { name: "Wrong tenant", countryCode: "US", timeZone: "UTC" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateLocation(contextB, location.id, { name: "Wrong tenant" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateStockItem(contextB, item.id, { name: "Wrong tenant" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateWarehouse(contextA, warehouse.id, { name: "Updated warehouse", countryCode: "US", timeZone: "America/New_York" })).resolves.toMatchObject({ id: warehouse.id, code: "EDIT-WH", name: "Updated warehouse" });
+    await expect(service.updateLocation(contextA, location.id, { name: "Updated location" })).resolves.toMatchObject({ id: location.id, warehouseId: warehouse.id, code: "EDIT-LOC" });
+    await expect(service.updateStockItem(contextA, item.id, { name: "Updated stock" })).resolves.toMatchObject({ id: item.id, code: "EDIT-MAT", baseUnit: "each", name: "Updated stock" });
+  });
+
   it("records opening stock once and rejects changed idempotent input", async () => {
     const input = movementInput({
       quantityDelta: 10,

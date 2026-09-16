@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { centerApi } from "./order-centers-fixture";
 
 import { FUNCTION_DESTINATIONS, NAVIGATION_GROUPS, PRIMARY_DESTINATIONS, QUICK_DESTINATION_IDS } from "../src/features/navigation/navigation-registry";
 
@@ -10,18 +12,62 @@ test("all primary pages share stable destinations and current-page navigation", 
   for (const item of PRIMARY_DESTINATIONS) {
     const navigation = page.getByRole("navigation", { name: "主导航", exact: true });
     await expect(navigation.getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_DESTINATIONS.length);
-    if (item.groupId !== "overview") {
-      const toggle = navigation.getByRole("button", { name: item.groupLabel, exact: true });
-      if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
-    }
+    const toggle = page.getByRole("group", { name: "业务模块", exact: true }).getByRole("button", { name: item.groupLabel, exact: true });
+    if (await toggle.getAttribute("aria-pressed") === "false") await toggle.click();
     await navigation.getByRole("link", { name: item.label, exact: true }).click();
-    await expect(page).toHaveURL((url) => url.pathname === item.href);
+    await expect(page).toHaveURL((url) => url.pathname === item.href, { timeout: 30_000 });
     await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
     await expect(navigation.locator('[aria-current="page"]')).toHaveText(item.label);
-    await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText(item.label);
+    await expect(page.getByRole("navigation", { name: "当前位置" }).getByRole("listitem")).toHaveText(
+      item.href === "/" ? ["运营总览"] : ["运营总览", item.groupLabel, item.label],
+    );
     await expect(page.locator(".erp-sidebar")).toHaveCount(1);
     await expect(navigation.getByRole("link", { name: "刊登控制台", exact: true, includeHidden: true })).toHaveAttribute("href", "/listings");
   }
+  expect(errors).toEqual([]);
+});
+
+test("SPU breadcrumbs show the record, return to the filtered list and open its business module", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  const code = `QA-CRUMB-${randomUUID().slice(0, 8)}`;
+  const name = `定制毛毯 · 多尺寸多形状 ${"PersonalizedBlanket".repeat(5)}`;
+  const { spu } = await centerApi<{ spu: { id: string } }>("product-development/spus", {
+    code, name, idempotencyKey: randomUUID(),
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const listPath = `/product-specifications?q=${code}&page=2`;
+  await page.goto(listPath);
+  const breadcrumbs = page.getByRole("navigation", { name: "当前位置" });
+  await expect(breadcrumbs.getByRole("listitem")).toHaveText(["运营总览", "商品与刊登", "商品 SPU"]);
+  await page.getByRole("row").filter({ hasText: code }).getByRole("button", { name: "查看产品与规格" }).click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("spu") === spu.id);
+  await expect(breadcrumbs.getByRole("listitem")).toHaveText(["运营总览", "商品与刊登", "商品 SPU", `${code} · ${name}`]);
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveCount(1);
+  await expect(page).toHaveTitle(`${code} · ${name} · YummyAI`);
+  await expect(breadcrumbs.getByRole("link", { name: "商品 SPU", exact: true })).toHaveAttribute("href", listPath);
+  await page.screenshot({ path: testInfo.outputPath("breadcrumbs-spu-desktop.png") });
+  await page.reload();
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveText(`${code} · ${name}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(breadcrumbs.getByRole("link", { name: "商品 SPU", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("breadcrumbs-spu-mobile.png") });
+  await breadcrumbs.getByRole("link", { name: "商品 SPU", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname + url.search === listPath);
+  await expect(page.getByRole("button", { name: "查看产品与规格" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "搜索编号或名称" })).toHaveValue(code);
+  await expect(breadcrumbs.getByRole("listitem")).toHaveCount(3);
+  await page.goBack();
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveText(`${code} · ${name}`);
+  await expect(page.getByRole("heading", { name: `${code} · ${name}`, exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveText("商品 SPU");
+  await breadcrumbs.getByRole("link", { name: "商品与刊登", exact: true }).click();
+  await expect(page).toHaveURL(/\/navigation\?group=catalog$/);
+  await expect(page.getByRole("group", { name: "业务分类" }).getByRole("button", { name: "商品与刊登", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".erp-directory-groups").getByRole("link")).toHaveCount(FUNCTION_DESTINATIONS.filter((item) => item.groupId === "catalog").length);
   expect(errors).toEqual([]);
 });
 
@@ -32,8 +78,8 @@ test("opening an import link before the shared breadcrumb hydrates stays consist
   await expect(page).toHaveURL(/\/orders\?view=reports$/);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await page.goto("/orders", { waitUntil: "domcontentloaded" });
-    await page.getByRole("link", { name: "导入亚马逊报告", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "订单工作台", level: 1 })).toBeVisible();
+    await page.locator("#erp-page-content").getByRole("link", { name: "导入订单报告", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "订单报告导入", level: 1 })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText("导入与定制");
   }
   expect(errors).toEqual([]);
@@ -52,10 +98,10 @@ test("search finds ZIP imports and supports keyboard selection and return paths"
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/orders\?view=reports$/);
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "订单工作台", level: 1 })).toBeVisible();
-  await page.getByRole("navigation", { name: "当前位置" }).getByRole("link", { name: "订单工作台" }).click();
+  await expect(page.getByRole("heading", { name: "订单报告导入", level: 1 })).toBeVisible();
+  await page.getByRole("navigation", { name: "当前位置" }).getByRole("link", { name: "订单中心" }).click();
   await expect(page).toHaveURL(/\/orders$/);
-  await expect(page.getByRole("heading", { name: "订单工作台", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "订单中心", level: 1 })).toBeVisible();
 });
 
 test("directory exposes every function and narrows production products by task name", async ({ page }) => {
@@ -81,7 +127,7 @@ test("directory exposes every function and narrows production products by task n
 
 test("search empty states, Escape and Tab keep keyboard focus usable", async ({ page }) => {
   await page.goto("/navigation");
-  const trigger = page.getByRole("button", { name: "找功能 Ctrl K", exact: true });
+  const trigger = page.getByRole("button", { name: "找功能", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "找功能", exact: true });
   await dialog.getByRole("textbox").fill("没有这个功能xyz");
@@ -108,7 +154,7 @@ test("POD module URLs and browser history retain useful breadcrumbs", async ({ p
   await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText("图案处理");
   await page.goBack();
   await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText("来图定制");
-  await expect(page.getByRole("navigation", { name: "主导航", exact: true }).locator('[aria-current="page"]')).toHaveText("创意工作台");
+  await expect(page.getByRole("navigation", { name: "主导航", exact: true }).locator('[aria-current="page"]')).toHaveText("创意项目");
 });
 
 test("mobile menu shows all groups, navigates and closes without horizontal overflow", async ({ page }, testInfo) => {
@@ -118,11 +164,11 @@ test("mobile menu shows all groups, navigates and closes without horizontal over
   await page.getByRole("button", { name: "打开全部导航" }).click();
   const menu = page.getByRole("dialog", { name: "全部导航", exact: true });
   await expect(menu.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_DESTINATIONS.length);
-  await expect(menu.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button")).toHaveCount(NAVIGATION_GROUPS.length - 1);
+  await expect(menu.getByRole("group", { name: "业务模块", exact: true }).getByRole("button")).toHaveCount(NAVIGATION_GROUPS.length + 1);
   await page.screenshot({ path: testInfo.outputPath("navigation-mobile-menu.png") });
   await menu.getByRole("link", { name: "导入订单报告", exact: true }).click();
   await expect(menu).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "订单工作台", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "订单报告导入", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "打开全部导航" }).click();
   await menu.getByRole("button", { name: "创意设计", exact: true }).click();
   await menu.getByRole("link", { name: "生产文件与底稿", exact: true }).click();
@@ -168,26 +214,26 @@ test("detail pages keep their module return link even when the record is unavail
   }
 });
 
-test("business modules disclose one group at a time and work without a mouse", async ({ page }) => {
+test("business modules switch the page panel and work without a mouse", async ({ page }) => {
   await page.goto("/navigation");
   const nav = page.getByRole("navigation", { name: "主导航", exact: true });
-  await expect(nav.getByRole("button")).toHaveCount(NAVIGATION_GROUPS.length - 1);
-  await expect(nav.getByRole("link")).toHaveCount(3);
-  await expect(nav.locator('button[aria-expanded="true"]')).toHaveCount(1);
-  const creative = nav.getByRole("button", { name: "创意设计", exact: true });
+  const modules = page.getByRole("group", { name: "业务模块", exact: true });
+  await expect(modules.getByRole("button")).toHaveCount(NAVIGATION_GROUPS.length + 1);
+  await expect(nav.getByRole("link")).toHaveCount(PRIMARY_DESTINATIONS.filter((item) => item.groupId === "commerce").length);
+  await expect(modules.locator('button[aria-pressed="true"]')).toHaveCount(1);
+  const creative = modules.getByRole("button", { name: "创意设计", exact: true });
   await creative.focus();
   await page.keyboard.press("Enter");
-  await expect(creative).toHaveAttribute("aria-expanded", "true");
-  await expect(nav.getByRole("link", { name: "订单工作台", exact: true })).toBeHidden();
-  await page.keyboard.press("Tab");
-  await expect(nav.getByRole("link", { name: "创意工作台", exact: true })).toBeFocused();
-  await nav.getByRole("link", { name: "生产文件与底稿", exact: true }).click();
+  await expect(creative).toHaveAttribute("aria-pressed", "true");
+  await expect(nav.getByRole("link", { name: "订单中心", exact: true })).toBeHidden();
+  await nav.getByRole("link", { name: "生产文件与底稿", exact: true }).focus();
+  await page.keyboard.press("Enter");
   await expect(creative).toHaveAttribute("data-active", "true");
   await expect(nav.locator('[aria-current="page"]')).toHaveText("生产文件与底稿");
   await page.getByRole("navigation", { name: "常用任务快捷入口" }).getByRole("link", { name: "导入订单报告", exact: true }).click();
-  await expect(nav.getByRole("button", { name: "订单与履约", exact: true })).toHaveAttribute("aria-expanded", "true");
-  await expect(creative).toHaveAttribute("aria-expanded", "false");
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("订单工作台");
+  await expect(modules.getByRole("button", { name: "订单与履约", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(creative).toHaveAttribute("aria-pressed", "false");
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("订单中心");
 });
 
 test("category browsing reduces choices while search still reaches every module", async ({ page }) => {
@@ -239,7 +285,43 @@ test("React Bits task spotlight gives pointer feedback without blocking navigati
   await expect.poll(() => card.evaluate((el) => el.getAttribute("style"))).toContain("--mouse-x:");
   await card.getByRole("link").click();
   await expect(page).toHaveURL(/\/orders\?view=reports$/);
-  await expect(page.getByRole("heading", { name: "订单工作台", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "订单报告导入", level: 1 })).toBeVisible();
+});
+
+test("desktop modules stay fixed and only intentional selection changes the page panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/navigation");
+  const nav = page.getByRole("navigation", { name: "主导航", exact: true });
+  const modules = page.getByRole("group", { name: "业务模块", exact: true });
+  const positions = await modules.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().y));
+  for (const name of ["创意设计", "系统配置", "选品研究", "采购与库存", "商品与刊登"]) {
+    const group = modules.getByRole("button", { name, exact: true });
+    await group.click();
+    await expect(group).toHaveAttribute("aria-pressed", "true");
+    await expect(modules.locator('button[aria-pressed="true"]')).toHaveCount(1);
+    await expect(page).toHaveURL((url) => url.pathname === "/navigation");
+    expect(await modules.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().y))).toEqual(positions);
+  }
+  const supply = modules.getByRole("button", { name: "采购与库存", exact: true });
+  await supply.hover();
+  await expect(supply).toHaveAttribute("aria-pressed", "false");
+  await expect(modules.getByRole("button", { name: "商品与刊登", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await supply.click();
+  const suppliers = nav.getByRole("link", { name: "供应商档案", exact: true });
+  await suppliers.hover();
+  await expect(suppliers).toBeVisible();
+  await expect(supply).toHaveAttribute("aria-pressed", "true");
+  await suppliers.click();
+  await expect(page).toHaveURL((url) => url.pathname === "/suppliers");
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("供应商档案");
+  const creative = modules.getByRole("button", { name: "创意设计", exact: true });
+  await creative.click();
+  await creative.focus();
+  await page.keyboard.press("Enter");
+  await expect(creative).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL((url) => url.pathname === "/suppliers");
+  await page.goBack();
+  await expect(modules.getByRole("button", { name: "订单与履约", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("appearance stays consistent across navigation, reloads, and system changes", async ({ page }) => {
@@ -251,16 +333,22 @@ test("appearance stays consistent across navigation, reloads, and system changes
   await theme.getByRole("button", { name: "浅色", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator(".ops-metric").first()).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await page.getByRole("button", { name: "收起侧边栏", exact: true }).click();
-  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "76px");
+  await page.locator(".erp-appearance").getByRole("button", { name: "收起页面栏", exact: true }).click();
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "104px");
+  await page.reload();
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "104px");
   await page.locator(".erp-sidebar").getByRole("button", { name: "创意设计", exact: true }).click();
-  await page.locator(".erp-sidebar").getByRole("link", { name: "创意工作台", exact: true }).click();
+  await page.locator(".erp-sidebar").getByRole("link", { name: "创意项目", exact: true }).click();
   await expect(page).toHaveURL(/\/creative-designs\/canvas$/);
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(theme.getByRole("button", { name: "浅色", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "76px");
-  await page.getByRole("button", { name: "展开侧边栏", exact: true }).click();
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "320px");
+  await page.locator(".erp-page-panel").getByRole("button", { name: "收起页面栏", exact: true }).click();
+  await expect(page.locator(".erp-sidebar").getByRole("button", { name: "创意设计", exact: true })).toBeFocused();
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "104px");
+  await page.getByRole("button", { name: "展开页面栏", exact: true }).click();
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "320px");
   await theme.getByRole("button", { name: "跟随系统", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.emulateMedia({ colorScheme: "light" });
@@ -287,5 +375,56 @@ test("appearance controls work without browser storage and workflow tabs fit mob
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   for (const tab of await page.getByRole("navigation", { name: "工作流分类" }).getByRole("button").all()) await expect(tab).toBeInViewport();
+  await page.getByRole("button", { name: "打开全部导航" }).click();
+  const menu = page.getByRole("dialog", { name: "全部导航", exact: true });
+  await menu.getByRole("button", { name: "订单与履约", exact: true }).click();
+  await menu.getByRole("button", { name: "收藏店铺运营", exact: true }).click();
+  await menu.getByRole("button", { name: "常用", exact: true }).click();
+  await expect(menu.getByRole("navigation", { name: "常用页面", exact: true }).getByRole("link", { name: "店铺运营", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "打开全部导航" })).toBeFocused();
   expect(errors).toEqual([]);
+});
+
+test("favorites validate saved IDs, persist edits and open real ERP pages", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("nav-fixture-initialized")) {
+      localStorage.setItem("yummyai.ui.favorite-pages", JSON.stringify(["suppliers", "unknown-page", "suppliers", 3]));
+      localStorage.setItem("nav-fixture-initialized", "true");
+    }
+  });
+  await page.goto("/navigation");
+  const modules = page.getByRole("group", { name: "业务模块", exact: true });
+  await modules.getByRole("button", { name: "常用", exact: true }).click();
+  const favorites = page.getByRole("navigation", { name: "常用页面", exact: true });
+  await expect(favorites.getByRole("link")).toHaveCount(1);
+  await favorites.getByRole("button", { name: "取消收藏供应商档案", exact: true }).click();
+  await expect(favorites.getByText("还没有常用页面", { exact: true })).toBeVisible();
+  await modules.getByRole("button", { name: "订单与履约", exact: true }).click();
+  await page.getByRole("button", { name: "收藏店铺运营", exact: true }).click();
+  await modules.getByRole("button", { name: "常用", exact: true }).click();
+  await favorites.getByRole("link", { name: "店铺运营", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/stores");
+  await expect(favorites.locator('[aria-current="page"]')).toHaveText("店铺运营");
+  await page.reload();
+  await modules.getByRole("button", { name: "常用", exact: true }).click();
+  await expect(favorites.getByRole("link")).toHaveCount(1);
+  await expect(favorites.getByRole("button", { name: "取消收藏店铺运营", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("yummyai.ui.favorite-pages")!))).toEqual(["stores"]);
+});
+
+test("mobile module selection preserves the desktop collapsed preference", async ({ page }) => {
+  await page.goto("/navigation");
+  await page.locator(".erp-appearance").getByRole("button", { name: "收起页面栏", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "打开全部导航" }).click();
+  const menu = page.getByRole("dialog", { name: "全部导航", exact: true });
+  await menu.getByRole("button", { name: "采购与库存", exact: true }).click();
+  await menu.getByRole("link", { name: "供应商档案", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page).toHaveURL((url) => url.pathname === "/suppliers");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "104px");
+  await page.getByRole("button", { name: "展开页面栏", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "主导航", exact: true }).locator('[aria-current="page"]')).toHaveText("供应商档案");
 });

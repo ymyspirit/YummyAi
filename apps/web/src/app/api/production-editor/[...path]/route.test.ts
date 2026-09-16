@@ -8,6 +8,18 @@ import { DELETE, GET, POST } from "./route";
 describe("production editor authenticated proxy", () => {
   beforeEach(() => { apiFetchMock.mockReset(); process.env.API_BASE_URL = "http://api.test"; });
   const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+  it("authenticates model-cutout and apply-image writes and rejects cross-origin or GET access", async () => {
+    for (const suffix of [["images", createEntityId(), "model-cutout"], ["renders", createEntityId(), "apply-image"], ["enhance-order-images"]]) {
+      const path = ["projects", createEntityId(), ...suffix], url = `http://web.test/api/production-editor/${path.join("/")}`;
+      expect((await GET(new Request(url), context(path))).status).toBe(404);
+      expect((await POST(new Request(url, { method: "POST", headers: { origin: "https://elsewhere.test", "content-type": "application/json" }, body: "{}" }), context(path))).status).toBe(403);
+      apiFetchMock.mockResolvedValue(Response.json({ accepted: true }));
+      const response = await POST(new Request(url, { method: "POST", headers: { origin: "http://web.test", "content-type": "application/json" }, body: "{}" }), context(path));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
+    expect(apiFetchMock).toHaveBeenCalledTimes(3);
+  });
   it("only proxies same-origin POST refinement with bounded JSON and private responses", async () => {
     const id = createEntityId(), asset = createEntityId(), path = ["projects", id, "images", asset, "refine"];
     const url = `http://web.test/api/production-editor/${path.join("/")}`;

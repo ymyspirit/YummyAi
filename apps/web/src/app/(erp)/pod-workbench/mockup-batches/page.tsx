@@ -11,7 +11,7 @@ export default async function MockupBatchesPage({ searchParams }: { searchParams
   return (
     <div className="research-shell pod-batch-shell">
       <main className="research-main pod-batch-main">
-        <MockupBatchWorkbench {...loaded} />
+        <MockupBatchWorkbench {...loaded} initialDesignVersionId={typeof params.designVersionId==="string"?params.designVersionId:undefined} />
       </main>
     </div>
   );

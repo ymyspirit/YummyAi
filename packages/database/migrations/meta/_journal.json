@@ -470,6 +470,125 @@
       "when": 1790006400000,
       "tag": "0067_canvas_snapshot_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790006400001,
+      "tag": "0068_creative_studio_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1790006400002,
+      "tag": "0069_product_supplier_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1790006400003,
+      "tag": "0070_order_centers",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1790006400004,
+      "tag": "0071_artwork_product_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1790006400005,
+      "tag": "0072_artwork_materials",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790006400006,
+      "tag": "0073_research_studies",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1790006400007,
+      "tag": "0074_research_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1790006400008,
+      "tag": "0075_ai_assists",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1790006400009,
+      "tag": "0076_ai_assist_batch2",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1790006400010,
+      "tag": "0077_ai_assist_batch3",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1790006400011,
+      "tag": "0078_model_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1790006400012,
+      "tag": "0079_specification_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1790006400013,
+      "tag": "0080_artwork_optional_master_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1790006400014,
+      "tag": "0081_model_channel_removal",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1790006400015,
+      "tag": "0082_customer_plan_readiness",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1790006400016,
+      "tag": "0083_order_workbench",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1790006400017,
+      "tag": "0084_order_report_read_models",
+      "breakpoints": true
     }
   ]
 }

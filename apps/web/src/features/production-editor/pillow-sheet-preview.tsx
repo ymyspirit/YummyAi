@@ -38,12 +38,13 @@ export function PillowSheetPreview({ document, projectId }: { document: ShapedPi
     <div className="pe-sheet-labels"><strong>正面</strong><strong>{spec.sideMode === "single" ? "背面 · 镜像轮廓留白" : "背面 · 图像镜像 / 文字正读"}</strong></div>
     <div className="pe-canvas-checker">
       <svg role="img" aria-label="抱枕正反片实时排版预览" viewBox={`0 0 ${layout.widthMm} ${layout.heightMm}`}>
+        {document.exportBackground === "white" && <rect width="100%" height="100%" fill="white" />}
         <defs>
           <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={spec.widthMm} height={spec.heightMm}><rect width={spec.widthMm} height={spec.heightMm} fill="black" />{printMask}</mask>
           <mask id={backMaskId} maskUnits="userSpaceOnUse" x={0} y={0} width={spec.widthMm} height={spec.heightMm}><rect width={spec.widthMm} height={spec.heightMm} fill="black" /><g transform={mirror}>{printMask}</g></mask>
         </defs>
-        <g transform={`translate(${layout.marginMm} ${layout.marginMm})`}><path d={shape.path} fill="white" /><g mask={`url(#${maskId})`}>{document.layers.map((layer) => layerView(layer))}</g><path d={shape.path} fill="none" stroke="black" strokeWidth={spec.cutLineMm} /></g>
-        <g transform={`translate(${layout.backOffsetMm + layout.marginMm} ${layout.marginMm})`}><path d={shape.path} fill="white" transform={mirror} />{spec.sideMode === "double" && <g mask={`url(#${backMaskId})`}>{document.layers.map((layer) => layerView(layer, true))}</g>}<path d={shape.path} fill="none" stroke="black" strokeWidth={spec.cutLineMm} transform={mirror} /></g>
+        <g transform={`translate(${layout.marginMm} ${layout.marginMm})`}><path d={shape.path} fill="white" /><g mask={spec.artworkClipMode === "none" ? undefined : `url(#${maskId})`}>{document.layers.map((layer) => layerView(layer))}</g><path d={shape.path} fill="none" stroke="black" strokeWidth={spec.cutLineMm} strokeLinejoin="round" /></g>
+        <g transform={`translate(${layout.backOffsetMm + layout.marginMm} ${layout.marginMm})`}><path d={shape.path} fill="white" transform={mirror} />{spec.sideMode === "double" && <g mask={spec.artworkClipMode === "none" ? undefined : `url(#${backMaskId})`}>{document.layers.map((layer) => layerView(layer, true))}</g>}<path d={shape.path} fill="none" stroke="black" strokeWidth={spec.cutLineMm} strokeLinejoin="round" transform={mirror} /></g>
       </svg>
     </div>
     {error && <p className="pe-alert" role="alert">{error}</p>}

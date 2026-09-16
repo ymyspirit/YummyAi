@@ -108,7 +108,7 @@ export async function renderProductionDocument(rawDocument: ProductionEditorDocu
   const fatalPreviewCodes = new Set(["asset_unavailable", "font_unavailable", "unsupported_glyph", "jpeg_transparency", "contour_self_intersection", "contour_union_failed", "barcode_union_invalid", "contour_outside_body", "contour_too_small", "barcode_outside_body", "barcode_not_connected", "barcode_not_at_bottom", "pixel_limit", "opening_outside_cover"]);
   if (options.purpose === "production" ? !preflight.productionReady : preflight.issues.some((issue) => fatalPreviewCodes.has(issue.code))) throw new ProductionEditorRenderError(preflight);
   const layout = getProductionLayout(document);
-  const scale = options.purpose === "preview" ? Math.min(1, 1600 / Math.max(layout.widthPx, layout.heightPx)) : 1;
+  const scale = options.purpose === "preview" && !options.previewFullResolution ? Math.min(1, 1600 / Math.max(layout.widthPx, layout.heightPx)) : 1;
   const widthPx = Math.max(1, Math.round(layout.widthPx * scale)), heightPx = Math.max(1, Math.round(layout.heightPx * scale));
   const layers = document.layers.filter((layer) => layer.visible);
   const normalizedAssets = new Map<string, string>();
@@ -133,10 +133,10 @@ export async function renderProductionDocument(rawDocument: ProductionEditorDocu
     const spec = document.spec;
     const maskPath = `<path d="${rawBody}" fill="white" stroke="black" stroke-width="${spec.whiteBorderMm * 2}" stroke-linejoin="round"/>`;
     const mask = `<defs><mask id="print" maskUnits="userSpaceOnUse" x="0" y="0" width="${spec.widthMm}" height="${spec.heightMm}"><rect width="100%" height="100%" fill="black"/>${maskPath}</mask><mask id="printBack" maskUnits="userSpaceOnUse" x="0" y="0" width="${spec.widthMm}" height="${spec.heightMm}"><rect width="100%" height="100%" fill="black"/><g transform="translate(${spec.widthMm} 0) scale(-1 1)">${maskPath}</g></mask></defs>`;
-    const front = `<path d="${outline}" fill="white"/><g mask="url(#print)">${layers.map((layer) => renderLayer(layer, normalizedAssets, fonts)).join("")}</g><path d="${outline}" fill="none" stroke="black" stroke-width="${spec.cutLineMm}"/>`;
+    const front = `<path d="${outline}" fill="white"/><g${spec.artworkClipMode === "none" ? "" : ' mask="url(#print)"'}>${layers.map((layer) => renderLayer(layer, normalizedAssets, fonts)).join("")}</g><path d="${outline}" fill="none" stroke="black" stroke-width="${spec.cutLineMm}" stroke-linejoin="round"/>`;
     const backLayers = layers.map((layer) => layer.kind === "image" ? `<g transform="translate(${spec.widthMm} 0) scale(-1 1)">${renderLayer(layer, normalizedAssets, fonts)}</g>` : renderLayer(mirrorProductionTextLayer(layer, fonts.get(layer.fontId)!, spec.widthMm), normalizedAssets, fonts)).join("");
-    const backArt = spec.sideMode === "double" ? `<g mask="url(#printBack)">${backLayers}</g>` : "";
-    const back = `<g transform="translate(${spec.widthMm} 0) scale(-1 1)"><path d="${outline}" fill="white"/></g>${backArt}<g transform="translate(${spec.widthMm} 0) scale(-1 1)"><path d="${outline}" fill="none" stroke="black" stroke-width="${spec.cutLineMm}"/></g>`;
+    const backArt = spec.sideMode === "double" ? `<g${spec.artworkClipMode === "none" ? "" : ' mask="url(#printBack)"'}>${backLayers}</g>` : "";
+    const back = `<g transform="translate(${spec.widthMm} 0) scale(-1 1)"><path d="${outline}" fill="white"/></g>${backArt}<g transform="translate(${spec.widthMm} 0) scale(-1 1)"><path d="${outline}" fill="none" stroke="black" stroke-width="${spec.cutLineMm}" stroke-linejoin="round"/></g>`;
     body = `${mask}<g transform="translate(${layout.marginMm} ${layout.marginMm})">${front}</g><g transform="translate(${layout.backOffsetMm + layout.marginMm} ${layout.marginMm})">${back}</g>`;
   }
   const background = options.background === "white" ? `<rect width="100%" height="100%" fill="white"/>` : "";
@@ -146,6 +146,7 @@ export async function renderProductionDocument(rawDocument: ProductionEditorDocu
   // Only this bounded, internally constructed SVG needs a larger XML attribute limit
   // for photographic PNG data. Customer inputs remain raster-only with decoder limits.
   let pipeline = sharp(svgBytes, { limitInputPixels: MAX_PRODUCTION_PIXELS, unlimited: true }).toColourspace("srgb").withIccProfile("srgb").withMetadata({ density: document.spec.dpi * scale });
+  if (options.background === "white") pipeline = pipeline.flatten({ background: "#ffffff" });
   if (options.format === "jpeg") pipeline = pipeline.flatten({ background: "#ffffff" }).jpeg({ quality: 100, chromaSubsampling: "4:4:4" });
   else if (options.format === "tiff") pipeline = pipeline.tiff({ compression: "lzw" });
   else pipeline = pipeline.png();

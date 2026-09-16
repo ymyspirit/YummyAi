@@ -3,6 +3,7 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, Image as ImageIcon, ImageOff, ListFilter, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { workflowHref } from "../navigation/workflow-href";
 
 export interface ListingCatalogItemView {
   id: string;
@@ -45,6 +46,7 @@ export interface ListingCatalogFilters {
 }
 
 export function ListingCatalog({ catalog, filters }: { catalog: ListingCatalogPageView; filters: ListingCatalogFilters }) {
+  const detailHref = (id: string) => workflowHref(`/listings/${id}?${new URLSearchParams({ queue: catalog.items.slice(0, 100).map(item => item.id).join(",") })}`, pageHref(filters, catalog.page));
   const [hydrated, setHydrated] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const selectedItems = useMemo(() => catalog.items.filter((item) => selected.includes(item.id)), [catalog.items, selected]);
@@ -57,7 +59,7 @@ export function ListingCatalog({ catalog, filters }: { catalog: ListingCatalogPa
     <section aria-busy={!hydrated} className="listing-catalog-frame" data-hydrated={hydrated ? "true" : "false"} aria-labelledby="listing-catalog-title">
       <header className="listing-library-header">
         <div><p className="section-code">CATALOG WORKSPACE</p><h2 id="listing-catalog-title">Listing 目录</h2></div>
-        <span>{catalog.total} RECORDS</span>
+        <span>{catalog.items[0] && <Link href={detailHref(catalog.items[0].id)}>连续修订</Link>} · {catalog.total} RECORDS</span>
       </header>
 
       <form className="listing-catalog-filters" method="get">
@@ -93,7 +95,7 @@ export function ListingCatalog({ catalog, filters }: { catalog: ListingCatalogPa
               <td><strong>{item.completeness}%</strong><span className={item.blockerCount ? "listing-blocker-count" : "listing-clear-count"}>{item.blockerCount ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{item.blockerCount ? `${item.blockerCount} 阻断` : "无阻断"}</span></td>
               <td><span className={`listing-index-status ${item.status}`}>{statusLabel(item.status)}</span></td>
               <td><time>{formatDate(item.updatedAt)}</time></td>
-              <td><Link aria-label={`打开 ${item.title || item.spuCode}`} href={`/listings/${item.id}`}><ArrowRight size={16} /></Link></td>
+              <td><Link aria-label={`打开 ${item.title || item.spuCode}`} href={detailHref(item.id)}><ArrowRight size={16} /></Link></td>
             </tr>
           ))}</tbody>
         </table>

@@ -45,7 +45,7 @@ export function InventoryWorkspace({ data }: { data: InventoryWorkspaceView }) {
       <section className="inventory-empty" aria-labelledby="inventory-empty-title">
         <PackageOpen size={32} />
         <strong id="inventory-empty-title">还没有库存事实</strong>
-        <span>先通过库存 API 建立仓库、库位和物料，再记录期初或收货流水。系统不会推测库存数量。</span>
+        <span>使用上方按钮新增仓库、库位和物料，再登记期初入库；采购到货从采购单登记收货。</span>
       </section>
     );
   }

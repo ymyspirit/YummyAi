@@ -1,4 +1,25 @@
+import { ProductDevelopmentController } from "./catalog/product-development.controller.js";
+import { ProductDevelopmentService } from "./catalog/product-development.service.js";
+import { SalesRecipeService } from "./catalog/sales-recipe.service.js";
+import { SalesPackageService } from "./catalog/sales-package.service.js";
+import { SalesAdaptationService } from "./design/sales-adaptation.service.js";
 import { Module } from "@nestjs/common";
+import { AssistController } from "./ai/assist.controller.js";
+import { AssistService, AssistEnqueuer } from "./ai/assist.service.js";
+import { AssistContextService } from "./ai/assist-context.service.js";
+import { AssistCatalogContextService } from "./ai/assist-catalog-context.service.js";
+import { AssistBusinessContextService } from "./ai/assist-business-context.service.js";
+import { RedisAssistEnqueuer } from "./ai/redis-assist-enqueuer.js";
+import { AI_ASSIST_VAULT } from "./platform.tokens.js";
+import { createEnvironmentSecretVault } from "@yummyai/ai-core";
+import { MODEL_SECRET_VAULT } from "./platform.tokens.js";
+import { ModelConfigController } from "./ai/model-config.controller.js";
+import { ModelConfigurationController } from "./ai/model-configuration.controller.js";
+import { ModelConfigurationService } from "./ai/model-configuration.service.js";
+import { CreativeStudioController } from "./design/creative-studio.controller.js";
+import { CreativeStudioService } from "./design/creative-studio.service.js";
+import { StudioGenerationService, StudioGenerationEnqueuer } from "./design/studio-generation.service.js";
+import { RedisStudioGenerationEnqueuer } from "./design/redis-studio-generation-enqueuer.js";
 import { APP_GUARD } from "@nestjs/core";
 import { connectDatabase, migrateDatabase } from "@yummyai/database";
 import { HttpMarketplaceAuthorizationGateway, HttpMarketplaceCapabilityGateway } from "@yummyai/marketplace-connectors";
@@ -23,6 +44,8 @@ import { ChannelInventoryService } from "./channel-inventory/channel-inventory.s
 import { CustomerIntelligenceController } from "./customer-intelligence/customer-intelligence.controller.js";
 import { CustomerIntelligenceService } from "./customer-intelligence/customer-intelligence.service.js";
 import { ProductController } from "./catalog/product.controller.js";
+import { ProductSupplyController } from "./catalog/product-supply.controller.js";
+import { ProductSupplyService } from "./catalog/product-supply.service.js";
 import { DrizzleCatalogRepository, ProductService } from "./catalog/product.service.js";
 import { AmazonCustomWorkflowController } from "./catalog/amazon-custom-workflow.controller.js";
 import { AmazonCustomWorkflowService } from "./catalog/amazon-custom-workflow.service.js";
@@ -94,6 +117,8 @@ import { RedisMarketplaceListingSyncEnqueuer } from "./marketplaces/redis-market
 import { NotificationController } from "./notifications/notification.controller.js";
 import { OrderController } from "./orders/order.controller.js";
 import { AmazonOrderReportController } from "./orders/amazon-order-report.controller.js";
+import { OrderWorkspaceController } from "./orders/order-workspace.controller.js";
+import { OrderWorkspaceService } from "./orders/order-workspace.service.js";
 import { AmazonOrderReportService } from "./orders/amazon-order-report.service.js";
 import { AmazonReportArchiveGateway, HttpAmazonReportArchiveGateway } from "./orders/amazon-report-archive.gateway.js";
 import { AmazonReportRetentionEnqueuer, RedisAmazonReportRetentionEnqueuer } from "./orders/redis-amazon-report-retention-enqueuer.js";
@@ -152,6 +177,8 @@ import {
 import { ResearchController } from "./research/research.controller.js";
 import { ResearchClassificationService } from "./research/research-classification.service.js";
 import { ResearchRepository } from "./research/research.repository.js";
+import { ResearchStudyService } from "./research/research-study.service.js";
+import { ResearchArchiveService } from "./research/research-archive.service.js";
 import { ProcurementController } from "./procurement/procurement.controller.js";
 import { ProcurementService } from "./procurement/procurement.service.js";
 import { PlanningController } from "./planning/planning.controller.js";
@@ -174,7 +201,11 @@ import {
 import { WorkflowRunService } from "./workflows/workflow-run.service.js";
 
 @Module({
-  controllers: [
+  controllers: [ProductDevelopmentController,
+    ModelConfigController,
+    ModelConfigurationController,
+    AssistController,
+    CreativeStudioController,
     AssetsController,
     AmazonCustomWorkflowController,
     CaptureController,
@@ -205,6 +236,7 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     MarketplacePublicationController,
     NotificationController,
     AmazonOrderReportController,
+    OrderWorkspaceController,
     OrderController,
     FulfillmentAutomationController,
     OrderAfterSalesController,
@@ -217,12 +249,24 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     PlanningController,
     SupplierPerformanceController,
     ProductController,
+    ProductSupplyController,
     ResearchController,
     SupplierRoutingController,
     WorkflowDefinitionController,
     WorkflowRunController,
   ],
-  providers: [
+  providers: [ProductDevelopmentService, SalesRecipeService, SalesPackageService, SalesAdaptationService,
+    { provide: MODEL_SECRET_VAULT, useFactory: () => createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:model-config") },
+    { provide: StudioGenerationEnqueuer, useClass: RedisStudioGenerationEnqueuer },
+    CreativeStudioService,
+    StudioGenerationService,
+    ModelConfigurationService,
+    AssistService,
+    AssistContextService,
+    AssistCatalogContextService,
+    AssistBusinessContextService,
+    { provide: AssistEnqueuer, useClass: RedisAssistEnqueuer },
+    { provide: AI_ASSIST_VAULT, useFactory: () => createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:ai-assist") },
     {
       provide: DATABASE_CONNECTION,
       useFactory: async () => {
@@ -314,6 +358,7 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     NotificationService,
     OrderService,
     AmazonOrderReportService,
+    OrderWorkspaceService,
     { provide: AmazonReportArchiveGateway, useClass: HttpAmazonReportArchiveGateway },
     { provide: AmazonReportRetentionEnqueuer, useClass: RedisAmazonReportRetentionEnqueuer },
     FulfillmentAutomationService,
@@ -330,8 +375,11 @@ import { WorkflowRunService } from "./workflows/workflow-run.service.js";
     PlanningService,
     SupplierPerformanceService,
     ProductService,
+    ProductSupplyService,
     ResearchClassificationService,
     ResearchRepository,
+    ResearchStudyService,
+    ResearchArchiveService,
     WorkflowCapabilityRegistry,
     WorkflowDefinitionService,
     WorkflowRunService,

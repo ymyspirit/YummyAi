@@ -1,0 +1,127 @@
+.oc-artwork-review {
+  margin: 16px 0 24px;
+  container: artwork-review / inline-size;
+}
+.oc-artwork-review h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.oc-artwork-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  margin-top: 12px;
+  align-items: start;
+}
+.oc-artwork-sheet,
+.oc-artwork-decision {
+  min-width: 0;
+}
+.oc-artwork-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #dce1e7);
+  border-bottom: 0;
+  font-size: 12px;
+}
+.oc-artwork-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: clamp(280px, 47vh, 500px);
+  overflow: auto;
+  border: 1px solid var(--line, #dce1e7);
+  background: repeating-conic-gradient(#e5e7eb 0% 25%, #f4f5f7 0% 50%) 50% / 16px 16px;
+}
+.oc-artwork-preview > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+.oc-artwork-preview[data-background="white"] {
+  background: #fff;
+}
+.oc-artwork-issues li[data-severity="error"] {
+  font-weight: 600;
+}
+.oc-artwork-preview[data-zoom] {
+  display: block;
+}
+.oc-artwork-preview[data-zoom] > img {
+  width: auto;
+  height: auto;
+  max-width: none;
+}
+.oc-artwork-preview-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  padding: 24px;
+  color: #475569;
+  background: #f4f5f7;
+  text-align: center;
+  font-size: 13px;
+}
+.oc-artwork-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+.oc-artwork-decision p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.oc-artwork-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.oc-artwork-issues {
+  font-size: 12px;
+}
+.oc-artwork-issues > ul {
+  max-height: 140px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  line-height: 1.7;
+}
+.oc-artwork-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.oc-artwork-decision-actions > button {
+  flex: 1;
+}
+.oc-artwork-review .oc-full-field textarea {
+  width: 100%;
+  resize: vertical;
+}
+.oc-artwork-review .oc-hint {
+  font-size: 12px;
+}
+@container artwork-review (max-width: 740px) {
+  .oc-artwork-review-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .oc-artwork-preview {
+    height: clamp(240px, 38vh, 380px);
+  }
+}

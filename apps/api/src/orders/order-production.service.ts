@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 import type { SecretVault } from "@yummyai/ai-core";
-import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
+import { authorize, Permission } from "@yummyai/authz";
+import { ReleaseOrderArtworkInputSchema } from "@yummyai/contracts/order/workspace";
 import {
   CreateProductionBatchInputSchema, CreateProductionOrderInputSchema, CreateProductionRecoveryInputSchema, CreateQualityStandardInputSchema,
   RecordProductionBatchEventInputSchema, RecordProductionMilestoneInputSchema, RecordProductionRecoveryEventInputSchema,
@@ -15,6 +17,7 @@ import {
   productionBatchEvents, productionBatchMembers, productionBatches, productionMilestoneEvents,
   productionOrderVersions, productionOrders, productionRecoveryCases, productionRecoveryEvents,
   purchaseOrders, purchaseOrderVersions, qualityDefects, qualityInspections, qualityStandardVersions,
+  fulfillmentSuppliers, orderWorkItems, productionEditorProjects, orderWorkEvents,
   type DatabaseConnection, type TenantTransaction, withTenant,
 } from "@yummyai/database";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -22,6 +25,8 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT } from "../platform.tokens.js";
 import { OrderService } from "./order.service.js";
+import { ProductionEditorService } from "../design/production-editor.service.js";
+import { encryptProductionBytes } from "@yummyai/production-editor";
 
 @Injectable()
 export class OrderProductionService {
@@ -30,7 +35,51 @@ export class OrderProductionService {
     @Inject(ORDER_PII_VAULT) private readonly vault: SecretVault,
     @Inject(OrderService) private readonly orderService: OrderService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(ProductionEditorService) private readonly editor?: ProductionEditorService,
   ) {}
+
+  async releaseArtwork(context: TenantContext, orderLineId: string, raw: unknown) {
+    authorize(context, Permission.OrderWrite); authorize(context, Permission.OrderPiiRead);
+    const input = ReleaseOrderArtworkInputSchema.parse(raw);
+    const [work] = await withTenant(this.database.db, context, (tx) => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, orderLineId)));
+    if (!this.editor || !work?.editorProjectId || !work.encryptedDataKey || work.expiresAt <= new Date()) throw new ConflictException("生产文件或订单资料不可用");
+    const render = await this.editor.getRender(context, work.editorProjectId, input.renderId);
+    if (render.purpose !== "production" || render.status !== "completed" || !render.files.length || !render.preflight?.productionReady || render.versionId !== work.approvedEditorVersionId) throw new ConflictException("请选择已审核版本生成的正式生产文件");
+    const id = await withTenant(this.database.db, context, async (tx) => {
+      await lock(tx, `order-work:${orderLineId}`); await lock(tx, `production-line:${orderLineId}`);
+      const [replayed] = await tx.select().from(productionOrders).where(and(eq(productionOrders.orderLineId, orderLineId), eq(productionOrders.idempotencyKey, input.idempotencyKey)));
+      if (replayed) {
+        const [event] = await tx.select().from(orderWorkEvents).where(and(eq(orderWorkEvents.workItemId, orderLineId), eq(orderWorkEvents.idempotencyKey, input.idempotencyKey)));
+        if (!event || event.requestHash !== checksum(JSON.stringify(input))) throw new ConflictException("同一次下达生产的重试内容不能改变");
+        return replayed.id;
+      }
+      const [current] = await tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, orderLineId));
+      const [line] = await tx.select({ line: orderLines, order: orders }).from(orderLines).innerJoin(orders, eq(orders.id, orderLines.orderId)).where(eq(orderLines.id, orderLineId));
+      if (!current || !line || current.revision !== input.expectedRevision || current.projectionVersion !== input.expectedProjectionVersion || current.held || current.artwork !== "approved" || !["not_required", "approved"].includes(current.proof) || line.order.sideState || line.order.addressStatus === "anonymized") throw new ConflictException("订单状态已变化，或文件、客户确认尚未完成");
+      const [project] = await tx.select().from(productionEditorProjects).where(eq(productionEditorProjects.id, current.editorProjectId!)).for("update");
+      if (!project?.encryptedDataKey || project.currentVersionId !== render.versionId || project.reviewedVersionId !== render.versionId || current.approvedEditorVersionId !== render.versionId) throw new ConflictException("生产文件已变化，请重新审核");
+      const [supplier] = await tx.select().from(fulfillmentSuppliers).where(eq(fulfillmentSuppliers.id, input.supplierId));
+      if (!supplier || supplier.status !== "active") throw new UnprocessableEntityException("请选择启用的供应商");
+      const used = await tx.execute(sql`select coalesce(sum(pv.quantity),0)::int as quantity from production_orders p join production_order_versions pv on pv.production_order_id = p.id and pv.version_number = p.current_version_number where p.order_line_id = ${orderLineId} and p.status <> 'cancelled' and p.source = 'initial'`);
+      if (Number(used[0]?.quantity ?? 0) + input.quantity > line.line.quantity) throw new ConflictException("下达数量超过订单剩余数量");
+      const productionId = createEntityId();
+      await tx.insert(productionOrders).values({ id: productionId, tenantId: context.tenantId, orderId: line.order.id, orderLineId,
+        supplierId: input.supplierId, sourceWorkItemId: orderLineId, expectedCompletionAt: new Date(input.expectedCompletionAt), idempotencyKey: input.idempotencyKey, createdBy: context.userId });
+      await tx.insert(productionOrderVersions).values({ id: createEntityId(), tenantId: context.tenantId, productionOrderId: productionId, versionNumber: 1,
+        quantity: input.quantity, sourceWorkRevisionId: current.pushedRevisionId, sourceEditorProjectId: project.id, sourceEditorVersionId: render.versionId, sourceRenderId: render.id,
+        encryptedInstructions: this.vault.encrypt(input.instructions), instructionsChecksum: checksum(input.instructions), expectedCompletionAt: new Date(input.expectedCompletionAt), createdBy: context.userId });
+      const encryptedReason = this.vault.withSecret(current.encryptedDataKey!, (secret) => {
+        const key = Buffer.from(secret, "base64"); try { return Buffer.from(encryptProductionBytes(key, Buffer.from(JSON.stringify(input.instructions)))).toString("base64"); } finally { key.fill(0); }
+      });
+      await tx.insert(orderWorkEvents).values({ id: createEntityId(), tenantId: context.tenantId, workItemId: orderLineId, action: "release_production", fromState: "approved", toState: "planned", revision: current.revision,
+        encryptedReason, idempotencyKey: input.idempotencyKey, requestHash: checksum(JSON.stringify(input)), actorId: context.userId });
+      await tx.update(orderWorkItems).set({ projectionVersion: current.projectionVersion + 1, updatedAt: new Date() }).where(eq(orderWorkItems.id, orderLineId));
+      return productionId;
+    });
+    return this.get(context, id);
+  }
+
+  qualityStandards(context: TenantContext) { return withTenant(this.database.db, context, (tx) => tx.select().from(qualityStandardVersions).orderBy(desc(qualityStandardVersions.createdAt))); }
 
   async create(context: TenantContext, orderId: string, rawInput: CreateProductionOrderInput) {
     const input = CreateProductionOrderInputSchema.parse(rawInput);
@@ -262,13 +311,15 @@ export class OrderProductionService {
         await tx.insert(productionOrders).values({
           id: replacementId, tenantId: context.tenantId, orderId: original.orderId, orderLineId: original.orderLineId,
           supplierId: original.supplierId, routingDecisionId: original.routingDecisionId,
-          purchaseOrderVersionId: original.purchaseOrderVersionId, parentProductionOrderId: original.id,
+          purchaseOrderVersionId: original.purchaseOrderVersionId, sourceWorkItemId: original.sourceWorkItemId, parentProductionOrderId: original.id,
           source: "remake", status: "planned", expectedCompletionAt,
           idempotencyKey: `remake:${id}`, createdBy: context.userId,
         });
         await tx.insert(productionOrderVersions).values({
           id: createEntityId(), tenantId: context.tenantId, productionOrderId: replacementId, versionNumber: 1,
           quantity: version.quantity, designVersionId: version.designVersionId, productionAssetIds: version.productionAssetIds,
+          sourceWorkRevisionId: version.sourceWorkRevisionId, sourceEditorProjectId: version.sourceEditorProjectId,
+          sourceEditorVersionId: version.sourceEditorVersionId, sourceRenderId: version.sourceRenderId,
           encryptedInstructions: version.encryptedInstructions, instructionsChecksum: version.instructionsChecksum,
           expectedCompletionAt, createdBy: context.userId,
         });
@@ -324,6 +375,8 @@ export class OrderProductionService {
         id: productionOrderVersions.id, versionNumber: productionOrderVersions.versionNumber,
         quantity: productionOrderVersions.quantity, designVersionId: productionOrderVersions.designVersionId,
         productionAssetIds: productionOrderVersions.productionAssetIds, instructionsChecksum: productionOrderVersions.instructionsChecksum,
+        sourceWorkRevisionId: productionOrderVersions.sourceWorkRevisionId, sourceEditorProjectId: productionOrderVersions.sourceEditorProjectId,
+        sourceEditorVersionId: productionOrderVersions.sourceEditorVersionId, sourceRenderId: productionOrderVersions.sourceRenderId,
         expectedCompletionAt: productionOrderVersions.expectedCompletionAt, createdAt: productionOrderVersions.createdAt,
       }).from(productionOrderVersions).where(eq(productionOrderVersions.productionOrderId, productionOrderId)).orderBy(asc(productionOrderVersions.versionNumber));
       const milestones = await tx.select({

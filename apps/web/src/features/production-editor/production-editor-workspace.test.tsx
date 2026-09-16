@@ -4,9 +4,18 @@ import { describe, expect, it } from "vitest";
 
 import { createProductionDocument } from "./production-editor-model";
 import { ProductionConfirmations, ProductionProcessPanel } from "./production-editor-panels";
-import { ProductionOutputPanel } from "./production-editor-workspace";
+import { ProductionOutputPanel, visualSignature } from "./production-editor-workspace";
 
 describe("production editor review boundaries", () => {
+  it("invalidates a transparent proof when the document changes to a white sheet", () => {
+    const document = createProductionDocument("shaped_pillow");
+    const whiteSignature = visualSignature({ ...document, exportBackground: "white" });
+    expect(whiteSignature).not.toBe(visualSignature({ ...document, exportBackground: "transparent" }));
+    expect(visualSignature({ ...document, exportBackground: undefined })).toBe(visualSignature({ ...document, exportBackground: "transparent" }));
+    const render = renderFixture("white", "version-1");
+    const html = renderToStaticMarkup(<ProductionOutputPanel projectId="project" renders={[render]} previewId="white" previewBackground="white" onError={() => undefined} />);
+    expect(html).toContain('style="background:#ffffff"');
+  });
   it("shows sample factory parameters as unconfirmed and does not fabricate barcode dimensions", () => {
     const html = renderToStaticMarkup(<ProductionProcessPanel document={createProductionDocument("shaped_pillow")} onChange={() => undefined} />);
     expect(html).toContain("待工厂确认");

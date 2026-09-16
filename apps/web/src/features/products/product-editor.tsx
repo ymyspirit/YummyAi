@@ -110,7 +110,7 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
         </div>
         <div>
           <Factory size={18} />
-          <span>供应商候选</span>
+          <span>调研供应商候选</span>
           <strong className="mono">{initialPlan.suppliers?.length ?? 0}</strong>
         </div>
       </section>
@@ -164,7 +164,8 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
         <section className="supplier-frame" aria-labelledby="supplier-title">
           <header>
             <p className="section-code">SUPPLIER CANDIDATES</p>
-            <h2 id="supplier-title">供应商优先级</h2>
+            <h2 id="supplier-title">调研供应商候选</h2>
+            <p>早期调研记录；正式合作与报价请在下方“产品供应商”中维护。</p>
           </header>
           <ol>
             {initialPlan.suppliers?.map((supplier) => (

@@ -92,6 +92,12 @@ the same change; `pnpm check:rules` enforces equality.
 
 - Preserve unrelated user changes in a dirty worktree. Do not reset, checkout,
   or rewrite files outside the requested scope.
+- Clean up test-created data and associated resources after testing in every
+  module, including manual, API, and browser tests, unless the user asks to keep
+  them. Track exact fixture IDs and use failure-safe teardown; resume cleanup
+  after an interruption. Use supported deletion or archival flows, preserve real
+  business data and required immutable history, and verify related lists, search,
+  and counts are clear. Report any retained test history or incomplete cleanup.
 - Parser changes require parser tests, extension typecheck/build, extension
   reload, and a smoke test on the affected marketplace.
 - Tenant, auth, storage, capture, review, and export changes require integration

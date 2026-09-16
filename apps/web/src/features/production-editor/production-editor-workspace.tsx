@@ -3,6 +3,8 @@
 import { ProductionEditorDocumentSchema, ProductionEditorPreflightSchema, type ProductionEditorDocument, type ProductionEditorExportOptions, type ProductionEditorLayer, type ProductionEditorPoint, type ProductionEditorPreflight } from "@yummyai/contracts/pod/production-editor";
 import { ProductionEditorDetailViewSchema, ProductionEditorFontViewSchema, ProductionEditorImageViewSchema, ProductionEditorRenderViewSchema, ProductionEditorWorkspaceViewSchema, type ProductionEditorDetailView, type ProductionEditorProjectView, type ProductionEditorRenderView } from "@yummyai/contracts/pod/production-editor-api";
 import { AmazonReportDetailViewSchema } from "@yummyai/contracts/order/report";
+import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
+import Link from "next/link";
 import { ArrowDown, ArrowUp, Check, Download, Eye, EyeOff, FileImage, FolderOpen, Hand, History, ImagePlus, Layers, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, PenTool, Plus, Redo2, RefreshCw, Ruler, Save, ShieldCheck, Trash2, Type, Undo2, UnlockKeyhole, Upload, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,8 +14,10 @@ import { ProductionConfirmations, ProductionContourPanel, ProductionLayerPanel, 
 import { createProductionDocument, invalidateProductionEdit, moveProductionLayer, newProductionImage, newProductionText, scalePillowArtwork, type ProductionKind } from "./production-editor-model";
 import { applyPillowOutline, pillowSubjectLongest, samplePillowImage, tracePillowOutline } from "./pillow-outline";
 import { PillowPreparationPanel } from "./pillow-preparation-panel";
+import { PillowContourOptimizerPanel } from "./pillow-contour-optimizer-panel";
 import { PillowSheetPreview } from "./pillow-sheet-preview";
 import { ProductionCutoutEditor } from "./production-cutout-editor";
+import { OrderImageEnhancementPanel, ProductionModelCutoutPanel } from "./production-model-cutout-panel";
 import { OrderRequirementsPanel } from "./order-requirements-panel";
 import { applyOrderProductionRequirements, orderProductionRequirements, type OrderProductionRequirements } from "./order-production-requirements";
 import { alignProductionLayer, duplicateProductionLayer, fitArcFontSize, fitProductionImage, nudgeProductionLayer, printableBounds, replaceProductionImage, rotateProductionLayer, type LayoutAction } from "./production-layout-tools";
@@ -37,6 +41,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   const [createKind, setCreateKind] = useState(kind);
   const [createName, setCreateName] = useState(kind === "shaped_pillow" ? "异形抱枕生产稿" : "圆形胎罩生产稿");
   const [source, setSource] = useState<Source | null>(null);
+  const [workRequirements, setWorkRequirements] = useState<OrderProductionRequirements | null>(null);
   const [useSource, setUseSource] = useState(!!reportLineId);
   const [sourceLoading, setSourceLoading] = useState(!!reportLineId);
   const [cutoutTarget, setCutoutTarget] = useState<{ layerId: string; imageId: string } | null>(null);
@@ -53,7 +58,8 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   const [draftPoints, setDraftPoints] = useState<ProductionEditorPoint[]>([]);
   const [inspector, setInspector] = useState<"layer" | "process" | "confirm">("process");
   const [format, setFormat] = useState<ProductionEditorExportOptions["format"]>("png");
-  const [background, setBackground] = useState<ProductionEditorExportOptions["background"]>("transparent");
+  const background = document.exportBackground ?? "transparent";
+  function setBackground(value: ProductionEditorExportOptions["background"]) { changeDocument({ ...document, exportBackground: value }); }
   const [preflight, setPreflight] = useState<ProductionEditorPreflight | null>(null);
   const [previewSignature, setPreviewSignature] = useState("");
   const context = useRef(0);
@@ -65,6 +71,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   const measurements = useRef(createLayerMeasurement());
   const shortcutHandler = useRef<(event: KeyboardEvent) => void>(() => undefined);
   shortcutHandler.current = handleShortcut;
+  const catalogLocked = !!detail?.project.catalogSource?.locked;
   const dirty = !!detail && JSON.stringify(document) !== JSON.stringify(detail.version.document);
   const hasUnsavedWork = dirty || cutoutState.dirty || contourMode === "draw" && draftPoints.length > 0;
   const dirtyRef = useRef(hasUnsavedWork); dirtyRef.current = hasUnsavedWork;
@@ -74,6 +81,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   const detailRef = useRef(detail); detailRef.current = detail;
   const selected = document.layers.find((layer) => layer.id === selectedId) ?? null;
   const activeRenders = useMemo(() => detail?.renders.filter((render) => render.status === "queued" || render.status === "processing") ?? [], [detail?.renders]);
+  const enhancing = activeRenders.some(render => render.purpose === "order_image_enhancement");
   const matchingPreview = detail?.renders.find((render) => render.purpose === "preview" && render.status === "completed" && ((render.versionId === detail.version.id && visualSignature(detail.version.document) === visualSignature(document)) || previewSnapshots.current.get(render.id) === visualSignature(document)));
   const hasPreview = !!matchingPreview && previewSignature === visualSignature(document);
   const images = detail?.images ?? [];
@@ -89,7 +97,11 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
     const controller = new AbortController();
     void (async () => {
       try {
-        const workspace = ProductionEditorWorkspaceViewSchema.parse(await editorRequest("projects", undefined, "GET", controller.signal));
+        if (scope === "project" && initialProjectId) {
+          await openProject(initialProjectId, initialVersionId, false);
+          return;
+        }
+        const workspace = ProductionEditorWorkspaceViewSchema.parse(await editorRequest(scope === "templates" ? "projects?scope=templates" : "projects", undefined, "GET", controller.signal));
         let currentSource: Source | null = null;
         if (reportLineId) {
           const response = await fetch(`/api/orders/reports/lines/${encodeURIComponent(reportLineId)}`, { cache: "no-store", signal: controller.signal });
@@ -102,7 +114,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
         setSource(currentSource);
         const available = workspace.projects.filter((project) => scope === "project" ? project.id === initialProjectId
           : scope === "order" ? project.source?.reportLineId === reportLineId && project.source?.reportVersionId === currentSource?.reportVersionId
-          : scope === "templates" ? !project.source : true);
+          : scope === "templates" ? !project.source && !project.workSource : true);
         setProjects(available);
         const resumeId = initialProjectId ?? (scope === "order" ? available[0]?.id : undefined);
         if (resumeId) await openProject(resumeId, initialVersionId, false);
@@ -153,6 +165,14 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
             const signature = previewSnapshots.current.get(result.id);
             if (signature) setPreviewSignature(signature);
           }
+          if (result.status === "completed" && result.purpose === "order_image_enhancement") {
+            if (!dirtyRef.current && !mutatingRef.current) {
+              const refreshed = ProductionEditorDetailViewSchema.parse(await editorRequest(`projects/${detail!.project.id}`));
+              if (cancelled || token !== context.current) return;
+              applyDetail(refreshed); setNotice("顾客图片已完成保真美化，草稿已更新；请核对图片并继续制作。");
+              continue;
+            } else setNotice("顾客图片已完成美化。请保留当前未保存内容，再刷新项目查看新版本。");
+          }
           const savedVersion = detailRef.current?.version;
           if (result.preflight && savedVersion?.id === result.versionId && JSON.stringify(documentRef.current) === JSON.stringify(savedVersion.document)) setPreflight(result.preflight);
         } catch { if (!cancelled) setNotice("后台任务仍保留，状态暂时无法读取。可刷新项目继续查看。"); }
@@ -164,6 +184,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   }, [detail?.project.id, activeRenders]);
 
   function changeDocument(next: ProductionEditorDocument, invalidate = true) {
+    if (catalogLocked || enhancing) return;
     setHistory((value) => commitEditorHistory(value, invalidate ? invalidateProductionEdit(value.present, next) : next));
     setPreflight(null);
   }
@@ -183,6 +204,14 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
     try {
       const value = ProductionEditorDetailViewSchema.parse(await editorRequest(`projects/${id}${versionId ? `?versionId=${encodeURIComponent(versionId)}` : ""}`));
       let projectSource: Source | null = null;
+      let pinnedRequirements: OrderProductionRequirements | null = null;
+      if (value.project.workSource) {
+        const pinned = value.project.workSource;
+        const response = await fetch(`/api/order-centers/lines/${pinned.workItemId}/revisions/${pinned.revisionId}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("当前账号无法读取已推送的制作需求。");
+        const draft = OrderWorkDraftSchema.parse(await response.json());
+        pinnedRequirements = orderProductionRequirements({ surfaces: [{ key: "work", label: "已推送制作需求", fields: [...draft.fields, { key: "instructions", kind: "text", label: "运营制作说明", value: draft.instructions }], previewFileKey: null, buyerFileKeys: [] }] });
+      }
       if (value.project.source) {
         const pinned = value.project.source;
         const response = await fetch(`/api/orders/reports/lines/${encodeURIComponent(pinned.reportLineId)}`, { cache: "no-store" });
@@ -191,7 +220,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
         if (report.versionId !== pinned.reportVersionId || !report.line.reviewed) throw new Error("订单定制版本已变化，请返回订单重新核对。");
         projectSource = { ...pinned, title: report.line.title, requirements: orderProductionRequirements(report) };
       }
-      if (token === context.current) { applyDetail(value); setShowCreate(false); if (projectSource || !reportLineId) setSource(projectSource); }
+      if (token === context.current) { applyDetail(value); setWorkRequirements(pinnedRequirements); setShowCreate(false); if (projectSource || !reportLineId) setSource(projectSource); }
     }
     catch (cause) { if (token === context.current) setError(editorError(cause)); }
     finally { if (token === context.current) setLoading(false); }
@@ -313,15 +342,15 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
     if (imageInput.current) imageInput.current.value = ""; if (fontInput.current) fontInput.current.value = ""; if (replaceInput.current) replaceInput.current.value = "";
   }
   async function checkPreflight() { await perform(async () => { const saved = await saveDocument(); setPreflight(ProductionEditorPreflightSchema.parse(await editorRequest(`projects/${saved.project.id}/preflight`, { expectedVersionId: saved.version.id, format, background, purpose: "production" }))); setInspector("confirm"); }); }
-  async function requestRender(purpose: "preview" | "production") {
+  async function requestRender(purpose: "preview" | "production", previewFullResolution = false) {
     await perform(async () => {
       const saved = await saveDocument();
-      const rendered = ProductionEditorRenderViewSchema.parse(await editorRequest(`projects/${saved.project.id}/renders`, { expectedVersionId: saved.version.id, format: purpose === "preview" ? "png" : format, background: purpose === "preview" ? "transparent" : background, purpose }));
+      const rendered = ProductionEditorRenderViewSchema.parse(await editorRequest(`projects/${saved.project.id}/renders`, { expectedVersionId: saved.version.id, format: purpose === "preview" ? "png" : format, background, purpose, ...(previewFullResolution ? { previewFullResolution: true } : {}) }));
       if (purpose === "preview") previewSnapshots.current.set(rendered.id, visualSignature(saved.version.document));
       setDetail((current) => current ? { ...current, renders: [rendered, ...current.renders.filter((item) => item.id !== rendered.id)] } : current);
       if (rendered.status === "completed" && purpose === "preview") setPreviewSignature(visualSignature(saved.version.document));
       if (rendered.preflight) setPreflight(rendered.preflight);
-      setNotice(purpose === "preview" ? "后台校对预览已提交，完成后可在下方查看。" : "生产文件已提交后台生成。");
+      setNotice(purpose === "preview" ? previewFullResolution ? "原尺寸待审稿已提交，保留设定的像素与 DPI；审核通过后再生成生产文件。" : "后台校对预览已提交，完成后可在下方查看。" : "生产文件已提交后台生成。");
     });
   }
   async function approve() { await perform(async () => { if (!hasPreview || !document.confirmations.visualReview) throw new Error("请先查看当前图稿的后台预览并勾选视觉核对。"); const saved = await saveDocument(); const reviewed = ProductionEditorDetailViewSchema.parse(await editorRequest(`projects/${saved.project.id}/review`, { expectedVersionId: saved.version.id })); setDetail(reviewed); setHistory(createEditorHistory(reviewed.version.document)); setNotice("当前版本已确认。正式出图仍需生产预检通过。"); }); }
@@ -356,7 +385,8 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
 
   return <div className="pe-workspace" ref={workspaceElement} tabIndex={-1}>
     {error && <p className="pe-alert" role="alert">{error}</p>}{notice && <p className="pe-notice" role="status">{notice}</p>}
-    {source && <OrderRequirementsPanel requirements={source.requirements} document={document} disabled={busy || !!cutoutTarget} onApply={() => changeDocument(applyOrderProductionRequirements(document, source.requirements))} />}
+    {(workRequirements || source) && <OrderRequirementsPanel requirements={workRequirements ?? source!.requirements} document={document} disabled={busy || !!cutoutTarget} originLabel={workRequirements ? "对照已推送的制作需求" : undefined} onApply={() => changeDocument(applyOrderProductionRequirements(document, workRequirements ?? source!.requirements))} />}
+    {detail?.project.workSource && <p className="pe-hint">此图稿使用推送时固定的需求与素材。<Link href={`/order-artwork?line=${detail.project.workSource.workItemId}`}>返回制图中心提交审核</Link></p>}
     {detail && cutoutTarget && <ProductionCutoutEditor projectId={detail.project.id} imageId={cutoutTarget.imageId} expectedVersionId={detail.project.currentVersionId} headOnly={source?.requirements.subject === "head"} onStateChange={updateCutoutState} onCancel={() => { setCutoutTarget(null); setCutoutState({ dirty: false, busy: false }); }} onApply={(image) => {
       setDetail((current) => current ? { ...current, images: [...current.images.filter((item) => item.id !== image.id), image] } : current);
       changeDocument({ ...document, layers: document.layers.map((layer) => layer.id === cutoutTarget.layerId && layer.kind === "image" ? { ...layer, assetId: image.id, assetVersion: image.version, name: image.name } : layer) });
@@ -364,17 +394,20 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
       setNotice("抠图已应用到所选图层，原件和修整记录已保留。请检查边缘，再生成抱枕轮廓并保存新版本。");
     }} />}
     <div className="pe-main-editor" hidden={!!cutoutTarget}>
-    <div className="pe-project-bar"><label><FolderOpen size={15} /><select aria-label="打开生产项目" value={detail?.project.id ?? ""} disabled={busy || loading} onChange={(event) => { if (event.target.value) void openProject(event.target.value); }}><option value="">选择已保存项目</option>{projects.map((project) => <option value={project.id} key={project.id}>{project.productType === "shaped_pillow" ? "抱枕" : "胎罩"} · {project.name} · V{project.versionNumber}</option>)}</select></label>{scope !== "project" && <button className="pe-button" disabled={busy || loading} onClick={() => setShowCreate((value) => !value)}><Plus size={15} />{scope === "order" ? "新建此订单生产稿" : "新建项目"}</button>}{detail && <><label className="pe-history-select"><History size={15} /><select aria-label="历史版本" value={detail.version.id} disabled={busy || loading} onChange={(event) => void openProject(detail.project.id, event.target.value)}>{detail.versions.map((version) => <option key={version.id} value={version.id}>V{version.versionNumber} · {version.reviewed ? "已确认" : "草稿"} · {formatDate(version.createdAt)}</option>)}</select></label><button className="pe-button" aria-label="刷新项目" disabled={busy || loading} onClick={() => void openProject(detail.project.id)}><RefreshCw size={15} /></button>{!scope && <button className="pe-button danger" disabled={busy || loading} onClick={() => void removeProject()}><Trash2 size={15} />删除项目</button>}</>}</div>
+    <div className="pe-project-bar"><label><FolderOpen size={15} /><select aria-label="打开生产项目" value={detail?.project.id ?? ""} disabled={busy || loading} onChange={(event) => { if (event.target.value) void openProject(event.target.value); }}><option value="">选择已保存项目</option>{projects.map((project) => <option value={project.id} key={project.id}>{project.productType === "shaped_pillow" ? "抱枕" : "胎罩"} · {project.name} · V{project.versionNumber}</option>)}</select></label>{scope !== "project" && <button className="pe-button" disabled={busy || loading} onClick={() => setShowCreate((value) => !value)}><Plus size={15} />{scope === "order" ? "新建此订单生产稿" : "新建项目"}</button>}{detail && <><label className="pe-history-select"><History size={15} /><select aria-label="历史版本" value={detail.version.id} disabled={busy || loading} onChange={(event) => void openProject(detail.project.id, event.target.value)}>{detail.versions.map((version) => <option key={version.id} value={version.id}>V{version.versionNumber} · {version.reviewed ? "已确认" : "草稿"} · {formatDate(version.createdAt)}</option>)}</select></label><button className="pe-button" aria-label="刷新项目" disabled={busy || loading} onClick={() => void openProject(detail.project.id)}><RefreshCw size={15} /></button>{!scope && !detail.project.workSource && !detail.project.catalogSource && <button className="pe-button danger" disabled={busy || loading} onClick={() => void removeProject()}><Trash2 size={15} />删除项目</button>}</>}</div>
     {showCreate && <form className="pe-new-panel" onSubmit={(event) => { event.preventDefault(); void createProject(); }}><label>新项目名称<input value={createName} onChange={(event) => setCreateName(event.target.value)} maxLength={160} required /></label><label>产品类型<select value={createKind} onChange={(event) => setCreateKind(event.target.value as ProductionKind)}><option value="shaped_pillow">异形抱枕</option><option value="tire_cover">圆形胎罩</option></select></label>{reportLineId && <label className="pe-check"><input type="checkbox" checked={useSource} disabled={sourceLoading || scope === "order"} onChange={(event) => setUseSource(event.target.checked)} />{sourceLoading ? "正在读取订单来源…" : source ? `使用当前订单买家原图：${source.title}` : "使用当前订单买家原图（待就绪）"}</label>}<button className="pe-button primary" type="submit" disabled={busy || loading || (useSource && !source)}><Plus size={15} />创建生产草稿</button></form>}
     {loading && <div className="pe-empty" role="status"><LoaderCircle size={24} className="pe-spin" /><p>正在读取生产项目…</p></div>}
     {!detail && !loading && <div className="pe-empty"><FileImage size={30} /><h2>建立可继续编辑的生产稿</h2><p>选择产品并创建草稿，再加入订单原图或本地图片。原 PNG 会作为一个图片图层保留，文字和其他图层可以继续添加。</p></div>}
     {detail && !loading && <>
-      <div className="pe-editor-toolbar" inert={busy}><label className="pe-document-name">图稿名称<input value={document.name} maxLength={160} onChange={(event) => changeDocument({ ...document, name: event.target.value }, false)} /></label><span className={`pe-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "有未保存改动" : detail.version.reviewed ? `V${detail.version.versionNumber} 已确认` : `V${detail.version.versionNumber} 草稿`}</span><button className="pe-button" aria-label="撤销" disabled={busy || !history.past.length} onClick={() => setHistory(undoEditorHistory)}><Undo2 size={16} /></button><button className="pe-button" aria-label="重做" disabled={busy || !history.future.length} onClick={() => setHistory(redoEditorHistory)}><Redo2 size={16} /></button><button className="pe-button primary" disabled={busy || contourMode === "draw"} onClick={saveCurrent}><Save size={15} />{detail.version.id !== detail.project.currentVersionId ? "历史副本另存新版本" : "保存新版本"}</button></div>
+      {catalogLocked && <p className="pe-hint">此销售 SKU 制作版本已锁定。可查看和下载文件，修改请从产品开发创建新版本。</p>}
+      <div className="pe-editor-toolbar" inert={busy || catalogLocked}><label className="pe-document-name">图稿名称<input value={document.name} maxLength={160} onChange={(event) => changeDocument({ ...document, name: event.target.value }, false)} /></label><span className={`pe-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "有未保存改动" : detail.version.reviewed ? `V${detail.version.versionNumber} 已确认` : `V${detail.version.versionNumber} 草稿`}</span><button className="pe-button" aria-label="撤销" disabled={busy || !history.past.length} onClick={() => setHistory(undoEditorHistory)}><Undo2 size={16} /></button><button className="pe-button" aria-label="重做" disabled={busy || !history.future.length} onClick={() => setHistory(redoEditorHistory)}><Redo2 size={16} /></button><button className="pe-button primary" disabled={busy || catalogLocked || contourMode === "draw"} onClick={saveCurrent}><Save size={15} />{detail.version.id !== detail.project.currentVersionId ? "历史副本另存新版本" : "保存新版本"}</button></div>
       <ProductionShortcutHelp /><div className="pe-editor-grid" inert={busy || loading} aria-busy={busy || loading}>
-        <aside className="pe-left-panel" inert={contourMode === "draw"}>
+        <aside className="pe-left-panel" inert={catalogLocked || contourMode === "draw"}>
           <section className="pe-assets"><h2><ImagePlus size={15} />素材</h2><button className="pe-button" disabled={busy || document.layers.length >= 100} onClick={() => imageInput.current?.click()}><Upload size={15} />上传图片</button><input className="pe-file-input pe-image-input" ref={imageInput} type="file" accept=".png,.jpg,.jpeg,.tif,.tiff" aria-label="上传生产图片" onChange={(event) => void upload(event.target.files?.[0], "images")} />
             <button className="pe-button" disabled={busy || selected?.kind !== "image" || !selected.visible || selected.locked || contourMode === "draw"} onClick={() => { if (selected?.kind === "image") { setCutoutTarget({ layerId: selected.id, imageId: selected.assetId }); setNotice(""); setError(""); } }}><PenTool size={15} />抠图与修边</button>
             <p className="pe-hint">选中图片后，框选顾客需要的部位并抠图，可用套索、擦除和恢复修边。</p>
+            <OrderImageEnhancementPanel key={`enhancement-${detail.project.id}`} projectId={detail.project.id} versionId={detail.version.id} renders={detail.renders} disabled={busy || dirty || catalogLocked || enhancing} onQueue={render => setDetail(current => current ? { ...current, renders: [render, ...current.renders.filter(item => item.id !== render.id)] } : current)} />
+            <ProductionModelCutoutPanel key={detail.project.id} projectId={detail.project.id} versionId={detail.version.id} images={images} renders={detail.renders} subject={(workRequirements ?? source?.requirements)?.subject} disabled={busy || dirty || catalogLocked || enhancing} onQueue={render => setDetail(current => current ? { ...current, renders: [render, ...current.renders.filter(item => item.id !== render.id)] } : current)} onImage={image => setDetail(current => current ? { ...current, images: [image, ...current.images.filter(item => item.id !== image.id)] } : current)} />
             {images.length ? <ul className="pe-asset-list">{images.map((image) => <li key={image.id}><button onClick={() => addImage(image.id)} aria-label={`添加 ${image.name} 到画布`} disabled={document.layers.length >= 100}><img src={editorAssetUrl(detail.project.id, image.id, "preview")} alt={image.name} loading="lazy" referrerPolicy="no-referrer" /><span>{image.name}<small>{image.width} × {image.height} px</small></span><Plus size={14} /></button></li>)}</ul> : <p className="pe-hint">暂无图片素材。</p>}
           </section>
           <section className="pe-layer-list"><h2><Layers size={15} />图层 <small>{document.layers.length}</small></h2><div className="pe-inline-buttons"><button className="pe-button" onClick={() => addText(false)} disabled={document.layers.length >= 100}><Type size={14} />添加文字</button>{document.productType === "tire_cover" && <button className="pe-button" onClick={() => addText(true)} disabled={document.layers.length >= 100}><Type size={14} />弧形文字</button>}</div><ol>{[...document.layers].reverse().map((layer) => <li className={selectedId === layer.id ? "selected" : ""} key={layer.id}><button className="pe-layer-name" onClick={() => { setSelectedId(layer.id); setInspector("layer"); setContourMode("off"); setCanvasView("front"); }}>{layer.kind === "image" ? <FileImage size={14} /> : <Type size={14} />}<span>{layer.name || "未命名图层"}</span></button><button className="pe-icon-button" aria-label={`${layer.visible ? "隐藏" : "显示"} ${layer.name}`} onClick={() => patchLayer(layer.id, { visible: !layer.visible })}>{layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}</button><button className="pe-icon-button" aria-label={`${layer.locked ? "解锁" : "锁定"} ${layer.name}`} onClick={() => patchLayer(layer.id, { locked: !layer.locked })}>{layer.locked ? <LockKeyhole size={14} /> : <UnlockKeyhole size={14} />}</button></li>)}</ol>{selected && <div className="pe-inline-buttons"><button className="pe-button" aria-label="上移图层" disabled={selected.locked || document.layers.at(-1)?.id === selected.id} onClick={() => changeDocument(moveProductionLayer(document, selected.id, 1))}><ArrowUp size={14} /></button><button className="pe-button" aria-label="下移图层" disabled={selected.locked || document.layers[0]?.id === selected.id} onClick={() => changeDocument(moveProductionLayer(document, selected.id, -1))}><ArrowDown size={14} /></button><button className="pe-button danger" aria-label="删除选中图层" disabled={selected.locked} onClick={deleteLayer}><Trash2 size={14} /></button></div>}</section>
@@ -382,6 +415,9 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
         </aside>
         <section className="pe-canvas-column">
           {document.productType === "shaped_pillow" && <PillowPreparationPanel document={document} canTrace={canTrace} traceHint={traceHint} onChange={changeDocument} onTrace={(fit) => void generatePillowOutline(fit)} />}
+          {document.productType === "shaped_pillow" && <PillowContourOptimizerPanel document={document} image={selected?.kind === "image" ? selected : null} projectId={detail.project.id}
+            disabledReason={contourMode === "draw" ? "请先完成或取消手动画轮廓。" : !traceImage?.actualAlpha || !selected?.visible || selected.opacity <= 0 ? "先选中已完成模型抠图的透明图片。" : document.layers.filter(layer => layer.visible && layer.opacity > 0).length !== 1 ? "先单独显示主体图片，再预览工艺轮廓；多图层稿请逐一核对。" : ""}
+            onApply={next => { changeDocument(next); setCanvasView("sheet"); setContourMode("off"); setZoom(1); setFitToken(value => value + 1); setNotice(`已应用新刀线，图案内容与尺寸保持不变。正反片间距为 100px，外边距为 50px；${next.spec.barcodeTab.widthMm && next.spec.barcodeTab.heightMm ? "条码框位于底部" : "请补齐底部条码框宽高"}。可撤销恢复，请重新核对并保存新版本。`); }} />}
           {document.productType === "shaped_pillow" && <div className="pe-canvas-view-tabs" role="group" aria-label="抱枕画布视图"><button className="pe-button" aria-pressed={canvasView === "front"} onClick={() => setCanvasView("front")}>正面编辑</button><button className="pe-button" aria-pressed={canvasView === "sheet"} disabled={contourMode === "draw"} onClick={() => setCanvasView("sheet")}>正反片排版</button><span>预览与编辑共用当前图稿</span></div>}
           {canvasView === "sheet" && document.productType === "shaped_pillow" ? <PillowSheetPreview document={document} projectId={detail.project.id} /> : <>
             <div className="pe-canvas-toolbar">
@@ -395,13 +431,13 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
               </>}
               <button className="pe-button" aria-label="缩小画布" onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}><ZoomOut size={14} /></button><span className="pe-zoom-value">{Math.round(zoom * 100)}%</span><button className="pe-button" aria-label="放大画布" onClick={() => setZoom((value) => Math.min(4, value + 0.25))}><ZoomIn size={14} /></button><button className="pe-button" aria-label="适应画布" onClick={() => { setZoom(1); setFitToken((value) => value + 1); }}><Maximize2 size={14} /></button>
             </div>
-            <ProductionFabricCanvas document={document} projectId={detail.project.id} images={detail.images} fonts={detail.fonts} selectedId={selectedId} zoom={zoom} fitToken={fitToken} contourMode={contourMode} draftPoints={draftPoints} onSelect={(id) => { setSelectedId(id); if (id) setInspector("layer"); }} onLayerChange={patchLayer} onPointChange={(index, point) => { const points = contourMode === "draw" ? draftPoints : document.contour; contourPoints(points.map((item, pointIndex) => pointIndex === index ? point : item)); }} onPointAdd={(point) => setDraftPoints((points) => points.length < 200 ? [...points, point] : points)} />
+            <ProductionFabricCanvas document={document} projectId={detail.project.id} images={detail.images} fonts={detail.fonts} selectedId={selectedId} zoom={zoom} fitToken={fitToken} contourMode={catalogLocked ? "pan" : contourMode} draftPoints={draftPoints} onSelect={(id) => { setSelectedId(id); if (id) setInspector("layer"); }} onLayerChange={patchLayer} onPointChange={(index, point) => { const points = contourMode === "draw" ? draftPoints : document.contour; contourPoints(points.map((item, pointIndex) => pointIndex === index ? point : item)); }} onPointAdd={(point) => setDraftPoints((points) => points.length < 200 ? [...points, point] : points)} />
           </>}
-          <ProductionOutputPanel projectId={detail.project.id} renders={detail.renders} previewId={matchingPreview?.id} selectedVersionId={dirty ? undefined : detail.version.id} versions={detail.versions} onError={setError} />
+          <ProductionOutputPanel projectId={detail.project.id} renders={detail.renders} previewId={matchingPreview?.id} previewBackground={background} selectedVersionId={dirty ? undefined : detail.version.id} versions={detail.versions} onError={setError} />
         </section>
         <aside className="pe-right-panel"><div className="pe-inspector-tabs" role="tablist" aria-label="图稿设置">{([['layer', '图层'], ['process', '工艺'], ['confirm', '预检确认']] as const).map(([key, name]) => <button role="tab" aria-selected={inspector === key} className={inspector === key ? "active" : ""} key={key} disabled={contourMode === "draw"} onClick={() => { setInspector(key); if (contourMode === "edit") setContourMode("off"); }}>{name}</button>)}</div>
           {document.productType === "shaped_pillow" && (contourMode === "draw" || contourMode === "edit") ? <ProductionContourPanel points={contourMode === "draw" ? draftPoints : document.contour} onChange={contourPoints} /> : inspector === "layer" ? <div className="pe-layer-inspector"><ProductionLayerPanel key={selected?.id} layer={selected} images={images} fonts={detail.fonts.length ? detail.fonts : emptyFonts} onChange={(patch) => { if (selected && !selected.locked) patchLayer(selected.id, patch); }} />{selected && <ProductionLayoutPanel key={`tools-${selected.id}`} document={document} layer={selected} images={images} onAction={(action) => void layoutAction(action)} onDuplicate={duplicateLayer} onReplace={replaceImage} onUpload={() => replaceInput.current?.click()} />}<input className="pe-file-input" ref={replaceInput} type="file" accept=".png,.jpg,.jpeg,.tif,.tiff" aria-label="上传并替换生产图片" onChange={(event) => void upload(event.target.files?.[0], "images", selected?.id)} /></div> : inspector === "process" ? <ProductionProcessPanel document={document} onChange={changeDocument} /> : <ProductionConfirmations document={document} hasPreview={hasPreview} onChange={(next) => changeDocument(next, false)} />}
-          <section className="pe-inspector-section pe-export-controls"><h2><ShieldCheck size={15} />预检与出图</h2><ProductionResolutionPanel document={document} images={images} onSelect={selectLayer} /><div className="pe-fields-two"><label>生产文件格式<select value={format} onChange={(event) => { const next = event.target.value as ProductionEditorExportOptions["format"]; setFormat(next); if (next === "jpeg") setBackground("white"); }}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="tiff">TIFF</option></select></label><label>生产文件背景<select value={background} disabled={format === "jpeg"} onChange={(event) => setBackground(event.target.value as ProductionEditorExportOptions["background"])}><option value="transparent">透明</option><option value="white">白色</option></select></label></div>{format === "jpeg" && <p className="pe-hint">JPEG 不支持透明，圆形外部以白色保存。</p>}<button className="pe-button" disabled={busy || contourMode === "draw"} onClick={() => void checkPreflight()}><ShieldCheck size={14} />检查生产参数</button><button className="pe-button" disabled={busy || contourMode === "draw"} onClick={() => void requestRender("preview")}><Eye size={14} />生成后台校对预览</button><button className="pe-button" disabled={busy || !hasPreview || !document.confirmations.visualReview || contourMode === "draw"} onClick={() => void approve()}><Check size={14} />确认当前版本</button><button className="pe-button primary" disabled={busy || dirty || !detail.version.reviewed || detail.version.id !== detail.project.currentVersionId} onClick={() => void requestRender("production")}><Download size={14} />生成生产文件</button>{busy && <p className="pe-hint" role="status"><LoaderCircle size={14} className="pe-spin" />正在处理…</p>}
+          <section className="pe-inspector-section pe-export-controls"><h2><ShieldCheck size={15} />预检与出图</h2><ProductionResolutionPanel document={document} images={images} onSelect={selectLayer} /><div className="pe-fields-two"><label>生产文件格式<select value={format} onChange={(event) => { const next = event.target.value as ProductionEditorExportOptions["format"]; setFormat(next); if (next === "jpeg") setBackground("white"); }}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="tiff">TIFF</option></select></label><label>生产文件背景<select value={background} disabled={format === "jpeg"} onChange={(event) => setBackground(event.target.value as ProductionEditorExportOptions["background"])}><option value="transparent">透明</option><option value="white">白色</option></select></label></div>{format === "jpeg" && <p className="pe-hint">JPEG 不支持透明，圆形外部以白色保存。</p>}<button className="pe-button" disabled={busy || contourMode === "draw"} onClick={() => void checkPreflight()}><ShieldCheck size={14} />检查生产参数</button><button className="pe-button" disabled={busy || contourMode === "draw"} onClick={() => void requestRender("preview")}><Eye size={14} />生成后台校对预览</button><button className="pe-button" disabled={busy || contourMode === "draw"} onClick={() => void requestRender("preview", true)}><Download size={14} />生成原尺寸待审稿</button>{!detail.project.workSource && <button className="pe-button" disabled={busy || !hasPreview || !document.confirmations.visualReview || contourMode === "draw"} onClick={() => void approve()}><Check size={14} />确认当前版本</button>}<button className="pe-button primary" disabled={busy || dirty || !detail.version.reviewed || detail.version.id !== detail.project.currentVersionId} onClick={() => void requestRender("production")}><Download size={14} />生成生产文件</button>{busy && <p className="pe-hint" role="status"><LoaderCircle size={14} className="pe-spin" />正在处理…</p>}
           {preflight && <div className={`pe-preflight ${preflight.productionReady ? "ready" : "pending"}`}><strong>{preflight.productionReady ? "当前参数通过生产预检" : "仍有项目需要处理或人工确认"}</strong><span>{preflight.widthPx} × {preflight.heightPx} px</span><ul>{preflight.issues.map((issue, index) => <li key={`${issue.code}-${index}`} className={issue.severity}><b>{issue.severity === "error" ? "需修正" : issue.severity === "manual" ? "待确认" : "提醒"}</b>{issue.message}{issue.layerId && <button className="pe-button" onClick={() => { selectLayer(issue.layerId!); window.requestAnimationFrame(() => workspaceElement.current?.querySelector(".pe-layer-inspector")?.scrollIntoView({ block: "nearest" })); }}>定位图层</button>}</li>)}</ul></div>}
           </section>
         </aside>
@@ -411,11 +447,11 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   </div>;
 }
 
-export function ProductionOutputPanel({ projectId, renders, previewId, selectedVersionId, versions = [], onError }: { projectId: string; renders: ProductionEditorRenderView[]; previewId?: string; selectedVersionId?: string; versions?: ProductionEditorDetailView["versions"]; onError: (message: string) => void }) {
+export function ProductionOutputPanel({ projectId, renders, previewId, previewBackground = "transparent", selectedVersionId, versions = [], onError }: { projectId: string; renders: ProductionEditorRenderView[]; previewId?: string; previewBackground?: "transparent" | "white"; selectedVersionId?: string; versions?: ProductionEditorDetailView["versions"]; onError: (message: string) => void }) {
   const preview = renders.find((render) => render.id === previewId && render.status === "completed" && render.files.some((file) => file.mediaType.startsWith("image/")));
   return <section className="pe-output-panel"><h2>后台预览与文件</h2>
-    {preview ? <div className="pe-server-preview"><img src={renderFileUrl(projectId, preview.id, preview.files.find((file) => file.mediaType.startsWith("image/"))!.key)} alt="当前图稿的后台裁剪轮廓校对预览" loading="lazy" referrerPolicy="no-referrer" /><p>当前图稿校对预览 · V{versions.find((version) => version.id === preview.versionId)?.versionNumber ?? "—"} · 请核对文字、正反面和裁剪轮廓</p></div> : <p className="pe-hint">当前图稿尚无匹配的后台预览。图稿改动后需要重新生成并核对。</p>}
-    {renders.length ? <ul className="pe-render-list">{renders.slice(0, 12).map((render) => <li key={render.id}><div><strong>{render.purpose === "preview" ? "校对预览" : "生产文件"} · V{versions.find((version) => version.id === render.versionId)?.versionNumber ?? "—"}</strong><span>{({ queued: "排队中", processing: "生成中", completed: "已生成", failed: "生成失败" })[render.status]} · {formatDate(render.createdAt)}{(render.id === previewId || render.purpose === "production" && render.versionId === selectedVersionId) ? " · 当前图稿" : " · 历史记录"}</span>{render.errorCode && <p className="pe-hint">生成未完成，请检查预检提示并重试。</p>}</div>{render.files.map((file) => <button className="pe-button" key={file.key} onClick={() => void downloadEditorFile(renderFileUrl(projectId, render.id, file.key), file.name).catch((cause) => onError(editorError(cause)))}><Download size={14} />{file.name}</button>)}</li>)}</ul> : <p className="pe-hint">生成后台预览后，在这里核对实际排版。确认版本后再生成所需生产格式。</p>}
+    {preview ? <div className="pe-server-preview" style={previewBackground === "white" ? { background: "#ffffff" } : undefined}><img src={renderFileUrl(projectId, preview.id, preview.files.find((file) => file.mediaType.startsWith("image/"))!.key)} alt="当前图稿的后台裁剪轮廓校对预览" loading="lazy" referrerPolicy="no-referrer" /><p>当前图稿校对预览 · V{versions.find((version) => version.id === preview.versionId)?.versionNumber ?? "—"} · 请核对文字、正反面和裁剪轮廓</p></div> : <p className="pe-hint">当前图稿尚无匹配的后台预览。图稿改动后需要重新生成并核对。</p>}
+    {renders.length ? <ul className="pe-render-list">{renders.slice(0, 12).map((render) => <li key={render.id}><div><strong>{render.purpose === "order_image_enhancement" ? "顾客图片保真美化" : render.purpose === "image_edit" ? "AI 模型抠图" : render.purpose === "preview" ? render.files.some((file) => file.name.startsWith("proof-")) ? "原尺寸待审稿" : "校对预览" : "生产文件"} · V{versions.find((version) => version.id === render.versionId)?.versionNumber ?? "—"}</strong><span>{({ queued: "排队中", processing: "生成中", completed: "已生成", failed: "生成失败" })[render.status]} · {formatDate(render.createdAt)}{(render.id === previewId || render.purpose === "production" && render.versionId === selectedVersionId) ? " · 当前图稿" : " · 历史记录"}</span>{render.errorCode && <p className="pe-hint">生成未完成，请检查预检提示并重试。</p>}</div>{render.files.map((file) => <button className="pe-button" key={file.key} onClick={() => void downloadEditorFile(renderFileUrl(projectId, render.id, file.key), file.name).catch((cause) => onError(editorError(cause)))}><Download size={14} />{file.name}</button>)}</li>)}</ul> : <p className="pe-hint">生成后台预览后，在这里核对实际排版。确认版本后再生成所需生产格式。</p>}
   </section>;
 }
 
@@ -437,6 +473,6 @@ function syncProductionEditorLocation(projectId: string | null, versionId?: stri
   else url.searchParams.delete("versionId");
   if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
 }
-function visualSignature(document: ProductionEditorDocument) { return JSON.stringify({ schemaVersion: document.schemaVersion, productType: document.productType, spec: document.spec, contour: document.contour, layers: document.layers }); }
+export function visualSignature(document: ProductionEditorDocument) { return JSON.stringify({ schemaVersion: document.schemaVersion, productType: document.productType, exportBackground: document.exportBackground ?? "transparent", spec: document.spec, contour: document.contour, layers: document.layers }); }
 function editorError(error: unknown) { return error instanceof Error && /^(登录|当前账号|项目已|文件|图稿|请选择|请先|请填写|订单|操作未)/.test(error.message) ? error.message : "操作未完成，请检查项目参数或稍后重试。"; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Shanghai" }).format(new Date(value)); }

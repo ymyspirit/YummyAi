@@ -80,6 +80,13 @@ describe("marketplace account foundation", () => {
     await expect(service.get(otherContext, accountId)).rejects.toMatchObject({ status: 404 });
   });
 
+  it("allows choosing an Amazon authorization mode later without accepting another platform", async () => {
+    const amazon = await service.create(context, CreateMarketplaceAccountInputSchema.parse({ platform: "amazon", displayName: "Manual Amazon", region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private" }));
+    await expect(service.update(context, amazon.id, { authorizationMode: "amazon_public" })).resolves.toMatchObject({ authorizationMode: "amazon_public", hasCredential: false, status: "pending_authorization" });
+    await expect(service.update(context, amazon.id, { authorizationMode: "etsy_oauth" })).rejects.toMatchObject({ status: 409 });
+    await expect(service.update(otherContext, amazon.id, { displayName: "Wrong tenant" })).rejects.toMatchObject({ status: 404 });
+  });
+
   it("rejects a duplicate display identity in the same platform", async () => {
     await expect(service.create(context, CreateMarketplaceAccountInputSchema.parse({
       platform: "etsy",

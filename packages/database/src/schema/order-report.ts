@@ -112,3 +112,14 @@ export const amazonOrderReportVersions = pgTable("amazon_order_report_versions",
   uniqueIndex("amazon_order_report_versions_number_unique").on(table.tenantId, table.reportLineId, table.versionNumber),
   index("amazon_order_report_versions_retention_idx").on(table.tenantId, table.expiresAt),
 ]);
+
+/** Rebuildable, encrypted display projection; the original report version is immutable. */
+export const amazonOrderReportReadModels = pgTable("amazon_order_report_read_models", {
+  versionId: uuid("version_id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  encryptedMetadata: text("encrypted_metadata"),
+  encryptedThumbnails: text("encrypted_thumbnails"),
+}, (table) => [
+  foreignKey({ columns: [table.tenantId, table.versionId], foreignColumns: [amazonOrderReportVersions.tenantId, amazonOrderReportVersions.id], name: "amazon_order_report_read_models_version_fk" }).onDelete("cascade"),
+  index("amazon_order_report_read_models_tenant_idx").on(table.tenantId, table.versionId),
+]);

@@ -156,11 +156,11 @@ export function ProductionFabricCanvas(props: CanvasProps) {
           object.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
         }
         object.editorLayerId = layer.id;
-        object.set({ angle: layer.rotationDeg, opacity: layer.opacity, selectable: !controlMode && !layer.locked, evented: !controlMode, lockMovementX: layer.locked, lockMovementY: layer.locked, lockScalingX: layer.locked, lockScalingY: layer.locked, lockRotation: layer.locked, borderColor: "#2563eb", cornerColor: "#ffffff", cornerStrokeColor: "#2563eb", transparentCorners: false, cornerSize: 10, padding: 2, objectCaching: false, ...(drawing ? {} : { clipPath: clip() }) });
+        object.set({ angle: layer.rotationDeg, opacity: layer.opacity, selectable: !controlMode && !layer.locked, evented: !controlMode, lockMovementX: layer.locked, lockMovementY: layer.locked, lockScalingX: layer.locked, lockScalingY: layer.locked, lockRotation: layer.locked, borderColor: "#2563eb", cornerColor: "#ffffff", cornerStrokeColor: "#2563eb", transparentCorners: false, cornerSize: 10, padding: 2, objectCaching: false, ...(drawing || doc.productType === "shaped_pillow" && doc.spec.artworkClipMode === "none" ? {} : { clipPath: clip() }) });
         objects.push(object);
       }
       if (doc.productType === "shaped_pillow" && !drawing) {
-        objects.push(new fabric.Path(bodyPath, { ...passive, fill: "transparent", stroke: "#ffffff", strokeWidth: doc.spec.whiteBorderMm * 2, strokeLineJoin: "round", clipPath: clip() }));
+        if (doc.spec.artworkClipMode !== "none") objects.push(new fabric.Path(bodyPath, { ...passive, fill: "transparent", stroke: "#ffffff", strokeWidth: doc.spec.whiteBorderMm * 2, strokeLineJoin: "round", clipPath: clip() }));
         objects.push(new fabric.Path(finalPath, { ...passive, fill: "transparent", stroke: "#000000", strokeWidth: doc.spec.cutLineMm, strokeLineJoin: "round" }));
       } else if (doc.productType === "tire_cover") {
         objects.push(new fabric.Circle({ ...passive, left: 0, top: 0, radius: size.width / 2, fill: "transparent", stroke: "#6b7a90", strokeWidth: 0.8 / viewport.scale }));

@@ -17,6 +17,7 @@ import {
   type PodBatchActionState,
 } from "./pod-batch-actions";
 import type { BatchCapabilities, MockupBatch, MockupOptions } from "./pod-batch-types";
+import { useWorkflowReturn } from "../navigation/use-workflow-return";
 
 const idle: PodBatchActionState = { status: "idle", message: "" };
 
@@ -27,8 +28,9 @@ export function MockupBatchWorkbench({
   batches,
   batch,
   assetUrls,
-  error,
+  error, initialDesignVersionId,
 }: {
+  initialDesignVersionId?: string;
   capabilities?: BatchCapabilities;
   options?: MockupOptions;
   allPacks: Array<{ id: string; name: string; versionNumber: number; status: string; platform: string; locale: string }>;
@@ -38,6 +40,7 @@ export function MockupBatchWorkbench({
   error?: string;
 }) {
   const feature = capabilities?.mockupBatches;
+  const workflow = useWorkflowReturn();
   return (
     <div className="pod-batch-workbench">
       <header className="pod-batch-header">
@@ -47,8 +50,8 @@ export function MockupBatchWorkbench({
           <p>消费已绑定 SKU 的正式设计版本，用已批准模板包确定性渲染；这里只生成图片，不生成标题。</p>
         </div>
         <nav aria-label="生产上下游">
-          <Link href="/creative-designs"><ChevronLeft size={14} />画图设计来源</Link>
-          <Link aria-current="page" href="/pod-workbench/mockup-batches">批量套图</Link>
+          <Link href={workflow.back ?? "/product-development"}><ChevronLeft size={14} />{workflow.back ? "返回来源 SKU" : "产品开发"}</Link>
+          <Link aria-current="page" href={workflow.current}>批量套图</Link>
         </nav>
       </header>
       <section className="pod-batch-boundary">
@@ -60,7 +63,7 @@ export function MockupBatchWorkbench({
       {feature && !feature.enabled ? <div className="pod-batch-alert warning"><AlertTriangle size={15} /><span><b>套图入口暂未启用</b>{feature.blockers.join("；")}</span></div> : null}
 
       <TemplateConsole allPacks={allPacks} options={options} />
-      <MockupComposer disabled={!feature?.enabled} options={options} />
+      <MockupComposer disabled={!feature?.enabled} options={options} initialDesignVersionId={initialDesignVersionId} />
       <div className="pod-batch-layout">
         <MockupLedger activeId={batch?.id} batches={batches} />
         <MockupMatrix assetUrls={assetUrls} batch={batch} options={options} />
@@ -122,10 +125,11 @@ function TemplateReview({ pack }: { pack: { id: string; name: string; versionNum
   return <form action={action} className="pod-template-review"><input name="versionId" type="hidden" value={pack.id} /><span><b>{pack.name} v{pack.versionNumber}</b><small>{pack.platform} · {pack.locale} · {statusLabel(pack.status)}</small></span>{pack.status === "draft" ? <><input name="rejectionReason" placeholder="驳回原因" /><button disabled={pending} name="decision" value="reject">驳回</button><button className="primary" disabled={pending} name="decision" value="approve">批准</button></> : null}<ActionNotice state={state} /></form>;
 }
 
-function MockupComposer({ options, disabled }: { options?: MockupOptions; disabled: boolean }) {
+function MockupComposer({ options, disabled, initialDesignVersionId }: { options?: MockupOptions; disabled: boolean; initialDesignVersionId?:string }) {
   const [state, action, pending] = useActionState(createMockupBatch, idle);
-  const [packId, setPackId] = useState(options?.templatePacks[0]?.id ?? "");
-  const [designIds, setDesignIds] = useState<string[]>([]);
+  const initialDesign=options?.formalDesigns.find(d=>d.designVersionId===initialDesignVersionId);
+  const [packId, setPackId] = useState(options?.templatePacks.find(p=>initialDesign && p.slots.every(s=>s.acceptedPrintSpecVersionIds.includes(initialDesign.printSpecVersionId)))?.id??options?.templatePacks[0]?.id??"");
+  const [designIds, setDesignIds] = useState<string[]>(initialDesign?[initialDesign.designVersionId]:[]);
   const pack = options?.templatePacks.find((entry) => entry.id === packId);
   const designs = options?.formalDesigns.filter((design) => pack?.slots.every((slot) => slot.acceptedPrintSpecVersionIds.includes(design.printSpecVersionId))) ?? [];
   const payload = JSON.stringify({
@@ -137,7 +141,7 @@ function MockupComposer({ options, disabled }: { options?: MockupOptions; disabl
     }),
   });
   return (
-    <details className="pod-batch-compose">
+    <details className="pod-batch-compose" open={!!initialDesign}>
       <summary><span><Grid3X3 size={15} />新建套图批次</span><small>一个模板包 · 最多 50 个正式设计版本</small></summary>
       <form action={action}>
         <input name="payload" type="hidden" value={payload} />
@@ -153,7 +157,9 @@ function MockupComposer({ options, disabled }: { options?: MockupOptions; disabl
 }
 
 function MockupLedger({ activeId, batches }: { activeId?: string; batches: MockupBatch[] }) {
-  return <aside className="pod-batch-ledger"><header><span>MOCKUP LEDGER</span><b>{batches.length}</b></header>{batches.length ? batches.map((entry) => <Link className={entry.id === activeId ? "active" : ""} href={`/pod-workbench/mockup-batches?batch=${entry.id}`} key={entry.id}><span>{statusLabel(entry.status)}</span><strong>{entry.name}</strong><small>{entry.completedCount}/{entry.itemCount} 已批准 · {entry.failedCount} 失败</small></Link>) : <p>尚无套图批次。</p>}</aside>;
+  const workflow = useWorkflowReturn();
+  const batchHref = (id: string) => { const url = new URL(workflow.current, "https://erp.invalid"); url.searchParams.set("batch", id); return `${url.pathname}${url.search}`; };
+  return <aside className="pod-batch-ledger"><header><span>MOCKUP LEDGER</span><b>{batches.length}</b></header>{batches.length ? batches.map((entry) => <Link className={entry.id === activeId ? "active" : ""} href={batchHref(entry.id)} key={entry.id}><span>{statusLabel(entry.status)}</span><strong>{entry.name}</strong><small>{entry.completedCount}/{entry.itemCount} 已批准 · {entry.failedCount} 失败</small></Link>) : <p>尚无套图批次。</p>}</aside>;
 }
 
 function MockupMatrix({ batch, options, assetUrls }: { batch?: MockupBatch; options?: MockupOptions; assetUrls: Record<string, string> }) {

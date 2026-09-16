@@ -6,7 +6,8 @@ export interface ProviderPricing {
 }
 
 export function normalizeEndpoint(endpoint: string, path: string): string {
-  return `${endpoint.replace(/\/$/, "")}${path}`;
+  const base = endpoint.replace(/\/$/, "");
+  return `${base}${base.endsWith("/v1") && path.startsWith("/v1/") ? path.slice(3) : path}`;
 }
 
 export async function throwProviderResponseError(response: Response, providerId: string): Promise<never> {

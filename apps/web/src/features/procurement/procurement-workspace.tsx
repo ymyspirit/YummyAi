@@ -1,4 +1,5 @@
 import type { ProcurementWorkspaceView } from "@yummyai/contracts";
+import { PurchaseOrderActions } from "./procurement-operations";
 import {
   AlertTriangle,
   ArrowRight,
@@ -12,7 +13,7 @@ import {
   ShoppingCart,
 } from "lucide-react";
 
-export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView }) {
+export function ProcurementWorkspace({ data, focusedOrderId }: { data: ProcurementWorkspaceView; focusedOrderId?: string }) {
   const suppliers = new Map(data.suppliers.map((supplier) => [supplier.id, supplier]));
   const stockItems = new Map(data.stockItems.map((stockItem) => [stockItem.id, stockItem]));
   const locations = new Map(data.locations.map((location) => [location.id, location]));
@@ -40,7 +41,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
       <section className="procurement-empty" aria-labelledby="procurement-empty-title">
         <ShoppingCart size={32} />
         <strong id="procurement-empty-title">还没有采购证据</strong>
-        <span>先通过采购 API 建立申请、询价或补货策略。系统不会根据库存缺口自动批准采购。</span>
+        <span>点击上方“新增采购单”填写采购草稿。保存并审核后，可以登记收货。</span>
       </section>
     );
   }
@@ -82,6 +83,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                 <th>金额</th>
                 <th>预计到货</th>
                 <th>收货 / 发票</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -89,9 +91,10 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                 const orderReceipts = receiptByOrder.get(order.id) ?? [];
                 const orderInvoices = invoiceByOrder.get(order.id) ?? [];
                 return (
-                  <tr key={order.id}>
+                  <tr key={order.id} id={`purchase-${order.id}`} tabIndex={order.id === focusedOrderId ? -1 : undefined} data-focused={order.id === focusedOrderId || undefined}>
                     <td>
                       <strong>{order.code}</strong>
+                      {order.purpose && order.purpose !== "general" && <span>{order.purpose === "fba_replenishment" ? "FBA 备货" : "定制订单"}{order.sourceSupplyVersionId ? " · 供货报价建单" : ""}</span>}
                       <span>{suppliers.get(order.supplierId)?.name ?? "未知供应商"} · V{order.currentVersion}</span>
                     </td>
                     <td><Status value={order.status} /></td>
@@ -109,6 +112,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                       <span>{orderReceipts.length} 次收货</span>
                       <small>{orderInvoices.length ? invoiceStatus(orderInvoices) : "未登记发票"}</small>
                     </td>
+                    <td><PurchaseOrderActions data={data} order={order} /></td>
                   </tr>
                 );
               })}

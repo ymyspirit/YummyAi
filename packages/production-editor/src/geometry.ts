@@ -21,6 +21,19 @@ export function getProductionLayout(document: ProductionEditorDocument) {
     return { widthMm: diameter, heightMm: diameter, widthPx: mmToPixels(diameter, document.spec.dpi), heightPx: mmToPixels(diameter, document.spec.dpi), panelWidthMm: diameter, panelHeightMm: diameter, marginMm: 0, backOffsetMm: 0 };
   }
   const { widthMm, heightMm, cutLineMm, panelGapMm, barcodeTab, dpi } = document.spec;
+  if (document.spec.sheetMarginMm !== undefined) {
+    // Curves rarely span an integer number of pixels. Allocate whole pixel cells
+    // per panel so SVG viewBox rounding cannot shrink a clear margin or gap.
+    const pixelMm = 25.4 / dpi;
+    const clearMarginMm = Math.round(document.spec.sheetMarginMm / pixelMm) * pixelMm;
+    const clearGapMm = Math.round(panelGapMm / pixelMm) * pixelMm;
+    const marginMm = clearMarginMm + cutLineMm / 2;
+    const panelWidthMm = Math.ceil((widthMm + cutLineMm) / pixelMm - 1e-8) * pixelMm;
+    const panelHeightMm = Math.ceil((heightMm + (barcodeTab.heightMm ?? 0) + cutLineMm) / pixelMm - 1e-8) * pixelMm;
+    const sheetWidth = panelWidthMm * 2 + clearGapMm + clearMarginMm * 2;
+    const sheetHeight = panelHeightMm + clearMarginMm * 2;
+    return { widthMm: sheetWidth, heightMm: sheetHeight, widthPx: mmToPixels(sheetWidth, dpi), heightPx: mmToPixels(sheetHeight, dpi), panelWidthMm, panelHeightMm, marginMm, backOffsetMm: panelWidthMm + clearGapMm };
+  }
   const marginMm = cutLineMm / 2 + 1;
   const panelWidthMm = widthMm + marginMm * 2;
   const panelHeightMm = heightMm + (barcodeTab.heightMm ?? 0) + marginMm * 2;
@@ -89,7 +102,14 @@ export function buildPillowContour(document: ShapedPillowDocument) {
     issues.push("barcode_not_connected");
     return { path: polygonPath(points), points, issues };
   }
-  const top = Math.min(bottomLeft, bottomRight) - 0.01;
+  // A concave lower edge can rise between the tab's two ends. Overlap the whole
+  // lower boundary in this span so joining the blank tab cannot leave cut holes.
+  const anchorXs = [...new Set([x1, x2, ...points.map(([x]) => x).filter(x => x > x1 && x < x2)])].sort((a, b) => a - b);
+  const joinYs = anchorXs.flatMap((x, index) => {
+    const next = anchorXs[index + 1];
+    return [bottomIntersection(points, x), ...(next === undefined ? [] : [bottomIntersection(points, (x + next) / 2)])].filter((y): y is number => y !== undefined);
+  });
+  const top = Math.min(bottomLeft, bottomRight, ...joinYs) - 0.01;
   const bottom = heightMm + barcodeTab.heightMm;
   try {
     const union = polygonClipping.union([points], [[[x1, top], [x2, top], [x2, bottom], [x1, bottom], [x1, top]]]);

@@ -28,6 +28,9 @@ async function proxy(request: Request, context: RouteContext, method: "GET" | "P
     const versionId = url.searchParams.get("versionId");
     if (!versionId || !idPattern.test(versionId)) return failure(400);
     upstream.searchParams.set("versionId", versionId);
+    const thumbnail = url.searchParams.get("thumbnail");
+    if (thumbnail !== null && thumbnail !== "1") return failure(400);
+    if (thumbnail) upstream.searchParams.set("thumbnail", thumbnail);
   }
   if (path[0] === "workspace") {
     for (const key of ["accountId", "batchId"]) {

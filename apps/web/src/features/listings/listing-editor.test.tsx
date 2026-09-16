@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ListingEditor, type ListingEditorView } from "./listing-editor";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), useSearchParams: () => new URLSearchParams(), usePathname: () => "/listings/listing" }));
 
 describe("listing editor", () => {
   it("renders stable platform tabs, field provenance, and validation", () => {

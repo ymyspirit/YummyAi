@@ -5,15 +5,22 @@ import {
 import { BadgeCheck, ShoppingCart } from "lucide-react";
 
 import { ProcurementWorkspace } from "../../../features/procurement/procurement-workspace";
+import { ProcurementOperations } from "../../../features/procurement/procurement-operations";
+import { ProcurementAssist } from "../../../features/ai-assist/business-assist";
 import { apiFetch } from "../../../server-api";
+import { PurchaseOrderFocus } from "../../../features/procurement/purchase-order-focus";
+import { WorkflowReturnLink } from "../../../features/navigation/use-workflow-return";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProcurementPage() {
+export default async function ProcurementPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const focusedOrderId = typeof params.order === "string" ? params.order : undefined;
   const result = await loadProcurementWorkspace();
   return (
     <div className="research-shell procurement-shell">
       <main className="research-main procurement-main">
+        <WorkflowReturnLink className="listing-return-link" label="返回供货资料" />
         <header className="procurement-header">
           <div>
             <p className="kicker">PURCHASE / RECEIPT / INVOICE</p>
@@ -34,7 +41,7 @@ export default async function ProcurementPage() {
               <span>{result.error}</span>
             </div>
           </section>
-        ) : <ProcurementWorkspace data={result.data} />}
+        ) : <><ProcurementAssist data={result.data} /><ProcurementOperations data={result.data} /><PurchaseOrderFocus id={focusedOrderId} found={result.data.purchaseOrders.some(order => order.id === focusedOrderId)} /><ProcurementWorkspace data={result.data} focusedOrderId={focusedOrderId} /></>}
       </main>
     </div>
   );

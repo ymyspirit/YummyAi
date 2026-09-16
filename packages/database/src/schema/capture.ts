@@ -27,6 +27,7 @@ export const researchItems = pgTable(
     normalizedUrl: text("normalized_url").notNull(),
     latestTitle: text("latest_title"),
     latestStatus: text("latest_status").default("normalizing").notNull(),
+    archivedAt: timestamp("archived_at", { mode: "date", withTimezone: true }),
     productTypeName: text("product_type_name"),
     productTypeKey: text("product_type_key"),
     classificationStatus: text("classification_status").default("unclassified").notNull(),

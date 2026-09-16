@@ -3,6 +3,7 @@
 import { CANVAS_BRIDGE, CANVAS_WORKFLOW_TEMPLATES, CanvasBriefSchema, CanvasProductionTemplateSchema, CanvasResultViewSchema, CreateCanvasBriefInputSchema, type CanvasBrief, type CanvasProductionTemplate, type CanvasResultView } from "@yummyai/contracts/pod/canvas-bridge";
 import { ArrowRight, Check, Circle, Copy, ExternalLink, FileImage, FolderOpen, LayoutTemplate, Plus, RefreshCw, Scissors, Search, Shapes, Workflow, X } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SpotlightCard } from "../../components/react-bits/spotlight-card";
 import { canvasApi, connectCanvas } from "./canvas-connection";
@@ -11,12 +12,22 @@ import { canvasResultSelection, nextCanvasPrompt, recentCanvasProjects, type Can
 import "./canvas-workspace.css";
 import { ProductionEditorSession } from "../production-editor/production-editor-session";
 import type { ProductionKind } from "../production-editor/production-editor-model";
+import { CreativeProjectsWorkspace } from "./creative-projects-workspace";
+import type { ResearchSourceSelection } from "@yummyai/contracts/research/creative";
 
 type Asset = CanvasBrief["referenceAssets"][number];
 type TemplateKey = typeof CANVAS_WORKFLOW_TEMPLATES[number]["key"];
 const TEMPLATE_ICONS = { freeform: Plus, original_pattern: Shapes, tire_cover: Circle, shaped_pillow: Scissors };
 
-export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: string | null; initialBriefId?: string }) {
+export function CanvasWorkspace({ canvasUrl, initialBriefId, initialResearchSources }: { canvasUrl: string | null; initialBriefId?: string; initialResearchSources?: ResearchSourceSelection[] }) {
+  const [legacy,setLegacy]=useState(false);
+  useEffect(()=>{setLegacy(new URLSearchParams(location.search).get("legacy")==="1");},[]);
+  function chooseLegacy(value:boolean) {const u=new URL(location.href);if(value)u.searchParams.set("legacy","1");else u.searchParams.delete("legacy");history.replaceState(history.state,"",u);setLegacy(value);}
+  return legacy ? <><button type="button" onClick={()=>chooseLegacy(false)}>返回创意项目</button><LegacyCanvasWorkspace canvasUrl={canvasUrl} initialBriefId={initialBriefId}/></> : <CreativeProjectsWorkspace initialBriefId={initialBriefId} initialResearchSources={initialResearchSources} onLegacy={()=>chooseLegacy(true)}/>;
+}
+
+function LegacyCanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: string | null; initialBriefId?: string }) {
+  const router = useRouter();
   const [rows, setRows] = useState<CanvasBriefRow[]>([]), [assets, setAssets] = useState<Asset[]>([]), [templates, setTemplates] = useState<CanvasProductionTemplate[]>([]);
   const [brief, setBrief] = useState<CanvasBrief>(), [results, setResults] = useState<CanvasResultView[]>([]), [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -86,6 +97,11 @@ export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: stri
     await perform(async () => { const created = CanvasBriefSchema.parse(await canvasApi("briefs", parsed.data)); await activate(created.id); await reload(); setNotice("创作项目已保存。打开画布即可开始当前步骤。"); });
   }
   function openCanvas() {
+    if (!brief) return;
+    sessionStorage.setItem("yummyai.studio.scope", brief.id);
+    router.push(`/creative-designs/studio/canvas?brief=${brief.id}`);
+  }
+  function openLegacyCanvas() {
     if (!canvasUrl || !brief) return;
     resetConnection();
     const channelId = crypto.randomUUID(), url = new URL(canvasUrl), boundId = brief.id;
@@ -147,7 +163,6 @@ export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: stri
   return <div className="canvas-erp-workspace" aria-busy={busy || loading}>
     <header className="canvas-erp-header"><div><h1>创意工作台</h1><p>从模板开始，在这里筛选方案、完成审核并继续生产作图。</p></div><div className="canvas-actions"><details className="canvas-tools-menu"><summary>辅助工具</summary><nav aria-label="创意辅助工具"><Link href="/creative-designs">批量生图</Link><Link href="/pod-workbench">图片处理工具</Link><Link href="/design">设计任务与校样</Link></nav></details><button type="button" onClick={() => void perform(reload)} disabled={busy || loading}><RefreshCw size={15} />刷新任务</button><button type="button" className="primary" onClick={startNew} disabled={busy}><Plus size={16} />新建创作</button></div></header>
     {error ? <p role="alert" className="canvas-notice error">{error}</p> : null}{notice ? <p role="status" className="canvas-notice">{notice}</p> : null}
-    {!canvasUrl ? <p className="canvas-notice error">画布地址未配置或无效，请先完成画布部署。</p> : null}
     <div className="canvas-workbench-layout">
       <aside className="canvas-projects" aria-label="创作项目"><h2><FolderOpen size={16} aria-hidden="true" />最近项目 <small>{recentCanvasProjects(rows).length}</small></h2>
         <label className="canvas-search"><Search size={16} /><input aria-label="搜索创作项目" placeholder="搜索项目名称" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
@@ -169,7 +184,7 @@ export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: stri
             </div></div><button className="primary" type="submit" disabled={busy || loading || !name.trim() || !prompt.trim()}>{busy ? "保存中…" : "保存创作需求"}<ArrowRight size={16} /></button></fieldset></form>
         </section> : brief ? <>
           <section className="canvas-current"><header className="canvas-section-header"><div><small>{brief.workflow?.template.name ?? "自由创作"}</small><h2 ref={title} tabIndex={-1}>{brief.name}</h2></div><div className="canvas-actions">
-            {brief.nextBriefId ? <button className="primary" disabled={busy} onClick={() => void perform(() => activate(brief.nextBriefId!))}>打开下一步<ArrowRight size={16} /></button> : <div className="canvas-open-action"><button type="button" className="primary" disabled={!canvasUrl || busy || brief.status === "cancelled"} onClick={openCanvas}><ExternalLink size={16} />打开创意画布</button><small>在独立窗口打开无限画布</small></div>}
+            {brief.nextBriefId ? <button className="primary" disabled={busy} onClick={() => void perform(() => activate(brief.nextBriefId!))}>打开下一步<ArrowRight size={16} /></button> : <div className="canvas-open-action"><button type="button" className="primary" disabled={busy || brief.status === "cancelled"} onClick={openCanvas}><Workflow size={16} />打开创意画布</button><small>在 ERP 内编辑，自动保存到当前项目</small><Link href={`/creative-designs/studio/image?brief=${brief.id}`}>进入生图工作台</Link></div>}
           </div></header>
           <ol className="canvas-step-rail" aria-label="创作步骤">{(brief.workflow?.template.steps ?? [{ key: "create", name: "创作与审核", instructions: "" }]).map((step, index) => {
             const current = brief.workflow?.stepIndex ?? 0;
@@ -187,7 +202,7 @@ export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: stri
               {rejecting ? <form className="canvas-rejection-form" onSubmit={(event) => { event.preventDefault(); void review("reject"); }}><label>退回原因<textarea rows={2} value={rejectionReason} maxLength={1000} required onChange={(event) => setRejectionReason(event.target.value)} placeholder="例如：文字拼写需修正，或边缘有明显缺口" /></label><div className="canvas-actions"><button type="submit" disabled={busy || !rejectionReason.trim() || !selection.pending.length}>确认退回</button><button type="button" disabled={busy} onClick={() => setRejecting(false)}>取消</button></div></form> : null}
             </> : <div className="canvas-empty"><FileImage size={30} /><h3>等待画布回传方案</h3><p>在画布的「ERP 创作任务」节点选择图片，提交后会显示在这里。每个步骤最多 4 个方案。</p></div>}
           </section>
-          {brief.status !== "cancelled" && !brief.nextBriefId && results.length > 0 ? <section className="canvas-next"><header><span className="canvas-eyebrow">下一步</span><h2>{nextStep ? nextStep.name : "关联工艺底稿，制作生产图"}</h2><p>{selection.unreviewed ? `还有 ${selection.unreviewed} 个方案未完成审核。` : "当前方案已完成审核，勾选要继续使用的已通过方案。"}</p></header>
+          {brief.status !== "cancelled" && !brief.nextBriefId && results.length > 0 ? <section className="canvas-next"><p><Link href="/print-library">登记已审核印花，进入产品组合与销售 SKU 开发</Link></p><header><span className="canvas-eyebrow">下一步</span><h2>{nextStep ? nextStep.name : "关联工艺底稿，制作生产图"}</h2><p>{selection.unreviewed ? `还有 ${selection.unreviewed} 个方案未完成审核。` : "当前方案已完成审核，勾选要继续使用的已通过方案。"}</p></header>
             {nextStep ? <><label>下一步创作说明<textarea rows={3} maxLength={8000} value={nextPrompt} onChange={(event) => setNextPrompt(event.target.value)} disabled={busy} /></label><button className="primary" disabled={!canAdvance || !nextPrompt.trim()} onClick={() => void continueWorkflow()}>用选中方案继续<ArrowRight size={16} /></button></> : <>
               <label>产品工艺底稿<select aria-label="产品工艺底稿" value={templateVersionId} disabled={busy} onChange={(event) => setTemplateVersionId(event.target.value)}><option value="">选择已审核的通用工艺底稿</option>{eligibleTemplates.map((template) => <option key={template.versionId} value={template.versionId}>{template.name} · {template.productType === "tire_cover" ? "备胎罩" : "异形抱枕"} · V{template.versionNumber}</option>)}</select></label>
               <p className="canvas-help">复用底稿的尺寸、工艺参数与轮廓，另建生产草稿并导入选中图案。原有图文不复制，新稿需重新确认尺寸、摆放和工艺。</p>
@@ -196,7 +211,7 @@ export function CanvasWorkspace({ canvasUrl, initialBriefId }: { canvasUrl: stri
             </>}
           </section> : null}
         </> : <div className="canvas-empty" role="status">{loading || busy ? "正在读取创作项目…" : "从左侧选择一个项目，或新建创作。"}</div>}
-        <details className="canvas-setup"><summary>画布连接与插件安装</summary><ol><li>打开原版画布顶部的“节点插件 → 第三方插件”，粘贴下方地址并安装。1.0.0 仍可单张回传；批量功能使用 1.1.0。</li><li>在底部“扩展节点”中添加“ERP 创作任务”。左侧点击节点名称可定位表单。</li><li>点击“读取当前需求”，加入步骤和参考素材；完成设计后选择图片回传。</li></ol><label>插件地址<input readOnly value={pluginUrl} onFocus={(event) => event.currentTarget.select()} /></label><button type="button" onClick={() => void copyPlugin()}><Copy size={14} />复制插件地址</button><p>画布 {CANVAS_BRIDGE.upstreamVersion} · 插件 {CANVAS_BRIDGE.pluginVersion}。AI 生图由原版画布中配置的模型执行；创建任务不会自动调用模型。</p></details>
+        <details className="canvas-setup"><summary>旧版画布与历史项目迁移</summary><p>旧版浏览器中的项目仍保留在原地址。请先导出 ZIP，再从 ERP“我的画布”导入，并核对节点与素材。</p><button type="button" disabled={!canvasUrl || !brief} onClick={openLegacyCanvas}><ExternalLink size={14} />打开旧版画布</button><ol><li>旧版需要回传时，在“节点插件 → 第三方插件”安装下方插件。</li><li>添加“ERP 创作任务”，读取当前需求后选择图片回传。</li></ol><label>旧版插件地址<input readOnly value={pluginUrl} onFocus={(event) => event.currentTarget.select()} /></label><button type="button" onClick={() => void copyPlugin()}><Copy size={14} />复制插件地址</button><p>旧版画布 {CANVAS_BRIDGE.upstreamVersion} · 插件 {CANVAS_BRIDGE.pluginVersion}。ERP 内的创作页面使用统一 AI 模型配置。</p></details>
       </div>
     </div>
   </div>;

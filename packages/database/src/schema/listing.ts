@@ -10,6 +10,7 @@ export const listings = pgTable("listings", {
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   spuId: uuid("spu_id").notNull(),
+  styleId: uuid("style_id"),
   platform: text("platform").notNull(),
   marketplaceId: text("marketplace_id"),
   locale: text("locale").notNull(),
@@ -24,7 +25,8 @@ export const listings = pgTable("listings", {
   check("listings_status_check", sql`${table.status} in ('draft','in_review','approved','archived')`),
   foreignKey({ columns: [table.tenantId, table.spuId], foreignColumns: [spus.tenantId, spus.id], name: "listings_spu_fk" }).onDelete("restrict"),
   uniqueIndex("listings_tenant_id_unique").on(table.tenantId, table.id),
-  uniqueIndex("listings_channel_unique").on(table.tenantId, table.spuId, table.platform, table.marketplaceId, table.locale),
+  uniqueIndex("listings_channel_unique").on(table.tenantId, table.spuId, table.platform, table.marketplaceId, table.locale).where(sql`${table.styleId} is null`),
+  uniqueIndex("listings_style_channel_unique").on(table.tenantId, table.styleId, table.platform, table.marketplaceId, table.locale).where(sql`${table.styleId} is not null`),
   index("listings_status_idx").on(table.tenantId, table.status, table.updatedAt),
 ]);
 

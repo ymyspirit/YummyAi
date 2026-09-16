@@ -23,7 +23,7 @@ export default function yummyaiPlugin(runtime: PluginRuntime): CanvasPlugin {
       await connection.connect();
       const next = CanvasBriefSchema.parse(await connection.request({ type: "brief.read" }));
       setBrief(next); setRefs(next.referenceAssets.map((asset) => asset.id)); setAttested(false); setBatchIds([]); setSelected("");
-      ctx.updateMetadata({ yummyai: { schemaVersion: 1, briefId: next.id }, content: next.prompt });
+      ctx.updateMetadata({ yummyai: { schemaVersion: 1, briefId: next.id }, content: next.designInstructions ?? next.prompt });
       setNotice(`已读取需求，已回传 ${next.resultCount}/4 个方案`);
     }
     async function addAssets() {
@@ -68,7 +68,7 @@ export default function yummyaiPlugin(runtime: PluginRuntime): CanvasPlugin {
       <header><strong>ERP 创作任务</strong><span>连接 · 制作 · 回传</span></header>
       {brief?.workflow ? <p><b>{brief.workflow.template.name}</b> · 第 {brief.workflow.stepIndex + 1}/{brief.workflow.template.steps.length} 步：{brief.workflow.template.steps[brief.workflow.stepIndex]?.name}<br /><small>回传方案后，在 ERP 完成审核再继续。</small></p> : null}
       <button disabled={busy} onClick={() => void action(readBrief)}>读取当前需求</button>
-      {brief ? <><h3>{brief.name}</h3><p className="yummyai-prompt">{brief.prompt}</p><fieldset><legend>选择参考素材</legend>{brief.referenceAssets.length ? brief.referenceAssets.map((asset) => <label className="yummyai-check" key={asset.id}><input type="checkbox" checked={refs.includes(asset.id)} onChange={(event) => setRefs((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} /><span>{asset.fileName}</span></label>) : <p>此需求没有参考素材</p>}</fieldset><button disabled={busy} onClick={() => void action(addAssets)}>将需求和所选素材加入画布</button></> : null}
+      {brief ? <><h3>{brief.name}</h3><p className="yummyai-prompt">{brief.designInstructions ?? brief.prompt}</p><fieldset><legend>选择参考素材</legend>{brief.referenceAssets.length ? brief.referenceAssets.map((asset) => <label className="yummyai-check" key={asset.id}><input type="checkbox" checked={refs.includes(asset.id)} onChange={(event) => setRefs((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} /><span>{asset.fileName}</span></label>) : <p>此需求没有参考素材</p>}</fieldset><button disabled={busy} onClick={() => void action(addAssets)}>将需求和所选素材加入画布</button></> : null}
       <hr /><h3>回传设计方案</h3><button disabled={busy || !brief} onClick={refreshImages}>刷新画布图片</button>
       <label>选择图片<select disabled={busy || !brief} value={selected} onChange={(event) => { const node = images.find((image) => image.id === event.target.value); setSelected(node?.id ?? ""); setTitle(node?.title?.slice(0, 160) ?? ""); setAttested(false); }}><option value="">请选择要回传的图片</option>{images.map((node) => <option key={node.id} value={node.id}>{node.title || "未命名图片"}</option>)}</select></label>
       {selected ? <img className="yummyai-preview" alt="待回传方案预览" src={String(images.find((node) => node.id === selected)?.metadata?.content ?? "")} /> : null}

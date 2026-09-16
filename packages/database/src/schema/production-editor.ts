@@ -9,6 +9,8 @@ export const productionEditorProjects = pgTable("production_editor_projects", {
   name: text("name").notNull(), status: text("status").notNull().default("active"),
   encryptedDataKey: text("encrypted_data_key"),
   sourceReportLineId: uuid("source_report_line_id"), sourceReportVersionId: uuid("source_report_version_id"),
+  sourceWorkItemId: uuid("source_work_item_id"), sourceWorkRevisionId: uuid("source_work_revision_id"),
+  sourceSalesSkuId: uuid("source_sales_sku_id"), sourceSalesRecipeId: uuid("source_sales_recipe_id"),
   currentVersionId: uuid("current_version_id"), versionNumber: integer("version_number").notNull().default(0),
   reviewedVersionId: uuid("reviewed_version_id"), reviewedBy: uuid("reviewed_by").references(() => users.id), reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }),
   expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }),

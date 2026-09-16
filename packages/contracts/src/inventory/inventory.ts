@@ -86,6 +86,14 @@ export const CreateInventoryLotInputSchema = z.object({
   }
 });
 
+// Stable identifiers and stock units are not editable metadata.
+export const UpdateWarehouseInputSchema = CreateWarehouseInputSchema.pick({ name: true, countryCode: true, timeZone: true }).strict();
+export const UpdateInventoryLocationInputSchema = CreateInventoryLocationInputSchema.pick({ name: true }).strict();
+export const UpdateStockItemInputSchema = CreateStockItemInputSchema.pick({ name: true }).strict();
+export type UpdateWarehouseInput = z.infer<typeof UpdateWarehouseInputSchema>;
+export type UpdateInventoryLocationInput = z.infer<typeof UpdateInventoryLocationInputSchema>;
+export type UpdateStockItemInput = z.infer<typeof UpdateStockItemInputSchema>;
+
 export const RecordInventoryMovementInputSchema = z.object({
   stockItemId: EntityIdSchema,
   locationId: EntityIdSchema,

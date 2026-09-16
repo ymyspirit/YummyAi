@@ -1,5 +1,8 @@
 import { FunctionDirectory } from "../../../features/navigation/function-directory";
+import { NAVIGATION_GROUPS } from "../../../features/navigation/navigation-registry";
 
-export default function NavigationPage() {
-  return <main className="research-main erp-directory-main"><FunctionDirectory /></main>;
+export default async function NavigationPage({ searchParams }: { searchParams: Promise<{ group?: string }> }) {
+  const { group } = await searchParams;
+  const initialGroup = NAVIGATION_GROUPS.find((item) => item.id === group)?.id ?? "commerce";
+  return <main className="research-main erp-directory-main"><FunctionDirectory key={initialGroup} initialGroup={initialGroup} /></main>;
 }

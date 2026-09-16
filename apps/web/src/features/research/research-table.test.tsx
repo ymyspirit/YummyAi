@@ -53,7 +53,9 @@ describe("ResearchTable", () => {
     expect(html).toContain("批量归类");
     expect(html).not.toContain("Updated product");
     expect(html).not.toContain("Original product");
-    expect(html).toContain("partial");
+    expect(html).toContain("采集：部分完成");
+    expect(html).toContain("研究状态");
+    expect(html).toContain("关联创意");
   });
 
   it("renders the main image, product evidence, and newest snapshot first", () => {

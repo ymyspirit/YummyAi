@@ -9,6 +9,7 @@ import type { ReviewDrawerView } from "../../../../features/reviews/review-drawe
 import type { PublicationWorkspaceView } from "../../../../features/marketplaces/publication-panel";
 import type { AutomationWorkspaceView } from "../../../../features/marketplaces/listing-channel-operations";
 import { apiFetch } from "../../../../server-api";
+import { WorkflowReturnLink } from "../../../../features/navigation/use-workflow-return";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +19,9 @@ export default async function ListingPage({ params }: { params: Promise<{ listin
   return (
     <div className="research-shell listing-shell">
       <main className="research-main listing-main">
+        <WorkflowReturnLink className="listing-return-link" label="返回来源页面继续处理" />
         {result.listing ? (
-          <ListingEditor accounts={result.accounts} automations={result.automations} listing={result.listing} operationsError={result.operationsError} publicationError={result.publicationError} publications={result.publications} replications={result.replications} review={result.review} syncs={result.syncs} />
+          <ListingEditor key={listingId} accounts={result.accounts} automations={result.automations} listing={result.listing} operationsError={result.operationsError} publicationError={result.publicationError} publications={result.publications} replications={result.replications} review={result.review} syncs={result.syncs} />
         ) : (
           <section className="analysis-error" role="alert">
             <FileText size={28} />

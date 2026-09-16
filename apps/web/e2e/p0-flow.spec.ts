@@ -14,6 +14,7 @@ import {
 import JSZip from "jszip";
 
 import { NAVIGATION_GROUPS, PRIMARY_NAVIGATION_LABELS } from "../src/features/navigation/navigation-registry";
+import { apiFetch } from "../src/server-api";
 
 test("capture to reviewed export", async ({ page }) => {
   await page.goto("/");
@@ -180,7 +181,7 @@ test("research library keeps unified product-type filters through paging and bul
         scrollWidth: element.scrollWidth,
         tableWidth: element.querySelector("table")?.getBoundingClientRect().width ?? 0,
       }));
-    expect(tableScrollMetrics.scrollWidth).toBeGreaterThan(tableScrollMetrics.clientWidth);
+    expect(tableScrollMetrics.scrollWidth).toBeLessThanOrEqual(tableScrollMetrics.clientWidth);
     expect(
       await page
         .locator(".item-title:visible")
@@ -216,8 +217,8 @@ test("primary navigation stays complete across ERP pages", async ({ page }) => {
   for (const label of PRIMARY_NAVIGATION_LABELS.slice(1)) {
     await expect(navigation.getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
     const group = NAVIGATION_GROUPS.find((entry) => entry.items.some((item) => item.label === label))!;
-    const toggle = navigation.getByRole("button", { name: group.label, exact: true });
-    if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+    const toggle = page.getByRole("group", { name: "业务模块", exact: true }).getByRole("button", { name: group.label, exact: true });
+    if (await toggle.getAttribute("aria-pressed") === "false") await toggle.click();
     await navigation.getByRole("link", { name: label }).click();
     const destination = group.items.find((item) => item.label === label)!;
     await expect(page).toHaveURL((url) => url.pathname === destination.href);
@@ -230,8 +231,8 @@ test("primary navigation stays complete across ERP pages", async ({ page }) => {
 
 test("P2 order inbox uses the real public projection", async ({ page }) => {
   await page.goto("/orders");
-  await expect(page.getByRole("heading", { name: "订单工作台" })).toBeVisible();
-  await expect(page.getByText("订单流水线")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "订单中心", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "各环节状态" })).toBeVisible();
   await expect(page.getByText(/买家姓名|详细地址|电子邮箱/)).toHaveCount(0);
 });
 
@@ -284,20 +285,16 @@ test(
   "Store ledger drills into layered real-data operations without page overflow",
   async ({ page }) => {
     const storeName = `E2E Store ${createEntityId().slice(-8)}`;
-    const tenantId = "019f7600-0000-7000-8000-000000000001";
-    const database = connectDatabase();
+    let storeId: string | undefined;
     try {
       await page.goto("/stores");
       await expect(page.getByRole("heading", { name: "店铺运营" })).toBeVisible();
-      const createPanel = page.locator("details.store-create-panel");
-      if (!(await createPanel.evaluate((element) => (element as HTMLDetailsElement).open))) {
-        await page.getByText("新增店铺连接", { exact: true }).click();
-      }
-      await page.getByLabel("连接名称").fill(storeName);
-      await page.getByRole("button", { name: "创建连接" }).click();
-      await expect(page.getByText(storeName, { exact: true })).toBeVisible();
-      await page.getByRole("link", { name: `打开 ${storeName} 店铺详情` }).click();
+      await page.getByRole("button", { name: "新增店铺", exact: true }).click();
+      await page.getByLabel("店铺名称", { exact: true }).fill(storeName);
+      await page.getByLabel("平台", { exact: true }).selectOption("etsy");
+      await page.getByRole("button", { name: "创建店铺档案" }).click();
       await expect(page.getByRole("heading", { name: storeName })).toBeVisible();
+      storeId = page.url().split("/").at(-1);
       for (const label of ["概览", "Listings", "订单", "健康与能力", "设置"]) {
         await expect(page.getByRole("heading", { name: label })).toBeVisible();
       }
@@ -318,22 +315,12 @@ test(
           .evaluate((element) => element.scrollWidth >= element.clientWidth),
       ).toBe(true);
     } finally {
-      await database.client.begin(async (tx) => {
-        await tx.unsafe(
-          `delete from audit_events
-            where tenant_id = $1
-              and entity_id in (
-                select id from marketplace_accounts
-                where tenant_id = $1 and display_name = $2
-              )`,
-          [tenantId, storeName],
-        );
-        await tx.unsafe(
-          `delete from marketplace_accounts where tenant_id = $1 and display_name = $2`,
-          [tenantId, storeName],
-        );
-      });
-      await database.client.end();
+      if (storeId) {
+        const response = await apiFetch(`${process.env.API_BASE_URL!.replace(/\/$/, "")}/v1/marketplace-accounts/${storeId}`, {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }),
+        });
+        expect(response.ok).toBe(true);
+      }
     }
   },
 );

@@ -11,12 +11,12 @@ export interface ListingSaveResult {
   version?: { id: string; versionNumber: number; validation: ListingValidation };
 }
 
-export async function saveListingVersion(listingId: string, content: ListingDraft): Promise<ListingSaveResult> {
+export async function saveListingVersion(listingId: string, content: ListingDraft, expectedVersionId?: string): Promise<ListingSaveResult> {
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { message: "API_BASE_URL 未配置，无法保存 Listing。", status: "error" };
   try {
     const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/listings/${listingId}/versions`, {
-      body: JSON.stringify(content), cache: "no-store", headers: { "content-type": "application/json" }, method: "POST",
+      body: JSON.stringify(content), cache: "no-store", headers: { "content-type": "application/json", ...(expectedVersionId ? { "if-match": expectedVersionId } : {}) }, method: "POST",
     });
     const payload = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
     if (!response.ok) return { message: messageFrom(payload) ?? `保存失败 (${response.status})`, status: "error" };
