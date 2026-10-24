@@ -274,7 +274,8 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
   const environment = requireStudioModelSelectionEnvironment(process.env, true), seen = await observeTransfer(page), child = childFor(environment.nonce);
   const result: Record<string, unknown> = { family: "studio_model_selection_c5a8f4d1_configuration_201", operation: "6db3a742", nonce: environment.nonce,
     schema: 188, paidExecution: false, configurationMutations: 0 }, observed: Request[] = [];
-  const record = (request: Request) => { observed.push(request); }; page.on("request", record);
+  const allowed = new Set<Request>(), requestStarts = new Map<Request, number>();
+  const record = (request: Request) => { requestStarts.set(request, Date.now()); observed.push(request); }; page.on("request", record);
   let failure: unknown;
   try {
     const basis = await seed(page, child, environment.nonce), before = await facts(child);
@@ -363,14 +364,66 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     result.images = images; result.viewports = viewports; result.configurationReads = transport; result.authorityHash = basis.authorityHash;
     result.configurationSnapshotHash = originalSha(JSON.stringify(configuration)); result.originalDocumentsHash = originalSha(JSON.stringify(before.documents));
     result.businessTablesUnchanged = true; result.originalDraftsAndRevisionsUnchanged = true; result.providerRequests = 0;
-    await seen.settle(false); await seen.markPhase("configuration-201.logout-private-settings");
-    await page.getByRole("button", { name: "退出登录", exact: true }).click();
+    const logoutButton = page.getByRole("button", { name: "退出登录", exact: true }), logoutPhase = "configuration-201.logout-private-settings";
+    await page.bringToFront(); await logoutButton.focus();
+    await seen.markPhase(logoutPhase); const clearBoundary = await seen.clear.boundary();
+    await seen.settle(false); verifyTransferNetwork(seen, allowed);
+    const logoutOrigin = new URL(page.url()).origin, logoutStartIndex = seen.rows.length, logoutStartedAt = Date.now();
+    const logoutResponse = page.waitForResponse(response => {
+      const url = new URL(response.url()), request = response.request();
+      return url.origin === logoutOrigin && url.pathname === "/api/erp-auth/logout" && !url.search
+        && request.method() === "POST" && request.frame() === page.mainFrame();
+    });
+    await logoutButton.click();
+    const acknowledgement = await logoutResponse;
+    expect(acknowledgement.status()).toBe(200); expect(await acknowledgement.json()).toEqual({ signedOut: true });
+    expect(await acknowledgement.finished()).toBeNull();
     await expect(page.getByRole("heading", { name: "登录运营工作台", exact: true })).toBeVisible(); await expect(embedded).toHaveCount(0);
-    await seen.settle(false); verifyTransferNetwork(seen, new Set<Request>()); result.logoutPrivateSettingsCleared = true;
+    expect(new URL(page.url()).origin).toBe(logoutOrigin); expect(new URL(page.url()).pathname).toBe("/login");
+    await expect(page.locator('iframe[title="无限画布模型配置"]')).toHaveCount(0);
+    const clearAfter = await seen.clear.boundary();
+    await expect.poll(() => seen.clear.documents.get(clearBoundary.document)?.events.some(event => event.name === STUDIO_PERSONAL_CLEAR_EVENT
+      && event.at >= clearBoundary.at && event.at <= clearAfter.at) ?? false).toBe(true);
+    const signedOutSession = await page.request.get(new URL("/api/erp-auth/session", logoutOrigin).href, { headers: { "cache-control": "no-store" } });
+    expect(signedOutSession.status()).toBe(401); await signedOutSession.dispose();
+    await seen.settle(false); const logoutFinishedAt = Date.now();
+    const acknowledgements = seen.rows.filter(row => row.index >= logoutStartIndex && row.path === "/api/erp-auth/logout");
+    expect(acknowledgements).toHaveLength(1);
+    const acknowledged = acknowledgements[0];
+    if (!acknowledged) throw new Error("studio_model_browser_logout_acknowledgement_missing");
+    expect(acknowledged.request).toBe(acknowledgement.request()); expect(acknowledged.phase).toBe(logoutPhase);
+    expect(acknowledged.method).toBe("POST"); expect(acknowledged.status).toBe(200); expect(acknowledged.finished).toBe(true); expect(acknowledged.failed).toBeNull();
+    const cancellations = seen.rows.filter(row => row.failed);
+    expect(cancellations.length).toBeLessThanOrEqual(1);
+    const cancelled = cancellations[0];
+    if (cancelled) {
+      const url = new URL(cancelled.request.url()), startedAt = requestStarts.get(cancelled.request);
+      if (startedAt === undefined || cancelled.failedAt === null) throw new Error("studio_model_browser_logout_session_time_missing");
+      expect(cancelled.index).toBeGreaterThanOrEqual(logoutStartIndex);
+      expect(url.origin).toBe(logoutOrigin); expect(url.pathname).toBe("/api/erp-auth/session"); expect(url.search).toBe("");
+      expect(cancelled.path).toBe("/api/erp-auth/session"); expect(cancelled.method).toBe("GET"); expect(cancelled.request.method()).toBe("GET");
+      expect(cancelled.request.frame()).toBe(page.mainFrame()); expect(cancelled.request.resourceType()).toBe("fetch");
+      expect(cancelled.request.isNavigationRequest()).toBe(false); expect(cancelled.request.postData()).toBeNull();
+      expect(cancelled.phase).toBe(logoutPhase); expect(cancelled.failedPhase).toBe(logoutPhase);
+      expect(cancelled.status).toBeNull(); expect(cancelled.finished).toBe(false); expect(cancelled.finishedAt).toBeNull(); expect(cancelled.finishedPhase).toBeNull();
+      expect(cancelled.failed).toBe("net::ERR_ABORTED");
+      expect(startedAt).toBeGreaterThanOrEqual(logoutStartedAt); expect(startedAt).toBeLessThanOrEqual(logoutFinishedAt);
+      expect(cancelled.failedAt).toBeGreaterThanOrEqual(startedAt); expect(cancelled.failedAt).toBeLessThanOrEqual(logoutFinishedAt);
+      expect(observed.filter(request => request === cancelled.request)).toHaveLength(1);
+      expect(seen.rows.filter(row => row.request === cancelled.request)).toHaveLength(1);
+      // Only this original request can be admitted, after real logout, CLEAR,
+      // private-frame removal and the subsequent unauthenticated read are proved.
+      allowed.add(cancelled.request);
+      result.logoutSessionCancellation = { requestIndex: cancelled.index, method: "GET", path: cancelled.path, mainFrame: true,
+        resourceType: "fetch", phase: logoutPhase, failedPhase: cancelled.failedPhase, startedAt, failedAt: cancelled.failedAt,
+        windowStartedAt: logoutStartedAt, windowFinishedAt: logoutFinishedAt, status: null, finished: false, failure: cancelled.failed };
+    }
+    expect(seen.consoles).toEqual([]); verifyTransferNetwork(seen, allowed);
+    result.logoutPrivateSettingsCleared = true; result.logoutSessionStatus = 401; result.logoutAcknowledgementFinished = true;
   } catch (error) { failure = error; result.primaryFailure = true; await failedScreenshot(page, info, result); }
   finally {
     page.off("request", record);
-    try { await seen.settle(false); noExecution(seen); verifyTransferNetwork(seen, new Set<Request>()); }
+    try { await seen.settle(false); noExecution(seen); expect(seen.consoles).toEqual([]); verifyTransferNetwork(seen, allowed); }
     catch (error) { result.networkGateFailed = true; failure ??= error; }
     failure = await finish(child, seen, info, result, failure);
   }
