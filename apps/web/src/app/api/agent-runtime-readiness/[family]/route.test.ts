@@ -45,8 +45,10 @@ it("allows only a fixed-family metadata GET under the exact current personal aut
   expect(mocks.upstream).not.toHaveBeenCalled();
 });
 
-it("uses the independent five-family endpoint without changing original workspace or paid transport", async () => {
-  for (const family of Object.keys(AGENT_RUNTIME_FAMILIES) as Array<keyof typeof AGENT_RUNTIME_FAMILIES>) {
+it("reads all registered runtime families without changing original workspace or paid transport", async () => {
+  const families = Object.keys(AGENT_RUNTIME_FAMILIES) as Array<keyof typeof AGENT_RUNTIME_FAMILIES>;
+  expect(families).toEqual(["loop", "plan", "native_v1", "native_v2", "native_v3", "native_v4"]);
+  for (const family of families) {
     const value = { ...view(), family, executorVersion: AGENT_RUNTIME_FAMILIES[family].executorVersion };
     mocks.upstream.mockResolvedValueOnce(upstream(value));
     const result = await GET(request(), context(family));
@@ -57,7 +59,8 @@ it("uses the independent five-family endpoint without changing original workspac
       expect.objectContaining({ method: "GET", cache: "no-store", headers: { "x-yummyai-context-authority": authority } }));
     expect(mocks.upstream.mock.calls.at(-1)![1]).not.toHaveProperty("body");
   }
-  expect(mocks.current).toHaveBeenCalledTimes(5);
+  expect(mocks.current).toHaveBeenCalledTimes(families.length);
+  expect(mocks.upstream).toHaveBeenCalledTimes(families.length);
 });
 
 it("preserves a read-only user's withheld transport checks without requiring WorkflowRun", async () => {

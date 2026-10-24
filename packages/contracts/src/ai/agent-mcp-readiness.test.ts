@@ -8,7 +8,7 @@ import {
 import { AgentMcpExecuteSchema } from "./agent-mcp.js";
 import { AgentMcpV2ExecuteSchema, AgentMcpV2SavedResultSchema, AgentMcpV2UsageSchema } from "./agent-mcp-v2.js";
 
-const families = AgentReadinessFamilySchema.options;
+const families = AgentMcpReadinessCallSchema.shape.family.options;
 const policy = () => ({ allowedFamilies: [...families], allowModelRun: false, maxCostUsd: 0, allowPrepare: false,
   allowNativeV3: false, allowedReads: ["knowledge.search"], allowedCommands: [], allowedResources: [], allowFulfillment: false });
 function result(family: AgentReadinessFamily = "native_v3") {
@@ -39,6 +39,8 @@ describe("explicit MCP readiness v1 on the unchanged five-tool v2 transport", ()
   });
 
   it("rejects unknown families, mixed native requests and arbitrary destinations or private inputs", () => {
+    expect(AgentReadinessFamilySchema.safeParse("native_v4").success).toBe(true);
+    expect(families).toEqual(["loop", "plan", "native_v1", "native_v2", "native_v3"]);
     const call = { version: AGENT_MCP_READINESS_VERSION, family: "native_v3" };
     for (const changed of [{ ...call, family: "native_v4" }, { ...call, version: "erp-agent-native-v3" },
       { ...call, operation: "start" }, { ...call, requestJson: "{}" }, { ...call, maxCostUsd: 0.000001 },
@@ -62,6 +64,7 @@ describe("explicit MCP readiness v1 on the unchanged five-tool v2 transport", ()
       startTransport: "explicit_native_v3", paidSubmissionEnabledByStartup: true };
     expect(AgentMcpReadinessResultSchema.safeParse(enabled).success).toBe(true);
     for (const changed of [{ ...policy(), allowedFamilies: [] }, { ...policy(), allowedFamilies: ["loop", "loop"] },
+      { ...policy(), allowedFamilies: [...families, "native_v4"] },
       { ...policy(), allowedReads: ["knowledge.search", "knowledge.search"] }, { ...policy(), allowModelRun: true },
       { ...policy(), maxCostUsd: 0.000001 }, { ...policy(), allowPrepare: true },
       { ...policy(), allowedResources: ["catalog.sku", "catalog.sku"] }])

@@ -13,14 +13,15 @@ function ready(family: AgentReadinessFamily = "native_v3"): AgentReadiness {
 }
 
 describe("independent read-only Agent readiness v1 transport", () => {
-  it("accepts all five original families while preserving the four explicit unchecked boundaries", () => {
+  it("accepts all six backend families while preserving the four explicit unchecked boundaries", () => {
+    expect(AgentReadinessFamilySchema.options).toEqual(["loop", "plan", "native_v1", "native_v2", "native_v3", "native_v4"]);
     for (const family of AgentReadinessFamilySchema.options) {
       const parsed = AgentReadinessSchema.parse(ready(family));
       expect(parsed.family).toBe(family);
       expect(parsed.notChecked).toEqual(["request_budget", "selected_sources", "provider_connection", "consumer_readiness"]);
       expect(parsed.state).toBe("no_known_blocker");
     }
-    expect(AgentReadinessFamilySchema.safeParse("native_v4").success).toBe(false);
+    expect(AgentReadinessFamilySchema.safeParse("unknown_family").success).toBe(false);
   });
 
   it("rejects a fabricated successful reservation, private configuration or a specific request budget", () => {

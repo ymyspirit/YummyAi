@@ -75,7 +75,21 @@ test("low-memory development is opt-in and full development stays compatible", a
   assert.match(pkg.scripts["dev:lite"], /--filter=@yummyai\/web/);
   assert.doesNotMatch(pkg.scripts["dev:lite"], /@yummyai\/worker|@yummyai\/extension/);
   assert.doesNotMatch(pkg.scripts["infra:up"], /low-memory/);
-  assert.match(pkg.scripts["infra:lite"], /docker-compose\.low-memory\.yml/);
+  for (const mode of ["up", "lite", "full"]) {
+    assert.equal(pkg.scripts[`infra:${mode}`], `node tools/scripts/unified-compose.mjs infrastructure ${mode}`);
+  }
+  const manager = await readFile(new URL("../scripts/unified-compose.mjs", import.meta.url), "utf8");
+  assert.ok(manager.includes('if (operation === "infrastructure" && args.length === 1) return infrastructure(args[0]);'));
+  const infrastructure = /async function infrastructure\(mode\) \{([\s\S]*?)\n\}/.exec(manager)?.[1];
+  assert.ok(infrastructure, "unified infrastructure owner is required");
+  const liteServices = /\blite:\s*(\[[^\]]+\])/.exec(infrastructure)?.[1];
+  assert.ok(liteServices, "lite service selection is required");
+  assert.deepEqual(JSON.parse(liteServices), ["postgres", "redis", "minio", "keycloak"]);
+  assert.ok(infrastructure.includes('if (await managedDeploymentExists()) return startServices(selections[mode], { startupGate: gate });'));
+  assert.ok(infrastructure.includes('...(mode === "lite" ? ["-f", path.join(workspace, "infra/docker-compose.low-memory.yml")] : [])'));
+  const overlay = await readFile(new URL("../../infra/docker-compose.low-memory.yml", import.meta.url), "utf8");
+  assert.match(overlay, /clamav:\s+profiles:\s*\["file-scanning"\]/);
+  assert.match(overlay, /otel-collector:\s+profiles:\s*\["observability"\]/);
   for (const name of ["dev:worker", "dev:extension", "dev:full", "infra:full"]) {
     assert.equal(typeof pkg.scripts[name], "string", `missing opt-in script ${name}`);
   }

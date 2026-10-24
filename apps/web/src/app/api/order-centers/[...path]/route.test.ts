@@ -56,9 +56,16 @@ describe("order list proxy recovery", () => {
     apiFetchMock.mockResolvedValueOnce(Response.json([]));
     expect((await GET(new Request(`${url}/factories?${query}`), context(factoryPath))).status).toBe(200);
     expect(apiFetchMock.mock.lastCall?.[0]).toBe(`http://api.test/v1/order-centers/${factoryPath.join("/")}?${query}`);
-    expect((await GET(new Request(`${url}/factories?${query}&quantity=1`), context(factoryPath))).status).toBe(400);
-    expect((await GET(new Request(`${url}/factories?${query}&routingDecisionId=${id}`), context(factoryPath))).status).toBe(400);
-    expect(apiFetchMock).toHaveBeenCalledTimes(5);
+    for (const quantity of [1, 100000]) {
+      apiFetchMock.mockResolvedValueOnce(Response.json([]));
+      expect((await GET(new Request(`${url}/factories?${query}&quantity=${quantity}`), context(factoryPath))).status).toBe(200);
+      expect(apiFetchMock.mock.lastCall?.[0]).toBe(`http://api.test/v1/order-centers/${factoryPath.join("/")}?${query}&quantity=${quantity}`);
+      expect(apiFetchMock.mock.lastCall?.[1]).toMatchObject({ method: "GET", cache: "no-store" });
+      expect(apiFetchMock.mock.lastCall?.[1]?.body).toBeUndefined();
+    }
+    for (const invalid of ["quantity=0", "quantity=-1", "quantity=1.5", "quantity=100001", "quantity=not-a-number", "quantity=1&quantity=2", `routingDecisionId=${id}`, "tenantId=caller"])
+      expect((await GET(new Request(`${url}/factories?${query}&${invalid}`), context(factoryPath))).status).toBe(400);
+    expect(apiFetchMock).toHaveBeenCalledTimes(7);
   });
   it("submits a validated native production request once and binds its receipt to the requested order and line", async () => {
     const id = "019f0000-0000-7000-8000-000000000001", other = "019f0000-0000-7000-8000-000000000002";

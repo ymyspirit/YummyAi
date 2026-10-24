@@ -99,21 +99,22 @@ describe("studio HTTP gateway", () => {
   });
 
   it.each([
-    { status: null, output_text: "unconfirmed private answer" },
-    { status: "completed", refusal: "private refusal", output_text: "must not adopt" },
-    { status: "completed", output: [{ type: "message", status: "incomplete", content: [{ type: "output_text", text: "partial" }] }] },
-    { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "partial" }, { type: "refusal", refusal: "private refusal" }] }] },
-    { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: 42 }] }] },
-    { status: "completed", output: [{ type: "message", content: [null] }] },
-    { status: "completed", output: "private incompatible output", output_text: "must not adopt" },
-    { status: "completed", output_text: "   " },
-    { status: "completed", output: [] },
-    { status: "completed", output_text: "x".repeat(100_001) },
-  ])("rejects refused or invalid Responses output without a second submission or chat fallback: %#", async payload => {
+    { payload: { status: null, output_text: "unconfirmed private answer" }, expectedCode: "model_response_incomplete" },
+    { payload: { status: "completed", refusal: "private refusal", output_text: "must not adopt" }, expectedCode: "studio_provider_invalid_result" },
+    { payload: { status: "completed", output: [{ type: "message", status: "incomplete", content: [{ type: "output_text", text: "partial" }] }] }, expectedCode: "model_response_incomplete" },
+    { payload: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "partial" }, { type: "refusal", refusal: "private refusal" }] }] }, expectedCode: "model_response_incomplete" },
+    { payload: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: 42 }] }] }, expectedCode: "studio_provider_invalid_result" },
+    { payload: { status: "completed", output: [{ type: "message", content: [null] }] }, expectedCode: "model_response_invalid" },
+    { payload: { status: "completed", output: "private incompatible output", output_text: "must not adopt" }, expectedCode: "model_response_invalid" },
+    { payload: { status: "completed", output_text: "   " }, expectedCode: "studio_provider_invalid_result" },
+    { payload: { status: "completed", output: [] }, expectedCode: "studio_provider_invalid_result" },
+    { payload: { status: "completed", output_text: "x".repeat(100_001) }, expectedCode: "studio_provider_invalid_result" },
+  ])("rejects refused or invalid Responses output without a second submission or chat fallback: %#", async ({ payload, expectedCode }) => {
     const transport = vi.fn<typeof fetch>(async () => Response.json(payload));
     const error = await new HttpStudioGateway(transport).generate(textRequest(), vi.fn()).catch(cause => cause);
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toBe("studio_provider_invalid_result");
+    expect(error.message).toBe(expectedCode);
+    expect(error.message).not.toContain("private");
     expect(transport.mock.calls.map(([url]) => url)).toEqual(["http://localhost:8080/v1/responses"]);
   });
 

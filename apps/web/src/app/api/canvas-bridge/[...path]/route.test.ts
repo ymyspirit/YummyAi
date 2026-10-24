@@ -4,9 +4,17 @@ const { apiFetchMock } = vi.hoisted(() => ({ apiFetchMock: vi.fn<typeof fetch>()
 vi.mock("../../../../server-api", () => ({ apiFetch: apiFetchMock }));
 import { GET, POST } from "./route";
 const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
-describe("canvas BFF scope and authentication boundary", () => {
-  beforeEach(() => { apiFetchMock.mockReset(); vi.stubEnv("API_BASE_URL", "http://api.test"); vi.stubEnv("NODE_ENV", "test"); });
+describe("local-service canvas BFF scope and authentication boundary", () => {
+  beforeEach(() => { apiFetchMock.mockReset(); vi.stubEnv("API_BASE_URL", "http://api.test"); vi.stubEnv("NODE_ENV", "test"); vi.stubEnv("WEB_AUTH_MODE", "local-service"); vi.stubEnv("FACTORY_PORTAL_ONLY", "0"); });
   afterEach(() => vi.unstubAllEnvs());
+  it("does not use the local-service transport unless explicitly selected", async () => {
+    for (const mode of [undefined, "personal"]) {
+      vi.stubEnv("WEB_AUTH_MODE", mode);
+      expect((await GET(new Request("http://localhost:3000/api/canvas-bridge/options"), context(["options"]))).status).toBe(403);
+      expect((await POST(new Request("http://localhost:3000/api/canvas-bridge/briefs", { method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, body: "{}" }), context(["briefs", createEntityId(), "results"]))).status).toBe(403);
+    }
+    expect(apiFetchMock).not.toHaveBeenCalled();
+  });
   it("forwards only allowed paths through server authentication", async () => {
     const id = createEntityId(); apiFetchMock.mockResolvedValue(Response.json({ saved: true }));
     const response = await POST(new Request("http://localhost:3000/api/canvas-bridge/briefs", { method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json", authorization: "caller-secret" }, body: "{}" }), context(["briefs", id, "results"]));

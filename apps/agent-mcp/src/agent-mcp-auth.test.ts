@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, rmdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve, relative, isAbsolute } from "node:path";
+import process from "node:process";
+import { isDeepStrictEqual } from "node:util";
 import type { ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,7 +65,7 @@ describe("MCP personal profile protected storage and fixed startup grant", () =>
     expect(requests).toBe(0); expect(JSON.stringify(status).includes(secret)).toBe(false);
   });
 
-  it("persists actual Windows CurrentUser ciphertext and rejects a different profile entropy without returning token material", async () => {
+  it.runIf(process.platform === "win32")("persists actual Windows CurrentUser ciphertext and rejects a different profile entropy without returning token material", async () => {
     const location = await directory(), store = new AgentMcpCredentialStore(location, digest, new WindowsAgentMcpDataProtection()), original = ready();
     await store.update(() => ({ next: original, value: undefined }));
     const cipher = await readFile(resolve(location, "credential.bin")); expect(cipher.includes(Buffer.from(secret))).toBe(false);
@@ -71,18 +73,21 @@ describe("MCP personal profile protected storage and fixed startup grant", () =>
     expect(actual?.state === "ready" && actual.tokens.refreshToken === secret).toBe(true);
     const other = new AgentMcpCredentialStore(location, "f".repeat(64), new WindowsAgentMcpDataProtection());
     await expect(other.read()).rejects.toMatchObject({ code: "mcp_auth_cache_invalid" });
-  });
+  }, 30_000);
 
-  it("preserves the last complete credential if protection fails and leaves no plaintext or partial replacement", async () => {
+  it.runIf(process.platform === "win32")("preserves the last complete credential if protection fails and leaves no plaintext or partial replacement", async () => {
     const location = await directory(), dpapi = new WindowsAgentMcpDataProtection(), original = ready(), store = new AgentMcpCredentialStore(location, digest, dpapi);
     await store.update(() => ({ next: original, value: undefined })); const before = await readFile(resolve(location, "credential.bin"));
-    const failure: AgentMcpDataProtection = { protect: async () => { throw new Error(secret); }, unprotect: (bytes, entropy) => dpapi.unprotect(bytes, entropy) };
+    let protectionFailures = 0;
+    const failure: AgentMcpDataProtection = { protect: async () => { protectionFailures++; throw new Error(secret); }, unprotect: (bytes, entropy) => dpapi.unprotect(bytes, entropy) };
     await expect(new AgentMcpCredentialStore(location, digest, failure).update(current => ({ next: current && { ...current, revision: current.revision + 1 }, value: undefined })))
       .rejects.toMatchObject({ code: "mcp_auth_storage_unavailable" });
+    expect(protectionFailures).toBe(1);
     expect((await readFile(resolve(location, "credential.bin"))).equals(before)).toBe(true); expect((await readdir(location)).some(name => name.endsWith(".tmp"))).toBe(false);
-  });
+    expect(isDeepStrictEqual(await store.read(), original)).toBe(true);
+  }, 30_000);
 
-  it("requires explicit reauthentication after corrupted storage and never resurrects a fixed provider after logout or a new grant", async () => {
+  it.runIf(process.platform === "win32")("requires explicit reauthentication after corrupted storage and never resurrects a fixed provider after logout or a new grant", async () => {
     const location = await directory(), store = new AgentMcpCredentialStore(location, digest, new WindowsAgentMcpDataProtection()), original = ready();
     await store.update(() => ({ next: original, value: undefined })); const session = await createPersonalAgentMcpSession(profile, { storeDir: location });
     const lease = await session.credentials.acquire(new AbortController().signal); await session.logout();
@@ -92,9 +97,9 @@ describe("MCP personal profile protected storage and fixed startup grant", () =>
     const corrupted = await createPersonalAgentMcpSession(profile, { storeDir: location, fetch: async () => { throw new Error("unexpected_auth_network"); } });
     expect((await corrupted.status()).state).toBe("reauthentication_required");
     await expect(corrupted.credentials.acquire(new AbortController().signal)).rejects.toMatchObject({ code: "mcp_auth_required" });
-  });
+  }, 30_000);
 
-  it("cannot commit an old protected grant after its exact lock-holder dies and a real logout has committed", async () => {
+  it.runIf(process.platform === "win32")("cannot commit an old protected grant after its exact lock-holder dies and a real logout has committed", async () => {
     const location = await directory(), protection = new WindowsAgentMcpDataProtection(), store = new AgentMcpCredentialStore(location, digest, protection), original = ready();
     await store.update(() => ({ next: original, value: undefined }));
     let enter!: () => void, release!: () => void;

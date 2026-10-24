@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CreativeRequirementsSchema } from "@yummyai/contracts/catalog/artwork";
 import {
   AssistResultSchema,
+  LegacyAssistResultSchema,
   type AssistDirection,
   type AssistResult,
 } from "@yummyai/contracts/ai/assist";
@@ -204,7 +205,7 @@ describe("bounded ERP assist output", () => {
       ),
     ).toThrow("assist_invalid_match");
   });
-  it("emits a strict schema with every object property required", () => {
+  it("emits a strict ordinary Worker schema with every object property required", () => {
     const visit = (value: unknown) => {
       if (!value || typeof value !== "object") return;
       const obj = value as Record<string, unknown>;
@@ -216,7 +217,15 @@ describe("bounded ERP assist output", () => {
         if (Array.isArray(v)) v.forEach(visit);
         else visit(v);
     };
-    visit(z.toJSONSchema(AssistResultSchema));
+    visit(z.toJSONSchema(LegacyAssistResultSchema));
+  });
+  it("preserves historical assist output bytes without adding typedAnswers", () => {
+    const original = result();
+    const originalJson = JSON.stringify(original);
+    const parsed = AssistResultSchema.parse(original);
+    expect(parsed).not.toHaveProperty("typedAnswers");
+    expect(JSON.stringify(parsed)).toBe(originalJson);
+    expect(JSON.stringify(original)).toBe(originalJson);
   });
   it("keeps required fields, overlong text and process mismatch as rule checks", () => {
     const detail = {

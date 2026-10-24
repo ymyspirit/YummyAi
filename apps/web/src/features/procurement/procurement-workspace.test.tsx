@@ -4,24 +4,34 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ProcurementWorkspace } from "./procurement-workspace";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 describe("ProcurementWorkspace", () => {
-  it("preserves fractional stock evidence beside whole-unit purchase coverage", () => {
+  it("preserves fractional stock evidence beside the original purchase unit and unknown conversion", () => {
     const data = fixture(); data.stockItems[0]!.baseUnit = "meter";
     data.suggestions[0]!.availableQuantity = "0.000000001";
     data.suggestions[0]!.inTransitQuantity = "0.35";
     const html = renderToStaticMarkup(<ProcurementWorkspace data={data} />);
     expect(html).toContain("可用 0.000000001"); expect(html).toContain("在途 0.35");
-    expect(html).toContain("整单位建议"); expect(html).toContain("供应商采购单位");
+    expect(html).toContain("按库存基本单位核对");
+    expect(html).toContain("下单前另核采购单位与计价依据");
+    expect(html).toContain("采购 10 件");
+    expect(html).toContain("原库存换算依据未留存 请核对");
+    expect(html).toContain("原计价数量未单列");
   });
   it("renders versioned purchase, receipt, invoice, and replenishment evidence", () => {
-    const html = renderToStaticMarkup(<ProcurementWorkspace data={fixture()} />);
+    const data = fixture();
+    const html = renderToStaticMarkup(<ProcurementWorkspace data={data} />);
     expect(html).toContain("库存采购单");
     expect(html).toContain("IPO-2026-001");
     expect(html).toContain("收货与发票对账");
     expect(html).toContain("开放补货建议");
     expect(html).toContain("待对账");
+    expect(html).toContain(`/procurement?invoiceOrder=${data.purchaseOrders[0]!.id}#invoice-reconciliation-workbench`);
+    expect(html).toContain("核对发票差异");
   });
 
   it("does not fabricate procurement evidence", () => {

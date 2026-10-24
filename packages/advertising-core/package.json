@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
-  "scripts": { "test": "vitest run", "typecheck": "tsc -p tsconfig.json" },
+  "scripts": { "test": "vitest run --passWithNoTests", "typecheck": "tsc -p tsconfig.json" },
   "dependencies": {
     "@yummyai/authz": "workspace:*",
     "@yummyai/catalog-core": "workspace:*",

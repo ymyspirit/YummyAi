@@ -9,3 +9,5 @@
 本机业务备份、会话、配置密钥、订单原文及运行产物不进入公开仓库。蓝图描述完整目标；其中历史本机验收路径属于本机记录，不能当成新提交已验证的证据。新提交的CI及日用部署结果按本阶段收口记录另行绑定。
 
 发布顺序、各阶段范围和收口门见[阶段计划](../project-control/PHASE_RELEASE_PLAN.md)。
+
+已知边界：普通 Assist 使用历史兼容的严格输出契约。知识 benchmark 的 provider 专用 strict wire 仍需单独版本化，使 typedAnswers 必填，同时保留归档输出和历史 checksum；本阶段不宣称该链路闭环，留在 P6 验收。真实付费及普通 Worker 保持关闭。finance-core、advertising-core 当前没有独立单元用例，按既有空包约定明确记录为0条，不计为业务验证。

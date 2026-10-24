@@ -148,4 +148,6 @@ jobs:
           node-version: 24.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Validate actual Windows DPAPI credential storage
+        run: pnpm --filter @yummyai/agent-mcp exec vitest run src/agent-mcp-auth.test.ts --maxWorkers=1 --minWorkers=1 --reporter=verbose
       - run: pnpm --filter @yummyai/store-api-node exec vitest run --config vitest.config.ts src/local.windows.test.ts --reporter=verbose

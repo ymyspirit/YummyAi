@@ -4,6 +4,7 @@ import { AGENT_PLAN_VERSION } from "@yummyai/contracts/ai/agent-plan";
 import { AGENT_NATIVE_VERSION } from "@yummyai/contracts/ai/agent-native";
 import { AGENT_NATIVE_V2_VERSION } from "@yummyai/contracts/ai/agent-native-v2";
 import { AGENT_NATIVE_V3_VERSION } from "@yummyai/contracts/ai/agent-native-v3";
+import { AGENT_NATIVE_V4_VERSION } from "@yummyai/contracts/ai/agent-native-v4";
 import {
   AGENT_RUNTIME_FAMILIES, AGENT_RUNTIME_LEASE_MS, AGENT_RUNTIME_MAX_VALID_MS,
   AGENT_RUNTIME_PRESENCE_VERSION, AGENT_RUNTIME_READINESS_VERSION,
@@ -28,13 +29,14 @@ const view = (): AgentRuntimeReadiness => ({
 });
 
 describe("independent Harness runtime observation contract", () => {
-  it("binds all five executor versions to the actual two queues and their exact dispatcher", () => {
+  it("binds all six executor versions to the actual two queues and their exact dispatcher", () => {
     expect(AGENT_RUNTIME_FAMILIES).toEqual({
       loop: { queue: "agent-loop", scheduler: "agentLoopScheduler", executorVersion: AGENT_LOOP_VERSION },
       plan: { queue: "agent-plan", scheduler: "agentPlanScheduler", executorVersion: AGENT_PLAN_VERSION },
       native_v1: { queue: "agent-plan", scheduler: "agentPlanScheduler", executorVersion: AGENT_NATIVE_VERSION },
       native_v2: { queue: "agent-plan", scheduler: "agentPlanScheduler", executorVersion: AGENT_NATIVE_V2_VERSION },
       native_v3: { queue: "agent-plan", scheduler: "agentPlanScheduler", executorVersion: AGENT_NATIVE_V3_VERSION },
+      native_v4: { queue: "agent-plan", scheduler: "agentPlanScheduler", executorVersion: AGENT_NATIVE_V4_VERSION },
     });
     expect(AgentRuntimePresenceReportSchema.parse(report())).toEqual(report());
     for (const value of [
@@ -63,6 +65,9 @@ describe("independent Harness runtime observation contract", () => {
 
   it("requires matching protocol, all three ready checks and an exact finite server freshness interval", () => {
     expect(AgentRuntimeReadinessSchema.parse(view())).toEqual(view());
+    const nativeV4 = { ...view(), family: "native_v4", executorVersion: AGENT_NATIVE_V4_VERSION };
+    expect(AgentRuntimeReadinessSchema.parse(nativeV4)).toEqual(nativeV4);
+    expect(AgentRuntimeReadinessSchema.safeParse({ ...nativeV4, executorVersion: AGENT_NATIVE_V3_VERSION }).success).toBe(false);
     for (const value of [
       { ...view(), family: "loop" }, { ...view(), executorVersion: AGENT_PLAN_VERSION },
       { ...view(), validForMs: 0, validUntil: view().checkedAt },
