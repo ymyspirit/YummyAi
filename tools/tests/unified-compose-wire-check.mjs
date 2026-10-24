@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import process from 'node:process';
 import {docker,readRuntime,runtimeDirectory,writePrivate} from '../../tools/scripts/unified-compose.mjs';
 import {escapeComposeDollars} from '../../tools/scripts/lib/unified-compose-model.mjs';
 const owner=randomUUID(),project='yummyai-wire-'+owner,name=project,file=path.join(runtimeDirectory,'wire-fixture-'+owner+'.json');

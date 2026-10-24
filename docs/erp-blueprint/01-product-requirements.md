@@ -1,5 +1,7 @@
 # 产品需求文档
 
+交付按[阶段发布约定](../project-control/PHASE_RELEASE_PLAN.md)执行：阶段作为业务里程碑，内部按用户可验证的小结果持续提交、检查和上线。功能目标、开发完成、已部署、已启用及业务验收分别记录；付费调用继续遵守原授权边界。当前运行版本与发布状态以[项目状态](../../PROJECT_STATUS.md)及对应提交的GitHub检查为准。
+
 <!-- studio-paid-image-73e2c9b1-current -->
 PRD1.1.127 新增单张图片报价确认、付费准入、原键恢复和未审核产物交接，先开发及隔离验收，真实付费继续关闭。当前为开发与隔离验收中，事实以[本片进度](../project-control/STUDIO_PAID_IMAGE_PROGRESS_20261024.md)及[专项契约](../integration/studio-paid-image.md)为准。以下旧版本保留当时状态。
 <!-- /studio-paid-image-73e2c9b1-current -->

@@ -13,40 +13,43 @@ function windowsPowerShell(): string {
 function systemEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(["SystemRoot", "WINDIR", "TEMP", "TMP", "PATH"].flatMap(key => process.env[key] === undefined ? [] : [[key, process.env[key]]]));
 }
-const nativePhases = ["initialize", "stdin_wait", "json_parse", "dir_check", "identity", "acl_read", "acl_apply", "acl_verify", "acquire",
+const nativePhases = ["initialize", "import_util", "import_mgmt", "import_sec", "stdin_wait", "json_parse", "dir_check", "identity", "acl_read", "acl_apply", "acl_verify", "acquire",
   "receive", "commit_parse", "validate", "decode", "create", "write", "flush", "replace", "move", "ack", "release"] as const;
 
 const helper = [
-  "$ErrorActionPreference='Stop';$lock=$null;$temporary=$null;$stage='initialize';$target='none'",
+  "$ErrorActionPreference='Stop';$lock=$null;$temporary=$null;$stage='initialize';$target='none';$utilityReady=$false",
   "function Write-StoreNodePhase([string]$value){[Console]::Out.WriteLine('phase:'+$value);[Console]::Out.Flush()}",
   "Write-StoreNodePhase 'initialize'",
   "try{",
-  " $stage='stdin_wait';Write-StoreNodePhase 'stdin_wait';$raw=[Console]::In.ReadLine();$stage='json_parse';Write-StoreNodePhase 'json_parse';$p=$raw|ConvertFrom-Json;$directory=$p.path",
+  " $stage='import_util';Write-StoreNodePhase 'import_util';Microsoft.PowerShell.Core\\Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop;$utilityReady=$true",
+  " $stage='import_mgmt';Write-StoreNodePhase 'import_mgmt';Microsoft.PowerShell.Core\\Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Management','Microsoft.PowerShell.Management.psd1')) -ErrorAction Stop",
+  " $stage='import_sec';Write-StoreNodePhase 'import_sec';Microsoft.PowerShell.Core\\Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Security','Microsoft.PowerShell.Security.psd1')) -ErrorAction Stop",
+  " $stage='stdin_wait';Write-StoreNodePhase 'stdin_wait';$raw=[Console]::In.ReadLine();$stage='json_parse';Write-StoreNodePhase 'json_parse';$p=$raw|Microsoft.PowerShell.Utility\\ConvertFrom-Json;$directory=$p.path",
   " $stage='dir_check';Write-StoreNodePhase 'dir_check';if(([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
   " $stage='identity';Write-StoreNodePhase 'identity';$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User;$sections=[Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner",
   " $stage='acl_read';Write-StoreNodePhase 'acl_read';$owner=[IO.Directory]::GetAccessControl($directory,$sections).GetOwner([Security.Principal.SecurityIdentifier])",
   " $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false)",
   " foreach($s in @($sid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}",
-  " $stage='acl_apply';Write-StoreNodePhase 'acl_apply';if($owner.Value -ne $sid.Value){$acl.SetOwner($sid);Set-Acl -LiteralPath $directory -AclObject $acl}else{[IO.Directory]::SetAccessControl($directory,$acl)}",
+  " $stage='acl_apply';Write-StoreNodePhase 'acl_apply';if($owner.Value -ne $sid.Value){$acl.SetOwner($sid);Microsoft.PowerShell.Security\\Set-Acl -LiteralPath $directory -AclObject $acl}else{[IO.Directory]::SetAccessControl($directory,$acl)}",
   " $stage='acl_verify';Write-StoreNodePhase 'acl_verify';$verified=[IO.Directory]::GetAccessControl($directory,$sections);$rules=@($verified.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]));$seen=@{}",
   " if(-not $verified.AreAccessRulesProtected -or $verified.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or $rules.Count -ne 2){throw 'invalid'}",
   " foreach($rule in $rules){$id=$rule.IdentityReference.Value;if(($id -ne $sid.Value -and $id -ne 'S-1-5-18') -or $seen.ContainsKey($id) -or $rule.IsInherited -or $rule.AccessControlType -ne 'Allow' -or $rule.FileSystemRights -ne 'FullControl' -or $rule.InheritanceFlags -ne 'ContainerInherit,ObjectInherit' -or $rule.PropagationFlags -ne 'None'){throw 'invalid'};$seen[$id]=$true}",
-  " $lockPath=Join-Path $directory 'node.lock';if([IO.File]::Exists($lockPath) -and ([IO.File]::GetAttributes($lockPath) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
+  " $lockPath=Microsoft.PowerShell.Management\\Join-Path $directory 'node.lock';if([IO.File]::Exists($lockPath) -and ([IO.File]::GetAttributes($lockPath) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
   " $stage='acquire';Write-StoreNodePhase 'acquire';$lock=[IO.File]::Open($lockPath,'OpenOrCreate','ReadWrite','None');[Console]::Out.WriteLine('locked');[Console]::Out.Flush();$stage='receive';Write-StoreNodePhase 'receive'",
   " while($null -ne ($line=[Console]::In.ReadLine())){",
-  "  $stage='commit_parse';Write-StoreNodePhase 'commit_parse';$target='none';$request=$line|ConvertFrom-Json;if($request.operation -eq 'release'){$stage='release';Write-StoreNodePhase 'release';break};if($request.operation -ne 'commit'){throw 'invalid'};$stage='validate'",
+  "  $stage='commit_parse';Write-StoreNodePhase 'commit_parse';$target='none';$request=$line|Microsoft.PowerShell.Utility\\ConvertFrom-Json;if($request.operation -eq 'release'){$stage='release';Write-StoreNodePhase 'release';break};if($request.operation -ne 'commit'){throw 'invalid'};$stage='validate'",
   "  if(([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
   "  $name='state.pe';$target='state';$maximum=100000;if($request.name -eq 'execution.pe'){$name='execution.pe';$target='journal';$maximum=67108864}elseif($null -ne $request.name -and $request.name -ne 'state.pe'){throw 'invalid'}",
-  "  $destination=Join-Path $directory $name;if([IO.File]::Exists($destination) -and ([IO.File]::GetAttributes($destination) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
+  "  $destination=Microsoft.PowerShell.Management\\Join-Path $directory $name;if([IO.File]::Exists($destination) -and ([IO.File]::GetAttributes($destination) -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'}",
   "  $stage='decode';$bytes=[Convert]::FromBase64String($request.cipher);try{",
   "   if($bytes.Length -le 0 -or $bytes.Length -gt $maximum){throw 'invalid'}",
-  "   $stage='create';$temporary=Join-Path $directory ('.state-'+[Guid]::NewGuid().ToString('N')+'.tmp');$stream=[IO.File]::Open($temporary,'CreateNew','Write','None')",
+  "   $stage='create';$temporary=Microsoft.PowerShell.Management\\Join-Path $directory ('.state-'+[Guid]::NewGuid().ToString('N')+'.tmp');$stream=[IO.File]::Open($temporary,'CreateNew','Write','None')",
   "   try{$stage='write';$stream.Write($bytes,0,$bytes.Length);$stage='flush';$stream.Flush($true)}finally{$stream.Dispose()}",
   "   if([IO.File]::Exists($destination)){$stage='replace';[IO.File]::Replace($temporary,$destination,[NullString]::Value)}else{$stage='move';[IO.File]::Move($temporary,$destination)};$temporary=$null",
   "   $stage='ack';Write-StoreNodePhase 'ack';[Console]::Out.WriteLine('committed');[Console]::Out.Flush();$stage='receive';Write-StoreNodePhase 'receive';$target='none'",
   "  }finally{[Array]::Clear($bytes,0,$bytes.Length)}",
   " }",
-  "}catch{$exception=$_.Exception;for($depth=0;$depth -lt 4 -and $null -ne $exception.InnerException;$depth++){$exception=$exception.InnerException};$type=$exception.GetType().Name;if($type -notin @('IOException','UnauthorizedAccessException','PrivilegeNotHeldException','ArgumentException','ArgumentNullException','PathTooLongException','NotSupportedException','SecurityException','InvalidOperationException','FormatException','OutOfMemoryException','MethodInvocationException','RuntimeException')){$type='Other'};[Console]::Error.WriteLine((@{code='store_node_storage_diagnostic';phase=$stage;target=$target;errorType=$type;hresult=[int]$exception.HResult}|ConvertTo-Json -Compress));[Console]::Error.WriteLine('store_node_storage_unavailable');exit 1}finally{if($null -ne $temporary -and [IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if($null -ne $lock){$lock.Dispose()}}",
+  "}catch{$exception=$_.Exception;for($depth=0;$depth -lt 4 -and $null -ne $exception.InnerException;$depth++){$exception=$exception.InnerException};$type=$exception.GetType().Name;if($type -notin @('IOException','UnauthorizedAccessException','PrivilegeNotHeldException','ArgumentException','ArgumentNullException','PathTooLongException','NotSupportedException','SecurityException','InvalidOperationException','FormatException','OutOfMemoryException','MethodInvocationException','RuntimeException')){$type='Other'};if($utilityReady){[Console]::Error.WriteLine((@{code='store_node_storage_diagnostic';phase=$stage;target=$target;errorType=$type;hresult=[int]$exception.HResult}|Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress))};[Console]::Error.WriteLine('store_node_storage_unavailable');exit 1}finally{if($null -ne $temporary -and [IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if($null -ne $lock){$lock.Dispose()}}",
 ].join("\n");
 
 export interface StoreNodeLocalLock { signal: AbortSignal; assertHeld(): void; commit(cipher: Uint8Array): Promise<void>; commitJournal(cipher: Uint8Array): Promise<void> }

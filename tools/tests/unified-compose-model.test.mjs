@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildUnifiedCompose, escapeComposeDollars, inspectComparable } from "../scripts/lib/unified-compose-model.mjs";
 
+const structuredClone = globalThis.structuredClone;
+
 // Entirely synthetic Docker API objects. No Docker socket, subprocess, file,
 // database, Worker or provider participates in this unit family.
 const hash = value => createHash("sha256").update(value).digest("hex");

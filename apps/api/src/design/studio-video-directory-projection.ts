@@ -18,7 +18,11 @@ const has = (value: JsonObject, key: string) => Object.hasOwn(value, key);
 const object = (value: unknown): value is JsonObject => value !== null && typeof value === "object" && !Array.isArray(value)
   && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
-const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+const controlCharacter = (value: string) => {
+  const code = value.charCodeAt(0);
+  return code <= 0x1f || code >= 0x7f && code <= 0x9f;
+};
+const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 1000 && !Array.from(value).some(controlCharacter);
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -70,7 +74,7 @@ function origin(log: JsonObject): StudioVideoDirectoryItem["origin"] {
 }
 function title(value: unknown, task: unknown): string | null {
   if (typeof value !== "string") return null;
-  const clean = value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu, " ").replace(/\s+/gu, " ").trim();
+  const clean = Array.from(value, character => controlCharacter(character) ? " " : character).join("").replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu, " ").replace(/\s+/gu, " ").trim();
   if (!clean || /(?:https?|wss?|data|blob|file|ftp|javascript):|(?:api[_ -]?key|authorization|bearer|password|token|cookie|secret|providerTaskId)|\bsk-[a-z0-9_-]{8,}/iu.test(clean)
     || object(task) && typeof task.id === "string" && task.id.length > 0 && clean.includes(task.id)) return null;
   let limited = "";

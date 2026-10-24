@@ -2,6 +2,14 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Root-level acceptance tools import these workspace packages directly.
+# Keep their resolution inside each checkout, including an adopted snapshot.
+nodeLinker: isolated
+enableGlobalVirtualStore: false
+publicHoistPattern:
+  - "@yummyai/*"
+verifyDepsBeforeRun: error
+
 overrides:
   "@vitejs/plugin-react": "5.2.0"
 
