@@ -72,9 +72,11 @@ export async function seedOperatingMetricEvidence() {
   const statement = FinanceStatementViewSchema.parse(await centerApi<unknown>(
     "finance/statements", RecordFinanceStatementInputSchema.parse({
       accountId: null, provider: "manual", statementKind: "manual_adjustment",
+      sourceIdentity: { schemaVersion: 2, kind: "named_source", sourceName: `SYNTHETIC-OPERATING-METRIC-${suffix}` },
       externalStatementId: `synthetic-unallocated-revenue-${suffix}`,
       periodStart, periodEnd, sourceCurrency: "USD", observedAt, idempotencyKey: randomUUID(),
       lines: [{ lineKey: "unallocated-sale", factType: "sale_revenue", direction: "credit",
+        sourceEntryId: `synthetic-unallocated-sale-event-${suffix}`,
         amountMinor: 10000, currency: "USD", occurredAt: "2026-07-12T00:00:00.000Z",
         externalReference: `synthetic-unallocated-sale-${suffix}`, orderId: null, orderLineId: null,
         skuId: null, listingId: null, supplierId: null, correctionKind: "original", correctsFactId: null }],

@@ -103,7 +103,7 @@ export async function createCenterProfile(
     idempotencyKey: randomUUID(),
   });
   const profile = profiles.find((profile) => profile.code === `E2E-${suffix}`)!;
-  if (!withSalesRecipe) return { ...profile, recipeId: "", adaptation: null };
+  if (!withSalesRecipe) return { ...profile, recipeId: "", adaptation: null, manufacturingSource: null };
   const brief = await centerApi<{ id: string }>("canvas-bridge/briefs", {
     requestId: randomUUID(),
     name: `E2E Master ${suffix}`,
@@ -142,7 +142,7 @@ export async function createCenterProfile(
     },
   );
   const spu = await createCenterSpu(`SPU-${suffix}`);
-  const { specification } = await centerApi<{ specification: { versionId: string } }>(
+  const { specification } = await centerApi<{ specification: { id: string; versionId: string } }>(
     "product-development/specifications",
     {
       spuId: spu.id,
@@ -222,7 +222,8 @@ export async function createCenterProfile(
       reason: "Reviewed synthetic art and process",
       idempotencyKey: randomUUID(),
     });
-    return { ...profile, recipeId: recipe.id, adaptation: { projectId: project.project.id, versionId: project.version.id, renderId: render.id } };
+    return { ...profile, recipeId: recipe.id, adaptation: { projectId: project.project.id, versionId: project.version.id, renderId: render.id },
+      manufacturingSource: { spuId: spu.id, specificationId: specification.id, specificationVersionId: specification.versionId } };
   } finally {
     await stopProductionEditorWorker(worker);
   }

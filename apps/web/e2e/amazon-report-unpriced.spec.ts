@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { createEntityId, type MarketplaceAccountView } from "@yummyai/contracts";
 import { apiFetch } from "../src/server-api";
+import { loginErp } from "./erp-identity-fixture";
+
+test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page); });
 
 test("manual report UI imports real unpriced reports and explains invalid columns", async ({ page }, testInfo) => {
   test.setTimeout(90_000);

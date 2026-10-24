@@ -7,11 +7,13 @@ import {
   type MarketplaceAccountView,
 } from "@yummyai/contracts";
 import type { OrderWorkDetail, OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import type { ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
 import { apiFetch } from "../src/server-api";
 import { centerApi, createCenterProfile } from "./order-centers-fixture";
 import { startProductionEditorWorker, stopProductionEditorWorker, syntheticProductionPng } from "./production-editor-fixture";
 import { seedOperatingMetricEvidence } from "./operating-metric-evidence-fixture";
 import { createFactoryFixture } from "./factory-directory-fixture";
+import { createCapacityFixture, fillProductionCapacity } from "./factory-capacity-fixture";
 import { syntheticSupplierProfile } from "../../../tools/testing/factory-fixtures";
 import { loginErp } from "./erp-identity-fixture";
 
@@ -27,6 +29,20 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     externalId = `E2E-CENTERS-${suffix}`;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  const currentLocalMinute = (offsetMs = 0) => page.evaluate(offset => {
+    const now = new Date(Date.now() + offset), pad = (value: number) => String(value).padStart(2, "0");
+    return [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join("-")
+      + "T" + [pad(now.getHours()), pad(now.getMinutes())].join(":");
+  }, offsetMs);
+  const acknowledgeFulfillment = async (operation: string) => {
+    const recovery = page.getByRole("region", { name: "本单原履约提交恢复", exact: true });
+    const original = recovery.locator("article:not([hidden])");
+    await expect(original).toHaveCount(1);
+    await expect(original).toContainText(operation + " · 已有原业务回执");
+    await original.getByRole("button", { name: "已核对本次履约结果", exact: true }).click();
+    await expect(original).toHaveCount(0);
+    await expect(recovery).toContainText("本次读取没有未核对的原履约提交");
+  };
   const account = await centerApi<MarketplaceAccountView>("marketplace-accounts", {
     platform: "amazon",
     displayName: `E2E Centers ${suffix}`,
@@ -37,6 +53,23 @@ test("six centers preserve an operator-edited order through artwork, whole produ
   });
   try {
     const profile = await createCenterProfile("tire_cover", suffix);
+    const source = profile.manufacturingSource;
+    if (!source) throw new Error("Synthetic reviewed specification is required for manufacturing");
+    const stock = await centerApi<{ id: string }>("inventory/stock-items", {
+      skuId: null, code: `CENTERS-FABRIC-${suffix}`.toUpperCase(), name: "Synthetic centers fabric", baseUnit: "meter",
+    });
+    const { data: manufacturing } = await centerApi<{ data: ManufacturingRecipeVersionView }>("manufacturing-recipes", {
+      spuId: source.spuId, specificationId: source.specificationId, code: `CENTERS-BOM-${suffix}`, idempotencyKey: createEntityId(),
+      content: { specificationVersionId: source.specificationVersionId, name: "Synthetic reviewed centers BOM", outputQuantity: 1, outputUnit: "each",
+        notes: "Synthetic physical specification and manufacturing source",
+        materials: [{ code: "FABRIC", name: "Synthetic centers fabric", stockItemId: stock.id, quantityNumerator: 1, quantityDenominator: 2,
+          unit: "meter", lossBps: 0, lossBasis: "add_to_net", responsibility: "merchant", operationCode: "MAKE" }],
+        operations: [{ code: "MAKE", name: "Synthetic manufacture", processCode: "make", responsibility: "factory", expectedSecondsPerOutput: null }] },
+    });
+    await centerApi(`manufacturing-recipes/${manufacturing.recipeId}/reviews`, {
+      expectedVersion: manufacturing.versionNumber, versionId: manufacturing.versionId, decision: "approved",
+      note: "Synthetic operator reviewed the exact material and process", idempotencyKey: createEntityId(),
+    });
     const supplier = await centerApi<{ id: string }>("sourcing/suppliers", {
       name: `E2E Centers Factory ${suffix}`,
       profile: syntheticSupplierProfile,
@@ -45,6 +78,7 @@ test("six centers preserve an operator-edited order through artwork, whole produ
       settlementCurrency: "USD",
     });
     const factory = await createFactoryFixture(supplier.id, "tire_cover", `E2E Centers Site ${suffix}`);
+    const capacity = await createCapacityFixture(factory.factory, [factory.capability], 10);
     const standard = await centerApi<{ id: string }>("order-centers/quality-standards", {
       name: `E2E Centers QC ${suffix}`,
       minimumScoreBps: 9000,
@@ -66,7 +100,7 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await page.goto(`/orders?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
     await page.getByText("平台发货截止：待核对", { exact: true }).click();
-    await page.getByLabel("平台最晚发货时间").fill("2026-10-01T18:00");
+    await page.getByLabel("平台最晚发货时间").fill(await currentLocalMinute(2 * 86_400_000));
     await page.getByLabel("平台交期核对依据").fill("Synthetic Seller Central ship-by verification");
     await page.getByRole("button", { name: "保存平台交期核对" }).click();
     await expect(page.getByRole("status").filter({ hasText: "平台交期核对已记录" })).toBeVisible();
@@ -144,10 +178,21 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     });
     await page.goto(`/production?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
-    await page.getByLabel("承接工厂").selectOption(factory.factory.id);
-    await page.getByLabel("整单计划完工").fill("2026-09-14T10:00");
-    await page.getByRole("button", { name: "安排整单生产（2 件）", exact: true }).click();
+    const production = page.getByRole("region", { name: "整单生产", exact: true });
+    const productionForm = production.getByRole("form", { name: "安排整单生产", exact: true });
+    const manufacturingChoice = productionForm.getByRole("group", { name: "本次制造依据", exact: true });
+    await expect(manufacturingChoice).toHaveCount(1);
+    await manufacturingChoice.getByLabel("制造版本", { exact: true }).selectOption(manufacturing.versionId);
+    await manufacturingChoice.getByRole("checkbox").check();
+    await productionForm.getByLabel("承接工厂").selectOption(factory.factory.id);
+    await productionForm.getByLabel("整单工厂当地计划完工", { exact: true }).fill(capacity.dueLocal);
+    await fillProductionCapacity(productionForm, capacity);
+    await productionForm.getByRole("button", { name: "安排整单生产（2 件）", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "整单生产已安排" })).toBeVisible();
+    const productionReceipt = page.getByRole("region", { name: "待确认生产提交", exact: true });
+    await expect(productionReceipt).toContainText("已建立 1 个生产安排");
+    await productionReceipt.getByRole("button", { name: "已核对本次结果", exact: true }).click();
+    await expect(productionReceipt.locator("article:not([hidden])")).toHaveCount(0);
     for (const [index, name] of [
       "记录整单已发送工厂",
       "记录工厂已接整单",
@@ -155,15 +200,17 @@ test("six centers preserve an operator-edited order through artwork, whole produ
       "记录整单生产完工",
     ].entries()) {
       await page.getByLabel("整单工厂凭证").fill(`SYNTHETIC_${index}`);
-      await page.getByLabel("整单进度发生时间", { exact: true }).fill(`2026-09-13T0${index + 1}:00`);
+      await page.getByLabel("整单进度发生时间", { exact: true }).fill(await currentLocalMinute());
       await page.getByRole("form", { name: "登记整单生产进度", exact: true }).getByRole("button", { name, exact: true }).click();
       await expect(page.getByRole("form", { name: "登记整单生产进度", exact: true }).getByRole("button", { name, exact: true })).toHaveCount(0);
+      await acknowledgeFulfillment("登记整单生产进度");
     }
     await fillQualityAssessment(page.getByRole("region", { name: "整单生产", exact: true }), standard.id, [{ label: "Synthetic print check", score: "100", outcome: "passed" }]);
-    await page.getByLabel("整单质检时间").fill("2026-09-13T05:00");
+    await page.getByLabel("整单质检时间").fill(await currentLocalMinute());
     await page.getByRole("checkbox", { name: "已逐项核对本单全部商品 均符合所选标准" }).check();
     await page.getByRole("button", { name: "登记整单质检通过" }).click();
     await expect(page.getByText("全部商品已生产并通过质检。", { exact: false })).toBeVisible();
+    await acknowledgeFulfillment("登记整单质检");
     await page.goto(`/shipments?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
     await page.getByLabel("物流单号", { exact: true }).fill(`SYNTHETIC-${suffix}`);
@@ -171,27 +218,31 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await page.getByLabel("承运商名称").fill("USPS");
     await page.getByLabel("物流服务").fill("Synthetic service");
     await page.getByLabel("发货国家").selectOption("US");
-    await page.getByLabel("计划发货时间", { exact: true }).fill("2026-09-13T06:00");
+    await page.getByLabel("计划发货时间", { exact: true }).fill(await currentLocalMinute());
     await expect(page.getByLabel("物流单号", { exact: true })).toHaveValue(`SYNTHETIC-${suffix}`);
     await expect(page.getByLabel("承运商代码", { exact: true })).toHaveValue("USPS");
     await expect(page.getByLabel("承运商名称", { exact: true })).toHaveValue("USPS");
     await expect(page.getByLabel("物流服务", { exact: true })).toHaveValue("Synthetic service");
     await page.getByRole("checkbox", { name: "已按实物核对全部装箱批次 生产版本 合格记录和数量", exact: true }).check();
     await page.getByRole("button", { name: "保存整单包裹（2 件）" }).click();
+    await acknowledgeFulfillment("建立整单包裹");
     await page.getByLabel("核对说明").fill("Synthetic package checked");
     await page.getByRole("button", { name: "审核通过", exact: true }).click();
-    await page.getByLabel("实际交运时间").fill("2026-09-13T06:00");
+    await acknowledgeFulfillment("审核原包裹版本");
+    await page.getByLabel("实际交运时间").fill(await currentLocalMinute());
     await page.getByLabel("交运凭证 / 说明").fill("Synthetic pickup receipt");
     await page.getByRole("button", { name: "确认整单已出库" }).click();
+    await acknowledgeFulfillment("登记实际出库");
     await expect(page.getByText("质检通过 2/2 件 · 已出库 2 件", { exact: true })).toBeVisible();
     const operations = await centerApi<OrderOperationsView>(`order-centers/lines/${id}/operations`);
     expect(operations.shipments[0]!.writebacks).toHaveLength(0);
     await page.getByLabel("整单下一步").getByRole("button", { name: "登记平台确认", exact: true }).click();
     await expect(page.getByLabel("平台确认时间")).toBeVisible();
-    await page.getByLabel("平台确认时间").fill("2026-09-13T06:30");
+    await page.getByLabel("平台确认时间").fill(await currentLocalMinute());
     await page.getByLabel("平台发货确认凭证").fill("Synthetic Seller Central accepted tracking receipt");
     await page.getByRole("button", { name: "记录已在平台确认发货" }).click();
     await expect(page.getByText(/已人工核对平台发货确认/)).toBeVisible();
+    await acknowledgeFulfillment("登记人工平台确认");
     expect((await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`)).line.platformConfirmationPending).toBe(false);
     await page.getByRole("navigation", { name: "本单操作" }).getByRole("button", { name: "售后", exact: true }).click();
     await page.getByLabel("问题类型").selectOption("customer_contact");
@@ -205,7 +256,7 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await page.getByRole("button", { name: "保存处理方案" }).click();
     await page.getByText("登记实际处理完成", { exact: true }).click();
     await page.getByLabel("执行凭证编号").fill(`ANSWER-${suffix}`);
-    await page.getByLabel("完成时间", { exact: true }).fill("2026-09-13T07:00");
+    await page.getByLabel("完成时间", { exact: true }).fill(await currentLocalMinute());
     await page.getByLabel("处理结果").fill("Synthetic issue handled");
     await page.getByRole("button", { name: "记录完成并结案" }).click();
     const afterSalesDrawer = page.getByRole("dialog", { name: "整单详情", exact: true });

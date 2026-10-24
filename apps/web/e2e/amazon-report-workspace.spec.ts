@@ -6,6 +6,9 @@ import { centerApi, createCenterProfile } from "./order-centers-fixture";
 
 import { apiFetch } from "../src/server-api";
 import { syntheticProductionPng } from "./production-editor-fixture";
+import { loginErp } from "./erp-identity-fixture";
+
+test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page); });
 
 // This test owns only the browser's report API fixture. Real parsing, RLS, scanning,
 // persistence and duplicate reconciliation are covered by API integration tests.
