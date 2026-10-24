@@ -84,7 +84,7 @@ jobs:
       - name: Check source before starting infrastructure
         run: pnpm check:secrets
       - run: pnpm lint
-      - run: pnpm typecheck
+      - run: pnpm typecheck --concurrency=2
       - run: pnpm test --concurrency=2
       - run: docker compose -f infra/docker-compose.yml -f infra/ci.compose.yml up -d --build postgres redis minio keycloak clamav otel-collector
       - name: Wait for infrastructure
@@ -108,7 +108,7 @@ jobs:
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e --workers=1
-      - run: pnpm build
+      - run: pnpm build --concurrency=2
       - run: pnpm --filter @yummyai/extension zip
       - run: pnpm release:manifest
       - uses: actions/upload-artifact@v4
