@@ -28,6 +28,18 @@ describe("after-sales case lifecycle", () => {
 
   afterAll(async () => { await database.client.end(); });
 
+  it("blocks monetary refunds when the order amount is unknown while allowing a non-monetary resolution", async () => {
+    const orderId = await seedOrder("unknown-money", 2500);
+    await withTenant(database.db, contextA, tx => tx.update(orderTable).set({ orderTotalMinor: null, orderCurrency: null }).where(eq(orderTable.id, orderId)));
+    const created = await service.create(contextA, orderId, { type: "quality_issue", reasonCode: "SYNTHETIC_UNKNOWN_MONEY", summary: "Synthetic unknown-money case", idempotencyKey: "unknown-money-case-0001" });
+    await expect(service.decide(contextA, created.case.id, { resolution: "partial_refund", refundAmountMinor: 100, refundCurrency: "USD", returnRequired: false,
+      responsibilityParty: "undetermined", reasonCode: "SYNTHETIC_REFUND", reason: "Synthetic refund", expectedDecisionVersion: 0, idempotencyKey: "unknown-money-refund-0001" })).rejects.toThrow("订单金额尚未提供");
+    expect(await withTenant(database.db, contextA, tx => tx.select().from(afterSalesDecisions).where(eq(afterSalesDecisions.caseId, created.case.id)))).toEqual([]);
+    const decided = await service.decide(contextA, created.case.id, { resolution: "no_action", refundAmountMinor: null, refundCurrency: null, returnRequired: false,
+      responsibilityParty: "undetermined", reasonCode: "SYNTHETIC_NO_ACTION", reason: "Synthetic non-monetary resolution", expectedDecisionVersion: 0, idempotencyKey: "unknown-money-no-action-0001" });
+    expect(decided.case.status).toBe("rejected");
+  });
+
   it("keeps protected contacts private and closes an approved return only after delivery", async () => {
     const orderId = await seedOrder("return", 2_500);
     const created = await service.create(contextA, orderId, {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "./server-api";
 
 const originalEnvironment = { ...process.env };
 
@@ -10,6 +11,7 @@ afterEach(() => {
 
 describe("apiFetch", () => {
   it("refreshes a cached OIDC token and retries once after a 401", async () => {
+    process.env.WEB_AUTH_MODE = "local-service";
     delete process.env.API_ACCESS_TOKEN;
     process.env.OIDC_ISSUER = "http://identity.test/realms/yummyai";
     process.env.LOCAL_OIDC_CLIENT_ID = "local-client";
@@ -22,8 +24,6 @@ describe("apiFetch", () => {
       .mockResolvedValueOnce(jsonResponse({ access_token: "fresh", expires_in: 300 }))
       .mockResolvedValueOnce(jsonResponse({ items: [] }));
     vi.stubGlobal("fetch", fetchMock);
-    const { apiFetch } = await import("./server-api");
-
     const response = await apiFetch("http://api.test/v1/research-items", {
       cache: "no-store",
     });

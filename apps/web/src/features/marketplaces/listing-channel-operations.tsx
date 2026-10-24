@@ -10,7 +10,7 @@ import type {
   MarketplacePublicationRequestView,
 } from "@yummyai/contracts";
 import type { ListingVariant } from "@yummyai/platform-rules";
-import { BadgeCheck, CircleAlert, CopyPlus, LoaderCircle, RefreshCw, SlidersHorizontal, Workflow } from "lucide-react";
+import { BadgeCheck, CircleAlert, CopyPlus, LoaderCircle, RefreshCw, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
@@ -18,10 +18,10 @@ import { useFormStatus } from "react-dom";
 import {
   createListingReplication,
   createMarketplaceAutomationRule,
-  createMarketplaceListingSync,
   setMarketplaceAutomationEnabled,
   type MarketplaceActionState,
 } from "./marketplace-actions";
+import { ListingSyncWorkspace } from "./listing-sync-workspace";
 
 export type AutomationWorkspaceView = MarketplaceAutomationRuleView & { runs: MarketplaceAutomationRunView[] };
 const initialState: MarketplaceActionState = { message: "", status: "idle" };
@@ -32,7 +32,7 @@ const syncActionOptions: ReadonlyArray<{ label: string; value: MarketplaceListin
   { value: "push_full_content", label: "写入完整批准内容" },
 ];
 
-export function ListingChannelOperations({ accounts, automations, error, listing, publications, replications, syncs }: {
+export function ListingChannelOperations({ accounts, automations, error, listing, publications, replications }: {
   accounts: MarketplaceAccountView[];
   automations: AutomationWorkspaceView[];
   error?: string;
@@ -47,24 +47,15 @@ export function ListingChannelOperations({ accounts, automations, error, listing
   const targetMarketplaces = [...new Set(platformAccounts.flatMap((account) => account.marketplaceIds))];
   const relevantRules = automations.filter((rule) => !rule.conditions.listingId || rule.conditions.listingId === listing.id);
   const [replicationState, replicate] = useActionState(createListingReplication.bind(null, listing.id, listing.versionId), initialState);
-  const [syncState, sync] = useActionState(createMarketplaceListingSync.bind(null, listing.id, listing.versionId), initialState);
   const [automationState, createRule] = useActionState(createMarketplaceAutomationRule.bind(null, listing.id), initialState);
-  const [sourceId, setSourceId] = useState(published[0]?.id ?? "");
-  const source = published.find((request) => request.id === sourceId) ?? published[0];
   const [ruleAction, setRuleAction] = useState<"queue_publication" | "queue_listing_sync">("queue_publication");
   const [ruleAccountId, setRuleAccountId] = useState(platformAccounts[0]?.id ?? "");
   const ruleAccount = platformAccounts.find((account) => account.id === ruleAccountId) ?? platformAccounts[0];
   const rulePublished = published.filter((request) => request.accountId === ruleAccount?.id);
-  const busy = syncs.some((request) => ["queued", "processing", "retry_pending"].includes(request.current.status));
 
   useEffect(() => {
-    if ([replicationState, syncState, automationState].some((state) => state.status === "success")) router.refresh();
-  }, [automationState, replicationState, router, syncState]);
-  useEffect(() => {
-    if (!busy) return;
-    const timer = window.setInterval(() => router.refresh(), 4_000);
-    return () => window.clearInterval(timer);
-  }, [busy, router]);
+    if ([replicationState, automationState].some((state) => state.status === "success")) router.refresh();
+  }, [automationState, replicationState, router]);
 
   return <section className="channel-operations" aria-labelledby="channel-operations-title">
     <header className="channel-operations-header">
@@ -84,16 +75,7 @@ export function ListingChannelOperations({ accounts, automations, error, listing
       <div className="channel-ledger">{replications.length ? replications.map((item) => <div className="channel-row" key={item.id}><strong>{item.targetMarketplaceId}</strong><span>{item.targetLocale}</span><code>{item.targetListingId.slice(0, 13)}</code><Status label="草稿已创建" tone="complete" /></div>) : <Empty text="尚未创建站点副本；副本始终从当前批准版本生成。" />}</div>
     </OperationBand>
 
-    <OperationBand icon={<SlidersHorizontal size={17} />} code="ONLINE RECONCILIATION" title="在线 Listing 同步" count={`${syncs.length} REQUESTS`}>
-      <form action={sync} className="channel-form sync-form">
-        <label><span>已发布 Listing</span><select name="sourcePublicationRequestId" required value={source?.id ?? ""} onChange={(event) => setSourceId(event.target.value)}>{published.map((request) => <option key={request.id} value={request.id}>{request.marketplaceId} · {request.current.externalListingId ?? request.id.slice(0, 8)}</option>)}</select></label>
-        <input name="accountId" type="hidden" value={source?.accountId ?? ""} />
-        <label><span>动作</span><select name="action" defaultValue="read">{syncActionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-        <SubmitButton disabled={!source} label="排队执行" />
-      </form>
-      <Notice state={syncState} />
-      <div className="channel-ledger">{syncs.length ? syncs.map((item) => <div className="channel-row" key={item.id}><strong>{syncActionLabel(item.action)}</strong><span>{item.marketplaceId} · {item.externalListingId}</span><code>{formatDate(item.createdAt)}</code><Status label={syncStatus(item.current.status)} tone={syncTone(item.current.status)} /></div>) : <Empty text="没有同步记录；需要先通过官方发布流程取得在线 Listing。" />}</div>
-    </OperationBand>
+    <ListingSyncWorkspace listingId={listing.id} listingVersionId={listing.versionId} />
 
     <OperationBand icon={<Workflow size={17} />} code="APPROVAL TRIGGERS" title="自动化规则" count={`${relevantRules.length} RULES`}>
       <form action={createRule} className="channel-form automation-form">
@@ -129,7 +111,5 @@ function Notice({ state }: { state: MarketplaceActionState }) { if (state.status
 function Empty({ text }: { text: string }) { return <p className="channel-empty">{text}</p>; }
 function Status({ label, tone }: { label: string; tone: string }) { return <em className={`channel-status ${tone}`}>{label}</em>; }
 function syncActionLabel(action: MarketplaceListingSyncAction) { return syncActionOptions.find((option) => option.value === action)?.label ?? action; }
-function syncStatus(status: MarketplaceListingSyncRequestView["current"]["status"]) { return ({ queued: "已排队", processing: "处理中", completed: "一致", drift_detected: "发现差异", retry_pending: "等待重试", reconciliation_required: "需要对账", failed: "失败" })[status]; }
-function syncTone(status: MarketplaceListingSyncRequestView["current"]["status"]) { return ["completed"].includes(status) ? "complete" : ["queued", "processing", "retry_pending"].includes(status) ? "running" : "failed"; }
 function runLabel(status: MarketplaceAutomationRunView["status"]) { return ({ enqueued: "已入队", failed: "失败", skipped: "已跳过" })[status]; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }

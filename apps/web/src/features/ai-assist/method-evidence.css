@@ -1,0 +1,68 @@
+.ai-method-evidence {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-block: 1px solid var(--line);
+  font-size: 12px;
+  min-width: 0;
+  animation: method-evidence-enter 180ms ease both;
+}
+.ai-method-evidence > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--muted-ink);
+}
+.ai-method-evidence > div {
+  flex: 1;
+  min-width: 140px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.ai-method-evidence strong {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ai-method-evidence span {
+  color: var(--muted-ink);
+}
+.ai-method-evidence a {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--blue);
+  padding: 3px 0;
+  transition:
+    color 180ms,
+    transform 180ms;
+}
+.ai-method-evidence a:hover {
+  transform: translateY(-1px);
+}
+.ai-method-evidence a:active {
+  transform: scale(0.98);
+}
+.ai-method-evidence a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+@keyframes method-evidence-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-method-evidence,
+  .ai-method-evidence * {
+    animation: none;
+    transition: none;
+  }
+}

@@ -11,19 +11,14 @@ import type {
   MarketplaceRegion,
 } from "@yummyai/contracts";
 import { z } from "zod";
+import { AmazonPublicationPayloadSchema } from "@yummyai/contracts/marketplace/publication";
+export { AmazonPublicationPayloadSchema } from "@yummyai/contracts/marketplace/publication";
 
-import { MarketplaceConnectorError, parseRetryAfter } from "./errors.js";
+import { EtsyPersonalizationSafetyError, MarketplaceConnectorError, parseRetryAfter } from "./errors.js";
 
 const basePayload = z.object({
   marketplaceId: z.string().min(1).max(80),
   locale: z.string().min(2).max(20),
-}).strict();
-
-export const AmazonPublicationPayloadSchema = basePayload.extend({
-  platform: z.literal("amazon"),
-  productType: z.string().min(1).max(120),
-  sku: z.string().min(1).max(160),
-  attributes: z.record(z.string(), z.unknown()),
 }).strict();
 
 export const EtsyPublicationPayloadSchema = basePayload.extend({
@@ -151,6 +146,7 @@ export interface AmazonListingsFeedResult {
 }
 
 export interface MarketplaceFeedGateway {
+  withRequestGuard?(beforeRequest:()=>Promise<void>):MarketplaceFeedGateway;
   submitAmazonListingsFeed(
     account: PublicationAccountContext,
     credential: Readonly<Record<string, string>>,
@@ -165,6 +161,7 @@ export interface MarketplaceFeedGateway {
 }
 
 export interface MarketplaceDraftGateway {
+  withRequestGuard?(beforeRequest:()=>Promise<void>):MarketplaceDraftGateway;
   create(
     account: PublicationAccountContext,
     credential: Readonly<Record<string, string>>,
@@ -223,6 +220,11 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     private readonly request: typeof fetch = globalThis.fetch,
     private readonly environment: NodeJS.ProcessEnv = process.env,
   ) {}
+
+  withRequestGuard(beforeRequest:()=>Promise<void>):MarketplaceDraftGateway&MarketplaceFeedGateway{
+    const guarded:typeof fetch=async (...args)=>{await beforeRequest();return this.request(...args);};
+    return new HttpMarketplaceDraftGateway(guarded,this.environment);
+  }
 
   create(
     account: PublicationAccountContext,
@@ -717,6 +719,7 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     if (payload.marketplaceId !== "etsy") {
       throw new MarketplaceConnectorError("etsy", "validation", "Etsy publications use the etsy marketplace ID");
     }
+    prepareEtsyPersonalizationWrite(payload.personalization, { personalization_questions: [] });
     const clientId = requiredEnvironment(this.environment, "ETSY_APP_KEYSTRING", "etsy");
     const sharedSecret = requiredEnvironment(this.environment, "ETSY_APP_SHARED_SECRET", "etsy");
     const refreshToken = requireCredential(credential, "refreshToken", "etsy");
@@ -837,47 +840,35 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     externalListingId: string,
   ): Promise<MarketplaceDraftResult> {
     const session = await this.etsySession(credential);
-    let quota: MarketplaceQuotaTelemetry | undefined;
-    if (payload.inventory) {
-      const response = await this.requestJson(
-        etsyInventoryUrl(externalListingId),
-        {
-          method: "PUT",
-          headers: { ...session.headers, "content-type": "application/json" },
-          body: JSON.stringify(toEtsyInventoryBody(payload.inventory)),
-        },
-        EtsyInventoryResponseSchema,
-        "etsy",
-        true,
-      );
-      quota = response.quota ?? quota;
-    }
-    if (payload.personalization) {
-      const url = new URL(
-        `/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}/personalization`,
-        "https://openapi.etsy.com/",
-      );
-      url.searchParams.set("supports_multiple_personalization_questions", "true");
-      const response = await this.requestJson(
-        url.toString(),
-        {
-          method: "POST",
-          headers: { ...session.headers, "content-type": "application/json" },
-          body: JSON.stringify({
-            personalization_questions: [{
-              question_type: "text_input",
-              question_text: "Personalization",
-              instructions: payload.personalization.instructions,
-              required: payload.personalization.required,
-              max_allowed_characters: payload.personalization.maxAllowedCharacters,
-            }],
-          }),
-        },
-        EtsyPersonalizationResponseSchema,
-        "etsy",
-        true,
-      );
-      quota = response.quota ?? quota;
+    const currentPersonalization = await this.readEtsyPersonalization(session.headers, externalListingId);
+    const personalizationQuestion = prepareEtsyPersonalizationWrite(payload.personalization, currentPersonalization.data);
+    let quota = currentPersonalization.quota;
+    let mutationRecorded = false;
+    try {
+      if (payload.inventory) {
+        const response = await this.requestJson(
+          etsyInventoryUrl(externalListingId),
+          {
+            method: "PUT",
+            headers: { ...session.headers, "content-type": "application/json" },
+            body: JSON.stringify(toEtsyInventoryBody(payload.inventory)),
+          },
+          EtsyInventoryResponseSchema,
+          "etsy",
+          true,
+        );
+        mutationRecorded = true;
+        quota = response.quota ?? quota;
+      }
+      if (personalizationQuestion) {
+        const response = await this.updateEtsyPersonalization(account, session.headers, personalizationQuestion, externalListingId);
+        quota = response.quota ?? quota;
+      }
+    } catch (error) {
+      if (mutationRecorded && error instanceof MarketplaceConnectorError && !error.outcomeUncertain) {
+        throw new MarketplaceConnectorError("etsy", "upstream_terminal", "Etsy Listing configuration is partially applied; reconciliation is required", error.retryAfterMs, true);
+      }
+      throw error;
     }
     return {
       externalListingId,
@@ -954,20 +945,22 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     externalListingId: string,
   ): Promise<MarketplaceOnlineListingResult> {
     const session = await this.etsySession(credential);
-    const [listingResponse, inventoryResponse] = await Promise.all([
+    const [listingResponse, inventoryResponse, personalizationResponse] = await Promise.all([
       this.requestJson(`https://openapi.etsy.com/v3/application/listings/${encodeURIComponent(externalListingId)}`, { headers: session.headers }, EtsyListingResponseSchema, "etsy", false),
       this.requestJson(etsyInventoryUrl(externalListingId), { headers: session.headers }, EtsyInventoryResponseSchema, "etsy", false),
+      this.readEtsyPersonalization(session.headers, externalListingId),
     ]);
     const listing = listingResponse.data;
     const inventory = inventoryResponse.data;
-    const quota = inventoryResponse.quota ?? listingResponse.quota;
+    const quota = personalizationResponse.quota ?? inventoryResponse.quota ?? listingResponse.quota;
+    const personalization = normalizeEtsyPersonalization(personalizationResponse.data);
     return {
-      issues: [],
+      issues: personalization.editable ? [] : [{ code: "ETSY_PERSONALIZATION_REQUIRES_ETSY", severity: "warning", path: "personalization", message: etsyPersonalizationManualMessage }],
       ...(quota ? { quota } : {}),
       ...session.rotation,
       snapshot: {
         externalState: listing.state,
-        content: normalizeEtsyContent(listing),
+        content: normalizeEtsyContent(listing, personalization.value),
         price: payload.inventory
           ? inventory.products.map((product) => product.offerings.map((offering) => normalizeEtsyMoney(offering.price, payload.price.currency)))
           : normalizeEtsyMoney(listing.price, payload.price.currency),
@@ -1030,6 +1023,9 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     externalListingId: string,
   ): Promise<MarketplaceOnlineListingResult> {
     const session = await this.etsySession(credential);
+    // Preflight before any content/inventory mutation; POST replaces every question.
+    const currentPersonalization = await this.readEtsyPersonalization(session.headers, externalListingId);
+    const personalizationQuestion = prepareEtsyPersonalizationWrite(payload.personalization, currentPersonalization.data);
     const listingBody = etsyListingContentBody(payload);
     let mutationRecorded = false;
     let quota: MarketplaceQuotaTelemetry | undefined;
@@ -1061,11 +1057,11 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
         );
         quota = inventoryResponse.quota ?? quota;
       }
-      if (payload.personalization) {
+      if (personalizationQuestion) {
         const personalizationResponse = await this.updateEtsyPersonalization(
           account,
           session.headers,
-          payload,
+          personalizationQuestion,
           externalListingId,
         );
         quota = personalizationResponse.quota ?? quota;
@@ -1090,31 +1086,32 @@ export class HttpMarketplaceDraftGateway implements MarketplaceDraftGateway, Mar
     };
   }
 
+  private readEtsyPersonalization(headers: Record<string, string>, externalListingId: string) {
+    return this.requestJson(
+      `https://openapi.etsy.com/v3/application/listings/${encodeURIComponent(externalListingId)}/personalization`,
+      { headers }, EtsyPersonalizationResponseSchema, "etsy", false,
+    );
+  }
+
   private updateEtsyPersonalization(
     account: PublicationAccountContext,
     headers: Record<string, string>,
-    payload: z.infer<typeof EtsyPublicationPayloadSchema>,
+    question: Record<string, unknown>,
     externalListingId: string,
   ) {
-    const personalization = payload.personalization!;
     const url = new URL(
       `/v3/application/shops/${encodeURIComponent(account.externalAccountId)}/listings/${encodeURIComponent(externalListingId)}/personalization`,
       "https://openapi.etsy.com/",
     );
-    url.searchParams.set("supports_multiple_personalization_questions", "true");
+    // Deliberately do not opt into multi-question replacement. Etsy's 409 guard
+    // also protects questions added by the seller after our preflight read.
     return this.requestJson(
       url.toString(),
       {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({
-          personalization_questions: [{
-            question_type: "text_input",
-            question_text: "Personalization",
-            instructions: personalization.instructions,
-            required: personalization.required,
-            max_allowed_characters: personalization.maxAllowedCharacters,
-          }],
+          personalization_questions: [question],
         }),
       },
       EtsyPersonalizationResponseSchema,
@@ -1343,9 +1340,6 @@ const EtsyListingResponseSchema = z.object({
   who_made: z.string().optional(),
   when_made: z.string().optional(),
   is_personalizable: z.boolean().optional(),
-  personalization_is_required: z.boolean().optional(),
-  personalization_char_count_max: z.number().int().positive().optional(),
-  personalization_instructions: z.string().optional(),
   price: z.unknown().optional(),
   quantity: z.number().int().nonnegative().optional(),
 }).passthrough();
@@ -1374,7 +1368,68 @@ const EtsyInventoryResponseSchema = z.object({
   sku_on_property: z.array(z.number().int().positive()).default([]),
   readiness_state_on_property: z.array(z.number().int().positive()).default([]),
 }).passthrough();
-const EtsyPersonalizationResponseSchema = z.object({}).passthrough();
+// Keep future question fields intact on read. Unknown data is never silently
+// normalized into the ERP's narrower single-text editor.
+const EtsyPersonalizationResponseSchema = z.object({
+  personalization_questions: z.array(z.record(z.string(), z.unknown())),
+}).passthrough();
+
+const EtsySingleTextQuestionSchema = z.object({
+  question_id: z.number().int().positive(),
+  question_type: z.literal("text_input"),
+  question_text: z.string().min(1),
+  instructions: z.string().nullable().optional(),
+  required: z.boolean(),
+  max_allowed_characters: z.number().int().min(1).max(1_024),
+  max_allowed_files: z.null().optional(),
+  options: z.array(z.unknown()).max(0).nullable().optional(),
+  add_on_price: z.null().optional(),
+}).strict();
+
+type EtsyPersonalizationResponse = z.infer<typeof EtsyPersonalizationResponseSchema>;
+const etsyPersonalizationManualMessage = new EtsyPersonalizationSafetyError("unsupported").message;
+
+function etsySingleTextQuestion(current: EtsyPersonalizationResponse) {
+  if (Object.keys(current).some((key) => key !== "personalization_questions") || current.personalization_questions.length !== 1) return undefined;
+  const parsed = EtsySingleTextQuestionSchema.safeParse(current.personalization_questions[0]);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function normalizeEtsyPersonalization(current: EtsyPersonalizationResponse): { editable: boolean; value: unknown } {
+  if (Object.keys(current).length === 1 && current.personalization_questions.length === 0) return { editable: true, value: null };
+  const single = etsySingleTextQuestion(current);
+  if (single) return { editable: true, value: { instructions: single.instructions ?? "", required: single.required, maxAllowedCharacters: single.max_allowed_characters } };
+  return { editable: false, value: { editing: "etsy_required", source: current } };
+}
+
+function prepareEtsyPersonalizationWrite(
+  desired: z.infer<typeof EtsyPublicationPayloadSchema>["personalization"],
+  current: EtsyPersonalizationResponse,
+): Record<string, unknown> | undefined {
+  const normalized = normalizeEtsyPersonalization(current);
+  if (!normalized.editable) throw new EtsyPersonalizationSafetyError("unsupported");
+  const existing = etsySingleTextQuestion(current);
+  if (!desired) {
+    if (existing) throw new EtsyPersonalizationSafetyError("deletion");
+    return undefined;
+  }
+  if (existing && (existing.instructions ?? "") === desired.instructions && existing.required === desired.required && existing.max_allowed_characters === desired.maxAllowedCharacters) return undefined;
+  const questionText = existing?.question_text ?? "Personalization";
+  assertEtsyPersonalizationText(desired.instructions, 120);
+  assertEtsyPersonalizationText(questionText, 45);
+  return {
+    ...(existing ? { question_id: existing.question_id } : {}),
+    question_type: "text_input", question_text: questionText, instructions: desired.instructions,
+    required: desired.required, max_allowed_characters: desired.maxAllowedCharacters,
+  };
+}
+
+function assertEtsyPersonalizationText(value: string, max: number) {
+  const capitals = value.split(/\s+/u).filter((word) => /^\p{Lu}{3}/u.test(word)).length;
+  if ([...value].length > max || !/^[\p{L}\p{N}]/u.test(value) || capitals > 1) {
+    throw new EtsyPersonalizationSafetyError("invalid_text");
+  }
+}
 
 function normalizeAmazonIssue(issue: z.infer<typeof AmazonIssueSchema>): MarketplacePublicationIssue {
   const severity = issue.severity?.toUpperCase();
@@ -1444,7 +1499,7 @@ function desiredEtsyContent(payload: z.infer<typeof EtsyPublicationPayloadSchema
   };
 }
 
-function normalizeEtsyContent(listing: z.infer<typeof EtsyListingResponseSchema>) {
+function normalizeEtsyContent(listing: z.infer<typeof EtsyListingResponseSchema>, personalization: unknown) {
   return {
     title: listing.title ?? null,
     description: listing.description ?? null,
@@ -1456,13 +1511,7 @@ function normalizeEtsyContent(listing: z.infer<typeof EtsyListingResponseSchema>
     isSupply: listing.is_supply ?? false,
     whoMade: listing.who_made ?? null,
     whenMade: listing.when_made ?? null,
-    personalization: listing.is_personalizable
-      ? {
-          instructions: listing.personalization_instructions ?? "",
-          required: listing.personalization_is_required ?? false,
-          maxAllowedCharacters: listing.personalization_char_count_max ?? 0,
-        }
-      : null,
+    personalization,
   };
 }
 
@@ -1477,7 +1526,6 @@ function etsyListingContentBody(payload: z.infer<typeof EtsyPublicationPayloadSc
     shipping_profile_id: String(payload.shippingProfileId),
     readiness_state_id: String(payload.readinessStateId),
     is_supply: String(payload.isSupply ?? false),
-    is_personalizable: String(Boolean(payload.personalization)),
   });
   if (payload.shopSectionId) body.set("shop_section_id", String(payload.shopSectionId));
   if (payload.inventory) return body;

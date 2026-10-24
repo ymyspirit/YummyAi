@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { SupplierProfile } from "@yummyai/contracts/suppliers/supplier-profile";
 import { bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { skus } from "./catalog.js";
@@ -28,6 +29,7 @@ export const fulfillmentSuppliers = pgTable("fulfillment_suppliers", {
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
+  profile: jsonb("profile").$type<SupplierProfile>().default(sql`'{"schemaVersion":1,"entityKind":"unconfirmed","legalName":"","alias":"","roles":[],"contacts":[],"officeAddress":null,"paymentTerms":"","invoiceInformation":"","notes":""}'::jsonb`).notNull(),
   status: text("status").default("active").notNull(),
   regionCode: text("region_code").notNull(),
   settlementCurrency: text("settlement_currency").notNull(),

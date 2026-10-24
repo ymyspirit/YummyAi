@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type { SecretVault } from "@yummyai/ai-core";
+import { authorize, Permission } from "@yummyai/authz";
+import { CompleteAfterSalesInputSchema } from "@yummyai/contracts/order/workspace";
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import {
   AddResponsibilityEvidenceInputSchema, CreateAfterSalesCaseInputSchema, CreateReturnShipmentInputSchema,
@@ -12,7 +14,7 @@ import {
 } from "@yummyai/contracts";
 import {
   afterSalesCases, afterSalesDecisions, afterSalesResponsibilityEvidence, customerContactRecords,
-  assetFiles, orders, replacementOrderLinks, returnShipments, returnTrackingEvents,
+  assetFiles, orders, orderLines, orderWorkItems, replacementOrderLinks, returnShipments, returnTrackingEvents,
   type DatabaseConnection, type TenantTransaction, withTenant,
 } from "@yummyai/database";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -22,6 +24,36 @@ import { DATABASE_CONNECTION, ORDER_PII_VAULT } from "../platform.tokens.js";
 
 @Injectable()
 export class OrderAfterSalesService {
+  async analysisBasis(context: TenantContext, caseId: string) {
+    authorize(context, Permission.OrderRead); authorize(context, Permission.OrderPiiRead);
+    const record = await this.get(context, caseId);
+    const source = await withTenant(this.database.db, context, async (tx) => {
+      const [order] = await tx.select({ status: orders.addressStatus }).from(orders).where(eq(orders.id, record.case.orderId));
+      if (!order || order.status === "anonymized") throw new NotFoundException("售后资料已清理");
+      const [line] = await tx.select({ id: orderLines.id, expiresAt: orderWorkItems.expiresAt }).from(orderLines)
+        .leftJoin(orderWorkItems, eq(orderWorkItems.id, orderLines.id)).where(eq(orderLines.orderId, record.case.orderId)).orderBy(asc(orderLines.id)).limit(1);
+      if (!line || (line.expiresAt && line.expiresAt <= new Date())) throw new NotFoundException("订单资料已过期");
+      return { lineId: line.id, expiresAt: line.expiresAt?.toISOString() };
+    });
+    return {
+      ...source,
+      case: { id: record.case.id, type: record.case.type, status: record.case.status, reasonCode: record.case.reasonCode, version: record.case.currentDecisionVersion, updatedAt: record.case.updatedAt.toISOString() },
+      contactCount: record.contacts.length,
+      contacts: record.contacts.slice(-20).map((c) => ({ direction: c.direction, channel: c.channel, occurredAt: c.occurredAt.toISOString() })),
+      decision: record.decisions.at(-1) ? ((d) => ({ version: d.versionNumber, resolution: d.resolution, refundAmountMinor: d.refundAmountMinor, refundCurrency: d.refundCurrency, returnRequired: d.returnRequired, responsibilityParty: d.responsibilityParty, decidedAt: d.decidedAt.toISOString() }))(record.decisions.at(-1)!) : null,
+      returns: record.returnShipments.slice(-20).map((r) => ({ status: r.status, updatedAt: r.updatedAt.toISOString() })),
+      returnCount: record.returnShipments.length,
+      replacementCount: record.replacements.length,
+      evidenceCount: record.responsibilityEvidence.length,
+    };
+  }
+
+  analysisSummary(context: TenantContext, orderIds: string[]) {
+    authorize(context, Permission.OrderRead);
+    return withTenant(this.database.db, context, (tx) => orderIds.length ? tx.select({ type: afterSalesCases.type, reasonCode: afterSalesCases.reasonCode, status: afterSalesCases.status, count: sql<number>`count(*)::int` })
+      .from(afterSalesCases).where(inArray(afterSalesCases.orderId, orderIds)).groupBy(afterSalesCases.type, afterSalesCases.reasonCode, afterSalesCases.status)
+      .orderBy(afterSalesCases.type, afterSalesCases.reasonCode, afterSalesCases.status) : Promise.resolve([]));
+  }
   constructor(
     @Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection,
     @Inject(ORDER_PII_VAULT) private readonly vault: SecretVault,
@@ -214,6 +246,39 @@ export class OrderAfterSalesService {
     }).from(afterSalesCases).where(orderId ? eq(afterSalesCases.orderId, orderId) : undefined).orderBy(desc(afterSalesCases.updatedAt)));
   }
 
+  /** Records evidence of a completed external action; never executes a refund or sends a message. */
+  async complete(context: TenantContext, caseId: string, raw: unknown) {
+    authorize(context, Permission.OrderWrite); authorize(context, Permission.OrderPiiRead);
+    const input = CompleteAfterSalesInputSchema.parse(raw);
+    const body = `售后结案 V${input.expectedDecisionVersion}\n执行凭证：${input.evidenceReference}\n${input.reason}`;
+    await withTenant(this.database.db, context, async (tx) => {
+      await lock(tx, `after-sales-case:${caseId}`);
+      const [record] = await tx.select().from(afterSalesCases).where(eq(afterSalesCases.id, caseId));
+      if (!record) throw new NotFoundException("售后记录不存在");
+      const [prior] = await tx.select().from(customerContactRecords).where(and(eq(customerContactRecords.caseId, caseId), eq(customerContactRecords.idempotencyKey, `completion:${input.idempotencyKey}`)));
+      if (prior) { if (prior.bodyChecksum !== checksum(body) || prior.occurredAt.toISOString() !== input.occurredAt) throw new ConflictException("同一次结案的重试内容不能改变"); return; }
+      if (!["approved", "rejected"].includes(record.status) || record.currentDecisionVersion !== input.expectedDecisionVersion) throw new ConflictException("请先确认当前处理方案，再登记实际执行结果");
+      await tx.insert(customerContactRecords).values({ id: createEntityId(), tenantId: context.tenantId, caseId, orderId: record.orderId, channel: "internal", direction: "internal", encryptedBody: this.vault.encrypt(body), bodyChecksum: checksum(body), idempotencyKey: `completion:${input.idempotencyKey}`, actorUserId: context.userId, occurredAt: new Date(input.occurredAt) });
+      await tx.update(afterSalesCases).set({ status: "resolved", updatedAt: new Date() }).where(eq(afterSalesCases.id, caseId));
+      await this.audit.recordInTransaction(tx, context, { action: "after_sales_case.complete", resourceType: "after_sales_case", resourceId: caseId, result: "success", metadata: { decisionVersion: input.expectedDecisionVersion } });
+    });
+    return this.getPrivate(context, caseId);
+  }
+
+  async getPrivate(context: TenantContext, caseId: string) {
+    authorize(context, Permission.OrderRead); authorize(context, Permission.OrderPiiRead);
+    const safe = await this.get(context, caseId);
+    const privateData = await withTenant(this.database.db, context, async (tx) => {
+      const [record] = await tx.select({ summary: afterSalesCases.encryptedSummary, addressStatus: orders.addressStatus }).from(afterSalesCases).innerJoin(orders, eq(orders.id, afterSalesCases.orderId)).where(eq(afterSalesCases.id, caseId));
+      if (!record || record.addressStatus === "anonymized") throw new NotFoundException("售后资料已清理");
+      const contacts = await tx.select().from(customerContactRecords).where(eq(customerContactRecords.caseId, caseId));
+      const decisions = await tx.select().from(afterSalesDecisions).where(eq(afterSalesDecisions.caseId, caseId));
+      await this.audit.recordInTransaction(tx, context, { action: "after_sales_case.private_read", resourceType: "after_sales_case", resourceId: caseId, result: "success", metadata: {} });
+      return { summary: this.vault.withSecret(record.summary, (value) => value), contacts: new Map(contacts.map((contact) => [contact.id, this.vault.withSecret(contact.encryptedBody, (value) => value)])), decisions: new Map(decisions.map((decision) => [decision.id, this.vault.withSecret(decision.encryptedReason, (value) => value)])) };
+    });
+    return { ...safe, case: { ...safe.case, summary: privateData.summary }, contacts: safe.contacts.map((contact) => ({ ...contact, body: privateData.contacts.get(contact.id) ?? "" })), decisions: safe.decisions.map((decision) => ({ ...decision, reason: privateData.decisions.get(decision.id) ?? "" })) };
+  }
+
   async get(context: TenantContext, caseId: string) {
     return withTenant(this.database.db, context, async (tx) => {
       const [record] = await tx.select({
@@ -258,8 +323,9 @@ export class OrderAfterSalesService {
   }
 }
 
-function validateRefund(order: { total: number; currency: string }, input: DecideAfterSalesCaseInput) {
+function validateRefund(order: { total: number | null; currency: string | null }, input: DecideAfterSalesCaseInput) {
   if (input.refundAmountMinor === null) return;
+  if (order.total === null || order.currency === null) throw new UnprocessableEntityException("订单金额尚未提供，请补齐金额和币种后再核定退款。");
   if (input.refundCurrency !== order.currency) throw new UnprocessableEntityException("Refund currency must match order currency");
   if (input.refundAmountMinor <= 0 || input.refundAmountMinor > order.total) throw new UnprocessableEntityException("Refund amount must be positive and cannot exceed order total");
   if (input.resolution === "full_refund" && input.refundAmountMinor !== order.total) throw new UnprocessableEntityException("Full refund must equal order total");

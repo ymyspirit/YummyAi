@@ -1,8 +1,8 @@
-import type { InventoryWorkspaceView } from "@yummyai/contracts";
+import type { InventoryWorkspaceView } from "@yummyai/contracts/inventory";
 import { PackageSearch, ShieldCheck } from "lucide-react";
 
-import { InventoryWorkspace } from "../../../features/inventory/inventory-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
+import { InventoryDailyView } from "../../../features/inventory/inventory-daily-view";
+import { parseInventoryWorkspaceResponse } from "../../../features/inventory/inventory-response";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +11,6 @@ export default async function InventoryPage() {
   const result = await loadInventoryWorkspace();
   return (
     <div className="research-shell inventory-shell">
-      <ErpSidebar
-        active="inventory"
-        contextLabel="INVENTORY LEDGER"
-        note="数量来自不可变库存流水；余额是可重建投影，缺失事实不会被推测或补零。"
-      />
       <main className="research-main inventory-main">
         <header className="inventory-header">
           <div>
@@ -37,7 +32,7 @@ export default async function InventoryPage() {
               <span>{result.error}</span>
             </div>
           </section>
-        ) : <InventoryWorkspace data={result.data} />}
+        ) : <InventoryDailyView data={result.data} />}
       </main>
     </div>
   );
@@ -56,7 +51,7 @@ async function loadInventoryWorkspace(): Promise<
       if (response.status === 403) return { error: "当前成员没有 inventory:read 权限。", kind: "forbidden" };
       return { error: `库存读取失败 (${response.status})。`, kind: "failed" };
     }
-    return { data: parseInventoryWorkspace(await response.json()) };
+    return { data: parseInventoryWorkspaceResponse(await response.json()) };
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : "库存读取失败。",
@@ -65,47 +60,3 @@ async function loadInventoryWorkspace(): Promise<
   }
 }
 
-function parseInventoryWorkspace(value: unknown): InventoryWorkspaceView {
-  if (!isRecord(value)) throw new TypeError("库存 API 返回了无效的数据结构。");
-  const collectionKeys = [
-    "warehouses",
-    "locations",
-    "stockItems",
-    "lots",
-    "balances",
-    "reservations",
-    "transfers",
-    "movements",
-  ] as const;
-  for (const key of collectionKeys) {
-    if (!Array.isArray(value[key])) throw new TypeError(`库存 API 缺少 ${key} 集合。`);
-  }
-  const balances = value.balances as unknown[];
-  const movements = value.movements as unknown[];
-  for (const [index, balance] of balances.entries()) {
-    if (!isRecord(balance) || typeof balance.stockItemId !== "string" ||
-      typeof balance.locationId !== "string" || typeof balance.physicalQuantity !== "number" ||
-      typeof balance.reservedQuantity !== "number" || typeof balance.availableQuantity !== "number" ||
-      typeof balance.inTransitQuantity !== "number" || typeof balance.unit !== "string") {
-      throw new TypeError(`库存余额第 ${index + 1} 条记录无效。`);
-    }
-  }
-  for (const [index, movement] of movements.entries()) {
-    if (!isRecord(movement) || typeof movement.id !== "string" ||
-      typeof movement.stockItemId !== "string" || typeof movement.locationId !== "string" ||
-      typeof movement.quantityDelta !== "number" || typeof movement.occurredAt !== "string") {
-      throw new TypeError(`库存流水第 ${index + 1} 条记录无效。`);
-    }
-  }
-  for (const item of collectionKeys.flatMap((key) => value[key])) {
-    if (!isRecord(item)) throw new TypeError("库存 API 返回了无效的记录。");
-    for (const protectedKey of ["tenantId", "createdBy", "recordedBy", "idempotencyKey"]) {
-      if (protectedKey in item) throw new TypeError("库存 API 返回了内部租户或幂等字段。");
-    }
-  }
-  return value as InventoryWorkspaceView;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

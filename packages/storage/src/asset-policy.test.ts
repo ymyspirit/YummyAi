@@ -29,6 +29,14 @@ describe("asset storage policy", () => {
   it("does not sign a research object as an authorized asset", () => {
     expect(() => assertAssetAccess(context, asset(), "authorized")).toThrow();
   });
+  it("separates advertising evidence from artwork and requires advertising read access", () => {
+    const record = asset({ assetDomain: "advertising", objectKey: `tenants/${context.tenantId}/advertising/${"a".repeat(64)}/report.csv` });
+    expect(() => assertAssetAccess(context, record, "advertising")).toThrow();
+    const allowed = { ...context, permissions: ["customer_intelligence:read"] };
+    expect(() => assertAssetAccess(allowed, record, "advertising")).not.toThrow();
+    expect(() => assertAssetAccess({ ...allowed, permissions: ["asset:read", "customer_intelligence:read"] }, record, "authorized")).toThrow();
+    expect(() => assertAssetAccess(allowed, { ...record, tenantId: "019b0000-0000-7000-8000-000000000099" }, "advertising")).toThrow();
+  });
 
   it("denies an object owned by another tenant", () => {
     const tenantId = "019b0000-0000-7000-8000-000000000099";

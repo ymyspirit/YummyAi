@@ -5,7 +5,7 @@ import {
 import { BadgeDollarSign, ShieldAlert } from "lucide-react";
 
 import { FinanceWorkspace } from "../../../features/finance/finance-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
+import { FinanceAssist } from "../../../features/ai-assist/business-assist";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +14,6 @@ export default async function FinancePage() {
   const result = await loadFinanceWorkspace();
   return (
     <div className="research-shell finance-shell">
-      <ErpSidebar
-        active="finance"
-        contextLabel="FINANCE EVIDENCE"
-        note="收入、成本、汇率与利润都锁定到不可变证据；缺失事实不会按零计算。"
-      />
       <main className="research-main finance-main">
         <header className="finance-header">
           <div>
@@ -32,6 +27,11 @@ export default async function FinancePage() {
           </div>
         </header>
 
+        <p><a href="/finance/originals">我的财务原提交：登记来源凭据、固定口径并恢复断线后的原填写与实际结果</a></p>
+        <p><a href="/finance/order-review">定制订单履约与利润复盘：查看 SKU、规格、配方和工厂汇总</a></p>
+        <p><a href="/finance/payables">应付与付款核销：登记工厂及供应商账单、付款证据与核销分配</a></p>
+        <p><a href="/finance/ledger">财务台账：逐页查阅原始凭据、历史版本与关联明细</a></p>
+        <p><a href="/finance/cost-allocations">费用分摊与归属利润：明确费用目标、精确预览、批准版本和复核历史依据</a></p>
         {"error" in result ? (
           <section className={`finance-load-state state-${result.kind}`} role="alert">
             <ShieldAlert size={20} />
@@ -40,7 +40,7 @@ export default async function FinancePage() {
               <span>{result.error}</span>
             </div>
           </section>
-        ) : <FinanceWorkspace data={result.data} />}
+        ) : <><FinanceAssist data={result.data} /><FinanceWorkspace data={result.data} /></>}
       </main>
     </div>
   );

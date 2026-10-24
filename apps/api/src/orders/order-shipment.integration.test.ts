@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
 import { OrderShipmentService } from "./order-shipment.service.js";
 import { OrderService } from "./order.service.js";
+import { syntheticPassedProduction } from "./shipment-production-fixture.js";
 
 describe("shipment, tracking, and marketplace writeback", () => {
   const database = connectDatabase();
@@ -198,14 +199,22 @@ describe("shipment, tracking, and marketplace writeback", () => {
         toWorkflowState: "awaiting_shipment", idempotencyKey: `shipment-ingest-${suffix}`, actorUserId: userA,
       });
     });
+    const sources = await syntheticPassedProduction(database, contextA, orderId, lineIds.map((id, index) => ({ id, quantity: quantities[index]! })));
+    sourceByLine = new Map(sources.map(source => [source.orderLineId, source]));
     return { orderId, lineIds };
   }
 });
 
+let sourceByLine = new Map<string, Awaited<ReturnType<typeof syntheticPassedProduction>>[number]>();
 function packageInput(packageReferenceId: string, trackingNumber: string, lines: Array<{ orderLineId: string; quantity: number }>) {
   return {
     packageReferenceId, trackingNumber, carrierCode: "UPS", carrierName: "UPS", carrierService: "Ground",
     labelAssetId: null, externalLabelId: null, labelCostMinor: null, labelCurrency: null,
-    weightGrams: null, dimensionsMm: null, lines,
+    weightGrams: null, dimensionsMm: null, lines: lines.map(line => {
+      const source = sourceByLine.get(line.orderLineId);
+      if (!source) throw new Error("Synthetic package production source missing");
+      return { ...line, productionAllocations: [{ productionOrderId: source.productionOrderId, productionVersionId: source.productionVersionId,
+        qualityInspectionId: source.qualityInspectionId, expectedProductionProjectionVersion: source.expectedProductionProjectionVersion, quantity: line.quantity }] };
+    }),
   };
 }

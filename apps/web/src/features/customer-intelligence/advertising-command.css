@@ -1,0 +1,110 @@
+.ad-command-workbench,
+.ad-command-review,
+.ad-command-retained {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  animation: ad-command-enter 160ms ease-out both;
+}
+.ad-command-workbench > header,
+.ad-command-review > header,
+.ad-command-workbench h2,
+.ad-command-actions > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ad-command-workbench > header,
+.ad-command-review > header { justify-content: space-between; }
+.ad-command-workbench h2,
+.ad-command-review h3 { margin: 0; font-size: 17px; }
+.ad-command-workbench p,
+.ad-command-review p,
+.ad-command-retained p { color: var(--muted-ink); line-height: 1.7; }
+.ad-command-workbench label,
+.ad-command-filter label,
+.ad-command-lookup label { display: grid; min-width: 0; gap: 6px; color: var(--muted-ink); }
+.ad-command-workbench :is(input, select),
+.ad-command-workbench button,
+.ad-command-review button,
+.ad-command-retained button {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.ad-command-workbench :is(input, select) { min-width: 0; width: 100%; }
+.ad-command-workbench button,
+.ad-command-review button,
+.ad-command-retained button { display: inline-flex; gap: 6px; align-items: center; justify-content: center; cursor: pointer; }
+.ad-command-workbench button:hover:not(:disabled),
+.ad-command-review button:hover:not(:disabled),
+.ad-command-retained button:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--blue); }
+.ad-command-workbench button:active:not(:disabled),
+.ad-command-review button:active:not(:disabled),
+.ad-command-retained button:active:not(:disabled) { transform: scale(.98); }
+.ad-command-workbench :focus-visible,
+.ad-command-review :focus-visible,
+.ad-command-retained :focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.ad-command-workbench button:disabled,
+.ad-command-review button:disabled { opacity: .52; cursor: default; }
+.ad-command-review button.primary { background: var(--blue); color: white; border-color: var(--blue); }
+.ad-command-lookup,
+.ad-command-filter,
+.ad-command-view { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+.ad-command-lookup label,
+.ad-command-filter label { flex: 1 1 220px; }
+.ad-command-view button[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); background: color-mix(in srgb, var(--blue), transparent 96%); }
+.ad-command-notice,
+.ad-command-result,
+.ad-command-retained { padding: 12px 14px; margin: 12px 0; background: var(--surface-muted); border-left: 2px solid var(--blue); }
+.ad-command-notice.is-error { border-left-color: #b45330; color: #923c22; }
+.ad-command-pairs { margin: 14px 0; }
+.ad-command-pairs > div { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); gap: 12px; border-bottom: 1px solid var(--line); padding: 9px 0; }
+.ad-command-pairs dt { color: var(--muted-ink); }
+.ad-command-pairs dd { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ad-command-workbench code,
+.ad-command-review code,
+.ad-command-retained code { font-size: 11px; overflow-wrap: anywhere; word-break: break-all; }
+.ad-command-list { list-style: none; margin: 0; padding: 0; }
+.ad-command-list > li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 13px 0; border-top: 1px solid var(--line); animation: ad-command-enter 140ms ease-out both; }
+.ad-command-list > li > div { min-width: 0; flex: 1 1 220px; display: grid; gap: 5px; }
+.ad-command-list small,
+.ad-command-list span { color: var(--muted-ink); }
+.ad-command-actions { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.ad-command-confirm { display: flex; align-items: start; gap: 8px; margin: 14px 0; line-height: 1.7; }
+.ad-command-confirm input { width: 17px; height: 17px; min-height: 0; margin-top: 3px; flex-shrink: 0; }
+.ad-command-original { margin: 16px 0; padding-top: 14px; border-top: 1px solid var(--line); min-width: 0; }
+.ad-command-original > section { min-width: 0; margin-top: 16px; }
+.ad-command-source { margin: 12px 0; min-width: 0; }
+.ad-command-source summary { cursor: pointer; line-height: 1.7; overflow-wrap: anywhere; }
+.ad-command-source nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.ad-command-source pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 11px; line-height: 1.7; background: var(--surface-muted); padding: 10px; }
+.ad-command-retained { display: grid; gap: 10px; }
+.ad-command-result h4 { margin: 0; }
+.ad-command-result a,
+.ad-command-retained a { color: var(--blue); overflow-wrap: anywhere; }
+.ad-command-exit { animation: ad-command-exit 160ms ease-in both; }
+@supports selector(::details-content) {
+  .ad-command-source { interpolate-size: allow-keywords; }
+  .ad-command-source::details-content { block-size: 0; opacity: 0; overflow: clip; transition: block-size 160ms ease, opacity 140ms ease, content-visibility 160ms allow-discrete; }
+  .ad-command-source[open]::details-content { block-size: auto; opacity: 1; }
+}
+@keyframes ad-command-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ad-command-exit { to { opacity: 0; transform: translateY(4px); } }
+@media (max-width: 620px) {
+  .ad-command-pairs > div { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .ad-command-review > header { align-items: start; }
+  .ad-command-lookup label,
+  .ad-command-filter label { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ad-command-workbench, .ad-command-workbench *, .ad-command-review, .ad-command-review *, .ad-command-retained, .ad-command-retained *, .ad-command-source::details-content, .ad-command-exit { animation: none !important; transition: none !important; }
+}

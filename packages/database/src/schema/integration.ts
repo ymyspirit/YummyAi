@@ -1,16 +1,21 @@
-import type { IntegrationApiScope, WebhookDeliveryStatus, WebhookEventType } from "@yummyai/contracts/integration";
+import type { CreateIntegrationApiClientInput, IntegrationApiDelegation, IntegrationApiScope, WebhookDeliveryStatus, WebhookEventType } from "@yummyai/contracts/integration";
 import { sql } from "drizzle-orm";
 import { check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { organizations, users } from "./identity.js";
 
 export const integrationApiClients = pgTable("integration_api_clients", {
+  delegation: jsonb("delegation").$type<IntegrationApiDelegation | null>(),
+  delegationRequest: jsonb("delegation_request").$type<CreateIntegrationApiClientInput | null>(),
+  creationTransactionId: text("creation_transaction_id"),
+  revocationTransactionId: text("revocation_transaction_id"),
   id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), label: text("label").notNull(), keyPrefix: text("key_prefix").notNull(), secretDigest: text("secret_digest").notNull(), scopes: jsonb("scopes").$type<IntegrationApiScope[]>().notNull(), status: text("status").default("active").notNull(), expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }), idempotencyKey: text("idempotency_key").notNull(), createdBy: uuid("created_by").notNull().references(() => users.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(), revokedAt: timestamp("revoked_at", { mode: "date", withTimezone: true }),
 }, (table) => [
   check("integration_api_clients_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`), check("integration_api_clients_status_check", sql`${table.status} in ('active','revoked')`), check("integration_api_clients_digest_check", sql`${table.secretDigest} ~ '^[0-9a-f]{64}$'`), unique("integration_api_clients_tenant_id_unique").on(table.tenantId, table.id), uniqueIndex("integration_api_clients_prefix_unique").on(table.keyPrefix), uniqueIndex("integration_api_clients_idempotency_unique").on(table.tenantId, table.idempotencyKey), index("integration_api_clients_status_idx").on(table.tenantId, table.status, table.expiresAt),
 ]);
 
 export const integrationApiClientEvents = pgTable("integration_api_client_events", {
+  creationTransactionId: text("creation_transaction_id"),
   id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), clientId: uuid("client_id").notNull(), action: text("action").notNull(), reasonCode: text("reason_code").notNull(), idempotencyKey: text("idempotency_key").notNull(), actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }), occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   check("integration_api_client_events_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`), check("integration_api_client_events_action_check", sql`${table.action} in ('created','revoked')`), foreignKey({ columns: [table.tenantId, table.clientId], foreignColumns: [integrationApiClients.tenantId, integrationApiClients.id], name: "integration_api_client_events_client_fk" }).onDelete("restrict"), unique("integration_api_client_events_tenant_id_unique").on(table.tenantId, table.id), uniqueIndex("integration_api_client_events_idempotency_unique").on(table.tenantId, table.clientId, table.idempotencyKey),

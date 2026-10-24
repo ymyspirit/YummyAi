@@ -1,0 +1,197 @@
+.finance-table .finance-money {
+  display: inline-block;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.finance-monetary-basis {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--muted-ink);
+  font-size: .75rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.finance-run-monetary > td {
+  padding-block: 6px 9px;
+  border-top: 0;
+}
+
+.finance-fx-grid .finance-fx-ratio {
+  min-width: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.finance-fx-grid article > :is(span, strong, time) {
+  overflow-wrap: anywhere;
+}
+
+.finance-monetary-basis.is-unverified {
+  color: var(--amber);
+}
+
+.finance-source-note,
+.finance-source-summary,
+.finance-source-coverage {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--muted-ink);
+  font-size: .75rem;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.finance-panel > .finance-source-note {
+  padding: 9px 12px;
+}
+
+.finance-source-summary.is-unverified {
+  color: var(--amber);
+}
+
+.finance-source-coverage {
+  display: block;
+  margin-top: 4px;
+}
+
+.finance-table.finance-statement-table .finance-source-row > td {
+  display: table-cell;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.finance-source-details {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 6px;
+  font-size: .75rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.finance-source-details > summary {
+  padding-block: 4px;
+  color: var(--blue);
+  cursor: pointer;
+  transition: color 150ms ease, opacity 150ms ease;
+}
+
+.finance-source-details > summary:hover {
+  color: var(--ink);
+}
+
+.finance-source-details > summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.finance-source-details::details-content {
+  interpolate-size: allow-keywords;
+  height: 0;
+  overflow: clip;
+  transition: height 180ms ease, content-visibility 180ms allow-discrete;
+}
+
+.finance-source-details[open]::details-content {
+  height: auto;
+}
+
+.finance-source-detail-body {
+  padding-block: 8px 4px;
+}
+
+.finance-source-detail-body dl {
+  display: grid;
+  grid-template-columns: minmax(80px, 110px) minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0 0 9px;
+}
+
+.finance-source-detail-body :is(dt, dd, li) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.finance-source-detail-body dt {
+  color: var(--muted-ink);
+}
+
+.finance-table .finance-source-details code {
+  display: inline;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.finance-source-entry-list,
+.finance-source-missing-list {
+  padding-left: 20px;
+  margin: 10px 0 0;
+}
+
+.finance-source-entry-list > li {
+  padding-block: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.finance-source-entry-list > li > strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.finance-source-missing-list > li {
+  padding-block: 4px;
+}
+
+.finance-run-source {
+  min-width: 0;
+  margin-top: 5px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .finance-monetary-basis {
+    animation: finance-monetary-enter 160ms ease-out both;
+    transition: color 150ms ease-out, opacity 150ms ease-out;
+  }
+  .finance-source-summary,
+  .finance-source-coverage,
+  .finance-source-details[open] > .finance-source-detail-body {
+    animation: finance-monetary-enter 160ms ease-out both;
+    transition: color 150ms ease, opacity 150ms ease;
+  }
+}
+
+@media (max-width: 720px) {
+  .finance-source-details,
+  .finance-run-source {
+    max-width: min(100%, calc(100vw - 88px));
+  }
+  .finance-source-detail-body dl {
+    grid-template-columns: minmax(70px, 84px) minmax(0, 1fr);
+    column-gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finance-source-details,
+  .finance-source-details *,
+  .finance-source-details::details-content,
+  .finance-source-summary,
+  .finance-source-coverage {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes finance-monetary-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}

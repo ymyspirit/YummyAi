@@ -1,9 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { HttpPodArtworkGateway } from "./pod-artwork.http-gateway.js";
 import type { PodArtworkExecutionRecord } from "./pod-artwork.processor.js";
 
 describe("HttpPodArtworkGateway", () => {
+  it("saves the original billing receipt before rejecting invalid artwork",async()=>{
+    const receipt=vi.fn(async(value:unknown)=>{expect(value).toBeDefined();}),body=JSON.stringify({modelKey:"pod.synthetic",modelVersion:"v1",costUsd:0.027,outputs:[],prompt:"synthetic-private-data"});
+    const gateway=new HttpPodArtworkGateway("https://processor.example/v1/process","synthetic-key",async()=>new Response(body,{headers:{"x-request-id":"synthetic-paid-request"}}));
+    await expect(gateway.execute({tenantId:"019f0000-0000-7000-8000-000000000003",userId:"019f0000-0000-7000-8000-000000000004"},task(),new AbortController().signal,receipt)).rejects.toThrow();
+    expect(receipt).toHaveBeenCalledOnce();
+    expect(receipt.mock.calls[0]?.[0]).toMatchObject({providerRequestId:"synthetic-paid-request",costUsd:"0.02700000",metadataValid:true});
+    expect(JSON.stringify(receipt.mock.calls[0]?.[0])).not.toContain("synthetic-private-data");
+  });
   it("rejects insecure non-loopback processor endpoints and embedded credentials", () => {
     expect(() => new HttpPodArtworkGateway("http://processor.example/v1/process", "secret"))
       .toThrow("must use HTTPS");

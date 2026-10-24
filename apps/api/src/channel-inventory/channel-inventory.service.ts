@@ -426,7 +426,7 @@ export class ChannelInventoryService {
       }
       const [account] = await tx.select().from(marketplaceAccounts)
         .where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
-      if (!account) throw new NotFoundException("Marketplace account not found");
+      if (!account || account.deletedAt) throw new NotFoundException("Marketplace account not found");
       if (input.listingId) {
         const [listing] = await tx.select().from(listings)
           .where(eq(listings.id, input.listingId)).limit(1);
@@ -515,7 +515,7 @@ export class ChannelInventoryService {
     return withTenant(this.database.db, context, async (tx) => {
       const [stockItemRows, accountRows, snapshotRows, policyRows, runRows, reconciliationRows] = await Promise.all([
         tx.select().from(inventoryStockItems).orderBy(inventoryStockItems.name),
-        tx.select().from(marketplaceAccounts).orderBy(marketplaceAccounts.displayName),
+        tx.select().from(marketplaceAccounts).where(sql`${marketplaceAccounts.deletedAt} is null`).orderBy(marketplaceAccounts.displayName),
         tx.select().from(networkInventorySnapshots)
           .orderBy(desc(networkInventorySnapshots.recordedAt)).limit(20),
         tx.select().from(channelAllocationPolicies)
@@ -626,7 +626,7 @@ async function validateSnapshotReferences(
   if (input.accountId) {
     const [account] = await tx.select().from(marketplaceAccounts)
       .where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
-    if (!account) throw new NotFoundException("Marketplace account not found");
+    if (!account || account.deletedAt) throw new NotFoundException("Marketplace account not found");
     if ((input.provider === "amazon" || input.provider === "etsy") && account.platform !== input.provider) {
       throw new ConflictException("Inventory provider does not match marketplace account");
     }
@@ -667,7 +667,7 @@ async function validatePolicyReferences(
   for (const channel of input.channels) {
     const [account] = await tx.select().from(marketplaceAccounts)
       .where(eq(marketplaceAccounts.id, channel.accountId)).limit(1);
-    if (!account) throw new NotFoundException("Marketplace account not found");
+    if (!account || account.deletedAt) throw new NotFoundException("Marketplace account not found");
     if (account.platform !== channel.platform) {
       throw new ConflictException("Channel platform does not match marketplace account");
     }

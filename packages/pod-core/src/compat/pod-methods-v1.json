@@ -1,0 +1,5109 @@
+{
+  "format": "pod-method-legacy-v1",
+  "sourceManifestSha256": "2714c872a4451a88a3426689deaf86e5619d5f30c68c1a7897d553897dd46986",
+  "methods": [
+    {
+      "methodKey": "pod.artwork.pattern_crop",
+      "label": "POD 处理 · 图案裁剪",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.pattern_crop",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "dc7b69bc7086c72520c07ccc3cadec2ff2242a296045a7f9521fc2d837102ec6"
+        },
+        "tools": [
+          {
+            "key": "pod.pattern_crop",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "bfb83106c600ef48f42e66bc5835fbb0548b07bf195caf7fefeb3cb8f0dc8f45"
+          }
+        ],
+        "checksum": "2e2784114d4bf6d054ff65941e1e80bf4e4514a37a9bcfe78299da24e44056f4"
+      },
+      "tools": [
+        {
+          "key": "pod.pattern_crop",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "图案裁剪",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "a0c33d858beabfabecff8a630ae7c5e6c95110712088109def1af8414121bae9",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.print_extract",
+      "label": "POD 处理 · 印花图提取",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.print_extract",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "64debb21fb0ea815724b2b80e24708816538da131f13b9df73be9af9ba807dc0"
+        },
+        "tools": [
+          {
+            "key": "pod.print_extract",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "2ffd79d86a8e935a0da0a7230a50233cde48fe34f1182e4a3cec3d5466142e72"
+          }
+        ],
+        "checksum": "e633bb9661be3db248c17ddbe6c787789a2522c27d68b26d0b2924fd1c7e88b1"
+      },
+      "tools": [
+        {
+          "key": "pod.print_extract",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "印花图提取",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "2bd10d7c9d9b7d030b3248779ee58aa76997e789ef6cddf460b5d2ca0d488653",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.background_remove",
+      "label": "POD 处理 · 一键抠图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.background_remove",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "94fe5c463eebfc1b116ef4ff4bb791a1402291de22594662266461c2c11e8625"
+        },
+        "tools": [
+          {
+            "key": "pod.background_remove",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4a737034b0d940864395a9c96474719b9673979fc6f3e54ddd733e625f87a036"
+          }
+        ],
+        "checksum": "4fdd8b5f595555d3f98e29e6933dfeb3973d47d6ebc2cf20fc9269ca1c660139"
+      },
+      "tools": [
+        {
+          "key": "pod.background_remove",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "一键抠图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "9843b480acdaaf7031d48fb3db7dd879975ab9691c89712a033ee023433c6a61",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.super_resolution",
+      "label": "POD 处理 · 超分提质",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.super_resolution",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "c26603bc819d83575e1164622985227d83256108755585195599442532a47f4e"
+        },
+        "tools": [
+          {
+            "key": "pod.super_resolution",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "6347922ee8600c5cd0abedc614348962698629eb297a47d8499ba4eddc895592"
+          }
+        ],
+        "checksum": "c63db945d01775c84a7b843ef155a773a484261cedb2028bba070ae25c602f02"
+      },
+      "tools": [
+        {
+          "key": "pod.super_resolution",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "超分提质",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "b8224b256f24518b37570ea4481190c783113d6948f8d374774f70595dfb192b",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.outpaint",
+      "label": "POD 处理 · 扩图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.outpaint",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "c9d55aba146d92b27b0af310f44457754f7a246986d5afa39a19ee9dcfedd75f"
+        },
+        "tools": [
+          {
+            "key": "pod.outpaint",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4b0e09f14dc3237e113c8f5077924b93df13b5b24406043b073687e8b0c9a6c1"
+          }
+        ],
+        "checksum": "3f76811a959d89b5ef061e91fce0b9fdb958e15d4c7dd9f58defb3b5e2a01c5d"
+      },
+      "tools": [
+        {
+          "key": "pod.outpaint",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "扩图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "ca46811108cd46e3c3de7b11cfc7e9dab2b55e67aa78ffe193dfb50a26a19ea8",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.crop_compress",
+      "label": "POD 处理 · 裁剪压缩",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.crop_compress",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "9c1bdff3ac32859a7c941d113b3432e891c031927593ac2804a0af8b9291d0ac"
+        },
+        "tools": [
+          {
+            "key": "pod.crop_compress",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4ee7e50fbadfe253f541d2d8ab251b1a668522d2a7f03c7b02de51ad68d02df2"
+          }
+        ],
+        "checksum": "0725b64b176e2134bc85cc8cb3ab87f6e0ff3231e8a0ffa78fcac49540fc397c"
+      },
+      "tools": [
+        {
+          "key": "pod.crop_compress",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "裁剪压缩",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "b9be4f39196753159117cf7c57bc0bf9ebf22878e5018e11de1e1d099ecef73f",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.vectorize",
+      "label": "POD 处理 · 转矢量图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.vectorize",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "8a1cc44a997b41f7de68c16ffba527615a03c7e90b0c7b088289f75637e23615"
+        },
+        "tools": [
+          {
+            "key": "pod.vectorize",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "6f2f4c33d55546fb81001da0907fe3d8851fa2cff701277cf08f6ab280df5147"
+          }
+        ],
+        "checksum": "31bdd0de2b3c6110d2dcad1209f347472df89e4a69bf873aacc844156bd888e6"
+      },
+      "tools": [
+        {
+          "key": "pod.vectorize",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "转矢量图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "7fe541e0a1f6d6b3ee9871b584563613ceed3bdfdb5e97773cd50c9ed4d584db",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.authorized_watermark_remove",
+      "label": "POD 处理 · 授权素材去水印",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.authorized_watermark_remove",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "cb3fcb35af07a7b25dd189b48f98cbd66a5fe676732a74250c17044fd60e1531"
+        },
+        "tools": [
+          {
+            "key": "pod.authorized_watermark_remove",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "6644761e021e649e840e1747724e9b8fde7e54f228afc275661b6dfe3dc1c26d"
+          }
+        ],
+        "checksum": "8c22a1d0b52c3a8fb8dd7ed2bb9318213c71f7dfcb3f7a8477d44ee2969d99a3"
+      },
+      "tools": [
+        {
+          "key": "pod.authorized_watermark_remove",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "授权素材去水印",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "9d15fe70bb81f0a31fbe446284cd7a3171a98baf537298d8e745fae015a632b5",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.rights_risk_scan",
+      "label": "POD 处理 · 侵权风险检查",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.rights_risk_scan",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "c8a64a750a664453469b1536ccf1c75f19fd48abc98c1fb6276382c1eab38a54"
+        },
+        "tools": [
+          {
+            "key": "pod.rights_risk_scan",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4aa5c801c65cce788c4c052a749a1e64ab1d2b62ac3fe84658eaf838fe46ea95"
+          }
+        ],
+        "checksum": "c4e202d01b7f2985a9ed0bef47e9924e191d422d97755e0f8b4a3dc940c57d68"
+      },
+      "tools": [
+        {
+          "key": "pod.rights_risk_scan",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "侵权风险检查",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "e32181139f20445d8ce120b45ac73408cadeff8f2aff9260991b29d8a9094b94",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.design_variation",
+      "label": "POD 处理 · 图裂变",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.design_variation",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "ab73b7f9a6f26991998ae9501c79b584c96d0c6a746b22bbedb69a7a0366a16a"
+        },
+        "tools": [
+          {
+            "key": "pod.design_variation",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "baad2fef1a9fe766be7885d645a6f11b7889b6f8c0257c1e0570dc094a401a7c"
+          }
+        ],
+        "checksum": "e2528328fa1ae5c823b8e9d03be4d4964a63cd55cbbac48d7c1990f9a9867dc3"
+      },
+      "tools": [
+        {
+          "key": "pod.design_variation",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "图裂变",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "fd6ade3dd6042a853bb54ead3ba0a1225eda885f83eed59c21fcff2c7d0f27ed",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.product_print_variation",
+      "label": "POD 处理 · 商品图裂变",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.product_print_variation",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "a113c0bb39f64f112840d9d6a8112ad259dc82736f70e91b0be75913c7c2014a"
+        },
+        "tools": [
+          {
+            "key": "pod.product_print_variation",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "83090c58df74d30ba6829618f57b1f593cb16cf1a13103aa544cd73baf57d564"
+          }
+        ],
+        "checksum": "f97c887648e0a7d58d6d721858254c637c7c853f28245f0766bd2ea8b536e9fc"
+      },
+      "tools": [
+        {
+          "key": "pod.product_print_variation",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "商品图裂变",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "bee095065a8a5707f83738bab7884e7291cf47d0b09ba59f7e108b7de0139715",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.instruction_edit",
+      "label": "POD 处理 · 全能改图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.instruction_edit",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "17296f08171793b439a96788aca647374cf8531064a08f56600b49c524eeb24d"
+        },
+        "tools": [
+          {
+            "key": "pod.instruction_edit",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "e9ce2c4985ccd46ee3e4a3f004de058dc23b943979a5f3d3e3fe45df4d3ac19b"
+          }
+        ],
+        "checksum": "acc7dd2a60a17a82aa9ebfc8408beed44761320e998b6de2a5a04e5c4e0ca36c"
+      },
+      "tools": [
+        {
+          "key": "pod.instruction_edit",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "全能改图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "4a32c39b89df574f6fc03038c80699630776e7ea8bcc2aedaf4560154a29d6ba",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.text_to_image",
+      "label": "POD 处理 · 文生图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.text_to_image",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "838c3536b0851689a5ddb565f8d0018205c4fff7ea7f67dc4de9bdb638d615bf"
+        },
+        "tools": [
+          {
+            "key": "pod.text_to_image",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "73688ab4f20fde88290bbc55b65bac8213d6154bdd5af9009de87148e08c1ae5"
+          }
+        ],
+        "checksum": "65c4264c20719caaa0e2ced129680ae8024fb6273a948a8c6c673d41afda1dab"
+      },
+      "tools": [
+        {
+          "key": "pod.text_to_image",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "文生图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "b84f4a30bbb81fd16b4b64ba671e4b43235c536f4a5735f61cd417f760603f24",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.element_fusion",
+      "label": "POD 处理 · 元素融合",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.element_fusion",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "8a1b242fedc76137dbeba9329addccceee111241a168976eb1f867b3a38ebe04"
+        },
+        "tools": [
+          {
+            "key": "pod.element_fusion",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "9152dfc58b8380dbf91d05fb0f3429d228af907a8d51553014269ff7e9298564"
+          }
+        ],
+        "checksum": "7b7640046cd47f49323b8730126d55a74b7fc3f283b6083cbae162bf5f71d930"
+      },
+      "tools": [
+        {
+          "key": "pod.element_fusion",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "元素融合",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "6d7d9e983274eb2c82af3abb4dd62256abcc0e54f7422640febdb6742f746710",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.licensed_brand_fusion",
+      "label": "POD 处理 · 授权品牌/IP 元素融合",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.licensed_brand_fusion",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "f4c7b4d46a0f6534e34fe6dcc34004f488a06b2a23834f6b583e7c0f4c937ad6"
+        },
+        "tools": [
+          {
+            "key": "pod.licensed_brand_fusion",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "97818ca750bedbe8f481976603b447e5bde692ae4731b945b54eccc82e9b3dae"
+          }
+        ],
+        "checksum": "3f96ebd243882a80bd6215f7ba735ec93801efac040ab2faa7848c3b67ad9fd5"
+      },
+      "tools": [
+        {
+          "key": "pod.licensed_brand_fusion",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "授权品牌/IP 元素融合",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "d6e082ab51efd1a0246ad6f8a75631522f59d26e161c34d3cc1dad8d25098797",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.series_design",
+      "label": "POD 处理 · 多联图与系列图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.series_design",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "57fcf80d337385134367145fa99444af53620291ae37fc80dbe5cfccb83ce0bb"
+        },
+        "tools": [
+          {
+            "key": "pod.series_design",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "a6686e36207a8f14b91f73a9b05dbcd83a4ad2807c351ca0817bd7dd3a2d31ef"
+          }
+        ],
+        "checksum": "68849d6814033fad45e5f57d571ee8953440baa539786e09ed480b4261b57a60"
+      },
+      "tools": [
+        {
+          "key": "pod.series_design",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "多联图与系列图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "3f28705ab66718c246070fd8964135d28d72671deaa36849dfaa29d659ce6b96",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.style_reference",
+      "label": "POD 处理 · 风格参考",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.style_reference",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "8194e78fcb0167b718fa35222484f691caf60b4171cb660845cdb79260b8edc9"
+        },
+        "tools": [
+          {
+            "key": "pod.style_reference",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "888ab57a0a2a5b68b543f70a631ea17502e7692646aa62a1ed5d4e8b9edf7398"
+          }
+        ],
+        "checksum": "5a0121e9f3678dffad48b11d3fc7eb8aa8862ffad07767e5d70922d61b42aafe"
+      },
+      "tools": [
+        {
+          "key": "pod.style_reference",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "风格参考",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "d3acf8561b452ee2cf4f0478f453ee3e6f712d1809a778a264180bf07df9e2d0",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.style_transfer",
+      "label": "POD 处理 · 风格转绘",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.style_transfer",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "93dc4c9e85977f350ef5dad03cf491a62d23495156d268c190a5f60f4af4567c"
+        },
+        "tools": [
+          {
+            "key": "pod.style_transfer",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "cd43827cbd972efb8f84274fea64eaa955ee4ffa28b34ace37f59596e7f13dca"
+          }
+        ],
+        "checksum": "7b1d2e060b3236d4f0bef6bf6e95ba592dbb568442dcc6c256a67752c7a2c295"
+      },
+      "tools": [
+        {
+          "key": "pod.style_transfer",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "风格转绘",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "424fb03c94ab6d2a3eccff177f8d31b34d22a4ba64466100fce7aa0c896164a2",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.canvas_extend",
+      "label": "POD 处理 · 尺寸延展",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.canvas_extend",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "9ded2e76a8608a07291d5ddcb0e5c9cb42f11ed522bf59e904c3f4bd2f515e9e"
+        },
+        "tools": [
+          {
+            "key": "pod.canvas_extend",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "f5c28647a7fa37831081a49a8408340265ed3405361e8f308b3a429823b57699"
+          }
+        ],
+        "checksum": "fec6117eac31f9512e33e9a623e741e8c34ed0918f032dbb5ccfc064aabe9355"
+      },
+      "tools": [
+        {
+          "key": "pod.canvas_extend",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "尺寸延展",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "1dadbd5178f47032a15cb2671e1ee25c1131ffae28b407abb9ff840683fd32bc",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.seamless_pattern",
+      "label": "POD 处理 · 连续图生成",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.seamless_pattern",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "a507285a268b4bf1da2c77774792350ffdf44b7ae37f707401d9247f74331ff8"
+        },
+        "tools": [
+          {
+            "key": "pod.seamless_pattern",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "f2a208b1ae2b343f4172db53f55e195d920cafeff232f9774edf8712d6b64cbb"
+          }
+        ],
+        "checksum": "db1f3de9be2adedd362a963779c6affdd57c3d13fc253bd51f770e060307129d"
+      },
+      "tools": [
+        {
+          "key": "pod.seamless_pattern",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "连续图生成",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "082404fc54086af36e2221a552b98c4e8ce836fbd6b17e174cc4875544a912ef",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.seamless_stitch",
+      "label": "POD 处理 · 连续图拼接",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.seamless_stitch",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "2a4c8ceec3480174ea795839585b43d16e5dbb6146a05310435e8b052e3e61ae"
+        },
+        "tools": [
+          {
+            "key": "pod.seamless_stitch",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "ef5c3ecfd3a46c5deb1451d858f1cc4c6f21057f3189b1c0a413b2d8fdd378ad"
+          }
+        ],
+        "checksum": "099ad82af49e68c2f9f4dd57806561ba31832448beb700ff69c1c6e094c6697a"
+      },
+      "tools": [
+        {
+          "key": "pod.seamless_stitch",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "连续图拼接",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "f5963fd64b550582a1d4b09a899c68c9ca6a525a016a959e270925cb8172dde0",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.print_composite",
+      "label": "POD 处理 · 印花合成",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.print_composite",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "d6293de0c014e1b1c60079fee835d698518d1964be49380dca6a7a1cbe53f24f"
+        },
+        "tools": [
+          {
+            "key": "pod.print_composite",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4522a9e843ca0c1a50f79ad4b0e553a03c8662f2772e86ae5a8d7ddeea6de5ce"
+          }
+        ],
+        "checksum": "3b0448d262b9bef5d73ef3f1317edddb2f303c841b70ac400796ce0ae04a5965"
+      },
+      "tools": [
+        {
+          "key": "pod.print_composite",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "印花合成",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "8360aee5a49f140594342750fae9eaefe627fd5633f19707c0664eb408d23338",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.meme_print",
+      "label": "POD 处理 · 梗图印花",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.meme_print",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "a3bac09af19aa97644ccff2815e435ad52f01fa634cbf40fc9dfe79e7ad0ec5b"
+        },
+        "tools": [
+          {
+            "key": "pod.meme_print",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "1ab7744a96925d4fe148d63196d8f633d369cf3df278d1498d84f0191ed81285"
+          }
+        ],
+        "checksum": "06648aa82775880232b3f080561ab3c52a46fa68e2b87d4f622432b975e65e72"
+      },
+      "tools": [
+        {
+          "key": "pod.meme_print",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "梗图印花",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "4cfaa406eb88f818f1177864d5911941c7766c70dd24b93f93f1958b3fb2d44b",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.product_suite",
+      "label": "POD 处理 · 商品套图",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.product_suite",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "28ff8bd2c4c7b20b10eaa2aca20145945a3a08f3b465bb5a8239b2dde03f5fe8"
+        },
+        "tools": [
+          {
+            "key": "pod.product_suite",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "29291b68e1c32ebeb64f209875787d54723e786d2b47beea6e77f2b7331824c7"
+          }
+        ],
+        "checksum": "c46caa821def1db546df7efde0c45aa3dbed92460b1e96c47e0aaf82a94d0830"
+      },
+      "tools": [
+        {
+          "key": "pod.product_suite",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "商品套图",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "ebedbf7301006126f3552fbbd9b1ddcf9c4c253dd55e645230d28f1ca2e01464",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.title_draft",
+      "label": "POD 处理 · 标题提取与标题草稿",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.title_draft",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "1fe39073553ad969b31c6cd6fc871c3750b6f0263a393fe7c4246419f487ff34"
+        },
+        "tools": [
+          {
+            "key": "pod.title_draft",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "4d01db62f95474550cbc87ab66db5316dd756ce15132d3884a24da19162571db"
+          }
+        ],
+        "checksum": "88e46da4282308d7a343a1808826fcbc00398b7d35ab63ab69d4a4eb7d504aca"
+      },
+      "tools": [
+        {
+          "key": "pod.title_draft",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "标题提取与标题草稿",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "14a0fd2b12760d521c0b93e80ae3535592c1b5622fb21ea2d6640bdefc723085",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.virtual_try_on",
+      "label": "POD 处理 · 模特试衣",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.virtual_try_on",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "adf35db30611985d909bb084cebcd708c84c2d1ebeab91db5a520766482c19f6"
+        },
+        "tools": [
+          {
+            "key": "pod.virtual_try_on",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "6c856f7289ae6c565659dae57a838950c1b8d9519e60a626095a9435f86b3450"
+          }
+        ],
+        "checksum": "b1f4a38f1ed5c1a33e5e745a7ca7a840006b8da6f8c09669a42f7bdcbc17e7e1"
+      },
+      "tools": [
+        {
+          "key": "pod.virtual_try_on",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "模特试衣",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "837cf1f31355c9cac0bb84fa466a3e93f1d51f4bb054251c093157849cdeb064",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.background_replace",
+      "label": "POD 处理 · 换背景",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.background_replace",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "bcd59e5898a3aa9b96791ab3695c40a1fc5d8bea205efea529ca3205043668f4"
+        },
+        "tools": [
+          {
+            "key": "pod.background_replace",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "df098f9b2204a9b44c436f2e16a88e852c2c8103d68d9ba2cbe988e8b0123213"
+          }
+        ],
+        "checksum": "c82d2cbd0a854ea70b661bd7f8019120757aca7e41df94d3d9c1d29036aee1dd"
+      },
+      "tools": [
+        {
+          "key": "pod.background_replace",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "换背景",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "89debdabfbf63daf8a27c36f340478fba3f2718ef2d28dc10fb73d321550b2f0",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.product_video",
+      "label": "POD 处理 · 商品短视频",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.product_video",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "b776739260920924a2f30c6b8f05fb390cfebd34a13ff3c440b6193e621e3b1d"
+        },
+        "tools": [
+          {
+            "key": "pod.product_video",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "ce35196192cf06f08d41a36b1afc1db9c1082a3f9a281380ab1aaf084acef457"
+          }
+        ],
+        "checksum": "15b7fa6479b6a4abfa8e381cbc94cf567131c39f2804ef44e4a38db7cb61b374"
+      },
+      "tools": [
+        {
+          "key": "pod.product_video",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "商品短视频",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "46434bf9ab906a6575a5e7b77667f1665bd69cbf28b3d42c1b1aa1804a05b911",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.piece_extract",
+      "label": "POD 处理 · 裁片图提取",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.piece_extract",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "7075e76660fb6a77ae1fe58113683e0ca33bdaf32ef11548a4ea9eb9f8a16772"
+        },
+        "tools": [
+          {
+            "key": "pod.piece_extract",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "8b534e13c1769fc8b7c85af61759240c9e2226ca2e57266429bb3e9d2ef848c8"
+          }
+        ],
+        "checksum": "f4dcb50ba64c94f123baa6195f4ce88ac47f965fd669849d14707faa490a95cb"
+      },
+      "tools": [
+        {
+          "key": "pod.piece_extract",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "裁片图提取",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "758f9acb58487c041ddd26e5aa96f2ff08df9c058fff119c87ed258e4ad642e4",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.piece_compose",
+      "label": "POD 处理 · 裁片图合成",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.piece_compose",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "6cf95bef89fa73bb83f23f2b65124468829d256c309cbacc3d57e17d23ce15a9"
+        },
+        "tools": [
+          {
+            "key": "pod.piece_compose",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "d08a03527bc88729adecb9a591fe49a8d7c0f65605cb1441c182b31e7c52676e"
+          }
+        ],
+        "checksum": "6678adb9d02986f1cadd0dc24d213baae37b80fd5e83b8569bb33c3c0971c32b"
+      },
+      "tools": [
+        {
+          "key": "pod.piece_compose",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "裁片图合成",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "e917a6d3a406c4388d9dd4c4f745ed18e28bcffa56e10f61ce3066662d4fa5a0",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    },
+    {
+      "methodKey": "pod.artwork.uv_layers",
+      "label": "POD 处理 · UV 智能分层",
+      "instructions": "使用已固定参数和有权素材执行原POD请求，复用原响应与费用证据；检查产物并交给所属业务审核，不得用方法说明修改制造参数、权利状态或生产批准。",
+      "steps": [
+        "authorize_current_member",
+        "validate_pinned_sources_and_parameters",
+        "submit_or_restore_original_response",
+        "validate_artifact_and_quality",
+        "handoff_for_business_review"
+      ],
+      "executionContract": {
+        "contractVersion": "native-harness-v1",
+        "executorKey": "pod_artwork",
+        "skill": {
+          "key": "pod.artwork.uv_layers",
+          "version": "pod-method-2026-10-18-v1",
+          "checksum": "38f17cca60509796489618a02f68afaad3f1ca2cb4383356e33ee0b5ba4aea0b"
+        },
+        "tools": [
+          {
+            "key": "pod.uv_layers",
+            "version": "pod-method-2026-10-18-v1",
+            "checksum": "2acac656f28bda3997857de33ba28ba091770e9a2fd6193d03af0d9c5f96288f"
+          }
+        ],
+        "checksum": "d67244f43ca450ea568c092d38dfd5da7a3a8b3e5ebe1de358da67877cd98dbb"
+      },
+      "tools": [
+        {
+          "key": "pod.uv_layers",
+          "version": "pod-method-2026-10-18-v1",
+          "label": "UV 智能分层",
+          "owner": "pod_owner",
+          "effect": "external_request",
+          "inputSchemaKey": "pod.artwork-task-input",
+          "outputSchemaKey": "pod.artwork-task-view",
+          "inputSchemaChecksum": "26170af1dc2d9ef253f4aedaa2b8630b336ca6da331e1b37cdd4c03420bb9545",
+          "outputSchemaChecksum": "03bb07f8f414429eb4d268eefa5bdb1fb12e0b660a4f9364af9506a32290ddac",
+          "permissionPolicyVersion": "pod-owner-access-2026-10-18-v1",
+          "requiredPermissions": [
+            "asset:read",
+            "design:read",
+            "design:write"
+          ],
+          "resourcePolicy": "pod.current-pinned-operation",
+          "dataDomains": [
+            "research",
+            "authorized_asset",
+            "business"
+          ],
+          "timeout": {
+            "mode": "fenced_lease",
+            "milliseconds": 300000
+          },
+          "maxInputBytes": 1048576,
+          "maxOutputBytes": 1048576,
+          "recovery": "original_child_task",
+          "approval": "owning_business_flow"
+        }
+      ]
+    }
+  ],
+  "inputSchemas": {
+    "pattern_crop": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "pattern_crop"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "print_extract": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "print_extract"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "background_remove": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "background_remove"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "super_resolution": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "super_resolution"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "outpaint": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "outpaint"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "crop_compress": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "crop_compress"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "vectorize": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "vectorize"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "authorized_watermark_remove": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "authorized_watermark_remove"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "rights_risk_scan": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "rights_risk_scan"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "design_variation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "design_variation"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "product_print_variation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "product_print_variation"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "instruction_edit": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "instruction_edit"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "text_to_image": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "text_to_image"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "element_fusion": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "element_fusion"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "licensed_brand_fusion": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "licensed_brand_fusion"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "series_design": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "series_design"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "style_reference": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "style_reference"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "style_transfer": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "style_transfer"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "canvas_extend": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "canvas_extend"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "seamless_pattern": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "seamless_pattern"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "seamless_stitch": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "seamless_stitch"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "print_composite": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "print_composite"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "meme_print": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "meme_print"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "product_suite": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "product_suite"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "title_draft": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "title_draft"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "virtual_try_on": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "virtual_try_on"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "background_replace": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "background_replace"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "product_video": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "product_video"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "piece_extract": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "piece_extract"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "piece_compose": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "piece_compose"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    },
+    "uv_layers": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "skuId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        },
+        "toolKey": {
+          "type": "string",
+          "const": "uv_layers"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inputAssetIds": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          }
+        },
+        "parameterSnapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "skuId",
+        "toolKey",
+        "title",
+        "inputAssetIds",
+        "parameterSnapshot"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "outputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+      },
+      "designTaskId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+      },
+      "skuId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+      },
+      "title": {
+        "type": "string"
+      },
+      "toolKey": {
+        "type": "string",
+        "enum": [
+          "pattern_crop",
+          "print_extract",
+          "background_remove",
+          "super_resolution",
+          "outpaint",
+          "crop_compress",
+          "vectorize",
+          "authorized_watermark_remove",
+          "rights_risk_scan",
+          "design_variation",
+          "product_print_variation",
+          "instruction_edit",
+          "text_to_image",
+          "element_fusion",
+          "licensed_brand_fusion",
+          "series_design",
+          "style_reference",
+          "style_transfer",
+          "canvas_extend",
+          "seamless_pattern",
+          "seamless_stitch",
+          "print_composite",
+          "meme_print",
+          "product_suite",
+          "title_draft",
+          "virtual_try_on",
+          "background_replace",
+          "product_video",
+          "piece_extract",
+          "piece_compose",
+          "uv_layers"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "awaiting_review",
+          "partially_succeeded",
+          "failed",
+          "blocked",
+          "approved",
+          "rejected",
+          "cancelled"
+        ]
+      },
+      "parameterSnapshot": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+        },
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 8000
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 240
+              }
+            }
+          ]
+        }
+      },
+      "inputAssets": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "assetId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "ordinal": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "checksumSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "domain": {
+              "type": "string",
+              "enum": [
+                "research",
+                "authorized"
+              ]
+            },
+            "rightsStatus": {
+              "type": "string",
+              "enum": [
+                "unverified",
+                "approved",
+                "rejected"
+              ]
+            },
+            "rightsSourceKind": {
+              "type": "string",
+              "enum": [
+                "owned",
+                "licensed",
+                "commissioned",
+                "ai_generated",
+                "customer_provided",
+                "competitor"
+              ]
+            }
+          },
+          "required": [
+            "assetId",
+            "ordinal",
+            "version",
+            "checksumSha256",
+            "domain",
+            "rightsStatus"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "modelKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "modelVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "seed": {
+        "type": "string",
+        "minLength": 1
+      },
+      "progressPercent": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "attemptCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "maxAttempts": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 20
+      },
+      "invocations": {
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "const": "harness-invocation-v1"
+            },
+            "owner": {
+              "type": "string",
+              "enum": [
+                "assist",
+                "workflow",
+                "pod"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "requestId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "parentId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "method": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "pattern": "^[a-zA-Z0-9_.-]+$"
+                    },
+                    "checksum": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "version",
+                    "checksum"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tool": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "pattern": "^[a-zA-Z0-9_.-]+$"
+                    },
+                    "checksum": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "version",
+                    "checksum"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "waiting",
+                "completed",
+                "failed",
+                "cancelled",
+                "uncertain"
+              ]
+            },
+            "boundary": {
+              "type": "string",
+              "enum": [
+                "legacy_missing",
+                "not_submitted",
+                "submitted",
+                "received",
+                "owner_receipt",
+                "delegated_task"
+              ]
+            },
+            "dispatches": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "processingAttempts": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "submittedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "receivedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "startedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerRequestId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "responseChecksum": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "artifact": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "owner_receipt",
+                        "design_version"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                    },
+                    "checksum": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "checksum"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outputTokens": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "inputTokens",
+                "outputTokens"
+              ],
+              "additionalProperties": false
+            },
+            "billing": {
+              "type": "object",
+              "properties": {
+                "basis": {
+                  "type": "string",
+                  "enum": [
+                    "configured_rate",
+                    "processor_reported",
+                    "unknown",
+                    "not_submitted",
+                    "not_applicable"
+                  ]
+                },
+                "amountUsd": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d{0,11})\\.\\d{8}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "budgetState": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "reserved",
+                        "committed",
+                        "released"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "budgetAmountUsd": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d{0,11})\\.\\d{8}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "needsProviderEvidence": {
+                  "type": "boolean"
+                },
+                "reconciliation": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                        },
+                        "sequence": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "amountUsd": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9]\\d{0,11})\\.\\d{8}$"
+                        },
+                        "proofChecksum": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "verification": {
+                          "type": "string",
+                          "const": "operator_attested"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "checkedBy": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "sequence",
+                        "amountUsd",
+                        "proofChecksum",
+                        "verification",
+                        "checkedAt",
+                        "checkedBy"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "basis",
+                "amountUsd",
+                "budgetState",
+                "budgetAmountUsd",
+                "needsProviderEvidence"
+              ],
+              "additionalProperties": false
+            },
+            "issues": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "legacy_execution_missing",
+                  "execution_contract_unavailable",
+                  "receipt_unavailable",
+                  "submission_unknown",
+                  "cost_unknown",
+                  "linked_owner_unavailable",
+                  "response_metadata_invalid",
+                  "ambiguous_budget"
+                ]
+              }
+            }
+          },
+          "required": [
+            "version",
+            "owner",
+            "id",
+            "requestId",
+            "parentId",
+            "method",
+            "tool",
+            "state",
+            "boundary",
+            "dispatches",
+            "processingAttempts",
+            "submittedAt",
+            "receivedAt",
+            "startedAt",
+            "finishedAt",
+            "providerRequestId",
+            "responseChecksum",
+            "model",
+            "artifact",
+            "usage",
+            "billing",
+            "issues"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "methodSnapshot": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "string",
+                "const": "pod-method-snapshot-v1"
+              },
+              "executionContract": {
+                "type": "object",
+                "properties": {
+                  "contractVersion": {
+                    "type": "string",
+                    "const": "native-harness-v1"
+                  },
+                  "executorKey": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                  },
+                  "skill": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                      },
+                      "version": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120,
+                        "pattern": "^[a-zA-Z0-9_.-]+$"
+                      },
+                      "checksum": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "version",
+                      "checksum"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "tools": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                        },
+                        "version": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120,
+                          "pattern": "^[a-zA-Z0-9_.-]+$"
+                        },
+                        "checksum": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "version",
+                        "checksum"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "checksum": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "contractVersion",
+                  "executorKey",
+                  "skill",
+                  "tools",
+                  "checksum"
+                ],
+                "additionalProperties": false
+              },
+              "methodSelection": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "string",
+                        "const": "agent-method-selection-v1"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "const": "builtin"
+                      },
+                      "methodKey": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                      },
+                      "contractChecksum": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "withdrawalGeneration": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "mode",
+                      "methodKey",
+                      "contractChecksum",
+                      "withdrawalGeneration"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "string",
+                        "const": "agent-method-selection-v1"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "const": "published"
+                      },
+                      "methodKey": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_.-]{2,159}$"
+                      },
+                      "contractChecksum": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "withdrawalGeneration": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "methodId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                      },
+                      "versionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "checksum": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "publicationEventId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "mode",
+                      "methodKey",
+                      "contractChecksum",
+                      "withdrawalGeneration",
+                      "methodId",
+                      "versionId",
+                      "version",
+                      "checksum",
+                      "publicationEventId"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "executionContract",
+              "methodSelection"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "resultVersionId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+      },
+      "errorCode": {
+        "type": "string",
+        "minLength": 1
+      },
+      "errorMessage": {
+        "type": "string",
+        "minLength": 1
+      },
+      "qualityCheckSnapshot": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "reviewSnapshot": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      },
+      "updatedAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      }
+    },
+    "required": [
+      "id",
+      "designTaskId",
+      "skuId",
+      "title",
+      "toolKey",
+      "status",
+      "parameterSnapshot",
+      "inputAssets",
+      "progressPercent",
+      "attemptCount",
+      "maxAttempts",
+      "createdAt",
+      "updatedAt"
+    ],
+    "additionalProperties": false
+  }
+}

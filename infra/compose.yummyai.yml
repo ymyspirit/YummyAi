@@ -1,0 +1,6 @@
+# Local managed deployment. Generate the private, pinned configuration with
+# `node tools/scripts/unified-compose.mjs capture` before using this entry point.
+# It contains application configuration and must remain outside source control.
+name: yummyai
+include:
+  - path: ../.artifacts/yummyai-compose/runtime.json

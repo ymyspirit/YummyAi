@@ -7,34 +7,60 @@
         "ANALYSIS_DEMO_MODE",
         "API_ACCESS_TOKEN",
         "API_BASE_URL",
+        "CANVAS_WORKBENCH_URL",
+        "CANVAS_STUDIO_URL",
+        "MODEL_CREDENTIAL_ENCRYPTION_KEY",
+        "FINANCE_COMMAND_ENCRYPTION_KEY",
+        "ADVERTISING_COMMAND_ENCRYPTION_KEY",
+        "KNOWLEDGE_EVIDENCE_ENCRYPTION_KEY",
         "DASHBOARD_DEMO_MODE",
         "DESIGN_DEMO_MODE",
         "LISTING_DEMO_MODE",
+        "LOCALAPPDATA",
         "LOCAL_OIDC_CLIENT_ID",
         "LOCAL_OIDC_CLIENT_SECRET",
+        "NODE_ENV",
         "OIDC_ISSUER",
         "OIDC_WEB_CLIENT_ID",
         "OIDC_WEB_REDIRECT_URI",
+        "PILLOW_REALESRGAN_DIR",
         "PRODUCT_DEMO_MODE"
       ],
       "persistent": true
     },
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".output/chrome-mv3/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": [
+        "^lint"
+      ]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": [
+        "^typecheck"
+      ]
     },
     "test": {
-      "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "coverage/**"
+      ]
     },
     "test:integration": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "env": [
         "DATABASE_URL",
         "OIDC_AUDIENCE",
@@ -46,11 +72,39 @@
         "S3_REGION",
         "S3_SECRET_ACCESS_KEY"
       ],
-      "outputs": ["coverage/**"]
+      "outputs": [
+        "coverage/**"
+      ]
     },
     "test:e2e": {
-      "dependsOn": ["^build"],
-      "outputs": ["playwright-report/**", "test-results/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "playwright-report/**",
+        "test-results/**"
+      ]
     }
-  }
+  },
+  "globalPassThroughEnv": [
+    "BUSINESS_FOLLOWUP_TENANT_IDS",
+    "ORDER_RESPONSIBILITY_TENANT_IDS",
+    "WORKFLOW_CENTER_TENANT_IDS",
+    "MODEL_BILLING_TENANT_IDS",
+    "YUNEXPRESS_ALLOWED_ORIGINS",
+    "LOGISTICS_LABEL_ALLOWED_HOSTS",
+    "INTEGRATION_SECRET_ENCRYPTION_KEY",
+    "ORDER_PII_ENCRYPTION_KEY",
+    "MODEL_CREDENTIAL_ENCRYPTION_KEY",
+    "KNOWLEDGE_EVIDENCE_ENCRYPTION_KEY",
+    "POD_EXECUTION_ENCRYPTION_KEY",
+    "WORKER_STARTUP_TIMEOUT_MS",
+    "WORKER_SHUTDOWN_TIMEOUT_MS",
+    "WORKER_QUEUES",
+    "WORKER_SCHEDULERS",
+    "LOCAL_OIDC_CLIENT_SECRET",
+    "LOCAL_OIDC_CLIENT_ID",
+    "E2E_ISOLATED_DAILY",
+    "LOGISTICS_TEST_BASE_URL"
+  ]
 }

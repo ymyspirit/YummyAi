@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "apiUrl": "https://erp-api.example.com",
+  "issuer": "https://identity.example.com/realms/yummyai",
+  "clientId": "yummyai-agent-mcp",
+  "audience": "yummyai-api",
+  "redirectUri": "http://127.0.0.1:12766/callback"
+}

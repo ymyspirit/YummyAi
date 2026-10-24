@@ -18,7 +18,11 @@ export function redisConnection(redisUrl = required("REDIS_URL")): ConnectionOpt
 }
 
 export function createQueue(name: QueueName, redisUrl?: string): Queue {
-  return new Queue(name, { connection: redisConnection(redisUrl) });
+  const queue = new Queue(name, { connection: redisConnection(redisUrl) });
+  // Producer connections can fail independently of their consumers. Handle the
+  // EventEmitter error without logging Redis URLs, credentials or job content.
+  queue.on("error", () => process.stderr.write("Queue transport unavailable\n"));
+  return queue;
 }
 
 export async function enqueueJob(

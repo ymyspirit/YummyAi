@@ -365,6 +365,8 @@ describe("POD governance database", () => {
   });
 
   async function createCatalog(context: TenantContext) {
+    // Setup privilege is local; governance assertions retain the original subject.
+    context = { ...context, permissions: [...context.permissions, Permission.ProductWrite] };
     const plan = await catalog.createPlan(context, { name: "POD governance", sourceReportIds: [createEntityId()], customization: { version: 1, fields: [] } });
     await catalog.transition(context, plan.id, "pending_approval");
     await catalog.transition(context, plan.id, "approved");
@@ -500,5 +502,5 @@ function patternCropQuality() {
 }
 
 function tenant(tenantId: string, userId: string): TenantContext {
-  return { tenantId, userId, permissions: [], dataScope: "tenant" };
+  return { tenantId, userId, permissions: [Permission.DesignRead, Permission.DesignWrite, Permission.DesignReview, Permission.AssetRead, Permission.ProductRead], dataScope: "tenant" };
 }

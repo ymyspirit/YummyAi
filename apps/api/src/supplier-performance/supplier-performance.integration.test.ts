@@ -1,10 +1,17 @@
+import { IncomingInspectionService } from "../procurement/incoming-inspection.service.js";
+import { recordInspectedReceiptFixture } from "../procurement/incoming-inspection.fixtures.js";
+import { syntheticQualityInspection } from "../../../../tools/testing/quality-fixtures.js";
 import { SecretVault } from "@yummyai/ai-core";
+import { Permission } from "@yummyai/authz";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { createEntityId, type NormalizeOrderInput, type TenantContext } from "@yummyai/contracts";
 import {
   connectDatabase,
   fulfillmentSuppliers,
   inventoryPurchaseOrders,
+  memberships,
+  membershipRoles,
+  roles,
   migrateDatabase,
   orderCustomizationRequirements,
   orderRoutingDecisions,
@@ -23,11 +30,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
 import { InventoryService } from "../inventory/inventory.service.js";
 import { OrderProductionService } from "../orders/order-production.service.js";
+import { syntheticNativeManufacturingForLine } from "../orders/manufacturing-production.test-fixture.js";
 import { OrderService } from "../orders/order.service.js";
 import { ProcurementService } from "../procurement/procurement.service.js";
 import { SupplierPerformanceService } from "./supplier-performance.service.js";
+import { FactoryDirectoryService } from "../suppliers/factory-directory.service.js";
+import { createSyntheticFactory } from "../suppliers/factory-directory.test-fixture.js";
+import { createSyntheticFactoryCapacity } from "../suppliers/factory-capacity.test-fixture.js";
+import { syntheticSupplierProfile } from "../../../../tools/testing/factory-fixtures.js";
 
 describe.sequential("supplier performance", () => {
+  // Records are created now; the historical event fixtures must share a window with their actual recording time.
+  const fixtureWindowEnd = new Date(Date.now() + 86_400_000).toISOString();
+  const fixtureCutoff = new Date(Date.now() + 86_460_000).toISOString();
   const database = connectDatabase();
   const tenantA = createEntityId();
   const tenantB = createEntityId();
@@ -42,11 +57,16 @@ describe.sequential("supplier performance", () => {
   const inventory = new InventoryService(database, audit);
   const procurement = new ProcurementService(database, inventory, audit);
   const orders = new OrderService(database, new SecretVault(Buffer.alloc(32, 71)), audit);
+  const factories = new FactoryDirectoryService(database, audit);
+  let factoryFixture: Awaited<ReturnType<typeof createSyntheticFactory>>;
+  let capacityFixture: Awaited<ReturnType<typeof createSyntheticFactoryCapacity>>;
   const production = new OrderProductionService(
     database,
     new SecretVault(Buffer.alloc(32, 73)),
     orders,
     audit,
+    undefined,
+    factories,
   );
   const service = new SupplierPerformanceService(database, audit);
 
@@ -70,6 +90,12 @@ describe.sequential("supplier performance", () => {
         userB, `supplier-performance-b-${userB}`, `supplier-b-${userB}@example.test`, "Supplier B",
       ],
     );
+    for (const context of [contextA, contextB]) await withTenant(database.db, context, async tx => {
+      const member = createEntityId(), role = createEntityId();
+      await tx.insert(memberships).values({ id: member, tenantId: context.tenantId, userId: context.userId, status: "active" });
+      await tx.insert(roles).values({ id: role, tenantId: context.tenantId, name: `Synthetic scorecard ${role}`, permissions: context.permissions, dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: context.tenantId, membershipId: member, roleId: role });
+    });
     await database.client.unsafe(
       `insert into marketplace_accounts
        (id,tenant_id,platform,display_name,region,authorization_mode,created_by)
@@ -81,6 +107,7 @@ describe.sequential("supplier performance", () => {
         id: supplierId,
         tenantId: tenantA,
         name: "Evidence Supplier",
+        profile: syntheticSupplierProfile,
         kind: "manual",
         status: "active",
         regionCode: "US",
@@ -120,7 +147,7 @@ describe.sequential("supplier performance", () => {
         windowKey: "2026-Q3",
         versionNumber: 1,
         startsAt: new Date("2026-07-01T00:00:00.000Z"),
-        endsAt: new Date("2026-09-01T00:00:00.000Z"),
+        endsAt: new Date(fixtureWindowEnd),
         availableUnits: 100,
         reservedUnits: 1,
         sourceVersion: "fixture-capacity-v1",
@@ -139,6 +166,9 @@ describe.sequential("supplier performance", () => {
       code: "RECEIVE",
       name: "Supplier KPI receiving",
     })).id;
+    factoryFixture = await createSyntheticFactory(factories, contextA, supplierId, "rectangular_print");
+    capacityFixture = await createSyntheticFactoryCapacity(database, contextA, { factory: factoryFixture.factory,
+      bindings: [{ capabilityVersionId: factoryFixture.capability.versionId, unitsPerItem: 1 }], capacityUnits: 10 });
     stockItemId = (await inventory.createStockItem(contextA, {
       skuId: null,
       code: "SUPPLIER-KPI-BLANK",
@@ -176,8 +206,8 @@ describe.sequential("supplier performance", () => {
       expectedDefinitionVersion: 1,
       supplierId,
       windowStart: "2026-07-01T00:00:00.000Z",
-      windowEnd: "2026-09-01T00:00:00.000Z",
-      evidenceCutoffAt: "2026-09-02T00:00:00.000Z",
+      windowEnd: fixtureWindowEnd,
+      evidenceCutoffAt: fixtureCutoff,
       idempotencyKey: "supplier-scorecard-run-0001",
     };
     const scorecard = await service.calculateScorecard(contextA, input);
@@ -215,8 +245,8 @@ describe.sequential("supplier performance", () => {
       expectedDefinitionVersion: 1,
       supplierId,
       windowStart: "2026-07-01T00:00:00.000Z",
-      windowEnd: "2026-09-01T00:00:00.000Z",
-      evidenceCutoffAt: "2026-09-02T00:00:00.000Z",
+      windowEnd: fixtureWindowEnd,
+      evidenceCutoffAt: fixtureCutoff,
       idempotencyKey: "supplier-scorecard-cross-tenant",
     })).rejects.toBeInstanceOf(NotFoundException);
 
@@ -313,13 +343,18 @@ describe.sequential("supplier performance", () => {
         reason: "Supplier scorecard fixture",
       });
     }
+    const basis = await syntheticNativeManufacturingForLine(database, contextA, lineId);
     const created = await production.create(contextA, current.id, {
+      ...factoryFixture.pins,
       orderLineId: lineId,
       routingDecisionId: decisionId,
       purchaseOrderVersionId: purchaseVersionId,
-      designVersionId: null,
-      productionAssetIds: [],
-      expectedCompletionAt: "2026-07-30T12:00:00.000Z",
+      designVersionId: basis.designVersionId,
+      productionAssetIds: basis.productionAssetIds,
+      manufacturing: basis.manufacturing,
+      productConfirmation: basis.productConfirmation,
+      expectedCompletionAt: capacityFixture.expectedCompletionAt,
+      capacityPlan: capacityFixture.capacityPlan,
       instructions: "Supplier performance fixture",
       idempotencyKey: "supplier-performance-production",
     });
@@ -345,7 +380,7 @@ describe.sequential("supplier performance", () => {
       minimumScoreBps: 9_000,
       criteria: [{ code: "OUTPUT", label: "Output quality", weightBps: 10_000, blocking: true }],
     });
-    await production.inspect(contextA, created.productionOrder.id, {
+    await production.inspect(contextA, created.productionOrder.id, await syntheticQualityInspection(production, contextA, created.productionOrder.id, {
       qualityStandardVersionId: standard.id,
       result: "passed",
       scoreBps: 9_500,
@@ -353,10 +388,12 @@ describe.sequential("supplier performance", () => {
       evidenceAssetIds: [],
       defects: [],
       idempotencyKey: "supplier-performance-inspection",
-    });
+    }));
   }
 
   async function seedProcurementEvidence() {
+    const [clock] = await withTenant(database.db, contextA, tx => tx.execute<{ now: string }>(sql`select clock_timestamp()::text as now`));
+    const now = new Date(clock!.now).getTime();
     const requisition = await procurement.createRequisition(contextA, {
       code: "SUPPLIER-KPI-REQ",
       reasonCode: "REORDER_POINT",
@@ -366,13 +403,13 @@ describe.sequential("supplier performance", () => {
     const rfq = await procurement.createRfq(contextA, requisition.id, {
       expectedRequisitionVersion: 1,
       supplierIds: [supplierId],
-      responseDueAt: "2026-08-01T00:00:00.000Z",
+      responseDueAt: new Date(now + 86_400_000).toISOString(),
       idempotencyKey: "supplier-performance-rfq",
     });
     const quote = await procurement.recordSupplierQuote(contextA, rfq.id, {
       supplierId,
       currency: "USD",
-      validUntil: "2026-08-20T00:00:00.000Z",
+      validUntil: new Date(now + 20 * 86_400_000).toISOString(),
       lines: [{ lineKey: "LINE-1", unitCostMinor: 425, minimumOrderQuantity: 5, leadTimeDays: 7 }],
       idempotencyKey: "supplier-performance-quote",
     });
@@ -392,7 +429,7 @@ describe.sequential("supplier performance", () => {
       reasonCode: "BUDGET_APPROVED",
       idempotencyKey: "supplier-performance-order-review",
     });
-    await procurement.recordReceipt(contextA, order.id, {
+    await recordInspectedReceiptFixture(procurement, new IncomingInspectionService(database, procurement, audit), contextA, order.id, {
       expectedVersion: 1,
       receivedAt: "2026-08-09T12:00:00.000Z",
       externalReference: "SUPPLIER-KPI-ASN",
@@ -479,6 +516,9 @@ function tenantContext(tenantId: string, userId: string): TenantContext {
       "procurement:approve",
       "order:read",
       "order:write",
+      Permission.ProductRead,
+      Permission.DesignRead,
+      Permission.AssetRead,
       "supplier_performance:read",
       "supplier_performance:review",
     ],

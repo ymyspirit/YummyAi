@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   CancelInventoryTransferInputSchema,
@@ -15,6 +15,8 @@ import {
   ReleaseInventoryReservationInputSchema,
 } from "@yummyai/contracts";
 import { z } from "zod";
+import { UpdateWarehouseInputSchema, UpdateInventoryLocationInputSchema, UpdateStockItemInputSchema,
+  ClassifyInventoryStockItemInputSchema, InventoryStockItemViewSchema } from "@yummyai/contracts/inventory";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
@@ -74,10 +76,24 @@ export class InventoryController {
 
   @Post("stock-items")
   @RequiresPermission(Permission.InventoryWrite)
-  createStockItem(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
+  async createStockItem(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
     const context = requireContext(request);
     authorize(context, Permission.InventoryWrite);
-    return this.service.createStockItem(context, CreateStockItemInputSchema.parse(body));
+    return InventoryStockItemViewSchema.parse(await this.service.createStockItem(context, CreateStockItemInputSchema.parse(body)));
+  }
+
+  @Post("stock-items/:id/classifications")
+  @RequiresPermission(Permission.InventoryWrite)
+  classifyStockItem(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.classifyStockItem(context, z.uuidv7().parse(id), ClassifyInventoryStockItemInputSchema.parse(body));
+  }
+
+  @Get("stock-items/:id/classifications")
+  @RequiresPermission(Permission.InventoryRead)
+  classificationHistory(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("beforeVersion") beforeVersion?: string) {
+    const context = requireContext(request); authorize(context, Permission.InventoryRead);
+    return this.service.stockClassificationHistory(context, z.uuidv7().parse(id), z.coerce.number().int().positive().optional().parse(beforeVersion));
   }
 
   @Get("lots")
@@ -86,6 +102,27 @@ export class InventoryController {
     const context = requireContext(request);
     authorize(context, Permission.InventoryRead);
     return this.service.listLots(context);
+  }
+
+  @Patch("warehouses/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateWarehouse(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateWarehouse(context, z.uuidv7().parse(id), UpdateWarehouseInputSchema.parse(body));
+  }
+
+  @Patch("locations/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateLocation(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateLocation(context, z.uuidv7().parse(id), UpdateInventoryLocationInputSchema.parse(body));
+  }
+
+  @Patch("stock-items/:id")
+  @RequiresPermission(Permission.InventoryWrite)
+  updateStockItem(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.InventoryWrite);
+    return this.service.updateStockItem(context, z.uuidv7().parse(id), UpdateStockItemInputSchema.parse(body));
   }
 
   @Post("lots")

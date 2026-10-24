@@ -1,0 +1,227 @@
+.notice-inbox {
+  min-width: 0;
+}
+.notice-trigger,
+.notice-dialog button,
+.notice-dialog a {
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s;
+}
+.notice-trigger {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 8px 11px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.notice-trigger b {
+  padding: 1px 5px;
+  font-size: 11px;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 4px;
+}
+.notice-dialog {
+  position: fixed;
+  inset: 76px 20px auto auto;
+  margin: 0;
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100dvh - 100px);
+  overflow: auto;
+  padding: 0;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px #0002;
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition:
+    opacity 0.16s,
+    transform 0.16s,
+    display 0.16s allow-discrete,
+    overlay 0.16s allow-discrete;
+}
+.notice-dialog[open] {
+  opacity: 1;
+  transform: translateY(0);
+}
+.notice-dialog::backdrop {
+  background: #0003;
+  opacity: 0;
+  transition:
+    opacity 0.16s,
+    display 0.16s allow-discrete,
+    overlay 0.16s allow-discrete;
+}
+.notice-dialog[open]::backdrop {
+  opacity: 1;
+}
+@starting-style {
+  .notice-dialog[open] {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  .notice-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+.notice-dialog header,
+.notice-actions,
+.notice-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.notice-dialog h2 {
+  margin: 0;
+  font-size: 14px;
+}
+.notice-dialog header button {
+  min-width: 32px;
+  min-height: 32px;
+  justify-content: center;
+}
+.notice-dialog header button svg {
+  color: var(--ink);
+}
+.notice-dialog header > div,
+.notice-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.notice-dialog button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  padding: 5px;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.notice-dialog :is(button, a):focus-visible,
+.notice-trigger:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.notice-dialog :is(button, a):hover,
+.notice-trigger:hover {
+  background: color-mix(in srgb, #2563eb 8%, var(--surface));
+  transform: scale(1.015);
+}
+.notice-dialog button:active,
+.notice-trigger:active {
+  transform: scale(0.98);
+}
+.notice-dialog button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+.notice-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+}
+.notice-dialog ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.notice-dialog li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  padding: 13px 16px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, #2563eb 4%, var(--surface));
+  animation: notice-enter 0.16s ease-out;
+}
+.notice-dialog li[data-read="true"] {
+  background: var(--surface);
+}
+.notice-dialog li > span {
+  color: var(--blue, #2563eb);
+}
+.notice-dialog li strong,
+.notice-dialog li p {
+  overflow-wrap: anywhere;
+}
+.notice-dialog li p {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+.notice-dialog time,
+.notice-dialog footer,
+.notice-item-actions > span {
+  color: var(--muted-ink);
+  font-size: 11px;
+}
+.notice-item-actions {
+  margin-top: 6px;
+}
+.notice-dialog a {
+  color: var(--blue, #2563eb);
+  padding: 4px 0;
+  text-decoration: none;
+}
+.notice-message {
+  margin: 0;
+  padding: 14px 16px;
+  line-height: 1.6;
+}
+.notice-message[role="alert"] {
+  color: var(--danger);
+}
+.notice-dialog footer {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+@keyframes notice-enter {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@media (max-width: 600px) {
+  .notice-dialog header button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .notice-dialog {
+    right: 12px;
+    top: 60px;
+    max-height: calc(100dvh - 76px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notice-inbox *,
+  .notice-dialog,
+  .notice-dialog *,
+  .notice-dialog::backdrop {
+    animation: none !important;
+    transition: none !important;
+  }
+}

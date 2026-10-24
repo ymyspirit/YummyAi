@@ -13,6 +13,7 @@ import { ProductCreatePanel } from "./product-create-panel";
 import type { ProductPlanView } from "./product-editor";
 
 interface ProductCatalogProps {
+  supplierCounts?: Record<string, number>;
   items: ProductPlanView[];
   owner: string;
   query: string;
@@ -20,16 +21,17 @@ interface ProductCatalogProps {
   status: string;
 }
 
-export function ProductCatalog({ items, owner, query, selectedId, status }: ProductCatalogProps) {
-  const filtered = filterProductPlans(items, query, status, owner);
-  const owners = [...new Map(items.flatMap((item) =>
+export function ProductCatalog({ items, owner, query, selectedId, status, supplierCounts }: ProductCatalogProps) {
+  const directoryItems = filterProductPlans(items, "", status === "archived" ? "archived" : "");
+  const filtered = filterProductPlans(directoryItems, query, status, owner);
+  const owners = [...new Map(directoryItems.flatMap((item) =>
     item.ownerUserId ? [[item.ownerUserId, item.ownerName ?? item.ownerUserId] as const] : [],
   )).entries()];
-  const pendingCount = items.filter((item) => item.status === "pending_approval").length;
-  const activeCount = items.filter((item) =>
+  const pendingCount = directoryItems.filter((item) => item.status === "pending_approval").length;
+  const activeCount = directoryItems.filter((item) =>
     ["approved", "developing", "listing"].includes(item.status),
   ).length;
-  const readyCount = items.filter((item) => item.status === "ready").length;
+  const readyCount = directoryItems.filter((item) => item.status === "ready").length;
 
   return (
     <section className="product-catalog" aria-labelledby="product-catalog-title">
@@ -41,17 +43,17 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
         </div>
         <span>
           <Boxes aria-hidden="true" size={17} />
-          {filtered.length} / {items.length} RECORDS
+          {filtered.length} / {directoryItems.length} RECORDS
         </span>
       </header>
 
-      <ProductCreatePanel defaultOpen={items.length === 0} />
+      <ProductCreatePanel defaultOpen={directoryItems.length === 0} />
 
       <dl className="product-catalog-signals" aria-label="产品目录摘要">
         <Signal
           icon={<Boxes aria-hidden="true" size={16} />}
           label="全部企划"
-          value={items.length}
+          value={directoryItems.length}
         />
         <Signal
           icon={<FileCheck2 aria-hidden="true" size={16} />}
@@ -87,7 +89,7 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
         <label>
           <span>产品状态</span>
           <select defaultValue={status} name="status">
-            <option value="">全部状态</option>
+            <option value="">全部未归档状态</option>
             <option value="researching">研究中</option>
             <option value="pending_approval">待立项</option>
             <option value="approved">已立项</option>
@@ -118,6 +120,7 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
               <tr>
                 <th>产品企划</th>
                 <th>SPU / SKU</th>
+                <th>供货供应商</th>
                 <th>负责人</th>
                 <th>状态</th>
                 <th>目标成本</th>
@@ -136,9 +139,10 @@ export function ProductCatalog({ items, owner, query, selectedId, status }: Prod
                     <code>{item.id}</code>
                   </td>
                   <td>
-                    <strong className="numeric">{item.spu?.code ?? "SPU 待创建"}</strong>
-                    <span>{item.spu ? `${item.spu.skus.length} 个 SKU` : "尚无 SKU"}</span>
+                    <strong className="numeric">{item.legacySpuCandidates?.length ? "历史关联待核对" : item.spu?.code ?? "SPU 待创建"}</strong>
+                    <span>{item.legacySpuCandidates?.length ? `${item.legacySpuCandidates.length} 个原 SPU · 按原商品查看` : item.spu ? `${item.spu.skus.length} 个 SKU` : "尚无 SKU"}</span>
                   </td>
+                  <td><Link href={`/products?plan=${item.id}#product-suppliers`}>{supplierCounts ? `${supplierCounts[item.id] ?? 0} 家 · 管理供货` : "查看供货资料"}</Link></td>
                   <td>
                     <strong>{item.ownerName ?? "未分配"}</strong>
                     <span>{item.ownerUserId ? item.ownerUserId.slice(0, 12) : "—"}</span>
@@ -190,6 +194,7 @@ export function filterProductPlans(
 ): ProductPlanView[] {
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
   return items.filter((item) => {
+    if (!status && item.status === "archived") return false;
     if (status && item.status !== status) return false;
     if (owner && item.ownerUserId !== owner) return false;
     if (!normalizedQuery) return true;

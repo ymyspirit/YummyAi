@@ -1,0 +1,31 @@
+{
+  "name": "@yummyai/workflow-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run --no-file-parallelism",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@yummyai/ai-core": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/order-core": "workspace:*",
+    "@yummyai/advertising-core": "workspace:*",
+    "@yummyai/finance-core": "workspace:*",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/catalog-core": "workspace:*",
+    "@yummyai/pod-core": "workspace:*",
+    "@yummyai/knowledge-core": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0",
+    "@yummyai/logistics": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

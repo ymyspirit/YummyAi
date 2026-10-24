@@ -1,0 +1,28 @@
+{
+  "name": "@yummyai/catalog-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./listing-read-contracts": "./src/listing-read-contracts.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/storage": "workspace:*",
+    "@yummyai/platform-rules": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

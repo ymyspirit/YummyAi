@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./permissions": "./src/permissions.ts",
+    "./authorize": "./src/authorize.ts",
+    "./assist-policy": "./src/assist-policy.ts",
+    "./business-benchmark-policy": "./src/business-benchmark-policy.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"

@@ -1,14 +1,37 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Permission } from "@yummyai/authz/permissions";
+import { PersonalAccessFixture } from "../identity/erp-access.fixture";
 
 import { filterProductPlans, ProductCatalog } from "./product-catalog";
 import type { ProductPlanView } from "./product-editor";
 
 describe("ProductCatalog", () => {
+  it("shows ambiguous historical bindings instead of claiming that no SPU exists", () => {
+    const item = fixture()[0]!;
+    item.spu = undefined;
+    item.legacySpuCandidates = [
+      { id: "original-a", code: "MUG-A", name: "Original A" },
+      { id: "original-b", code: "MUG-B", name: "Original B" },
+    ];
+    const html = renderToStaticMarkup(<ProductCatalog items={[item]} owner="" query="" status="" />);
+    expect(html).toContain("历史关联待核对");
+    expect(html).toContain("2 个原 SPU");
+    expect(html).not.toContain("SPU 待创建");
+    expect(html).not.toContain("尚无 SKU");
+  });
   it("renders real product signals, filters, and deep links", () => {
     const items = fixture();
     const html = renderToStaticMarkup(
-      <ProductCatalog items={items} owner="owner-1" query="mug" selectedId={items[0]!.id} status="developing" />,
+      <PersonalAccessFixture permissions={[Permission.ProductRead, Permission.ProductWrite]}>
+        <ProductCatalog
+          items={items}
+          owner="owner-1"
+          query="mug"
+          selectedId={items[0]!.id}
+          status="developing"
+        />
+      </PersonalAccessFixture>,
     );
 
     expect(html).toContain("产品目录");
@@ -36,9 +59,41 @@ describe("ProductCatalog", () => {
     expect(filterProductPlans(items, "poster", "ready")).toEqual([items[1]]);
     expect(filterProductPlans(items, "unknown", "")).toEqual([]);
 
-    const html = renderToStaticMarkup(<ProductCatalog items={items} owner="" query="unknown" status="" />);
+    const html = renderToStaticMarkup(
+      <ProductCatalog items={items} owner="" query="unknown" status="" />,
+    );
     expect(html).toContain("没有匹配的产品企划");
     expect(html).toContain("不会用演示产品填充结果");
+  });
+
+  it("keeps archived test records out of the daily directory, search, owners, and counts", () => {
+    const items = fixture();
+    const archived: ProductPlanView = {
+      ...items[0]!,
+      id: "0198fbef-4a10-7000-8000-000000000043",
+      name: "QA archived product",
+      status: "archived",
+      ownerUserId: "test-owner",
+      ownerName: "QA Owner",
+    };
+    const inventory = [...items, archived];
+    const html = renderToStaticMarkup(
+      <ProductCatalog items={inventory} owner="" query="" status="" />,
+    );
+
+    expect(html).toContain("2 / 2 RECORDS");
+    expect(html).not.toContain(archived.name);
+    expect(html).not.toContain(archived.ownerName);
+    expect(html).not.toContain(archived.id);
+    expect(filterProductPlans(inventory, "QA", "")).toEqual([]);
+    expect(filterProductPlans(inventory, "", "archived")).toEqual([archived]);
+
+    const history = renderToStaticMarkup(
+      <ProductCatalog items={inventory} owner="" query="" status="archived" />,
+    );
+    expect(history).toContain("1 / 1 RECORDS");
+    expect(history).toContain(archived.name);
+    expect(history).not.toContain(items[1]!.name);
   });
 });
 
@@ -55,7 +110,15 @@ function fixture(): ProductPlanView[] {
       ownerName: "Lin Q.",
       updatedAt: "2026-07-18T03:12:00.000Z",
       customization: { version: 2, fields: [] },
-      spu: { id: "spu-1", code: "TRAVEL-MUG-GIFT", name: "Travel Mug Gift", skus: [{ id: "sku-1", code: "MUG-1", attributes: {} }, { id: "sku-2", code: "MUG-2", attributes: {} }] },
+      spu: {
+        id: "spu-1",
+        code: "TRAVEL-MUG-GIFT",
+        name: "Travel Mug Gift",
+        skus: [
+          { id: "sku-1", code: "MUG-1", attributes: {} },
+          { id: "sku-2", code: "MUG-2", attributes: {} },
+        ],
+      },
     },
     {
       id: "0198fbef-4a10-7000-8000-000000000042",

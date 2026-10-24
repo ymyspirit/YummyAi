@@ -1,13 +1,22 @@
-import { Controller, Get, Inject, Query, Req } from "@nestjs/common";
+import { Controller, Get, Header, Inject, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
 import { DashboardService } from "./dashboard.service.js";
+import { FulfillmentAttentionService } from "./fulfillment-attention.service.js";
 
 @Controller("v1/dashboard")
 export class DashboardController {
-  constructor(@Inject(DashboardService) private readonly service: DashboardService) {}
+  constructor(@Inject(DashboardService) private readonly service: DashboardService,
+    @Inject(FulfillmentAttentionService) private readonly attention: FulfillmentAttentionService) {}
+
+  @Get("fulfillment-attention")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.DashboardRead)
+  fulfillment(@Req() request: AuthenticatedRequest, @Query() query: unknown) {
+    return this.attention.workspace(requireContext(request), query);
+  }
 
   @Get()
   @RequiresPermission(Permission.DashboardRead)

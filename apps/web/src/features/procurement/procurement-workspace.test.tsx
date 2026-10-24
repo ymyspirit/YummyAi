@@ -1,10 +1,20 @@
 import { createEntityId, type ProcurementWorkspaceView } from "@yummyai/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProcurementWorkspace } from "./procurement-workspace";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+
 describe("ProcurementWorkspace", () => {
+  it("preserves fractional stock evidence beside whole-unit purchase coverage", () => {
+    const data = fixture(); data.stockItems[0]!.baseUnit = "meter";
+    data.suggestions[0]!.availableQuantity = "0.000000001";
+    data.suggestions[0]!.inTransitQuantity = "0.35";
+    const html = renderToStaticMarkup(<ProcurementWorkspace data={data} />);
+    expect(html).toContain("可用 0.000000001"); expect(html).toContain("在途 0.35");
+    expect(html).toContain("整单位建议"); expect(html).toContain("供应商采购单位");
+  });
   it("renders versioned purchase, receipt, invoice, and replenishment evidence", () => {
     const html = renderToStaticMarkup(<ProcurementWorkspace data={fixture()} />);
     expect(html).toContain("库存采购单");
@@ -30,7 +40,9 @@ describe("ProcurementWorkspace", () => {
     };
     const html = renderToStaticMarkup(<ProcurementWorkspace data={empty} />);
     expect(html).toContain("还没有采购证据");
-    expect(html).toContain("不会根据库存缺口自动批准采购");
+    expect(html).toContain("新增采购申请");
+    expect(html).toContain("人工采购单");
+    expect(html).toContain("核对并审核后登记到货");
   });
 });
 

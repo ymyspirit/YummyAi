@@ -1,3 +1,4 @@
+import { withWorkerMarketplaceCredential } from "./marketplace-credential-failure.js";
 import type { SecretVault } from "@yummyai/ai-core";
 import {
   MarketplacePlatformSchema, MarketplaceRegionSchema, createEntityId,
@@ -14,7 +15,6 @@ import type {
   MarketplaceShipmentWritebackResult, ShipmentWritebackInput,
 } from "@yummyai/marketplace-connectors";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { z } from "zod";
 
 export interface ShipmentWritebackExecutionSnapshot {
   requestId: string;
@@ -112,9 +112,10 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
   }
 
   async withCredential<T>(context: TenantContext, accountId: string, callback: (credential: Readonly<Record<string, string>>) => Promise<T>) {
-    const [credential] = await withTenant(this.database.db, context, (tx) => tx.select({ encryptedEnvelope: marketplaceCredentials.encryptedEnvelope }).from(marketplaceCredentials).where(eq(marketplaceCredentials.accountId, accountId)).limit(1));
-    if (!credential) throw new Error("Marketplace credential is unavailable");
-    return this.secrets.withSecret(credential.encryptedEnvelope, (raw) => callback(z.record(z.string(), z.string()).parse(JSON.parse(raw))));
+    const [credential] = await withTenant(this.database.db, context, (tx) => tx.select({ encryptedEnvelope: marketplaceCredentials.encryptedEnvelope,
+      authorizationGeneration: marketplaceAccounts.authorizationGeneration, credentialId: marketplaceCredentials.id, credentialVersion: marketplaceCredentials.version,
+      accountStatus: marketplaceAccounts.status, platform: marketplaceAccounts.platform, refreshState: marketplaceAccounts.credentialRefreshState, useId: marketplaceAccounts.credentialUseId, deletedAt: marketplaceAccounts.deletedAt }).from(marketplaceCredentials).innerJoin(marketplaceAccounts, eq(marketplaceAccounts.id, marketplaceCredentials.accountId)).where(eq(marketplaceCredentials.accountId, accountId)).limit(1));
+    return withWorkerMarketplaceCredential(credential, this.secrets, callback);
   }
 
   async complete(context: TenantContext, snapshot: ShipmentWritebackExecutionSnapshot, result: MarketplaceShipmentWritebackResult) {

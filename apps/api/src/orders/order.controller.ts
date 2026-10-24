@@ -1,13 +1,14 @@
-import { Body, Controller, Get, Inject, NotFoundException, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Header, Inject, NotFoundException, Param, Post, Query, Req } from "@nestjs/common";
+import { OpenReviewedOrderExceptionSchema, ResolveReviewedOrderExceptionSchema, OrderExceptionOperationsQuerySchema } from "@yummyai/contracts/order/exception-operations";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   AnonymizeOrderProtectedDetailsCommandSchema, CreateOrderProofInputSchema, InitializeOrderCustomizationInputSchema, ListOrdersInputSchema,
-  OpenOrderExceptionCommandSchema, OrderPiiAccessPurposeSchema, OrderSideStateCommandSchema,
+  OrderPiiAccessPurposeSchema, OrderSideStateCommandSchema,
   RecordCustomerProofDecisionInputSchema,
   RegisterOrderCustomizationFileInputSchema,
   RemapOrderCustomizationInputSchema,
   RouteOrderLineInputSchema,
-  OrderTransitionCommandSchema, ResolveOrderExceptionCommandSchema,
+  OrderTransitionCommandSchema,
 } from "@yummyai/contracts";
 import { z } from "zod";
 
@@ -44,7 +45,8 @@ export class OrderController {
   routingDecisions(@Req() request: AuthenticatedRequest, @Query("orderId") orderId: unknown) { const context = requireContext(request); authorize(context, Permission.OrderRead); return this.routing.list(context, orderId === undefined ? undefined : z.uuidv7().parse(orderId)); }
 
   @Get("exceptions")
-  @RequiresPermission(Permission.OrderRead)
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead)
   exceptionQueue(@Req() request: AuthenticatedRequest, @Query("status") status: unknown) {
     const context = requireContext(request); authorize(context, Permission.OrderRead);
     return this.orders.listExceptions(context, z.enum(["open", "resolved"]).optional().parse(status));
@@ -91,12 +93,19 @@ export class OrderController {
   get(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.OrderRead); return this.orders.get(context, z.uuidv7().parse(id)); }
 
   @Get(":id/events")
-  @RequiresPermission(Permission.OrderRead)
-  events(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.OrderRead); return this.orders.events(context, z.uuidv7().parse(id)); }
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead)
+  events(@Req() request: AuthenticatedRequest, @Param("id") id: string) { return this.orders.operatorEvents(requireContext(request), z.uuidv7().parse(id)); }
 
   @Get(":id/exceptions")
-  @RequiresPermission(Permission.OrderRead)
-  exceptions(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.OrderRead); return this.orders.exceptions(context, z.uuidv7().parse(id)); }
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead)
+  exceptions(@Req() request: AuthenticatedRequest, @Param("id") id: string) { return this.orders.operatorExceptionViews(requireContext(request), z.uuidv7().parse(id)); }
+
+  @Get(":id/exception-operations")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead)
+  exceptionOperations(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query() query: unknown) { return this.orders.exceptionOperations(requireContext(request), z.uuidv7().parse(id), OrderExceptionOperationsQuerySchema.parse(query)); }
 
   @Get(":id/fulfillment")
   @RequiresPermission(Permission.OrderPiiRead)
@@ -115,12 +124,12 @@ export class OrderController {
   sideState(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.orders.changeSideState(context, z.uuidv7().parse(id), OrderSideStateCommandSchema.parse(body)); }
 
   @Post(":id/exceptions")
-  @RequiresPermission(Permission.OrderWrite)
-  openException(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.orders.openException(context, z.uuidv7().parse(id), OpenOrderExceptionCommandSchema.parse(body)); }
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead, Permission.OrderWrite)
+  openException(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { return this.orders.openExceptionReviewed(requireContext(request), z.uuidv7().parse(id), OpenReviewedOrderExceptionSchema.parse(body)); }
 
   @Post(":id/exceptions/:exceptionId/resolve")
-  @RequiresPermission(Permission.OrderWrite)
-  resolveException(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("exceptionId") exceptionId: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.orders.resolveException(context, z.uuidv7().parse(id), z.uuidv7().parse(exceptionId), ResolveOrderExceptionCommandSchema.parse(body)); }
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead, Permission.OrderWrite)
+  resolveException(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Param("exceptionId") exceptionId: string, @Body() body: unknown) { return this.orders.resolveExceptionReviewed(requireContext(request), z.uuidv7().parse(id), z.uuidv7().parse(exceptionId), ResolveReviewedOrderExceptionSchema.parse(body)); }
 }
 
 function requireContext(request: AuthenticatedRequest) { if (!request.tenantContext) throw new Error("Tenant context is required"); return request.tenantContext; }

@@ -1,0 +1,38 @@
+.ic-panel { min-width: 0; color: var(--ink, #172033); }
+.ic-panel *, .ic-dialog * { box-sizing: border-box; min-width: 0; }
+.ic-panel :is(p, code, li, strong, small, summary), .ic-dialog :is(p, code, li, label, strong) { overflow-wrap: anywhere; }
+.ic-panel-header, .ic-client-heading, .ic-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.ic-panel-header h2 { margin: .2rem 0; font-size: 1rem; }
+.ic-panel-header p, .ic-note { color: #5b6476; font-size: .78rem; line-height: 1.6; }
+.ic-panel p, .ic-dialog p { margin: .45rem 0; }
+.ic-registry h3, .ic-dialog h3 { display: flex; align-items: center; gap: .4rem; font-size: .9rem; }
+.ic-registry > div { min-width: 0; }
+.ic-registry ol, .ic-catalog > ul { display: grid; gap: .6rem; list-style: none; margin: .6rem 0; padding: 0; }
+.ic-registry ol > li, .ic-catalog > ul > li { border-bottom: 1px solid #e4e8ee; padding: .65rem 0; animation: ic-enter 180ms ease-out both; }
+.ic-status { font-size: .72rem; color: #155acb; padding: .2rem .4rem; background: #edf4ff; border-radius: .25rem; }
+.ic-status-revoked, .ic-status-expired, .ic-status-requires_reissue { color: #953433; background: #fff0ef; }
+.ic-warning { color: #963b32; background: #fff7f5; border-left: 2px solid #c34a42; padding: .5rem .65rem; font-size: .8rem; line-height: 1.65; }
+.ic-details { margin: .55rem 0; border-top: 1px solid #e4e8ee; padding-top: .5rem; }
+.ic-details summary { cursor: pointer; font-size: .8rem; font-weight: 600; padding: .25rem 0; }
+.ic-details::details-content { transition: content-visibility 160ms allow-discrete, opacity 160ms; opacity: 0; }
+.ic-details[open]::details-content { opacity: 1; }
+.ic-details li, .ic-registry p { font-size: .77rem; line-height: 1.65; }
+.ic-panel code, .ic-dialog code { font-size: .74rem; white-space: normal; }
+.ic-panel .oc-button, .ic-dialog .oc-button { display: inline-flex; justify-content: center; align-items: center; gap: .35rem; min-height: 34px; transition: transform 140ms, background 140ms, border-color 140ms; }
+.ic-panel .oc-button:hover:not(:disabled), .ic-dialog .oc-button:hover:not(:disabled) { transform: translateY(-1px); }
+.ic-panel .oc-button:active:not(:disabled), .ic-dialog .oc-button:active:not(:disabled) { transform: scale(.985); }
+.ic-panel :is(button, select, summary):focus-visible, .ic-dialog :is(input, button, select, summary):focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.ic-dialog, .ic-pending { animation: ic-enter 180ms ease-out both; }
+.ic-dialog[data-closing=true] { animation: ic-exit 150ms ease-in both; }
+.ic-dialog label { display: grid; gap: .35rem; font-size: .8rem; }
+.ic-dialog input:not([type=checkbox]), .ic-dialog select { width: 100%; min-height: 36px; padding: .5rem .6rem; border: 1px solid #d5dbe5; border-radius: .35rem; background: #fff; color: #172033; }
+.ic-dialog .ic-check { display: flex; align-items: flex-start; gap: .45rem; }
+.ic-check input { flex-shrink: 0; margin-top: .2rem; }
+.ic-form fieldset { display: grid; gap: .85rem; padding: 0; border: 0; }
+.ic-scope { display: grid; grid-template-columns: minmax(0, 1fr) 145px; align-items: center; gap: .4rem .8rem; border-bottom: 1px solid #e4e8ee; padding: .55rem 0; }
+.ic-scope small { grid-column: 1/-1; color: #5b6476; }
+.ic-catalog > ul { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem 1rem; }
+@keyframes ic-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes ic-exit { to { opacity: 0; transform: translateY(4px); } }
+@media (max-width: 640px) { .ic-panel-header .ic-actions { width: 100%; } .ic-actions .oc-button { flex: 1; } .ic-registry, .ic-catalog > ul { grid-template-columns: minmax(0, 1fr); } .ic-scope { grid-template-columns: minmax(0, 1fr); } .ic-panel-header h2 { font-size: 1rem; } }
+@media (prefers-reduced-motion: reduce) { .ic-panel *, .ic-dialog *, .ic-dialog, .ic-pending { animation: none !important; transition: none !important; } .ic-details::details-content { transition: none; } .ic-panel .oc-button:hover, .ic-dialog .oc-button:hover, .ic-panel .oc-button:active, .ic-dialog .oc-button:active { transform: none; } }

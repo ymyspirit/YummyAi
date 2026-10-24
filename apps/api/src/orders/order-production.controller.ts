@@ -10,6 +10,7 @@ import { z } from "zod";
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
 import { OrderProductionService } from "./order-production.service.js";
+import { parseRequestSchema } from "../request-schema.js";
 
 @Controller("v1/production")
 export class OrderProductionController {
@@ -66,7 +67,7 @@ export class OrderProductionCommandController {
 
   @Post(":id/production")
   @RequiresPermission(Permission.OrderWrite)
-  create(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.production.create(context, z.uuidv7().parse(id), CreateProductionOrderInputSchema.parse(body)); }
+  create(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.production.create(context, parseRequestSchema(z.uuidv7(), id), parseRequestSchema(CreateProductionOrderInputSchema, body)); }
 }
 
 function requireContext(request: AuthenticatedRequest) { if (!request.tenantContext) throw new Error("Tenant context is required"); return request.tenantContext; }

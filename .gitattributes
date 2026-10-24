@@ -1,0 +1,16 @@
+# Sealed runtime source and immutable SQL/upstream files must retain their exact
+# reviewed bytes across Windows and Linux checkouts. Documentation uses LF.
+* text=auto eol=lf
+/apps/** -text
+/packages/** -text
+/tools/** -text
+/infra/** -text
+/patches/** -text
+/AGENTS.md -text
+/CLAUDE.md -text
+/package.json -text
+/pnpm-lock.yaml -text
+/pnpm-workspace.yaml -text
+/turbo.json -text
+/eslint.config.* -text
+/tsconfig*.json -text

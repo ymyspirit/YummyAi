@@ -1,16 +1,17 @@
 import { Boxes, ShieldCheck } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { ProductCatalog } from "../../../features/products/product-catalog";
 import { ProductEditor, type ProductPlanView } from "../../../features/products/product-editor";
 import { apiFetch } from "../../../server-api";
+import { loadProductSupplyWorkspace } from "../../../features/products/product-supply-actions";
+import { ProductSupplyWorkspacePanel } from "../../../features/products/product-supply-workspace";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function ProductsPage({ searchParams }: { searchParams: SearchParams }) {
-  const [result, params] = await Promise.all([loadProductPlans(), searchParams]);
+  const [result, params, supply] = await Promise.all([loadProductPlans(), searchParams, loadProductSupplyWorkspace()]);
   const query = stringValue(params.q);
   const status = stringValue(params.status);
   const owner = stringValue(params.owner);
@@ -19,11 +20,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
 
   return (
     <div className="research-shell product-shell">
-      <ErpSidebar
-        active="products"
-        contextLabel="PRODUCT ERP"
-        note="证据审批、产品状态、定制 Schema、成本与供应商候选在同一开发档案中留痕。"
-      />
       <main className="research-main product-main">
         <header className="product-index-header">
           <div>
@@ -53,6 +49,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
               selectedId={selectedId}
               status={status}
               owner={owner}
+              supplierCounts={supply.data ? Object.fromEntries(result.items.map((plan) => [plan.id, new Set(supply.data!.links.filter((link) => link.productPlanId === plan.id && link.terms.status === "active" && link.supplierStatus === "active").map((link) => link.supplierId)).size])) : undefined}
             />
             {selectedId && !selectedPlan ? (
               <p className="product-selection-error" role="alert">
@@ -66,6 +63,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
                 aria-label={`${selectedPlan.name} 产品详情`}
               >
                 <ProductEditor initialPlan={selectedPlan} />
+                {supply.data ? <ProductSupplyWorkspacePanel data={supply.data} productPlanId={selectedPlan.id} /> : <p className="record-notice error" role="alert">{supply.error}</p>}
               </section>
             ) : null}
           </>

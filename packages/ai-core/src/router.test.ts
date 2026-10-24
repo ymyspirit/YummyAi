@@ -23,6 +23,11 @@ const request = {
 };
 
 describe("ModelRouter", () => {
+  it("rejects unpriced budgeted requests before invoking a provider", async () => {
+    const primary = provider("primary", async input => result(input, "primary"));
+    await expect(router([primary]).execute(context, { ...request, maxCostUsd: null })).rejects.toThrow("configured pricing");
+    expect(primary.generateCalls).toBe(0);
+  });
   it("returns the primary provider result", async () => {
     const primary = provider("primary", async (input) => result(input, "primary"));
     const fallback = provider("fallback", async (input) => result(input, "fallback"));

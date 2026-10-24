@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import {Permission} from "@yummyai/authz";
+import {readPublicationAuthority} from "@yummyai/catalog-core";
 
 import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from "@nestjs/common";
 import {
@@ -21,6 +23,7 @@ import {
   marketplacePublicationBatches,
   marketplacePublicationEvents,
   marketplacePublicationRequests,
+  marketplacePublicationIntents,
   type DatabaseConnection,
   withTenant,
 } from "@yummyai/database";
@@ -83,6 +86,8 @@ export class MarketplacePublicationBatchService {
       const [existing] = await tx.select().from(marketplacePublicationBatches)
         .where(eq(marketplacePublicationBatches.idempotencyKey, idempotencyKey)).limit(1);
       if (existing) return existing;
+      for(const item of prepared){const current=await this.publications.prepareInTransaction(context,item.input,tx);
+        if(current.capabilitySnapshotId!==item.prepared.capabilitySnapshotId||checksum(current.payload)!==checksum(item.prepared.payload)||checksum(current.assets)!==checksum(item.prepared.assets))throw new ConflictException("Publication batch source changed");}
       const [created] = await tx.insert(marketplacePublicationBatches).values({
         id: batchId,
         tenantId: context.tenantId,
@@ -118,6 +123,7 @@ export class MarketplacePublicationBatchService {
         id: createEntityId(), tenantId: context.tenantId, requestId: request.id, sequence: 1,
         status: scheduledFor ? "scheduled" : "queued", actorUserId: context.userId,
       })));
+      for(const [index,request] of requests.entries())await this.publications.admitInTransaction(context,request,tx,prepared[index]!.prepared,prepared[index]!.input);
       return created!;
     });
 
@@ -205,6 +211,7 @@ export class MarketplacePublicationBatchService {
         id: createEntityId(), tenantId: context.tenantId, requestId: request.id, sequence: 1,
         status: "queued", actorUserId: context.userId,
       })));
+      for(const request of requests)await this.publications.admitInTransaction(context,request,tx);
       return created!;
     });
 
@@ -225,6 +232,7 @@ export class MarketplacePublicationBatchService {
       const [batch] = await tx.select().from(marketplacePublicationBatches).where(eq(marketplacePublicationBatches.id, batchId)).limit(1);
       if (!batch) throw new NotFoundException("Marketplace publication batch not found");
       const requests = await tx.select().from(marketplacePublicationRequests).where(eq(marketplacePublicationRequests.batchId, batchId));
+      for(const request of requests){await readPublicationAuthority(tx,context,request.id,Permission.ListingPublish);await this.publications.cancelPreviewCoordinationInTransaction(tx,request.id);}
       const events = await tx.select().from(marketplacePublicationEvents)
         .where(inArray(marketplacePublicationEvents.requestId, requests.map((request) => request.id)))
         .orderBy(desc(marketplacePublicationEvents.sequence));
@@ -262,26 +270,31 @@ export class MarketplacePublicationBatchService {
     const batches = await withTenant(this.database.db, context, (tx) => tx.select().from(marketplacePublicationBatches)
       .where(input.accountId ? eq(marketplacePublicationBatches.accountId, input.accountId) : undefined)
       .orderBy(desc(marketplacePublicationBatches.createdAt)).limit(input.limit));
-    return Promise.all(batches.map((batch) => this.get(context, batch.id)));
+    const visible=[];
+    for(const batch of batches)try{visible.push(await this.get(context,batch.id));}catch(error){if(!(error instanceof Error)||!["ForbiddenError","CatalogAccessNotFoundError"].includes(error.constructor.name))throw error;}
+    return visible;
   }
 
   private async enqueueBatchChildren(context: TenantContext, batchId: string): Promise<void> {
     const workspace = await this.workspace(context, batchId);
     const delayMs = Math.max(0, (workspace.batch.scheduledFor?.getTime() ?? Date.now()) - Date.now());
+    const routes=await withTenant(this.database.db,context,tx=>tx.select().from(marketplacePublicationIntents).where(inArray(marketplacePublicationIntents.requestId,workspace.requests.map(request=>request.id))));
+    const central=new Set(routes.filter(row=>row.route==="central").map(row=>row.requestId));
     if (workspace.batch.action === "continue" && workspace.batch.platform === "amazon") {
+      if(central.size!==workspace.requests.length)return;
       try {
-        await this.batchEnqueuer.enqueue({ delayMs, publicationBatchId: batchId, requestedBy: context.userId, tenantId: context.tenantId });
+        await this.batchEnqueuer.enqueue({ delayMs, publicationBatchId: batchId, requestedBy: workspace.batch.createdBy!, tenantId: context.tenantId });
         return;
       } catch {
         await this.appendQueueFailures(context, workspace.requests, workspace.latest, "PUBLICATION_BATCH_QUEUE_UNAVAILABLE");
         throw new ServiceUnavailableException("Marketplace publication batch queue is unavailable");
       }
     }
-    const pending = workspace.requests.filter((request) => waitingStatuses.has(workspace.latest.get(request.id)?.status ?? ""));
+    const pending = workspace.requests.filter((request) => central.has(request.id)&&waitingStatuses.has(workspace.latest.get(request.id)?.status ?? ""));
     const results = await Promise.allSettled(pending.map((request) => this.publicationEnqueuer.enqueue({
       delayMs,
       publicationRequestId: request.id,
-      requestedBy: context.userId,
+      requestedBy: request.createdBy!,
       tenantId: context.tenantId,
     })));
     const failed = pending.filter((_request, index) => results[index]?.status === "rejected");
@@ -311,6 +324,7 @@ export class MarketplacePublicationBatchService {
       if (!batch) throw new NotFoundException("Marketplace publication batch not found");
       const requests = await tx.select().from(marketplacePublicationRequests)
         .where(eq(marketplacePublicationRequests.batchId, batchId)).orderBy(marketplacePublicationRequests.createdAt);
+      for(const request of requests)await readPublicationAuthority(tx,context,request.id);
       const events = requests.length
         ? await tx.select().from(marketplacePublicationEvents)
             .where(inArray(marketplacePublicationEvents.requestId, requests.map((request) => request.id)))

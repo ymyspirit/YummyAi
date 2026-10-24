@@ -1,12 +1,13 @@
 import { createEntityId, type ListingReplicationView, type TenantContext } from "@yummyai/contracts";
 import { describe, expect, it } from "vitest";
+import { Permission } from "@yummyai/authz";
 
 import { ListingService, type ListingRecord, type ListingRepository, type ListingVersionRecord } from "../listings/listing.service.js";
 import type { ListingDraft, ListingPlatform, ListingValidation } from "@yummyai/platform-rules";
 import { ReviewService } from "./review.service.js";
 import { MemoryIntegrationRepository } from "./review.integration.fixture.js";
 
-const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: [], dataScope: "tenant" };
+const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: [Permission.ProductRead, Permission.ListingRead, Permission.ListingWrite, Permission.ListingReview], dataScope: "tenant" };
 
 describe("review-export integration", () => {
   it("invalidates an approval through the Listing mutation boundary", async () => {

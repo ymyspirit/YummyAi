@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createEntityId } from "@yummyai/contracts";
 import type { JobEnvelope } from "@yummyai/jobs";
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PodExportPolicyError,
@@ -16,19 +16,24 @@ import {
 
 describe("POD immutable export", () => {
   it("builds a deterministic package with pinned provenance", async () => {
-    const first = await buildPodExportPackage(snapshot(), ids.tenant);
-    const second = await buildPodExportPackage(snapshot(), ids.tenant);
-    expect(Buffer.from(first.body).equals(Buffer.from(second.body))).toBe(true);
-    const zip = await JSZip.loadAsync(first.body);
-    const manifest = JSON.parse(await zip.file("manifest.json")!.async("string")) as Record<string, unknown>;
-    expect(manifest).toMatchObject({
-      exportId: ids.export,
-      taskId: ids.task,
-      designVersionId: ids.version,
-      toolKey: "pattern_crop",
-      modelKey: "pod.crop.v1",
-    });
-    expect(Object.keys(zip.files)).toContain(`artwork/${ids.asset}-v1-result.png`);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-07T00:00:00.000Z"));
+      const first = await buildPodExportPackage(snapshot(), ids.tenant);
+      vi.setSystemTime(new Date("2026-10-08T08:00:00.000Z"));
+      const second = await buildPodExportPackage(snapshot(), ids.tenant);
+      expect(Buffer.from(first.body).equals(Buffer.from(second.body))).toBe(true);
+      const zip = await JSZip.loadAsync(first.body);
+      const manifest = JSON.parse(await zip.file("manifest.json")!.async("string")) as Record<string, unknown>;
+      expect(manifest).toMatchObject({
+        exportId: ids.export,
+        taskId: ids.task,
+        designVersionId: ids.version,
+        toolKey: "pattern_crop",
+        modelKey: "pod.crop.v1",
+      });
+      expect(Object.keys(zip.files)).toContain(`artwork/${ids.asset}-v1-result.png`);
+    } finally { vi.useRealTimers(); }
   });
 
   it("fails closed before storage when an output loses rights approval", async () => {

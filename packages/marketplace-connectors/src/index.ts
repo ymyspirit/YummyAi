@@ -1,4 +1,5 @@
 export {
+  EtsyPersonalizationSafetyError,
   MarketplaceConnectorError,
   parseRetryAfter,
   type MarketplaceConnectorErrorCode,
@@ -17,6 +18,7 @@ export {
   type CapabilitySyncAccountContext,
   type CapabilitySyncIssue,
   type MarketplaceCapabilityGateway,
+  type MarketplaceCapabilityHooks,
   type MarketplaceCapabilitySyncResult,
 } from "./capabilities.js";
 export {
@@ -107,3 +109,14 @@ export type {
   MarketplacePublishInput,
   MarketplacePublishResult,
 } from "./connector.js";
+
+export { marketplaceCapabilityChecksum } from "./capabilities.js";
+export { createStoreNodeSealedCredential, openStoreNodeSealedCredential, openStoreNodeExecutionCredentialSeed, sealStoreNodeExecutionPayload, openStoreNodeExecutionPayload,
+  storeNodeExecutionPayloadChecksum, StoreNodeExecutionSealError } from "./store-node-execution-seal.js";
+export { createStoreNodeCapabilityTransport, StoreNodeCapabilityPolicyError,
+  type StoreNodeCapabilityExchange, type StoreNodeCapabilityTransportOptions } from "./store-node-capability-transport.js";
+export {createStoreNodePublicationTransport,assertStoreNodePublicationLease,StoreNodePublicationPolicyError,type StoreNodePublicationTransportOptions} from "./store-node-publication-transport.js";
+export { storeNodeAmazonApplication, assertStoreNodeAmazonCredentialBinding, assertStoreNodeAmazonApplication, storeNodeAmazonGatewayEnvironment,
+  StoreNodeAmazonApplicationError, type StoreNodeAmazonApplication } from "./store-node-amazon-application.js";
+export { createStoreNodeSubmissionTransport, assertStoreNodeSubmissionLease, StoreNodeSubmissionPolicyError,
+  type StoreNodeSubmissionTransportOptions } from "./store-node-submission-transport.js";

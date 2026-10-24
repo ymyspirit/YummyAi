@@ -41,6 +41,10 @@ import {
 } from "@yummyai/contracts";
 import { PodArtworkJobPayloadSchema, type JobEnvelope } from "@yummyai/jobs";
 import { createHash } from "node:crypto";
+import type { PodInvocationReceipt } from "@yummyai/contracts/harness";
+import type { PodProcessorResultV1 } from "@yummyai/contracts/pod/processor-result";
+import { podInvocationReceipt, podResultChecksum } from "./pod-invocation-receipt.js";
+import { decodePodResponse, podResultCheckpoint, PodResponseInvalidError, type PodArtworkResponseCheckpoint } from "./pod-artwork-response.js";
 
 export interface PodArtworkExecutionAsset {
   id: string;
@@ -63,64 +67,44 @@ export interface PodArtworkExecutionRecord {
   maxAttempts: number;
 }
 
-export interface PodArtworkExecutionResult {
-  outputs: Array<{
-    bytes: Uint8Array;
-    mediaType:
-      | "image/png"
-      | "image/jpeg"
-      | "image/webp"
-      | "image/tiff"
-      | "image/svg+xml"
-      | "video/mp4"
-      | "application/zip"
-      | "application/postscript"
-      | "text/plain";
-    role: "effect" | "production";
-    fileName: string;
-    metadata: {
-      width?: number;
-      height?: number;
-      unit?: "px" | "mm" | "in";
-      dpi?: number;
-      colorMode?: "rgb" | "cmyk" | "grayscale" | "spot";
-      transparent?: boolean;
-      durationSeconds?: number;
-      fps?: 24 | 25 | 30;
-      videoCodec?: "h264";
-      audioCodec?: "none" | "aac";
-      aiInference: "none" | "partial" | "full";
-      inferenceRegions?: Array<{ x: number; y: number; width: number; height: number }>;
-    };
-  }>;
-  modelKey: string;
-  modelVersion: string;
-  seed?: string;
-  costUsd?: number;
-  qualityCheckSnapshot: Record<string, unknown>;
-  partial: boolean;
-}
+export type PodArtworkExecutionResult = Omit<PodProcessorResultV1, "outputs"> & {
+  outputs: Array<Omit<PodProcessorResultV1["outputs"][number], "dataBase64"> & { bytes: Uint8Array }>;
+};
 
 export interface PodArtworkExecutionRepository {
+  markSubmitted(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string, attempt: number, claim?: PodArtworkClaim): Promise<void>;
+  recordResponse(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string, attempt: number, receipt: PodInvocationReceipt, checkpoint?: PodArtworkResponseCheckpoint, claim?: PodArtworkClaim): Promise<void>;
+  readResponse(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string, claim: PodArtworkClaim): Promise<PodArtworkResponseCheckpoint>;
   load(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string): Promise<PodArtworkExecutionRecord | undefined>;
-  claim(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string, attempt: number): Promise<boolean>;
+  claim(context: Pick<TenantContext, "tenantId" | "userId">, taskId: string, attempt: number): Promise<PodArtworkClaim | undefined>;
   complete(
     context: Pick<TenantContext, "tenantId" | "userId">,
     task: PodArtworkExecutionRecord,
     result: PodArtworkExecutionResult,
+    claim?: PodArtworkClaim,
   ): Promise<void>;
   fail(
     context: Pick<TenantContext, "tenantId" | "userId">,
     taskId: string,
     input: { attempt: number; terminal: boolean; code: string; message: string },
-  ): Promise<void>;
+    claim?: PodArtworkClaim,
+  ): Promise<void | "deferred" | "lost" | "uncertain" | "failed">;
+}
+
+export interface PodArtworkClaim {
+  /** Null is an explicit historical execution without durable recovery metadata. */
+  token: string | null;
+  attempt: number;
+  hasResponse: boolean;
 }
 
 export interface PodArtworkGateway {
+  prepare?(task: PodArtworkExecutionRecord): void | Promise<void>;
   execute(
     context: Pick<TenantContext, "tenantId" | "userId">,
     input: PodArtworkExecutionRecord,
     signal: AbortSignal,
+    onReceipt?: (receipt: PodInvocationReceipt, checkpoint?: PodArtworkResponseCheckpoint) => Promise<void>,
   ): Promise<PodArtworkExecutionResult>;
 }
 
@@ -135,6 +119,13 @@ export class PodArtworkInputPolicyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PodArtworkInputPolicyError";
+  }
+}
+
+export class PodArtworkDeferredError extends Error {
+  constructor() {
+    super("The originating POD workflow is paused before submission");
+    this.name = "PodArtworkDeferredError";
   }
 }
 
@@ -157,30 +148,73 @@ export class PodArtworkProcessor {
   async process(envelope: JobEnvelope, signal = new AbortController().signal) {
     const payload = PodArtworkJobPayloadSchema.parse(envelope.payload);
     const context = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
-    const task = await this.repository.load(context, payload.taskId);
-    if (!task) throw new PodArtworkTaskNotFoundError(payload.taskId);
-    const claimed = await this.repository.claim(context, task.id, envelope.attempt);
-    if (!claimed) return { taskId: task.id, disposition: "already_claimed" as const };
+    let claim: PodArtworkClaim | undefined;
+    try { claim = await this.repository.claim(context, payload.taskId, envelope.attempt); } catch (error) {
+      if (error instanceof PodArtworkDeferredError) return { taskId: payload.taskId, disposition: "deferred" as const };
+      if (error instanceof PodArtworkInputPolicyError) await this.repository.fail(context, payload.taskId, {
+        attempt: envelope.attempt, terminal: true, code: "INPUT_POLICY_BLOCKED", message: safeErrorMessage(error),
+      });
+      throw error;
+    }
+    if (!claim) return { taskId: payload.taskId, disposition: "already_claimed" as const };
 
+    let gatewayStarted = false;
+    let task: PodArtworkExecutionRecord | undefined;
     try {
+      task = await this.repository.load(context, payload.taskId);
+      if (!task) throw new PodArtworkTaskNotFoundError(payload.taskId);
       validateExecutionRecord(task);
-      const result = validateResult(task, await this.gateway.execute(context, task, signal));
-      await this.repository.complete(context, task, result);
+      let response: PodArtworkExecutionResult;
+      if (claim.hasResponse) {
+        response = decodePodResponse(await this.repository.readResponse(context, task.id, claim));
+      } else {
+        await this.gateway.prepare?.(task);
+        await this.repository.markSubmitted(context, task.id, claim.attempt, claim);
+        gatewayStarted = true;
+        let savedReceipt: PodInvocationReceipt | undefined, checkpointSaved = false;
+        const onReceipt = async (receipt: PodInvocationReceipt, checkpoint?: PodArtworkResponseCheckpoint) => {
+          await this.repository.recordResponse(context, task!.id, claim!.attempt, receipt, checkpoint, claim);
+          savedReceipt = receipt;
+          checkpointSaved = checkpoint !== undefined;
+        };
+        response = await this.gateway.execute(context, task, signal, onReceipt);
+        if (!checkpointSaved) {
+          const receipt = savedReceipt ?? podInvocationReceipt(response, podResultChecksum(response));
+          await onReceipt(receipt, podResultCheckpoint(response, receipt));
+        }
+        // Adopt the saved immutable bytes even if a gateway produced a different
+        // in-memory value after invoking its receipt callback.
+        if (claim.token) response = decodePodResponse(await this.repository.readResponse(context, task.id, claim));
+      }
+      const result = validateResult(task, response);
+      await this.repository.complete(context, task, result, claim);
       return {
         taskId: task.id,
         disposition: result.partial ? "partially_succeeded" as const : "awaiting_review" as const,
         outputCount: result.outputs.length,
       };
     } catch (error) {
-      const terminal = error instanceof PodArtworkInputPolicyError
-        || error instanceof PodArtworkOutputPolicyError
-        || envelope.attempt + 1 >= Math.min(task.maxAttempts, envelope.maxAttempts);
-      await this.repository.fail(context, task.id, {
-        attempt: envelope.attempt,
+      if (error instanceof PodArtworkDeferredError) {
+        await this.repository.fail(context, payload.taskId, { attempt: claim.attempt, terminal: false, code: "POD_WORKFLOW_PAUSED", message: "The originating workflow is paused" }, claim);
+        return { taskId: payload.taskId, disposition: "deferred" as const };
+      }
+      // An unclassified error after entering the external gateway can already be
+      // charged. Preserve the original task for reconciliation, never pay again.
+      const invalidResponse = error instanceof PodResponseInvalidError;
+      const uncertain = gatewayStarted && !(error instanceof PodArtworkOutputPolicyError) && !invalidResponse;
+      const terminal = uncertain || error instanceof PodArtworkInputPolicyError
+        || error instanceof PodArtworkOutputPolicyError || invalidResponse
+        || claim.attempt + 1 >= (claim.token ? task?.maxAttempts ?? 3 : Math.min(task?.maxAttempts ?? envelope.maxAttempts, envelope.maxAttempts));
+      const disposition = await this.repository.fail(context, payload.taskId, {
+        attempt: claim.attempt,
         terminal,
-        code: errorCode(error),
-        message: safeErrorMessage(error),
-      });
+        code: claim.token && error instanceof PodArtworkInputPolicyError ? "INPUT_POLICY_BLOCKED" : invalidResponse ? "POD_RESPONSE_INVALID" : uncertain ? "POD_RESULT_UNCERTAIN" : errorCode(error),
+        message: uncertain ? "POD result is uncertain; reconcile the original task before any new request" : safeErrorMessage(error),
+      }, claim);
+      if (disposition === "deferred") return { taskId: payload.taskId, disposition: "deferred" as const };
+      if (disposition === "lost") return { taskId: payload.taskId, disposition: "already_claimed" as const };
+      if (disposition === "uncertain" || (disposition === undefined && uncertain)) throw new Error("POD_RESULT_UNCERTAIN");
+      if (disposition === "failed" && !(error instanceof PodArtworkInputPolicyError) && !(error instanceof PodArtworkOutputPolicyError) && !(error instanceof PodResponseInvalidError)) throw new Error("POD_LOCAL_PROCESSING_FAILED");
       throw error;
     }
   }
@@ -203,6 +237,7 @@ function validateExecutionRecord(task: PodArtworkExecutionRecord) {
     return;
   }
   for (const asset of task.inputAssets) {
+    if (asset.rightsSourceKind === "competitor") throw new PodArtworkInputPolicyError("Competitor source assets cannot be transformed into publishable artwork");
     if (asset.domain !== "authorized" || asset.rightsStatus !== "approved") {
       throw new PodArtworkInputPolicyError(`POD tool ${task.toolKey} requires rights-approved authorized assets`);
     }

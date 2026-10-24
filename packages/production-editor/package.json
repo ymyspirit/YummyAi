@@ -1,0 +1,35 @@
+{
+  "name": "@yummyai/production-editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./geometry": "./src/geometry.ts",
+    "./products": "./src/products.ts",
+    "./pillow-outline": "./src/pillow-outline.ts",
+    "./pillow-contour-optimizer": "./src/pillow-contour-optimizer.ts",
+    "./pillow-subject": "./src/pillow-subject.ts",
+    "./pillow-automation-geometry": "./src/pillow-automation-geometry.ts",
+    "./text": "./src/text.ts",
+    "./cutout-svg": "./src/cutout-svg.ts",
+    "./design-automation": "./src/design-automation.ts",
+    "./private-envelope": "./src/private-envelope.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@yummyai/contracts": "workspace:*",
+    "sharp": "^0.35.3",
+    "opentype.js": "^1.3.4",
+    "polygon-clipping": "^0.15.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/opentype.js": "^1.3.8",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

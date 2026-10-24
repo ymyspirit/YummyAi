@@ -6,6 +6,7 @@ import { designVersions } from "./design.js";
 import { organizations, users } from "./identity.js";
 import { orderLines, orders } from "./order.js";
 import { fulfillmentSuppliers, orderRoutingDecisions, purchaseOrderVersions } from "./order-routing.js";
+import { fulfillmentFactories, fulfillmentFactoryVersions, factoryCapabilityVersions } from "./factory-directory.js";
 
 export const productionOrders = pgTable("production_orders", {
   id: uuid("id").primaryKey(),
@@ -13,8 +14,10 @@ export const productionOrders = pgTable("production_orders", {
   orderId: uuid("order_id").notNull(),
   orderLineId: uuid("order_line_id").notNull(),
   supplierId: uuid("supplier_id").notNull(),
-  routingDecisionId: uuid("routing_decision_id").notNull(),
-  purchaseOrderVersionId: uuid("purchase_order_version_id").notNull(),
+  factoryId: uuid("factory_id"),
+  routingDecisionId: uuid("routing_decision_id"),
+  purchaseOrderVersionId: uuid("purchase_order_version_id"),
+  sourceWorkItemId: uuid("source_work_item_id"),
   parentProductionOrderId: uuid("parent_production_order_id"),
   source: text("source").default("initial").notNull(),
   status: text("status").default("planned").notNull(),
@@ -22,6 +25,7 @@ export const productionOrders = pgTable("production_orders", {
   currentVersionNumber: integer("current_version_number").default(1).notNull(),
   expectedCompletionAt: timestamp("expected_completion_at", { mode: "date", withTimezone: true }).notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
+  requestChecksum: text("request_checksum"),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
@@ -34,10 +38,13 @@ export const productionOrders = pgTable("production_orders", {
   foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "production_orders_order_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.orderLineId], foreignColumns: [orderLines.tenantId, orderLines.id], name: "production_orders_line_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.supplierId], foreignColumns: [fulfillmentSuppliers.tenantId, fulfillmentSuppliers.id], name: "production_orders_supplier_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.supplierId, table.factoryId], foreignColumns: [fulfillmentFactories.tenantId, fulfillmentFactories.supplierId, fulfillmentFactories.id], name: "production_orders_factory_fk" }),
   foreignKey({ columns: [table.tenantId, table.routingDecisionId], foreignColumns: [orderRoutingDecisions.tenantId, orderRoutingDecisions.id], name: "production_orders_routing_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.purchaseOrderVersionId], foreignColumns: [purchaseOrderVersions.tenantId, purchaseOrderVersions.id], name: "production_orders_purchase_version_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.parentProductionOrderId], foreignColumns: [table.tenantId, table.id], name: "production_orders_parent_fk" }).onDelete("restrict"),
   uniqueIndex("production_orders_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("production_orders_source_line_unique").on(table.tenantId, table.id, table.orderLineId),
+  uniqueIndex("production_orders_parent_proof_unique").on(table.tenantId, table.id, table.parentProductionOrderId),
   uniqueIndex("production_orders_idempotency_unique").on(table.tenantId, table.orderLineId, table.idempotencyKey),
   index("production_orders_queue_idx").on(table.tenantId, table.status, table.expectedCompletionAt),
   index("production_orders_lineage_idx").on(table.tenantId, table.parentProductionOrderId, table.createdAt),
@@ -51,6 +58,11 @@ export const productionOrderVersions = pgTable("production_order_versions", {
   quantity: integer("quantity").notNull(),
   designVersionId: uuid("design_version_id"),
   productionAssetIds: jsonb("production_asset_ids").$type<string[]>().default(sql`'[]'::jsonb`).notNull(),
+  sourceWorkRevisionId: uuid("source_work_revision_id"),
+  sourceEditorProjectId: uuid("source_editor_project_id"),
+  sourceEditorVersionId: uuid("source_editor_version_id"),
+  sourceRenderId: uuid("source_render_id"),
+  factoryId: uuid("factory_id"), factoryVersionId: uuid("factory_version_id"), capabilityVersionId: uuid("capability_version_id"),
   encryptedInstructions: text("encrypted_instructions").notNull(),
   instructionsChecksum: text("instructions_checksum").notNull(),
   expectedCompletionAt: timestamp("expected_completion_at", { mode: "date", withTimezone: true }).notNull(),
@@ -63,7 +75,11 @@ export const productionOrderVersions = pgTable("production_order_versions", {
   foreignKey({ columns: [table.tenantId, table.productionOrderId], foreignColumns: [productionOrders.tenantId, productionOrders.id], name: "production_order_versions_order_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.designVersionId], foreignColumns: [designVersions.tenantId, designVersions.id], name: "production_order_versions_design_fk" }).onDelete("restrict"),
   uniqueIndex("production_order_versions_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("production_order_versions_source_order_unique").on(table.tenantId, table.id, table.productionOrderId),
+  uniqueIndex("production_versions_quantity_proof_unique").on(table.tenantId, table.id, table.productionOrderId, table.quantity),
   uniqueIndex("production_order_versions_number_unique").on(table.tenantId, table.productionOrderId, table.versionNumber),
+  foreignKey({ columns: [table.tenantId, table.factoryId, table.factoryVersionId], foreignColumns: [fulfillmentFactoryVersions.tenantId, fulfillmentFactoryVersions.factoryId, fulfillmentFactoryVersions.id], name: "production_order_versions_factory_fk" }),
+  foreignKey({ columns: [table.tenantId, table.factoryId, table.capabilityVersionId], foreignColumns: [factoryCapabilityVersions.tenantId, factoryCapabilityVersions.factoryId, factoryCapabilityVersions.id], name: "production_order_versions_capability_fk" }),
 ]);
 
 export const productionMilestoneEvents = pgTable("production_milestone_events", {
@@ -73,6 +89,7 @@ export const productionMilestoneEvents = pgTable("production_milestone_events", 
   sequence: integer("sequence").notNull(),
   type: text("type").notNull(),
   externalEventId: text("external_event_id"),
+  requestChecksum: text("request_checksum"),
   evidenceCode: text("evidence_code").notNull(),
   encryptedEvidenceNote: text("encrypted_evidence_note"),
   evidenceAssetIds: jsonb("evidence_asset_ids").$type<string[]>().default(sql`'[]'::jsonb`).notNull(),
@@ -83,6 +100,7 @@ export const productionMilestoneEvents = pgTable("production_milestone_events", 
   check("production_milestone_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("production_milestone_events_sequence_check", sql`${table.sequence} > 0`),
   check("production_milestone_events_type_check", sql`${table.type} in ('submitted','acknowledged','started','completed','failed','cancel_requested','cancelled')`),
+  check("production_milestone_request_checksum_check", sql`${table.requestChecksum} is null or ${table.requestChecksum}~'^[a-f0-9]{64}$'`),
   foreignKey({ columns: [table.tenantId, table.productionOrderId], foreignColumns: [productionOrders.tenantId, productionOrders.id], name: "production_milestone_events_order_fk" }).onDelete("restrict"),
   uniqueIndex("production_milestone_events_tenant_id_unique").on(table.tenantId, table.id),
   uniqueIndex("production_milestone_events_sequence_unique").on(table.tenantId, table.productionOrderId, table.sequence),
@@ -112,6 +130,11 @@ export const qualityStandardVersions = pgTable("quality_standard_versions", {
 ]);
 
 export const qualityInspections = pgTable("quality_inspections", {
+  assessmentVersion: integer("assessment_version"),
+  criterionResults: jsonb("criterion_results").$type<Array<{ code: string; scoreBps: number; passed: boolean; evidenceAssetIds: string[] }>>(),
+  requestChecksum: text("request_checksum"),
+  productionVersionId: uuid("production_version_id"),
+  productionProjectionVersion: integer("production_projection_version"),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   productionOrderId: uuid("production_order_id").notNull(),
@@ -127,9 +150,25 @@ export const qualityInspections = pgTable("quality_inspections", {
   check("quality_inspections_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("quality_inspections_result_check", sql`${table.result} in ('passed','failed')`),
   check("quality_inspections_score_check", sql`${table.scoreBps} between 0 and 10000`),
+  check("quality_inspections_assessment_check", sql`(
+    ${table.assessmentVersion} is null and ${table.criterionResults} is null and ${table.requestChecksum} is null
+    and ${table.productionVersionId} is null and ${table.productionProjectionVersion} is null
+  ) or (
+    ${table.assessmentVersion} is not null and ${table.assessmentVersion} = 2 and ${table.criterionResults} is not null
+    and jsonb_typeof(${table.criterionResults}) = 'array' and jsonb_array_length(${table.criterionResults}) between 1 and 200
+    and ${table.requestChecksum} is not null and ${table.requestChecksum} ~ '^[a-f0-9]{64}$' and ${table.productionVersionId} is not null
+    and ${table.productionProjectionVersion} is not null and ${table.productionProjectionVersion} > 0
+  ) or (
+    ${table.assessmentVersion} is not null and ${table.assessmentVersion}=3 and ${table.criterionResults} is null and ${table.requestChecksum} is not null
+    and ${table.requestChecksum} ~ '^[a-f0-9]{64}$' and ${table.productionVersionId} is not null
+    and ${table.productionProjectionVersion} is not null and ${table.productionProjectionVersion}>0 and ${table.inspectedBy} is not null
+  )`),
   foreignKey({ columns: [table.tenantId, table.productionOrderId], foreignColumns: [productionOrders.tenantId, productionOrders.id], name: "quality_inspections_order_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.qualityStandardVersionId], foreignColumns: [qualityStandardVersions.tenantId, qualityStandardVersions.id], name: "quality_inspections_standard_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.productionVersionId], foreignColumns: [productionOrderVersions.tenantId, productionOrderVersions.id], name: "quality_inspections_production_version_fk" }).onDelete("restrict"),
   uniqueIndex("quality_inspections_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("quality_inspections_source_proof_unique").on(table.tenantId, table.id, table.productionOrderId, table.productionVersionId, table.result),
+  uniqueIndex("quality_inspections_group_source_unique").on(table.tenantId, table.id, table.productionOrderId, table.productionVersionId, table.assessmentVersion),
   uniqueIndex("quality_inspections_idempotency_unique").on(table.tenantId, table.productionOrderId, table.idempotencyKey),
   index("quality_inspections_result_idx").on(table.tenantId, table.result, table.inspectedAt),
 ]);
@@ -151,15 +190,17 @@ export const qualityDefects = pgTable("quality_defects", {
   check("quality_defects_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("quality_defects_severity_check", sql`${table.severity} in ('minor','major','critical')`),
   check("quality_defects_responsibility_check", sql`${table.responsibility} in ('supplier','internal','carrier','customer','unknown')`),
-  check("quality_defects_disposition_check", sql`${table.disposition} in ('accept','rework','remake','reship','refund','cancel')`),
+  check("quality_defects_disposition_check", sql`${table.disposition} in ('accept','rework','remake','reship','refund','cancel','scrap')`),
   check("quality_defects_checksum_check", sql`${table.detailChecksum} ~ '^[0-9a-f]{64}$'`),
   foreignKey({ columns: [table.tenantId, table.productionOrderId], foreignColumns: [productionOrders.tenantId, productionOrders.id], name: "quality_defects_order_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.inspectionId], foreignColumns: [qualityInspections.tenantId, qualityInspections.id], name: "quality_defects_inspection_fk" }).onDelete("restrict"),
   uniqueIndex("quality_defects_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("quality_defects_group_source_unique").on(table.tenantId, table.id, table.inspectionId, table.productionOrderId),
   index("quality_defects_responsibility_idx").on(table.tenantId, table.responsibility, table.severity, table.createdAt),
 ]);
 
 export const productionRecoveryCases = pgTable("production_recovery_cases", {
+  requestChecksum: text("request_checksum"),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   orderId: uuid("order_id").notNull(),
@@ -183,11 +224,13 @@ export const productionRecoveryCases = pgTable("production_recovery_cases", {
   check("production_recovery_cases_status_check", sql`${table.status} in ('open','in_progress','resolved','cancelled')`),
   check("production_recovery_cases_version_check", sql`${table.projectionVersion} > 0`),
   check("production_recovery_cases_checksum_check", sql`${table.reasonChecksum} ~ '^[0-9a-f]{64}$'`),
+  check("production_recovery_cases_request_checksum_check", sql`${table.requestChecksum} is null or ${table.requestChecksum} ~ '^[a-f0-9]{64}$'`),
   check("production_recovery_cases_compensation_check", sql`(${table.type} = 'cancellation_compensation' and ${table.compensationAmountMinor} is not null and ${table.compensationCurrency} ~ '^[A-Z]{3}$') or (${table.type} <> 'cancellation_compensation' and ${table.compensationAmountMinor} is null and ${table.compensationCurrency} is null)`),
   foreignKey({ columns: [table.tenantId, table.orderId], foreignColumns: [orders.tenantId, orders.id], name: "production_recovery_cases_order_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.originalProductionOrderId], foreignColumns: [productionOrders.tenantId, productionOrders.id], name: "production_recovery_cases_production_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.defectId], foreignColumns: [qualityDefects.tenantId, qualityDefects.id], name: "production_recovery_cases_defect_fk" }).onDelete("restrict"),
   uniqueIndex("production_recovery_cases_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("production_recovery_cases_group_source_unique").on(table.tenantId, table.id, table.originalProductionOrderId),
   uniqueIndex("production_recovery_cases_idempotency_unique").on(table.tenantId, table.originalProductionOrderId, table.idempotencyKey),
   index("production_recovery_cases_queue_idx").on(table.tenantId, table.status, table.type, table.updatedAt),
 ]);

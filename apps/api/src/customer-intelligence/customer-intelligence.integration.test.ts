@@ -1,5 +1,6 @@
 import { UnprocessableEntityException } from "@nestjs/common";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { summarizeAdvertisingReports } from "@yummyai/contracts/customer-intelligence";
 import {
   connectDatabase, customerSignalFacts, migrateDatabase, withTenant,
 } from "@yummyai/database";
@@ -12,6 +13,8 @@ describe.sequential("customer intelligence", () => {
   const database = connectDatabase();
   const tenantA = createEntityId(); const tenantB = createEntityId();
   const userA = createEntityId(); const userB = createEntityId();
+  const roleA = createEntityId(); const roleB = createEntityId();
+  const membershipA = createEntityId(); const membershipB = createEntityId();
   const contextA = context(tenantA, userA); const contextB = context(tenantB, userB);
   const service = new CustomerIntelligenceService(database, new AuditService(database));
   let lineId = ""; let recommendationId = "";
@@ -20,8 +23,22 @@ describe.sequential("customer intelligence", () => {
     await migrateDatabase(database);
     await database.client.unsafe("insert into organizations (id,name,slug) values ($1,$2,$3),($4,$5,$6)", [tenantA, "CI A", `ci-a-${tenantA}`, tenantB, "CI B", `ci-b-${tenantB}`]);
     await database.client.unsafe("insert into app_users (id,oidc_subject,email,display_name) values ($1,$2,$3,$4),($5,$6,$7,$8)", [userA, `ci-a-${userA}`, `ci-a-${userA}@example.test`, "CI A", userB, `ci-b-${userB}`, `ci-b-${userB}@example.test`, "CI B"]);
+    for (const [tenantId, userId, roleId, membershipId] of [[tenantA, userA, roleA, membershipA], [tenantB, userB, roleB, membershipB]]) {
+      await database.client.unsafe("insert into memberships(id,tenant_id,user_id,status) values($1,$2,$3,'active')", [membershipId!, tenantId!, userId!]);
+      await database.client.unsafe("insert into roles(id,tenant_id,name,permissions,data_scope) values($1,$2,$3,$4::jsonb,'tenant')", [roleId!, tenantId!, `Synthetic CI role ${roleId}`, JSON.stringify(context(tenantId!, userId!).permissions)]);
+      await database.client.unsafe("insert into membership_roles(tenant_id,membership_id,role_id) values($1,$2,$3)", [tenantId!, membershipId!, roleId!]);
+    }
   });
-  afterAll(async () => database.client.end());
+  afterAll(async () => {
+    try {
+      for (const [tenantId, roleId, membershipId] of [[tenantA, roleA, membershipA], [tenantB, roleB, membershipB]]) {
+        await database.client.unsafe("delete from membership_roles where tenant_id=$1 and membership_id=$2 and role_id=$3", [tenantId!, membershipId!, roleId!]);
+        await database.client.unsafe("delete from roles where tenant_id=$1 and id=$2", [tenantId!, roleId!]);
+        await database.client.unsafe("delete from memberships where tenant_id=$1 and id=$2", [tenantId!, membershipId!]);
+      }
+      // Immutable synthetic evidence is removed by the owned disposable runner.
+    } finally { await database.client.end(); }
+  });
 
   it("records advertising evidence, validates sources, and replays idempotently", async () => {
     const report = await service.recordAdvertisingReport(contextA, {
@@ -36,6 +53,25 @@ describe.sequential("customer intelligence", () => {
       provider: "manual", accountId: null, externalReportId: `ci-report-${tenantA}`, scopeKey: "shop-a", periodStart: "2026-07-01T00:00:00.000Z", periodEnd: "2026-07-31T23:59:59.000Z", attributionWindowDays: 7, sourceCurrency: "USD", observedAt: "2026-08-01T00:00:00.000Z", lines: [{ lineKey: "term-1", entityLevel: "search_term", externalCampaignId: "campaign-1", externalAdGroupId: null, normalizedTerm: "custom pillow", identityRedacted: true, listingId: null, skuId: null, impressions: 1000, clicks: 80, orders: 8, spendMinor: 1200, salesMinor: 4800 }], idempotencyKey: `ci-report-key-${tenantA}`,
     })).id).toBe(report.id);
     await expect(service.recordCustomerSignal(contextA, { sourceType: "keyword", sourceId: createEntityId(), themeCode: "SEARCH_TERM", sentiment: "negative", occurrenceCount: 1, occurredAt: "2026-07-12T00:00:00.000Z", consentBasis: "advertising_authorization", identityRedacted: true, excerptChecksum: "a".repeat(64), idempotencyKey: `ci-bad-signal-${tenantA}` })).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it("preserves mixed-level evidence without exposing a double-counted total", async () => {
+    const base = { externalCampaignId: "campaign-mixed", externalAdGroupId: null, identityRedacted: true as const,
+      listingId: null, skuId: null, impressions: 100, clicks: 10, orders: 2, spendMinor: 1200, salesMinor: 4800 };
+    const report = await service.recordAdvertisingReport(contextA, {
+      provider: "manual", accountId: null, externalReportId: `ci-mixed-${tenantA}`, scopeKey: "mixed-scope",
+      periodStart: "2026-07-01T00:00:00.000Z", periodEnd: "2026-07-31T23:59:59.000Z", attributionWindowDays: 7,
+      sourceCurrency: "USD", observedAt: "2026-08-01T00:00:00.000Z", idempotencyKey: `ci-mixed-key-${tenantA}`,
+      lines: [{ ...base, lineKey: "campaign", entityLevel: "campaign", normalizedTerm: null },
+        { ...base, lineKey: "term", entityLevel: "search_term", normalizedTerm: "custom pillow" }],
+    });
+    expect(report.totals).toBeNull();
+    expect(report.lines).toHaveLength(2);
+    const stored = (await service.workspace(contextA)).advertisingReports.find((entry) => entry.id === report.id)!;
+    expect(stored.totals).toBeNull();
+    const groups = summarizeAdvertisingReports([stored]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.totals?.spendMinor)).toEqual([1200, 1200]);
   });
 
   it("pins VOC versions, isolates tenants, and keeps recommendations reviewable", async () => {

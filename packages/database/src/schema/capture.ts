@@ -3,6 +3,7 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -13,7 +14,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import type { CaptureDraft } from "@yummyai/contracts";
+import type { CaptureDraft, RecordCustomizationFileScanInput } from "@yummyai/contracts";
 import { organizations, users } from "./identity.js";
 
 export const researchItems = pgTable(
@@ -27,6 +28,7 @@ export const researchItems = pgTable(
     normalizedUrl: text("normalized_url").notNull(),
     latestTitle: text("latest_title"),
     latestStatus: text("latest_status").default("normalizing").notNull(),
+    archivedAt: timestamp("archived_at", { mode: "date", withTimezone: true }),
     productTypeName: text("product_type_name"),
     productTypeKey: text("product_type_key"),
     classificationStatus: text("classification_status").default("unclassified").notNull(),
@@ -167,19 +169,39 @@ export const captureMedia = pgTable(
     snapshotId: uuid("snapshot_id").notNull(),
     sourceUrl: text("source_url").notNull(),
     kind: text("kind").notNull(),
+    sourceIndex: integer("source_index"),
     status: text("status").notNull(),
     failureReason: text("failure_reason"),
+    objectKey: text("object_key"),
+    checksumSha256: text("checksum_sha256"),
+    mediaType: text("media_type"),
+    byteSize: integer("byte_size"),
+    scanResult: jsonb("scan_result").$type<RecordCustomizationFileScanInput>(),
+    archivedAt: timestamp("archived_at", { mode: "date", withTimezone: true }),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    dispatchCount: integer("dispatch_count").default(0).notNull(),
+    lastDispatchedAt: timestamp("last_dispatched_at", { mode: "date", withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { mode: "date", withTimezone: true }),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     check("capture_media_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
     check("capture_media_kind_check", sql`${table.kind} in ('image', 'video')`),
-    check("capture_media_status_check", sql`${table.status} in ('queued', 'excluded', 'failed')`),
+    check("capture_media_status_check", sql`${table.status} in ('queued', 'processing', 'archived', 'excluded', 'failed')`),
+    check("capture_media_source_index_check", sql`${table.sourceIndex} is null or ${table.sourceIndex} >= 0`),
+    check("capture_media_attempt_check", sql`${table.attemptCount} between 0 and 3 and ${table.dispatchCount} >= 0`),
+    check("capture_media_lease_check", sql`(${table.status} = 'processing' and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.status} <> 'processing' and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`),
+    check("capture_media_archive_check", sql`${table.status} <> 'archived' or (${table.objectKey} is not null and ${table.checksumSha256} is not null and ${table.checksumSha256} ~ '^[0-9a-f]{64}$' and ${table.objectKey} like 'tenants/' || ${table.tenantId}::text || '/research/' || ${table.checksumSha256} || '/%' and ${table.byteSize} is not null and ${table.byteSize} > 0 and ${table.mediaType} is not null and (${table.scanResult}->>'result') is not distinct from 'clean' and ${table.archivedAt} is not null)`),
     foreignKey({
       columns: [table.tenantId, table.snapshotId],
       foreignColumns: [captureSnapshots.tenantId, captureSnapshots.id],
       name: "capture_media_snapshot_fk",
     }).onDelete("cascade"),
     index("capture_media_snapshot_idx").on(table.tenantId, table.snapshotId),
+    uniqueIndex("capture_media_source_index_unique").on(table.tenantId, table.snapshotId, table.sourceIndex).where(sql`${table.sourceIndex} is not null`),
+    index("capture_media_source_order_idx").on(table.tenantId, table.snapshotId, table.sourceIndex, table.id),
+    index("capture_media_pending_idx").on(table.tenantId, table.status, table.nextAttemptAt),
   ],
 );

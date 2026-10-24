@@ -1,0 +1,25 @@
+.inventory-main > .record-master-list { min-width:0; }
+.inventory-main > .record-master-list .record-table-scroll { min-width:0; max-width:100%; }
+.stock-classification-panel { color:var(--ink); animation:stock-classification-in 140ms ease-out both; }
+.stock-classification-open { animation:stock-classification-in 140ms ease-out both; transition:transform 140ms ease,background-color 140ms ease; }
+.stock-classification-open:not(:disabled):hover { transform:scale(1.015); }
+.stock-classification-open:not(:disabled):active { transform:scale(.985); }
+.stock-classification-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px 0; }
+.stock-classification-summary p { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.stock-classification-summary span { margin-left:12px; color:var(--muted); }
+.stock-classification-summary button,.stock-classification-history > button { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px 10px; background:var(--surface); color:var(--ink); font:inherit; font-size:12px; cursor:pointer; }
+.stock-classification-history { padding:0 20px 20px; }
+.stock-classification-history h3 { margin:0 0 12px; font-size:13px; }
+.stock-classification-history ol { list-style:none; padding:0; margin:0; }
+.stock-classification-history li { padding:10px 0; border-top:1px solid var(--line); animation:stock-classification-in 140ms ease-out both; }
+.stock-classification-history li > div { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.stock-classification-history li span { color:var(--muted); font-size:11px; }
+.stock-classification-history li p { margin:6px 0 0; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.stock-classification-panel :where(button,select,textarea) { transition:transform 140ms ease,opacity 140ms ease,border-color 140ms ease,background-color 140ms ease; }
+.stock-classification-panel button:not(:disabled):hover { transform:scale(1.015); }
+.stock-classification-panel button:not(:disabled):active { transform:scale(.985); }
+.record-dialog:has(.stock-classification-panel[data-closing]) { animation:stock-classification-out 140ms ease-in both; }
+@keyframes stock-classification-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@keyframes stock-classification-out { to { opacity:0; transform:translateY(4px) scale(.99); } }
+@media(max-width:600px) { .stock-classification-summary { padding:12px 14px 0; align-items:flex-start; } .stock-classification-summary span { display:block; margin:5px 0 0; } .stock-classification-history { padding:0 14px 14px; } .stock-classification-history li > div { flex-wrap:wrap; gap:5px; } }
+@media(prefers-reduced-motion:reduce) { .stock-classification-open,.stock-classification-panel,.stock-classification-history li,.record-dialog:has(.stock-classification-panel[data-closing]) { animation:none; } .stock-classification-open,.stock-classification-panel :where(button,select,textarea) { transition:none; } }

@@ -6,6 +6,8 @@ export {
   type StoredAsset,
 } from "./asset-policy.js";
 export { checksumSha256 } from "./checksum.js";
+export {createFactoryReadPermit,assertFactoryReadPermit,type FactoryReadPermit} from "./factory-read-permit.js";
+export { ClamAvScanner } from "./clamav-scanner.js";
 export {
   buildCustomProductPackage,
   inspectCustomProductPackage,
@@ -26,3 +28,4 @@ export {
   type PutPrivateInput,
   type PutPrivateResult,
 } from "./storage.js";
+export { FactoryErpSourcePurger, createFactoryErpSourcePurgerFromEnvironment } from "./factory-erp-source-purger.js";

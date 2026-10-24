@@ -20,6 +20,14 @@ import type {
   InventoryUnit,
   InventoryWorkspaceView,
 } from "@yummyai/contracts";
+import { addStockQuantity, compareStockQuantity, formatStockQuantity, type StockQuantity } from "@yummyai/contracts/inventory/quantity";
+
+type QuantitySummary = Array<{ unit: InventoryUnit; quantity: StockQuantity }>;
+function summarizeQuantities(balances: InventoryBalanceView[], field: "physicalQuantity" | "reservedQuantity" | "availableQuantity" | "inTransitQuantity"): QuantitySummary {
+  const values = new Map<InventoryUnit, StockQuantity>();
+  for (const balance of balances) values.set(balance.unit, addStockQuantity(values.get(balance.unit) ?? 0, balance[field]));
+  return [...values].map(([unit, quantity]) => ({ unit, quantity }));
+}
 
 export function InventoryWorkspace({ data }: { data: InventoryWorkspaceView }) {
   const stockItems = new Map(data.stockItems.map((item) => [item.id, item]));
@@ -27,17 +35,11 @@ export function InventoryWorkspace({ data }: { data: InventoryWorkspaceView }) {
   const warehouses = new Map(data.warehouses.map((warehouse) => [warehouse.id, warehouse]));
   const lots = new Map(data.lots.map((lot) => [lot.id, lot]));
   const totals = {
-    physical: 0,
-    reserved: 0,
-    available: 0,
-    inTransit: 0,
+    physical: summarizeQuantities(data.balances, "physicalQuantity"),
+    reserved: summarizeQuantities(data.balances, "reservedQuantity"),
+    available: summarizeQuantities(data.balances, "availableQuantity"),
+    inTransit: summarizeQuantities(data.balances, "inTransitQuantity"),
   };
-  for (const balance of data.balances) {
-    totals.physical += balance.physicalQuantity;
-    totals.reserved += balance.reservedQuantity;
-    totals.available += balance.availableQuantity;
-    totals.inTransit += balance.inTransitQuantity;
-  }
   const activeReservations = data.reservations.filter((reservation) => reservation.status === "active");
 
   if (!data.stockItems.length && !data.balances.length) {
@@ -45,7 +47,7 @@ export function InventoryWorkspace({ data }: { data: InventoryWorkspaceView }) {
       <section className="inventory-empty" aria-labelledby="inventory-empty-title">
         <PackageOpen size={32} />
         <strong id="inventory-empty-title">还没有库存事实</strong>
-        <span>先通过库存 API 建立仓库、库位和物料，再记录期初或收货流水。系统不会推测库存数量。</span>
+        <span>使用上方按钮新增仓库、库位和物料，再登记期初入库；采购到货从采购单登记收货。</span>
       </section>
     );
   }
@@ -105,7 +107,7 @@ export function InventoryWorkspace({ data }: { data: InventoryWorkspaceView }) {
                     <strong>{stockLabel(stockItems.get(reservation.stockItemId))}</strong>
                     <span>{locationLabel(locations.get(reservation.locationId))} · {sourceLabel(reservation.sourceType)} {reservation.sourceId}</span>
                   </div>
-                  <b>{reservation.quantity}<small>{unitLabel(reservation.unit)}</small></b>
+                  <b>{formatStockQuantity(reservation.remainingQuantity ?? reservation.quantity)}<small>{unitLabel(reservation.unit)} 待耗用</small></b>
                 </li>
               ))}
             </ol>
@@ -175,14 +177,14 @@ function Signal({
   icon: React.ReactNode;
   code: string;
   label: string;
-  value: number;
+  value: QuantitySummary;
   tone: "navy" | "amber" | "green" | "blue";
 }) {
   return (
     <div className={`inventory-signal-item signal-${tone}`}>
       <span>{icon}</span>
       <p><small>{code}</small><strong>{label}</strong></p>
-      <b>{value}</b>
+      <b className="inventory-signal-quantities" aria-label="按基本单位汇总">{value.length ? value.map(row => <span key={row.unit} data-inventory-unit={row.unit}>{formatStockQuantity(row.quantity)}<small> {unitLabel(row.unit)}</small></span>) : "0"}</b>
     </div>
   );
 }
@@ -223,8 +225,8 @@ function BalanceRow({
   );
 }
 
-function QuantityCell({ value, tone }: { value: number; tone?: "amber" | "green" | "blue" | "danger" }) {
-  return <td><b className={tone ? `inventory-quantity quantity-${tone}` : "inventory-quantity"}>{value}</b></td>;
+function QuantityCell({ value, tone }: { value: StockQuantity; tone?: "amber" | "green" | "blue" | "danger" }) {
+  return <td><b className={tone ? `inventory-quantity quantity-${tone}` : "inventory-quantity"}>{formatStockQuantity(value)}</b></td>;
 }
 
 function TransferRow({
@@ -263,14 +265,14 @@ function MovementRow({
   stockItem?: InventoryStockItemView;
   location?: InventoryLocationView;
 }) {
-  const positive = movement.quantityDelta > 0;
+  const positive = compareStockQuantity(movement.quantityDelta, 0) > 0;
   return (
     <tr>
       <td><time dateTime={movement.occurredAt}>{formatDateTime(movement.occurredAt)}</time></td>
       <td><strong>{stockLabel(stockItem)}</strong><span>{locationLabel(location)}</span></td>
       <td><span className={positive ? "movement-delta is-positive" : "movement-delta is-negative"}>
         {positive ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}
-        {positive ? "+" : ""}{movement.quantityDelta}
+        {positive ? "+" : ""}{formatStockQuantity(movement.quantityDelta)}
       </span></td>
       <td><span className="inventory-bucket">{bucketLabel(movement.bucket)}</span></td>
       <td><code>{movement.reasonCode}</code></td>

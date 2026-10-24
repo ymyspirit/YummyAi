@@ -1,0 +1,205 @@
+.erp-login {
+  min-height: 100dvh;
+  padding: 32px;
+  background: #fff;
+  color: #182230;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-geist-sans), "Microsoft YaHei", sans-serif;
+  animation: identity-enter 0.2s ease-out;
+}
+.erp-login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 20px;
+  font-weight: 650;
+  align-self: flex-start;
+}
+.erp-login-brand svg,
+.erp-login section > svg {
+  color: #155eef;
+}
+.erp-login section {
+  width: min(100%, 420px);
+  margin: auto;
+  min-height: 360px;
+  padding: 38px 0;
+  animation: identity-enter 0.2s ease-out;
+}
+.erp-login h1 {
+  font-size: 28px;
+  letter-spacing: -0.7px;
+  margin: 22px 0 12px;
+}
+.erp-login p {
+  font-size: 14px;
+  color: #697586;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.erp-login .erp-login-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+  background: #155eef;
+  color: #fff;
+  border: 1px solid #155eef;
+  border-radius: 6px;
+  padding: 13px 16px;
+  margin-top: 30px;
+  text-decoration: none;
+  font-size: 14px;
+  transition:
+    background 0.16s,
+    transform 0.16s,
+    opacity 0.16s;
+}
+.erp-login-action:hover {
+  background: #004eeb;
+  transform: translateY(-1px);
+}
+.erp-login-action:active {
+  transform: scale(0.985);
+}
+.erp-login-action[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.erp-login .erp-login-notice {
+  padding: 12px;
+  border: 1px solid #fecdca;
+  background: #fff5f4;
+  color: #b42318;
+  border-radius: 5px;
+  animation: identity-enter 0.18s ease-out;
+}
+.erp-login .erp-login-help {
+  margin-top: 20px;
+  font-size: 12px;
+}
+.erp-session-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted-ink);
+}
+.erp-session-control > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.erp-session-control button,
+.erp-identity-blocked button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--line, #dce1e8);
+  border-radius: 5px;
+  background: var(--surface, #fff);
+  color: var(--ink, #182230);
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background 0.16s,
+    transform 0.16s;
+}
+.erp-session-control button:hover,
+.erp-identity-blocked button:hover {
+  background: var(--surface-muted, #f2f5fa);
+  transform: translateY(-1px);
+}
+.erp-session-control button:active,
+.erp-identity-blocked button:active {
+  transform: scale(0.985);
+}
+.erp-identity-blocked {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  background: var(--surface, #fff);
+  color: var(--ink, #182230);
+  font-size: 14px;
+  animation: identity-enter 0.16s ease-out;
+}
+.erp-login :focus-visible,
+.erp-session-control :focus-visible,
+.erp-identity-blocked :focus-visible {
+  outline: 2px solid #84adff;
+  outline-offset: 3px;
+}
+@keyframes identity-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 760px) {
+  .erp-login {
+    padding: 22px;
+  }
+  .erp-login section {
+    padding: 30px 0;
+  }
+  .erp-login h1 {
+    font-size: 25px;
+  }
+  .erp-session-control > span {
+    max-width: 90px;
+  }
+  .erp-session-control button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .erp-session-control button > span {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .erp-login,
+  .erp-login *,
+  .erp-session-control,
+  .erp-session-control *,
+  .erp-identity-blocked,
+  .erp-identity-blocked * {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
+@media (max-width: 760px) {
+  .erp-location-bar:has(.erp-session-control[data-personal="true"]) {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .erp-location-bar:has(.erp-session-control[data-personal="true"]) .erp-location-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .erp-session-control[data-personal="true"] > span {
+    max-width: 200px;
+  }
+}

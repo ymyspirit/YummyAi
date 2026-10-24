@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto";
+import { addStockQuantity, compareStockQuantity, negateStockQuantity, stockQuantityWithinCommandLimit, stockQuantityMatchesUnit,
+  subtractStockQuantity, type StockQuantity } from "@yummyai/contracts/inventory/quantity";
+import {
+  type AgentBalanceItem, type AgentBalancePageInput,
+  type AgentReadOwnerPage, type AgentReadOwnerPosition,
+} from "@yummyai/contracts/ai/agent-read";
 
 import {
   ConflictException,
@@ -53,10 +59,19 @@ import {
   type TenantTransaction,
   withTenant,
 } from "@yummyai/database";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import {
+  UpdateWarehouseInputSchema, UpdateInventoryLocationInputSchema, UpdateStockItemInputSchema,
+  InventoryWarehouseViewSchema, InventoryLocationViewSchema, InventoryStockItemViewSchema,
+  type UpdateWarehouseInput, type UpdateInventoryLocationInput, type UpdateStockItemInput,
+} from "@yummyai/contracts/inventory";
 
 import { AuditService } from "../audit/audit.service.js";
+import { readInventoryBalancePage, inventoryBalanceView } from "@yummyai/workflow-core";
+import { rethrowAgentReadError } from "../ai/agent-read-errors.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
+import { classifyStockItem, initialStockClassification, stockClassificationHistory, stockClassificationViews } from "./stock-classification.js";
+import type { ClassifyInventoryStockItemInput } from "@yummyai/contracts/inventory";
 
 type BalanceRow = typeof inventoryBalances.$inferSelect;
 type MovementRow = typeof inventoryMovements.$inferSelect;
@@ -66,9 +81,10 @@ export interface ReceiveProcurementStockInput {
   stockItemId: string;
   locationId: string;
   lotCode: string;
-  quantity: number;
+  quantity: StockQuantity;
   unit: InventoryUnit;
   unitCostMinor: number;
+  unitCostQuantity?: StockQuantity;
   currency: string;
   receivedAt: string;
   expiresAt: string | null;
@@ -112,6 +128,33 @@ export class InventoryService {
       tx.select().from(inventoryWarehouses).orderBy(asc(inventoryWarehouses.name)));
   }
 
+  async updateWarehouse(context: TenantContext, id: string, rawInput: UpdateWarehouseInput) {
+    const input = UpdateWarehouseInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryWarehouses)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryWarehouses.id, id)).returning());
+    if (!row) throw new NotFoundException("Warehouse not found");
+    await this.audit.record(context, { action: "inventory.warehouse.update", resourceType: "inventory_warehouse", resourceId: id, result: "success" });
+    return InventoryWarehouseViewSchema.parse(row);
+  }
+
+  async updateLocation(context: TenantContext, id: string, rawInput: UpdateInventoryLocationInput) {
+    const input = UpdateInventoryLocationInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryLocations)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryLocations.id, id)).returning());
+    if (!row) throw new NotFoundException("Location not found");
+    await this.audit.record(context, { action: "inventory.location.update", resourceType: "inventory_location", resourceId: id, result: "success" });
+    return InventoryLocationViewSchema.parse(row);
+  }
+
+  async updateStockItem(context: TenantContext, id: string, rawInput: UpdateStockItemInput) {
+    const input = UpdateStockItemInputSchema.parse(rawInput);
+    const [row] = await withTenant(this.database.db, context, (tx) => tx.update(inventoryStockItems)
+      .set({ ...input, updatedAt: new Date() }).where(eq(inventoryStockItems.id, id)).returning());
+    if (!row) throw new NotFoundException("Stock item not found");
+    await this.audit.record(context, { action: "inventory.stock_item.update", resourceType: "inventory_stock_item", resourceId: id, result: "success" });
+    return InventoryStockItemViewSchema.parse(row);
+  }
+
   async createLocation(context: TenantContext, rawInput: CreateInventoryLocationInput) {
     const input = CreateInventoryLocationInputSchema.parse(rawInput);
     const location = await withTenant(this.database.db, context, async (tx) => {
@@ -145,6 +188,7 @@ export class InventoryService {
 
   async createStockItem(context: TenantContext, rawInput: CreateStockItemInput) {
     const input = CreateStockItemInputSchema.parse(rawInput);
+    const { materialKind, ...identity } = input;
     const stockItem = await withTenant(this.database.db, context, async (tx) => {
       if (input.skuId) {
         const [sku] = await tx.select({ id: skus.id }).from(skus).where(eq(skus.id, input.skuId)).limit(1);
@@ -157,19 +201,22 @@ export class InventoryService {
       const [created] = await tx.insert(inventoryStockItems).values({
         id: createEntityId(),
         tenantId: context.tenantId,
-        ...input,
+        ...identity,
         createdBy: context.userId,
       }).returning();
-      return created!;
-    });
-    await this.audit.record(context, {
-      action: "inventory.stock_item.create",
-      resourceType: "inventory_stock_item",
-      resourceId: stockItem.id,
-      result: "success",
-      metadata: { code: stockItem.code, skuId: stockItem.skuId },
+      const classification = materialKind ? (await initialStockClassification(tx, context, this.audit, created!, materialKind)).classification : null;
+      await this.audit.recordInTransaction(tx, context, { action: "inventory.stock_item.create", resourceType: "inventory_stock_item",
+        resourceId: created!.id, result: "success", metadata: { code: created!.code, skuId: created!.skuId, materialKind: materialKind ?? null } });
+      return { ...created!, classification };
     });
     return stockItem;
+  }
+
+  classifyStockItem(context: TenantContext, id: string, input: ClassifyInventoryStockItemInput) {
+    return classifyStockItem(this.database, this.audit, context, id, input);
+  }
+  stockClassificationHistory(context: TenantContext, id: string, beforeVersion?: number) {
+    return stockClassificationHistory(this.database, context, id, beforeVersion);
   }
 
   listStockItems(context: TenantContext) {
@@ -180,7 +227,9 @@ export class InventoryService {
   async createLot(context: TenantContext, rawInput: CreateInventoryLotInput) {
     const input = CreateInventoryLotInputSchema.parse(rawInput);
     const lot = await withTenant(this.database.db, context, async (tx) => {
-      await requireStockItem(tx, input.stockItemId);
+      const stock = await requireStockItem(tx, input.stockItemId);
+      if (input.unitCostQuantity != null && !stockQuantityMatchesUnit(input.unitCostQuantity, stock.baseUnit))
+        throw new ConflictException("Lot cost quantity does not match its stock unit");
       await lock(tx, `inventory-lot-code:${context.tenantId}:${input.stockItemId}:${input.code}`);
       const [existing] = await tx.select({ id: inventoryLots.id }).from(inventoryLots)
         .where(and(eq(inventoryLots.stockItemId, input.stockItemId), eq(inventoryLots.code, input.code))).limit(1);
@@ -232,6 +281,7 @@ export class InventoryService {
       sourceId: input.receiptId,
       unitCostMinor: input.unitCostMinor,
       unitCostCurrency: input.currency,
+      unitCostQuantity: input.unitCostQuantity ?? 1,
       receivedAt: new Date(input.receivedAt),
       expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
       createdBy: context.userId,
@@ -255,6 +305,7 @@ export class InventoryService {
 
   async recordMovement(context: TenantContext, rawInput: RecordInventoryMovementInput) {
     const input = RecordInventoryMovementInputSchema.parse(rawInput);
+    if (input.type === "consumption") throw new ConflictException("请从原生产单登记实际耗用");
     const result = await withTenant(this.database.db, context, async (tx) => {
       await lock(tx, `inventory-idempotency:${context.tenantId}:${input.idempotencyKey}`);
       const [replayed] = await tx.select().from(inventoryMovements)
@@ -286,7 +337,20 @@ export class InventoryService {
 
   async createReservation(context: TenantContext, rawInput: CreateInventoryReservationInput) {
     const input = CreateInventoryReservationInputSchema.parse(rawInput);
-    const reservationId = await withTenant(this.database.db, context, async (tx) => {
+    const reservationId = await withTenant(this.database.db, context, tx => this.createReservationInTransaction(tx, context, input));
+    await this.audit.record(context, {
+      action: "inventory.reservation.create",
+      resourceType: "inventory_reservation",
+      resourceId: reservationId,
+      result: "success",
+      metadata: { sourceType: input.sourceType, stockItemId: input.stockItemId },
+    });
+    return this.getReservation(context, reservationId);
+  }
+
+  /** Same inventory owner, used by an authorized business owner in its existing tenant transaction. */
+  async createReservationInTransaction(tx: TenantTransaction, context: TenantContext, rawInput: CreateInventoryReservationInput) {
+    const input = CreateInventoryReservationInputSchema.parse(rawInput);
       await lock(tx, `inventory-reservation-idempotency:${context.tenantId}:${input.idempotencyKey}`);
       const [replayed] = await tx.select().from(inventoryReservations)
         .where(eq(inventoryReservations.idempotencyKey, input.idempotencyKey)).limit(1);
@@ -298,7 +362,7 @@ export class InventoryService {
       await lock(tx, `inventory-dimension:${context.tenantId}:${key}`);
       await requireDimension(tx, input.stockItemId, input.locationId, input.lotId, input.unit);
       const balance = await requireBalance(tx, key);
-      if (balance.physicalQuantity - balance.reservedQuantity < input.quantity) {
+      if (compareStockQuantity(subtractStockQuantity(balance.physicalQuantity, balance.reservedQuantity), input.quantity) < 0) {
         throw new ConflictException("Insufficient available stock for reservation");
       }
       const id = createEntityId();
@@ -322,25 +386,29 @@ export class InventoryService {
         actorUserId: context.userId,
       });
       await tx.update(inventoryBalances).set({
-        reservedQuantity: balance.reservedQuantity + input.quantity,
+        reservedQuantity: addStockQuantity(balance.reservedQuantity, input.quantity),
         projectionVersion: balance.projectionVersion + 1,
         updatedAt: new Date(),
       }).where(eq(inventoryBalances.id, balance.id));
       return id;
-    });
-    await this.audit.record(context, {
-      action: "inventory.reservation.create",
-      resourceType: "inventory_reservation",
-      resourceId: reservationId,
-      result: "success",
-      metadata: { sourceType: input.sourceType, stockItemId: input.stockItemId },
-    });
-    return this.getReservation(context, reservationId);
   }
 
   async releaseReservation(context: TenantContext, reservationId: string, rawInput: ReleaseInventoryReservationInput) {
     const input = ReleaseInventoryReservationInputSchema.parse(rawInput);
-    await withTenant(this.database.db, context, async (tx) => {
+    await withTenant(this.database.db, context, tx => this.releaseReservationInTransaction(tx, context, reservationId, input));
+    await this.audit.record(context, {
+      action: "inventory.reservation.release",
+      resourceType: "inventory_reservation",
+      resourceId: reservationId,
+      result: "success",
+      metadata: { outcome: input.outcome },
+    });
+    return this.getReservation(context, reservationId);
+  }
+
+  /** Same inventory owner, used by an authorized business owner in its existing tenant transaction. */
+  async releaseReservationInTransaction(tx: TenantTransaction, context: TenantContext, reservationId: string, rawInput: ReleaseInventoryReservationInput) {
+    const input = ReleaseInventoryReservationInputSchema.parse(rawInput);
       await lock(tx, `inventory-reservation:${context.tenantId}:${reservationId}`);
       const [reservation] = await tx.select().from(inventoryReservations)
         .where(eq(inventoryReservations.id, reservationId)).limit(1);
@@ -356,7 +424,8 @@ export class InventoryService {
       const key = dimensionKey(reservation.stockItemId, reservation.locationId, reservation.lotId);
       await lock(tx, `inventory-dimension:${context.tenantId}:${key}`);
       const balance = await requireBalance(tx, key);
-      if (balance.reservedQuantity < reservation.quantity) throw new ConflictException("Reservation projection is inconsistent");
+      const remaining = (await reservationRemainingQuantities(tx, [reservation])).get(reservation.id)!;
+      if (compareStockQuantity(balance.reservedQuantity, remaining) < 0) throw new ConflictException("Reservation projection is inconsistent");
       await tx.insert(inventoryReservationEvents).values({
         id: createEntityId(),
         tenantId: context.tenantId,
@@ -375,19 +444,11 @@ export class InventoryService {
         updatedAt: new Date(),
       }).where(eq(inventoryReservations.id, reservationId));
       await tx.update(inventoryBalances).set({
-        reservedQuantity: balance.reservedQuantity - reservation.quantity,
+        reservedQuantity: subtractStockQuantity(balance.reservedQuantity, remaining),
         projectionVersion: balance.projectionVersion + 1,
         updatedAt: new Date(),
       }).where(eq(inventoryBalances.id, balance.id));
-    });
-    await this.audit.record(context, {
-      action: "inventory.reservation.release",
-      resourceType: "inventory_reservation",
-      resourceId: reservationId,
-      result: "success",
-      metadata: { outcome: input.outcome },
-    });
-    return this.getReservation(context, reservationId);
+    return remaining;
   }
 
   listReservations(context: TenantContext) {
@@ -403,8 +464,52 @@ export class InventoryService {
       const events = await tx.select().from(inventoryReservationEvents)
         .where(eq(inventoryReservationEvents.reservationId, reservationId))
         .orderBy(asc(inventoryReservationEvents.sequence));
-      return { reservation, events };
+      return { reservation, events, remainingQuantity: (await reservationRemainingQuantities(tx, [reservation])).get(reservation.id)! };
     });
+  }
+
+  async reservationStateInTransaction(tx: TenantTransaction, context: TenantContext, reservationId: string, lockRow = true) {
+    if (lockRow) await lock(tx, `inventory-reservation:${context.tenantId}:${reservationId}`);
+    const [reservation] = await tx.select().from(inventoryReservations).where(eq(inventoryReservations.id, reservationId));
+    if (!reservation) throw new NotFoundException("Inventory reservation not found");
+    return { reservation, remainingQuantity: (await reservationRemainingQuantities(tx, [reservation])).get(reservation.id)! };
+  }
+
+  /** No external action: movement, partial reservation and the caller's receipt commit together. */
+  async productionMaterialStockInTransaction(tx: TenantTransaction, context: TenantContext, input: {
+    kind: "consume" | "return"; stockItemId: string; locationId: string; lotId: string | null; unit: InventoryUnit;
+    quantity: StockQuantity; reservationId: string | null; sourceLineId: string; occurredAt: string; idempotencyKey: string;
+  }) {
+    await lock(tx, `inventory-idempotency:${context.tenantId}:${input.idempotencyKey}`);
+    const [existing] = await tx.select().from(inventoryMovements).where(eq(inventoryMovements.idempotencyKey, input.idempotencyKey));
+    if (existing) throw new ConflictException("生产耗用回执与原库存流水需要核对");
+    let reservedDelta: StockQuantity = 0;
+    let reservation: typeof inventoryReservations.$inferSelect | undefined;
+    let remaining: StockQuantity = 0;
+    if (input.reservationId) {
+      await lock(tx, `inventory-reservation:${context.tenantId}:${input.reservationId}`);
+      [reservation] = await tx.select().from(inventoryReservations).where(eq(inventoryReservations.id, input.reservationId));
+      if (input.kind !== "consume" || !reservation || reservation.status !== "active"
+        || reservation.stockItemId !== input.stockItemId || reservation.locationId !== input.locationId || reservation.lotId !== input.lotId
+        || reservation.unit !== input.unit || reservation.sourceType !== "order_line" || reservation.sourceId !== input.sourceLineId
+        || reservation.expiresAt && reservation.expiresAt <= new Date()) throw new ConflictException("请核对原生产预留的物料 库位 批次及有效状态");
+      const outstanding = (await reservationRemainingQuantities(tx, [reservation])).get(reservation.id)!;
+      remaining = subtractStockQuantity(outstanding, input.quantity);
+      if (compareStockQuantity(remaining, 0) < 0) throw new ConflictException("实际耗用超过本次预留余量 请另行核对可用库存");
+      reservedDelta = negateStockQuantity(input.quantity);
+    }
+    const result = await applyMovement(tx, context, { stockItemId: input.stockItemId, locationId: input.locationId, lotId: input.lotId,
+      unit: input.unit, quantityDelta: input.kind === "consume" ? negateStockQuantity(input.quantity) : input.quantity,
+      bucket: "physical", type: input.kind === "consume" ? "consumption" : "return", sourceType: "order_line", sourceId: input.sourceLineId,
+      occurredAt: input.occurredAt, idempotencyKey: input.idempotencyKey, reasonCode: input.kind === "consume" ? "PRODUCTION_CONSUMPTION" : "PRODUCTION_RETURN" }, reservedDelta);
+    if (reservation) {
+      const status = compareStockQuantity(remaining, 0) === 0 ? "fulfilled" : "active";
+      await tx.insert(inventoryReservationEvents).values({ id: createEntityId(), tenantId: context.tenantId, reservationId: reservation.id,
+        sequence: reservation.version + 1, action: "consumed", fromStatus: "active", toStatus: status, quantityDelta: reservedDelta,
+        movementId: result.movement.id, reasonCode: "PRODUCTION_CONSUMPTION", idempotencyKey: input.idempotencyKey, actorUserId: context.userId });
+      await tx.update(inventoryReservations).set({ status, version: reservation.version + 1, updatedAt: new Date() }).where(eq(inventoryReservations.id, reservation.id));
+    }
+    return result;
   }
 
   async createTransfer(context: TenantContext, rawInput: CreateInventoryTransferInput) {
@@ -522,6 +627,30 @@ export class InventoryService {
     return rows.map(toBalanceView);
   }
 
+  async agentBalancePage(context: TenantContext, input: AgentBalancePageInput, position: AgentReadOwnerPosition, signal?: AbortSignal): Promise<AgentReadOwnerPage<AgentBalanceItem>> {
+    try { return await readInventoryBalancePage(this.database, context, input, position, signal); }
+    catch (error) { rethrowAgentReadError(error); }
+  }
+
+  /** Read options for a stock item already pinned and authorized by the production owner. */
+  async materialStockOptionsInTransaction(tx: TenantTransaction, stockItemId: string, after?: string, selected?: string) {
+    const select = () => tx.select({ dimensionKey: inventoryBalances.dimensionKey, stockItemId: inventoryBalances.stockItemId, unit: inventoryBalances.unit,
+      locationId: inventoryLocations.id, locationName: inventoryLocations.name, warehouseName: inventoryWarehouses.name,
+      lotId: inventoryBalances.lotId, lotCode: inventoryLots.code, expiresAt: inventoryLots.expiresAt,
+      physicalQuantity: inventoryBalances.physicalQuantity, reservedQuantity: inventoryBalances.reservedQuantity,
+      availableQuantity: sql<string>`(${inventoryBalances.physicalQuantity}-${inventoryBalances.reservedQuantity})::text` })
+      .from(inventoryBalances).innerJoin(inventoryLocations, eq(inventoryLocations.id, inventoryBalances.locationId))
+      .innerJoin(inventoryWarehouses, eq(inventoryWarehouses.id, inventoryLocations.warehouseId))
+      .innerJoin(inventoryStockItems, eq(inventoryStockItems.id, inventoryBalances.stockItemId))
+      .leftJoin(inventoryLots, eq(inventoryLots.id, inventoryBalances.lotId));
+    const filter = and(eq(inventoryBalances.stockItemId, stockItemId), eq(inventoryStockItems.status, "active"), eq(inventoryLocations.status, "active"),
+      eq(inventoryWarehouses.status, "active"), gt(inventoryBalances.physicalQuantity, 0));
+    const rows = await select().where(and(filter, after ? gt(inventoryBalances.dimensionKey, after) : undefined)).orderBy(asc(inventoryBalances.dimensionKey)).limit(26);
+    const selectedRows = selected ? await select().where(and(filter, eq(inventoryBalances.dimensionKey, selected))).limit(1) : [];
+    const view = (row: typeof rows[number]) => ({ ...row, expiresAt: row.expiresAt?.toISOString() ?? null });
+    return { items: rows.slice(0, 25).map(view), selected: selectedRows.map(view), nextCursor: rows.length > 25 ? rows[24]!.dimensionKey : null };
+  }
+
   async workspace(context: TenantContext) {
     return withTenant(this.database.db, context, async (tx) => {
       const [
@@ -543,6 +672,8 @@ export class InventoryService {
         tx.select().from(inventoryTransfers).orderBy(desc(inventoryTransfers.updatedAt)).limit(100),
         tx.select().from(inventoryMovements).orderBy(desc(inventoryMovements.occurredAt)).limit(100),
       ]);
+      const remainingReservations = await reservationRemainingQuantities(tx, reservations);
+      const classificationViews = await stockClassificationViews(tx, stockItems.map(item => item.id));
       return {
         warehouses: warehouses.map((warehouse) => ({
           id: warehouse.id,
@@ -566,6 +697,7 @@ export class InventoryService {
           code: stockItem.code,
           name: stockItem.name,
           baseUnit: stockItem.baseUnit,
+          classification: classificationViews.get(stockItem.id) ?? null,
           status: stockItem.status,
         })),
         lots: lots.map((lot) => ({
@@ -575,6 +707,7 @@ export class InventoryService {
           sourceType: lot.sourceType,
           sourceId: lot.sourceId,
           unitCostMinor: lot.unitCostMinor,
+          unitCostQuantity: lot.unitCostQuantity,
           unitCostCurrency: lot.unitCostCurrency,
           receivedAt: lot.receivedAt?.toISOString() ?? null,
           expiresAt: lot.expiresAt?.toISOString() ?? null,
@@ -587,6 +720,7 @@ export class InventoryService {
           locationId: reservation.locationId,
           lotId: reservation.lotId,
           quantity: reservation.quantity,
+          remainingQuantity: remainingReservations.get(reservation.id)!,
           unit: reservation.unit,
           sourceType: reservation.sourceType,
           sourceId: reservation.sourceId,
@@ -639,7 +773,8 @@ export class InventoryService {
         tx.select().from(inventoryMovements).orderBy(asc(inventoryMovements.recordedAt), asc(inventoryMovements.id)),
         tx.select().from(inventoryReservations).where(eq(inventoryReservations.status, "active")),
       ]);
-      const projections = buildProjection(movements, reservations);
+      const remaining = await reservationRemainingQuantities(tx, reservations);
+      const projections = buildProjection(movements, reservations.map(row => ({ ...row, quantity: remaining.get(row.id)! })));
       await tx.delete(inventoryBalances);
       if (projections.length) {
         await tx.insert(inventoryBalances).values(projections.map((projection) => ({
@@ -702,7 +837,7 @@ export class InventoryService {
             locationId: transfer.sourceLocationId,
             bucket: "physical",
             type: "transfer_outbound",
-            quantityDelta: -transfer.quantity,
+            quantityDelta: negateStockQuantity(transfer.quantity),
             reasonCode: "TRANSFER_DISPATCH",
             idempotencyKey: childKey(input.idempotencyKey, "source-debit"),
           }
@@ -711,7 +846,7 @@ export class InventoryService {
             locationId: transfer.destinationLocationId,
             bucket: "in_transit",
             type: "transfer_inbound",
-            quantityDelta: -transfer.quantity,
+            quantityDelta: negateStockQuantity(transfer.quantity),
             reasonCode: "TRANSFER_RECEIPT",
             idempotencyKey: childKey(input.idempotencyKey, "transit-debit"),
           };
@@ -772,18 +907,23 @@ async function applyMovement(
   tx: TenantTransaction,
   context: TenantContext,
   input: RecordInventoryMovementInput,
+  reservedDelta: StockQuantity = 0,
 ) {
+  input = RecordInventoryMovementInputSchema.parse(input);
   const key = dimensionKey(input.stockItemId, input.locationId, input.lotId);
   await lock(tx, `inventory-dimension:${context.tenantId}:${key}`);
   await requireDimension(tx, input.stockItemId, input.locationId, input.lotId, input.unit);
   const current = await findBalance(tx, key);
   const next = nextBalance(current, input.bucket, input.quantityDelta);
-  if (next.physicalQuantity < next.reservedQuantity) throw new ConflictException("Movement would make available stock negative");
+  next.reservedQuantity = addStockQuantity(next.reservedQuantity, reservedDelta);
+  assertSupportedBalance(next);
+  if (compareStockQuantity(next.physicalQuantity, next.reservedQuantity) < 0) throw new ConflictException("Movement would make available stock negative");
   if (
-    next.physicalQuantity < 0
-    || next.inTransitQuantity < 0
-    || next.providerQuantity < 0
-    || next.virtualQuantity < 0
+    compareStockQuantity(next.physicalQuantity, 0) < 0
+    || compareStockQuantity(next.reservedQuantity, 0) < 0
+    || compareStockQuantity(next.inTransitQuantity, 0) < 0
+    || compareStockQuantity(next.providerQuantity, 0) < 0
+    || compareStockQuantity(next.virtualQuantity, 0) < 0
   ) {
     throw new ConflictException("Movement would make an inventory bucket negative");
   }
@@ -818,7 +958,13 @@ async function applyMovement(
   return { movement: movement!, balance };
 }
 
-function nextBalance(current: BalanceRow | undefined, bucket: InventoryBucket, quantityDelta: number) {
+function assertSupportedBalance(value: Pick<BalanceRow, "physicalQuantity" | "reservedQuantity" | "inTransitQuantity" | "providerQuantity" | "virtualQuantity">) {
+  for (const field of ["physicalQuantity", "reservedQuantity", "inTransitQuantity", "providerQuantity", "virtualQuantity"] as const) {
+    if (!stockQuantityWithinCommandLimit(value[field])) throw new ConflictException("Inventory dimension quantity exceeds the supported range");
+  }
+}
+
+function nextBalance(current: BalanceRow | undefined, bucket: InventoryBucket, quantityDelta: StockQuantity) {
   const next = {
     physicalQuantity: current?.physicalQuantity ?? 0,
     reservedQuantity: current?.reservedQuantity ?? 0,
@@ -827,7 +973,7 @@ function nextBalance(current: BalanceRow | undefined, bucket: InventoryBucket, q
     virtualQuantity: current?.virtualQuantity ?? 0,
   };
   const column = bucketColumn(bucket);
-  next[column] += quantityDelta;
+  next[column] = addStockQuantity(next[column], quantityDelta);
   return next;
 }
 
@@ -841,33 +987,35 @@ function buildProjection(
     locationId: string;
     lotId: string | null;
     unit: string;
-    physicalQuantity: number;
-    reservedQuantity: number;
-    inTransitQuantity: number;
-    providerQuantity: number;
-    virtualQuantity: number;
+    physicalQuantity: StockQuantity;
+    reservedQuantity: StockQuantity;
+    inTransitQuantity: StockQuantity;
+    providerQuantity: StockQuantity;
+    virtualQuantity: StockQuantity;
   }>();
   for (const movement of movements) {
     const key = dimensionKey(movement.stockItemId, movement.locationId, movement.lotId);
     const value = values.get(key) ?? emptyProjection(key, movement.stockItemId, movement.locationId, movement.lotId, movement.unit);
-    value[bucketColumn(movement.bucket as InventoryBucket)] += movement.quantityDelta;
+    const column = bucketColumn(movement.bucket as InventoryBucket);
+    value[column] = addStockQuantity(value[column], movement.quantityDelta);
     values.set(key, value);
   }
   for (const reservation of reservations) {
     const key = dimensionKey(reservation.stockItemId, reservation.locationId, reservation.lotId);
     const value = values.get(key) ?? emptyProjection(key, reservation.stockItemId, reservation.locationId, reservation.lotId, reservation.unit);
-    value.reservedQuantity += reservation.quantity;
+    value.reservedQuantity = addStockQuantity(value.reservedQuantity, reservation.quantity);
     values.set(key, value);
   }
   const result = [...values.values()].sort((a, b) => a.dimensionKey.localeCompare(b.dimensionKey));
   for (const value of result) {
+    assertSupportedBalance(value);
     if (
-      value.physicalQuantity < value.reservedQuantity
-      || value.physicalQuantity < 0
-      || value.reservedQuantity < 0
-      || value.inTransitQuantity < 0
-      || value.providerQuantity < 0
-      || value.virtualQuantity < 0
+      compareStockQuantity(value.physicalQuantity, value.reservedQuantity) < 0
+      || compareStockQuantity(value.physicalQuantity, 0) < 0
+      || compareStockQuantity(value.reservedQuantity, 0) < 0
+      || compareStockQuantity(value.inTransitQuantity, 0) < 0
+      || compareStockQuantity(value.providerQuantity, 0) < 0
+      || compareStockQuantity(value.virtualQuantity, 0) < 0
     ) {
       throw new ConflictException("Inventory evidence cannot produce a valid projection");
     }
@@ -890,22 +1038,7 @@ function emptyProjection(dimension: string, stockItemId: string, locationId: str
   };
 }
 
-function toBalanceView(row: BalanceRow) {
-  return {
-    stockItemId: row.stockItemId,
-    locationId: row.locationId,
-    lotId: row.lotId,
-    unit: row.unit,
-    physicalQuantity: row.physicalQuantity,
-    reservedQuantity: row.reservedQuantity,
-    availableQuantity: row.physicalQuantity - row.reservedQuantity,
-    inTransitQuantity: row.inTransitQuantity,
-    providerQuantity: row.providerQuantity,
-    virtualQuantity: row.virtualQuantity,
-    projectionVersion: row.projectionVersion,
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
+function toBalanceView(row: BalanceRow) { return inventoryBalanceView(row); }
 
 async function requireDimension(
   tx: TenantTransaction,
@@ -957,6 +1090,20 @@ async function requireBalance(tx: TenantTransaction, key: string) {
   return balance;
 }
 
+async function reservationRemainingQuantities(tx: TenantTransaction, rows: Array<typeof inventoryReservations.$inferSelect>) {
+  const totals = rows.length ? await tx.select({ id: inventoryReservationEvents.reservationId,
+    delta: sql<string>`sum(${inventoryReservationEvents.quantityDelta})::text` }).from(inventoryReservationEvents)
+    .where(eq(inventoryReservationEvents.action, "consumed")).groupBy(inventoryReservationEvents.reservationId) : [];
+  const deltas = new Map(totals.map(row => [row.id, row.delta]));
+  const result = new Map<string, StockQuantity>();
+  for (const row of rows) {
+    const remaining = row.status === "active" ? addStockQuantity(row.quantity, deltas.get(row.id) ?? 0) : 0;
+    if (compareStockQuantity(remaining, 0) < 0) throw new ConflictException("原预留数量与耗用流水不一致 请核对历史");
+    result.set(row.id, remaining);
+  }
+  return result;
+}
+
 async function hasTransferEvent(tx: TenantTransaction, transferId: string, idempotencyKey: string) {
   const [event] = await tx.select({ id: inventoryTransferEvents.id }).from(inventoryTransferEvents)
     .where(and(
@@ -973,7 +1120,7 @@ function assertMovementReplay(row: MovementRow, input: RecordInventoryMovementIn
     || row.lotId !== input.lotId
     || row.bucket !== input.bucket
     || row.type !== input.type
-    || row.quantityDelta !== input.quantityDelta
+    || compareStockQuantity(row.quantityDelta, input.quantityDelta) !== 0
     || row.unit !== input.unit
     || row.sourceType !== input.sourceType
     || row.sourceId !== input.sourceId
@@ -992,7 +1139,7 @@ function assertReservationReplay(
     row.stockItemId !== input.stockItemId
     || row.locationId !== input.locationId
     || row.lotId !== input.lotId
-    || row.quantity !== input.quantity
+    || compareStockQuantity(row.quantity, input.quantity) !== 0
     || row.unit !== input.unit
     || row.sourceType !== input.sourceType
     || row.sourceId !== input.sourceId
@@ -1010,7 +1157,7 @@ function assertTransferReplay(
     || row.lotId !== input.lotId
     || row.sourceLocationId !== input.sourceLocationId
     || row.destinationLocationId !== input.destinationLocationId
-    || row.quantity !== input.quantity
+    || compareStockQuantity(row.quantity, input.quantity) !== 0
     || row.unit !== input.unit
   ) {
     throw new ConflictException("Inventory transfer idempotency key was reused with different input");
@@ -1039,5 +1186,11 @@ function checksum(value: string) {
 }
 
 async function lock(tx: TenantTransaction, key: string) {
+  if (key.startsWith("inventory-dimension:")) {
+    // Every balance writer shares the rebuild's tenant key before taking any
+    // dimension lock. Rebuild holds that key exclusively across reading the
+    // immutable evidence and replacing its projection.
+    await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtextextended('inventory-projection-rebuild:' || current_setting('app.tenant_id'), 0))`);
+  }
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }

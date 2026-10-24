@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { createReleaseCandidateManifest } from "../scripts/create-release-candidate-manifest.mjs";
 
-test("creates a commit-bound manifest for Chrome and Edge packages", async () => {
-  const rootDir = await fixtureRoot();
+test("creates a commit-bound manifest for Chrome and Edge packages", async (t) => {
+  const rootDir = await fixtureRoot(t);
   const result = await createReleaseCandidateManifest({
     rootDir,
     commitSha: "a".repeat(40),
@@ -27,16 +27,16 @@ test("creates a commit-bound manifest for Chrome and Edge packages", async () =>
   assert.match(stored.artifacts[0].sha256, /^[0-9a-f]{64}$/);
 });
 
-test("fails closed when an Edge package is missing", async () => {
-  const rootDir = await fixtureRoot({ includeEdge: false });
+test("fails closed when an Edge package is missing", async (t) => {
+  const rootDir = await fixtureRoot(t, { includeEdge: false });
   await assert.rejects(
     createReleaseCandidateManifest({ rootDir, commitSha: "b".repeat(40) }),
     /Missing edge extension package/,
   );
 });
 
-test("fails closed when local tracked source changes are present", async () => {
-  const rootDir = await fixtureRoot();
+test("fails closed when local tracked source changes are present", async (t) => {
+  const rootDir = await fixtureRoot(t);
   git(rootDir, ["init"]);
   git(rootDir, ["config", "user.email", "release-test@example.test"]);
   git(rootDir, ["config", "user.name", "Release Test"]);
@@ -53,8 +53,17 @@ test("fails closed when local tracked source changes are present", async () => {
   );
 });
 
-async function fixtureRoot({ includeEdge = true } = {}) {
+async function fixtureRoot(testContext, { includeEdge = true } = {}) {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "yummyai-release-"));
+  testContext.diagnostic("Owned disposable release fixture: " + rootDir);
+  testContext.after(async () => {
+    const absolute = path.resolve(rootDir);
+    assert.equal(path.dirname(absolute), path.resolve(os.tmpdir()));
+    assert.match(path.basename(absolute), /^yummyai-release-[A-Za-z0-9]+$/);
+    assert.equal((await lstat(absolute)).isSymbolicLink(), false);
+    await rm(absolute, { recursive: true, force: true });
+    await assert.rejects(access(absolute), error => error.code === "ENOENT");
+  });
   const extensionDir = path.join(rootDir, "apps", "extension", ".output");
   const migrationDir = path.join(rootDir, "packages", "database", "migrations", "meta");
   await Promise.all([
@@ -80,5 +89,5 @@ async function fixtureRoot({ includeEdge = true } = {}) {
 }
 
 function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
+  execFileSync("git", args, { cwd, stdio: "ignore", windowsHide: true });
 }

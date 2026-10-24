@@ -1,0 +1,24 @@
+import { defineConfig } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import { requireDisposableIntegrationEnvironment } from "../../tools/testing/require-disposable-integration.mjs";
+import base from "./playwright.product-access.config";
+
+const database = new URL(requireDisposableIntegrationEnvironment());
+const nonce = /^\/order_daily_e2e_([a-f0-9]{32})$/.exec(database.pathname)?.[1];
+const api = new URL(process.env.API_BASE_URL ?? "https://invalid.invalid");
+if (!nonce || !["localhost", "127.0.0.1", "[::1]"].includes(database.hostname) ||
+  !["localhost", "127.0.0.1", "[::1]"].includes(api.hostname) || api.port !== "8130" ||
+  process.env.E2E_KNOWLEDGE_EVALUATION_ISOLATED !== "1" || process.env.E2E_LEGACY_SCHEMA_TARGET !== "current" ||
+  process.env.E2E_COMPILED_WEB !== "1" || process.env.WEB_AUTH_MODE !== "personal" ||
+  process.env.S3_PRIVATE_BUCKET !== `order-daily-e2e-${nonce}`)
+  throw new Error("Knowledge evaluation browser requires the current compiled personal nonce database, API and bucket");
+
+export default defineConfig({
+  ...base,
+  testMatch: "knowledge-evaluation-execution.spec.ts",
+  workers: 1,
+  fullyParallel: false,
+  retries: 0,
+  timeout: 180_000,
+  outputDir: fileURLToPath(new URL("../../tmp/knowledge-evaluation-20261021-e4c8a571/frontend/browser", import.meta.url)),
+});

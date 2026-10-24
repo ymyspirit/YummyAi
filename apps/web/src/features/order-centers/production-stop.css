@@ -1,0 +1,40 @@
+.ps-workspace,.ps-form { min-width:0; color:var(--ink); font-size:13px; overflow-wrap:anywhere; animation:ps-enter 160ms ease-out both; }
+.ps-workspace { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+.ps-workspace h4,.ps-form h3 { margin:0; font-size:14px; }
+.ps-workspace :is(header,footer),.ps-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.ps-workspace > header { justify-content:space-between; }
+.ps-workspace p,.ps-form p { line-height:1.65; color:var(--muted-ink); }
+.ps-workspace :is(button,input,select,textarea),.ps-form :is(button,input,select,textarea) { box-sizing:border-box; min-width:0; max-width:100%; min-height:36px; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); color:var(--ink); background:var(--surface); font:inherit; transition:transform 140ms ease,background-color 140ms ease,border-color 140ms ease; }
+.ps-workspace button,.ps-form button { display:inline-flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; }
+.ps-workspace button:hover:not(:disabled),.ps-form button:hover:not(:disabled) { border-color:var(--blue); transform:translateY(-1px); }
+.ps-workspace button:active:not(:disabled),.ps-form button:active:not(:disabled) { transform:scale(.97); }
+.ps-workspace button:disabled,.ps-form button:disabled { opacity:.5; cursor:default; }
+.ps-workspace button.primary,.ps-form button.primary { color:#fff; background:var(--blue); border-color:var(--blue); }
+.ps-workspace :focus-visible,.ps-form :focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.ps-workspace code,.ps-form code { font-size:11px; overflow-wrap:anywhere; word-break:break-all; }
+.ps-pairs,.ps-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 18px; margin:12px 0; }
+.ps-pairs > div,.ps-field-grid > * { min-width:0; }
+.ps-pairs dt { color:var(--muted-ink); }
+.ps-pairs dd { margin:4px 0; font-variant-numeric:tabular-nums; }
+.ps-full { grid-column:1/-1; }
+.ps-note,.ps-error { margin:10px 0; padding:10px 12px; border-left:2px solid var(--blue); background:var(--surface-muted); animation:ps-enter 140ms ease-out both; }
+.ps-error { border-color:var(--danger,#b42318); color:var(--danger,#b42318)!important; }
+.ps-history { margin:12px 0; padding:0; list-style:none; }
+.ps-history > li,.ps-capacity-row { min-width:0; padding:12px 0; border-top:1px solid var(--line); animation:ps-enter 140ms ease-out both; }
+.ps-history summary { cursor:pointer; line-height:1.7; }
+.ps-history :is(p,dl) { margin-top:8px; }
+.record-dialog:has(.ps-form) { width:min(760px,calc(100vw - 32px)); }
+.record-dialog:has(.ps-form) > .ps-form { padding:16px 20px 20px; }
+.ps-form fieldset { min-width:0; margin:12px 0; padding:12px 0; border:0; border-top:1px solid var(--line); }
+.ps-form label { display:grid; gap:6px; min-width:0; }
+.ps-form label > :is(input,select,textarea) { width:100%; }
+.ps-form .ps-check { display:flex; align-items:flex-start; gap:8px; line-height:1.65; }
+.ps-form .ps-check > input { width:16px; height:16px; min-height:16px; flex:0 0 16px; margin-top:3px; }
+.ps-form small { color:var(--muted-ink); line-height:1.6; }
+.ps-form footer { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding-top:12px; }
+.ps-exiting { animation:ps-exit 150ms ease-in both; pointer-events:none; }
+@supports selector(::details-content) { .ps-workspace details { interpolate-size:allow-keywords; } .ps-workspace details::details-content { block-size:0; opacity:0; overflow:clip; transition:block-size 160ms ease,opacity 140ms ease,content-visibility 160ms allow-discrete; } .ps-workspace details[open]::details-content { block-size:auto; opacity:1; } }
+@keyframes ps-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@keyframes ps-exit { to { opacity:0; transform:translateY(3px); } }
+@media(max-width:620px) { .ps-pairs,.ps-field-grid { grid-template-columns:minmax(0,1fr); } .record-dialog:has(.ps-form) > .ps-form { padding:12px; } .ps-form footer > button { flex:1 1 140px; } }
+@media(prefers-reduced-motion:reduce) { .ps-workspace,.ps-workspace *,.ps-form,.ps-form * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } .ps-workspace details::details-content { transition:none!important; } }

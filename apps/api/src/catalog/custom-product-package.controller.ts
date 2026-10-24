@@ -96,6 +96,18 @@ export class CustomProductPackageController {
     return this.packages.completeness(context, z.uuidv7().parse(planId));
   }
 
+  @Get("receipts/:receiptId")
+  @RequiresPermission(Permission.ProductRead)
+  receipt(@Req() request: AuthenticatedRequest, @Param("planId") planId: string, @Param("receiptId") receiptId: string) {
+    return this.packages.getOperationReceipt(requireContext(request), z.uuidv7().parse(planId), z.uuidv7().parse(receiptId));
+  }
+
+  @Post("receipts/:receiptId/read-url")
+  @RequiresPermission(Permission.ProductRead)
+  readReceipt(@Req() request: AuthenticatedRequest, @Param("planId") planId: string, @Param("receiptId") receiptId: string) {
+    return this.packages.readOperationPackage(requireContext(request), z.uuidv7().parse(planId), z.uuidv7().parse(receiptId));
+  }
+
   @Get()
   @RequiresPermission(Permission.ProductRead)
   async export(

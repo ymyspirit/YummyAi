@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Permission } from "@yummyai/authz/permissions";
+import { PersonalAccessFixture } from "../identity/erp-access.fixture";
 
 import {
   isCustomProductProfileEditable,
@@ -9,7 +11,7 @@ import {
 
 describe("product editor associations", () => {
   it("links the real research, design, and Listing records", () => {
-    const html = renderToStaticMarkup(<ProductEditor initialPlan={plan()} />);
+    const html = renderPlan(plan());
     expect(html).toContain("关联工作");
     expect(html).toContain("/analysis/report-1");
     expect(html).toContain("/design?task=design-1");
@@ -26,10 +28,30 @@ describe("product editor associations", () => {
     value.sourceReportIds = [];
     value.designTasks = [];
     value.listings = [];
-    const html = renderToStaticMarkup(<ProductEditor initialPlan={value} />);
+    const html = renderPlan(value);
     expect(html).toContain("尚未关联研究报告");
     expect(html).toContain("当前 SPU/SKU 尚未创建设计任务");
     expect(html).toContain("当前 SPU 尚未创建 Listing");
+  });
+
+  it("preserves every ambiguous historical SPU without offering a default create or shared edit", () => {
+    const value = plan();
+    value.status = "approved";
+    value.spu = undefined;
+    value.legacySpuCandidates = [
+      { id: "old-spu-a", code: "MUG-A", name: "Original mug A" },
+      { id: "old-spu-b", code: "MUG-B", name: "Original mug B" },
+    ];
+    const html = renderPlan(value);
+    expect(html).toContain("历史商品关系待核对");
+    expect(html).toContain("/product-specifications?spu=old-spu-a");
+    expect(html).toContain("/product-specifications?spu=old-spu-b");
+    expect(html).toContain("/design?task=design-1");
+    expect(html).toContain("/listings/listing-1");
+    expect(html).not.toContain("SPU 待创建");
+    expect(html).not.toContain("创建 SPU</button>");
+    expect(html).not.toContain("为 SKU 创建设计任务");
+    expect(html).not.toContain("保存产品计划</button>");
   });
 
   it("submits the current customization schema from a researching plan", () => {
@@ -42,7 +64,7 @@ describe("product editor associations", () => {
       ],
     };
 
-    const html = renderToStaticMarkup(<ProductEditor initialPlan={value} />);
+    const html = renderPlan(value);
 
     expect(html).toContain('name="customization"');
     expect(html).toContain("milestone_year");
@@ -60,6 +82,21 @@ describe("product editor associations", () => {
     expect(isCustomProductProfileEditable("archived")).toBe(false);
   });
 });
+
+function renderPlan(value: ProductPlanView) {
+  return renderToStaticMarkup(
+    <PersonalAccessFixture
+      permissions={[
+        Permission.ProductRead,
+        Permission.ProductWrite,
+        Permission.DesignRead,
+        Permission.DesignWrite,
+      ]}
+    >
+      <ProductEditor initialPlan={value} />
+    </PersonalAccessFixture>,
+  );
+}
 
 function plan(): ProductPlanView {
   return {

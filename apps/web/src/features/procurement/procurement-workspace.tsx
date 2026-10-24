@@ -1,4 +1,10 @@
 import type { ProcurementWorkspaceView } from "@yummyai/contracts";
+import { formatStockQuantity, sumStockQuantities } from "@yummyai/contracts/inventory/quantity";
+import { formatMinorAmount } from "@yummyai/contracts/common/money";
+import { unitNames } from "../manual-operations/operation-types";
+import { PurchaseOrderActions } from "./procurement-operations";
+import { ProcurementCycleLauncher } from "./procurement-command-workbench";
+import { ProcurementReconciliationLauncher } from "./procurement-reconciliation-workbench";
 import {
   AlertTriangle,
   ArrowRight,
@@ -12,7 +18,7 @@ import {
   ShoppingCart,
 } from "lucide-react";
 
-export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView }) {
+export function ProcurementWorkspace({ data, focusedOrderId }: { data: ProcurementWorkspaceView; focusedOrderId?: string }) {
   const suppliers = new Map(data.suppliers.map((supplier) => [supplier.id, supplier]));
   const stockItems = new Map(data.stockItems.map((stockItem) => [stockItem.id, stockItem]));
   const locations = new Map(data.locations.map((location) => [location.id, location]));
@@ -23,14 +29,11 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
   const varianceOrders = data.purchaseOrders.filter((order) =>
     order.status === "reconciliation_required");
   const openSuggestions = data.suggestions.filter((suggestion) => suggestion.status === "open");
-  const receivedUnits = data.receipts.reduce(
-    (total, receipt) => total + receipt.lines.reduce((sum, line) => sum + line.receivedQuantity, 0),
-    0,
-  );
 
   if (
     !data.requisitions.length
     && !data.rfqs.length
+    && !data.quotes.length
     && !data.purchaseOrders.length
     && !data.receipts.length
     && !data.policies.length
@@ -40,7 +43,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
       <section className="procurement-empty" aria-labelledby="procurement-empty-title">
         <ShoppingCart size={32} />
         <strong id="procurement-empty-title">还没有采购证据</strong>
-        <span>先通过采购 API 建立申请、询价或补货策略。系统不会根据库存缺口自动批准采购。</span>
+        <span>从“新增采购申请”开始询价 也可直接新增人工采购单 核对并审核后登记到货</span>
       </section>
     );
   }
@@ -49,8 +52,8 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
     <>
       <section className="procurement-signals" aria-label="采购运营摘要">
         <Signal icon={<ShoppingCart size={17} />} code="ACTIVE PO" label="进行中采购单" value={activeOrders.length} />
-        <Signal icon={<PackageCheck size={17} />} code="RECEIVED" label="累计收货数量" value={receivedUnits} tone="green" />
-        <Signal icon={<AlertTriangle size={17} />} code="RECONCILE" label="待对账采购单" value={varianceOrders.length} tone="red" />
+        <Signal icon={<PackageCheck size={17} />} code="RECEIPTS" label="收货记录" value={data.receipts.length} tone="green" />
+        <Signal icon={<AlertTriangle size={17} />} code="RECONCILE" label="原始对账差异" value={varianceOrders.length} tone="red" />
         <Signal icon={<RefreshCw size={17} />} code="REPLENISH" label="开放补货建议" value={openSuggestions.length} tone="amber" />
       </section>
 
@@ -70,7 +73,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
         <SectionHeader
           code="VERSIONED PURCHASE ORDERS"
           title="库存采购单"
-          detail={`${data.purchaseOrders.length} 笔，${varianceOrders.length} 笔待对账`}
+          detail={`${data.purchaseOrders.length} 笔，${varianceOrders.length} 笔原始记录有差异 当前处理见发票差异工作区`}
         />
         <div className="procurement-table-scroll">
           <table className="procurement-table procurement-order-table">
@@ -82,6 +85,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                 <th>金额</th>
                 <th>预计到货</th>
                 <th>收货 / 发票</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -89,9 +93,10 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                 const orderReceipts = receiptByOrder.get(order.id) ?? [];
                 const orderInvoices = invoiceByOrder.get(order.id) ?? [];
                 return (
-                  <tr key={order.id}>
+                  <tr key={order.id} id={`purchase-${order.id}`} tabIndex={order.id === focusedOrderId ? -1 : undefined} data-focused={order.id === focusedOrderId || undefined}>
                     <td>
                       <strong>{order.code}</strong>
+                      {order.purpose && order.purpose !== "general" && <span>{order.purpose === "fba_replenishment" ? "FBA 备货" : "定制订单"}{order.sourceSupplyVersionId ? " · 供货报价建单" : ""}</span>}
                       <span>{suppliers.get(order.supplierId)?.name ?? "未知供应商"} · V{order.currentVersion}</span>
                     </td>
                     <td><Status value={order.status} /></td>
@@ -99,7 +104,9 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                       {order.lines.map((line) => (
                         <span className="procurement-line" key={line.lineKey}>
                           <b>{stockItems.get(line.stockItemId)?.name ?? line.lineKey}</b>
-                          <small>{line.quantity} {unitLabel(line.unit)} · {locations.get(line.destinationLocationId)?.name ?? "未知库位"}</small>
+                          <small>采购 {formatStockQuantity(line.quantity)} {unitLabel(line.unit)} · {locations.get(line.destinationLocationId)?.name ?? "未知库位"}</small>
+                          <small>{line.stockBasis ? `库存 ${formatStockQuantity(line.stockBasis.stockQuantity)} ${unitLabel(line.stockBasis.stockUnit)} · 换算 ${line.stockBasis.conversionNumerator}/${line.stockBasis.conversionDenominator}` : "原库存换算依据未留存 请核对"}</small>
+                          <small>报价 {formatMoney(line.unitCostMinor, order.currency)} · {line.priceBasisQuantity === undefined ? "原计价数量未单列" : `每 ${formatStockQuantity(line.priceBasisQuantity)} ${unitLabel(line.unit)}`}</small>
                         </span>
                       ))}
                     </td>
@@ -109,6 +116,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                       <span>{orderReceipts.length} 次收货</span>
                       <small>{orderInvoices.length ? invoiceStatus(orderInvoices) : "未登记发票"}</small>
                     </td>
+                    <td><PurchaseOrderActions data={data} order={order} /></td>
                   </tr>
                 );
               })}
@@ -123,7 +131,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
           <SectionHeader
             code="POLICY-BASED SUGGESTIONS"
             title="补货建议"
-            detail={`${openSuggestions.length} 条开放建议`}
+            detail={`${openSuggestions.length} 条开放建议 · 按库存基本单位核对 下单前另核采购单位与计价依据`}
           />
           {data.suggestions.length ? (
             <ol className="procurement-suggestion-list">
@@ -132,9 +140,9 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                   <span className="procurement-list-icon"><RefreshCw size={15} /></span>
                   <div>
                     <strong>{stockItems.get(suggestion.stockItemId)?.name ?? "未知物料"}</strong>
-                    <span>{locations.get(suggestion.locationId)?.name ?? "未知库位"} · 可用 {suggestion.availableQuantity} · 在途 {suggestion.inTransitQuantity}</span>
+                    <span>{locations.get(suggestion.locationId)?.name ?? "未知库位"} · 可用 {formatStockQuantity(suggestion.availableQuantity)} · 在途 {formatStockQuantity(suggestion.inTransitQuantity)} · {stockItems.has(suggestion.stockItemId) ? unitNames[stockItems.get(suggestion.stockItemId)!.baseUnit] : "单位待核对"}</span>
                   </div>
-                  <b>+{suggestion.suggestedQuantity}<small>建议</small></b>
+                  <b>+{formatStockQuantity(suggestion.suggestedQuantity)}<small>{stockItems.has(suggestion.stockItemId) ? unitNames[stockItems.get(suggestion.stockItemId)!.baseUnit] : "库存单位待核对"}</small></b>
                 </li>
               ))}
             </ol>
@@ -145,7 +153,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
           <SectionHeader
             code="THREE-WAY MATCH"
             title="收货与发票对账"
-            detail={`${data.invoices.filter((invoice) => invoice.status === "reconciliation_required").length} 张发票有差异`}
+            detail={`原始记录中 ${data.invoices.filter((invoice) => invoice.status === "reconciliation_required").length} 张发票有差异 此处预览最近6张 完整处理与当前余额见发票差异工作区`}
           />
           {data.receipts.length || data.invoices.length ? (
             <ol className="procurement-reconcile-list">
@@ -154,7 +162,7 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                   <PackagePlus size={15} />
                   <div>
                     <strong>{orderCode(data, receipt.purchaseOrderId)}</strong>
-                    <span>{receipt.lines.reduce((sum, line) => sum + line.receivedQuantity, 0)} 已收 · {receipt.lines.reduce((sum, line) => sum + line.rejectedQuantity, 0)} 拒收</span>
+                    <span>{receiptQuantitySummary(receipt.lines)}</span>
                   </div>
                   <Status value={receipt.hasVariance ? "reconciliation_required" : "received"} />
                 </li>
@@ -164,7 +172,10 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
                   <BadgeDollarSign size={15} />
                   <div>
                     <strong>{invoice.invoiceNumber}</strong>
-                    <span>{formatMoney(invoice.totalMinor, invoice.currency)} · 差异 {formatSignedMoney(invoice.varianceMinor, invoice.currency)}</span>
+                    <span>{formatMoney(invoice.totalMinor, invoice.currency)} · 差额 {formatSignedMoney(invoice.varianceMinor, invoice.comparisonCurrency)}</span>
+                    <span>数量分配 {invoice.allocationStatus === "complete" ? "本张全部分配" : invoice.allocationStatus === "reconciliation_required" ? "差异待核对" : "旧分配依据待核对"} · 金额以匹配状态为准</span>
+                    {invoice.lines?.map(line => <span key={line.lineKey}>{line.lineKey} · 开票 {formatStockQuantity(line.invoicedQuantity)} {line.unit ? unitLabel(line.unit) : "原采购单位待核对"} · 已分配 {line.allocatedQuantity === null ? "待核对" : formatStockQuantity(line.allocatedQuantity)} · 报价 {formatMoney(line.unitCostMinor, invoice.currency)} / {line.priceBasisQuantity === null ? "计价数量待核对" : formatStockQuantity(line.priceBasisQuantity) + " " + (line.unit ? unitLabel(line.unit) : "单位待核对")}</span>)}
+                    <ProcurementReconciliationLauncher data={data} invoiceId={invoice.id} />
                   </div>
                   <Status value={invoice.status} />
                 </li>
@@ -187,18 +198,21 @@ export function ProcurementWorkspace({ data }: { data: ProcurementWorkspaceView 
               <strong>{requisition.code}</strong>
               <p>{requisition.lines.length} 个物料行 · {requisition.reasonCode}</p>
               <Status value={requisition.status} />
+              {requisition.status === "draft" && <div className="procurement-cycle-source-actions"><ProcurementCycleLauncher data={data} kind="rfq_create" targetId={requisition.id}>创建询价</ProcurementCycleLauncher></div>}
             </article>
           ))}
+          {data.rfqs.map((rfq) => <article key={rfq.id}><span className="procurement-source-code">RFQ · V{rfq.requisitionVersion}</span><strong>{data.requisitions.find(row => row.id === rfq.requisitionId)?.code ?? "原采购申请当前不可读取"}</strong><p>{rfq.supplierIds.length} 个供应商 · 截止 {formatDate(rfq.responseDueAt)}</p><Status value={rfq.status} />{rfq.status === "open" && <div className="procurement-cycle-source-actions"><ProcurementCycleLauncher data={data} kind="quote_record" targetId={rfq.id}>录入供应商报价</ProcurementCycleLauncher></div>}</article>)}
           {data.quotes.map((quote) => (
             <article key={quote.id}>
               <span className="procurement-source-code">QUOTE V{quote.version}</span>
               <strong>{suppliers.get(quote.supplierId)?.name ?? "未知供应商"}</strong>
               <p>{quote.lines.length} 个报价行 · 有效至 {formatDate(quote.validUntil)}</p>
               <b className="procurement-money">{formatMoney(quote.totalMinor, quote.currency)}</b>
+              {!data.quotes.some(row => row.rfqId === quote.rfqId && row.supplierId === quote.supplierId && row.version > quote.version) && <div className="procurement-cycle-source-actions"><ProcurementCycleLauncher data={data} kind="purchase_create" quoteId={quote.id}>按此报价建采购单</ProcurementCycleLauncher></div>}
             </article>
           ))}
         </div>
-        {!data.requisitions.length && !data.quotes.length
+        {!data.requisitions.length && !data.rfqs.length && !data.quotes.length
           ? <InlineEmpty message="还没有采购申请或供应商报价。" />
           : null}
       </section>
@@ -279,7 +293,7 @@ function orderCode(data: ProcurementWorkspaceView, purchaseOrderId: string) {
 }
 
 function invoiceStatus(invoices: ProcurementWorkspaceView["invoices"]) {
-  return invoices.some((invoice) => invoice.status === "reconciliation_required") ? "发票有差异" : "发票已匹配";
+  return invoices.some((invoice) => invoice.status === "reconciliation_required") ? "原发票有差异" : "原发票已匹配";
 }
 
 function statusLabel(value: string) {
@@ -305,16 +319,12 @@ function unitLabel(unit: string) {
 }
 
 function formatMoney(value: number, currency: string) {
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-  }).format(value / 100);
+  return `${currency} ${formatMinorAmount(value, currency)}`;
 }
 
-function formatSignedMoney(value: number, currency: string) {
-  const formatted = formatMoney(Math.abs(value), currency);
-  return `${value > 0 ? "+" : value < 0 ? "-" : ""}${formatted}`;
+function formatSignedMoney(value: number | null, currency?: string | null) {
+  if (value === null || !currency) return "待核对";
+  return `${value > 0 ? "+" : ""}${formatMoney(value, currency)}`;
 }
 
 function formatDate(value: string) {
@@ -329,4 +339,13 @@ function headingId(title: string) {
     "收货与发票对账": "reconciliation-title",
     "申请与询价": "procurement-sourcing-title",
   } as Record<string, string>)[title];
+}
+
+function receiptQuantitySummary(lines: ProcurementWorkspaceView["receipts"][number]["lines"]) {
+  return [...new Set(lines.map(line => line.unit))].map(unit => {
+    const matching = lines.filter(line => line.unit === unit);
+    const stockUnits = [...new Set(matching.flatMap(line => line.stockUnit ? [line.stockUnit] : []))];
+    const stock = stockUnits.map(stockUnit => { const rows = matching.filter(line => line.stockUnit === stockUnit && line.stockReceivedQuantity != null && line.stockRejectedQuantity != null); return rows.length ? `库存 ${formatStockQuantity(sumStockQuantities(rows.map(line => line.stockReceivedQuantity!)))} ${unitNames[stockUnit]}已收 · ${formatStockQuantity(sumStockQuantities(rows.map(line => line.stockRejectedQuantity!)))} ${unitNames[stockUnit]}拒收` : "库存换算待核对"; });
+    return `采购 ${formatStockQuantity(sumStockQuantities(matching.map(line => line.receivedQuantity)))} ${unitNames[unit]}已收 · ${formatStockQuantity(sumStockQuantities(matching.map(line => line.rejectedQuantity)))} ${unitNames[unit]}拒收 · ${stock.length ? stock.join("；") : "原库存换算依据未留存"}${stock.length && matching.some(line => !line.stockUnit || line.stockReceivedQuantity == null || line.stockRejectedQuantity == null) ? " · 部分原库存数量未留存 请核对" : ""}`;
+  }).join("；");
 }

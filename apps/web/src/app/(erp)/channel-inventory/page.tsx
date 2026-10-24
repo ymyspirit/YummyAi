@@ -5,7 +5,6 @@ import {
 import { Network, ShieldAlert } from "lucide-react";
 
 import { ChannelInventoryWorkspace } from "../../../features/channel-inventory/channel-inventory-workspace";
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +13,6 @@ export default async function ChannelInventoryPage() {
   const result = await loadChannelInventoryWorkspace();
   return (
     <div className="research-shell channel-inventory-shell">
-      <ErpSidebar
-        active="channel-inventory"
-        contextLabel="CHANNEL AVAILABILITY"
-        note="渠道可售量来自库存快照与已锁定策略版本；新证据到达后必须重新计算。"
-      />
       <main className="research-main channel-inventory-main">
         <header className="channel-inventory-header">
           <div>

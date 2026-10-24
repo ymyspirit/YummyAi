@@ -1,0 +1,20 @@
+.manufacturing-delivery-summary { min-width: 0; padding-block: 14px; border-block: 1px solid var(--fp-border, #dce1e8); animation: manufacturing-delivery-enter 180ms ease-out; }
+.manufacturing-delivery-summary h3 { display: flex; align-items: center; gap: 7px; font-size: 14px; margin: 0 0 10px; }
+.manufacturing-delivery-summary h3 span { color: #155eef; font-variant-numeric: tabular-nums; }
+.manufacturing-delivery-summary p, .manufacturing-delivery-summary li { overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.manufacturing-delivery-summary details { margin-top: 12px; interpolate-size: allow-keywords; }
+.manufacturing-delivery-summary summary { cursor: pointer; font-size: 13px; font-weight: 600; transition: color 160ms, transform 160ms; }
+.manufacturing-delivery-summary summary:hover { color: #155eef; transform: scale(1.002); }
+.manufacturing-delivery-summary summary:focus-visible { outline: 2px solid #155eef; outline-offset: 3px; }
+.manufacturing-delivery-summary details::details-content { block-size: 0; opacity: 0; overflow: clip; transition: block-size 180ms, opacity 180ms, content-visibility 180ms allow-discrete; }
+.manufacturing-delivery-summary details[open]::details-content { block-size: auto; opacity: 1; }
+.manufacturing-delivery-summary ul, .manufacturing-delivery-summary ol { margin: 6px 0 0; padding: 0; list-style: none; }
+.manufacturing-delivery-summary li { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px; padding-block: 8px; border-bottom: 1px solid #edf0f4; }
+.manufacturing-delivery-summary li div { min-width: 0; }
+.manufacturing-delivery-summary small { display: block; font-size: 12px; color: #697586; }
+.manufacturing-delivery-summary-note, .manufacturing-delivery-summary-hash { margin-top: 10px !important; color: #697586; }
+.manufacturing-delivery-summary-hash code { display: block; overflow-wrap: anywhere; font-size: 11px; }
+.manufacturing-delivery-summary-instructions { margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+@keyframes manufacturing-delivery-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 560px) { .manufacturing-delivery-summary li { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+@media (prefers-reduced-motion: reduce) { .manufacturing-delivery-summary, .manufacturing-delivery-summary * { animation: none !important; transition: none !important; } }

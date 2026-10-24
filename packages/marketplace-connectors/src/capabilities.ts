@@ -41,11 +41,18 @@ export interface MarketplaceCapabilitySyncResult {
   syncedAt: Date;
 }
 
+export interface MarketplaceCapabilityHooks {
+  beforeCredentialRefresh(): Promise<void>;
+  checkpointCredential(credential: Readonly<Record<string, string>>, expiresAt: Date): Promise<void>;
+  beforeRead(): Promise<void>;
+}
+
 export interface MarketplaceCapabilityGateway {
   sync(
     account: CapabilitySyncAccountContext,
     credential: Readonly<Record<string, string>>,
     input: SyncMarketplaceCapabilitiesInput,
+    hooks?: MarketplaceCapabilityHooks,
   ): Promise<MarketplaceCapabilitySyncResult>;
 }
 
@@ -53,16 +60,20 @@ export class HttpMarketplaceCapabilityGateway implements MarketplaceCapabilityGa
   constructor(
     private readonly request: typeof fetch = globalThis.fetch,
     private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly beforeRead?: MarketplaceCapabilityHooks["beforeRead"],
   ) {}
 
   sync(
     account: CapabilitySyncAccountContext,
     credential: Readonly<Record<string, string>>,
     input: SyncMarketplaceCapabilitiesInput,
+    hooks?: MarketplaceCapabilityHooks,
   ): Promise<MarketplaceCapabilitySyncResult> {
+    // Each sync owns its guarded transport. A shared gateway has no mutable actor state.
+    const gateway = hooks ? new HttpMarketplaceCapabilityGateway(this.request, this.environment, () => hooks.beforeRead()) : this;
     return account.platform === "amazon"
-      ? this.syncAmazon(account, credential, input)
-      : this.syncEtsy(account, credential, input);
+      ? gateway.syncAmazon(account, credential, input)
+      : gateway.syncEtsy(account, credential, input, hooks);
   }
 
   private async syncAmazon(
@@ -197,10 +208,13 @@ export class HttpMarketplaceCapabilityGateway implements MarketplaceCapabilityGa
     account: CapabilitySyncAccountContext,
     credential: Readonly<Record<string, string>>,
     input: SyncMarketplaceCapabilitiesInput,
+    hooks?: MarketplaceCapabilityHooks,
   ): Promise<MarketplaceCapabilitySyncResult> {
     const clientId = requiredEnvironment(this.environment, "ETSY_APP_KEYSTRING", "etsy");
     const sharedSecret = requiredEnvironment(this.environment, "ETSY_APP_SHARED_SECRET", "etsy");
     const refreshToken = requireCredential(credential, "refreshToken", "etsy");
+    const userId = requireCredential(credential, "userId", "etsy");
+    await hooks?.beforeCredentialRefresh();
     const token = await this.requestJson(
       "https://api.etsy.com/v3/public/oauth/token",
       {
@@ -211,10 +225,12 @@ export class HttpMarketplaceCapabilityGateway implements MarketplaceCapabilityGa
       EtsyTokenSchema,
       "etsy",
     );
-    const userId = requireCredential(credential, "userId", "etsy");
     if (token.access_token.split(".", 1)[0] !== userId) {
       throw new MarketplaceConnectorError("etsy", "authorization", "Etsy token identity changed");
     }
+    const refreshedCredentialExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000);
+    // Save the only returned refresh token before any later shop/taxonomy request can fail.
+    await hooks?.checkpointCredential({ ...credential, refreshToken: token.refresh_token }, refreshedCredentialExpiresAt);
     const headers = {
       authorization: `Bearer ${token.access_token}`,
       "user-agent": "YummyAI/0.1 (Language=TypeScript)",
@@ -268,7 +284,7 @@ export class HttpMarketplaceCapabilityGateway implements MarketplaceCapabilityGa
       marketplaceIds: ["etsy"],
       ...(refreshedCredential ? {
         refreshedCredential,
-        refreshedCredentialExpiresAt: new Date(syncedAt.getTime() + 90 * 24 * 60 * 60 * 1_000),
+        refreshedCredentialExpiresAt,
       } : {}),
       sourceChecksum,
       sourceVersion: "etsy-open-api-v3",
@@ -282,6 +298,10 @@ export class HttpMarketplaceCapabilityGateway implements MarketplaceCapabilityGa
     schema: z.ZodType<T>,
     platform: MarketplacePlatform,
   ): Promise<T> {
+    // Etsy's rotating POST is durably fenced by beforeCredentialRefresh. Every
+    // other request checks authority outside the network-error translation.
+    if (!(platform === "etsy" && url === "https://api.etsy.com/v3/public/oauth/token" && init.method === "POST"))
+      await this.beforeRead?.();
     let response: Response;
     try {
       response = await this.request(url, { ...init, signal: AbortSignal.timeout(20_000) });
@@ -399,3 +419,5 @@ function stableStringify(value: unknown): string {
   }
   return JSON.stringify(value) ?? "null";
 }
+
+export { checksum as marketplaceCapabilityChecksum };

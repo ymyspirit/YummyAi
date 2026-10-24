@@ -163,17 +163,18 @@ export class HttpMarketplaceAuthorizationGateway implements MarketplaceAuthoriza
     input: OAuthExchangeInput,
   ): Promise<AuthorizationGrant> {
     const sellingPartnerId = requireValue(input.sellingPartnerId, "Amazon selling partner ID");
+    const clientId = requiredEnvironment("AMAZON_SPAPI_LWA_CLIENT_ID");
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code: input.code,
       redirect_uri: input.redirectUri,
-      client_id: requiredEnvironment("AMAZON_SPAPI_LWA_CLIENT_ID"),
+      client_id: clientId,
       client_secret: requiredEnvironment("AMAZON_SPAPI_LWA_CLIENT_SECRET"),
     });
     const token = await requestToken("https://api.amazon.com/auth/o2/token", body, AmazonTokenResponseSchema);
     if (!token.refresh_token) throw new MarketplaceAuthorizationError("upstream", "Amazon did not return a refresh token");
     return {
-      credential: { kind: "amazon_public", refreshToken: token.refresh_token, sellingPartnerId },
+      credential: { kind: "amazon_public", clientId, refreshToken: token.refresh_token, sellingPartnerId },
       externalAccountId: sellingPartnerId,
       expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1_000),
       grantedScopes: account.requestedScopes,

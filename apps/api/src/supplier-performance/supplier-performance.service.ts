@@ -422,8 +422,13 @@ async function deriveSupplierMetrics(
     })),
   ];
 
-  const invoiceDenominator = invoices.reduce((sum, invoice) => sum + invoice.totalMinor, 0);
-  const invoiceVariance = invoices.reduce((sum, invoice) => sum + Math.abs(invoice.varianceMinor), 0);
+  const knownInvoices = invoices.flatMap(invoice => invoice.varianceMinor === null || invoice.allocationStatus === null || invoice.allocationStatus === "legacy_unknown"
+    ? [] : [{ ...invoice, varianceMinor: invoice.varianceMinor }]);
+  // There is no pinned FX evidence in this metric. Different minor currencies
+  // cannot be added together to manufacture a comparable price score.
+  const comparableInvoices = new Set(knownInvoices.map(invoice => invoice.currency)).size > 1 ? [] : knownInvoices;
+  const invoiceDenominator = comparableInvoices.reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+  const invoiceVariance = comparableInvoices.reduce((sum, invoice) => sum + Math.abs(invoice.varianceMinor), 0);
   const invoiceAccuracy = Math.max(0, invoiceDenominator - invoiceVariance);
 
   const responseTarget = definitions.find((definition) => definition.metric === "response_time")
@@ -472,8 +477,8 @@ async function deriveSupplierMetrics(
       qualityRows.map((row) => evidence("quality_inspection", row.inspection.id))),
     derived("on_time_delivery", onTimeSamples.length, onTimeSamples.filter((sample) => sample.onTime).length,
       onTimeSamples.length, "sample_ratio", onTimeSamples.map((sample) => sample.reference)),
-    derived("price_variance", invoices.length, invoiceAccuracy, invoiceDenominator, "money_ratio",
-      invoices.map((invoice) => evidence("inventory_supplier_invoice", invoice.id))),
+    derived("price_variance", comparableInvoices.length, invoiceAccuracy, invoiceDenominator, "money_ratio",
+      comparableInvoices.map((invoice) => evidence("inventory_supplier_invoice", invoice.id))),
     derived("response_time", responseSamples.length,
       responseSamples.filter((sample) => sample.withinTarget).length, responseSamples.length,
       "sample_ratio", responseSamples.map((sample) => sample.reference)),

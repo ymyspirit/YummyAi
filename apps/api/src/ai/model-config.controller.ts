@@ -3,7 +3,7 @@ import type { SecretVault } from "@yummyai/ai-core";
 import { Permission, authorize } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { modelProviderConfigs, type DatabaseConnection, withTenant } from "@yummyai/database";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
@@ -59,6 +59,7 @@ export class ModelConfigController {
           updatedAt: modelProviderConfigs.updatedAt,
         })
         .from(modelProviderConfigs)
+        .where(ne(modelProviderConfigs.status, "deleted"))
         .orderBy(modelProviderConfigs.createdAt),
     );
     return rows.map((row) => ({ ...row, hasCredential: true }));
@@ -95,19 +96,20 @@ export class ModelConfigController {
     authorize(context, Permission.ModelConfigure);
     const configId = z.uuidv7().parse(id);
     const input = UpdateProviderConfigSchema.parse(body);
-    const [updated] = await withTenant(this.database.db, context, (tx) =>
-      tx
+    const [updated] = await withTenant(this.database.db, context, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`model-configuration:${context.tenantId}`}, 0))`);
+      return tx
         .update(modelProviderConfigs)
         .set({
           ...(input.label === undefined ? {} : { label: input.label }),
           ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
           ...(input.status === undefined ? {} : { status: input.status }),
           ...(input.apiKey === undefined ? {} : { encryptedApiKey: this.secrets.encrypt(input.apiKey) }),
-          updatedAt: new Date(),
+          updatedAt: sql`clock_timestamp()`,
         })
-        .where(and(eq(modelProviderConfigs.tenantId, context.tenantId), eq(modelProviderConfigs.id, configId)))
-        .returning(publicSelection),
-    );
+        .where(and(eq(modelProviderConfigs.tenantId, context.tenantId), eq(modelProviderConfigs.id, configId), ne(modelProviderConfigs.status, "deleted")))
+        .returning(publicSelection);
+    });
     if (!updated) throw new NotFoundException("Model provider configuration not found");
     return { ...updated, hasCredential: true };
   }

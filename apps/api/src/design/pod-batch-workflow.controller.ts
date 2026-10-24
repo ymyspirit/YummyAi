@@ -8,6 +8,7 @@ import {
   CreateMockupListingBindingsInputSchema,
   CreateMockupTemplateInspectionInputSchema,
   CreateMockupTemplatePackVersionInputSchema,
+  ConfirmMockupTemplateInspectionInputSchema,
   ReviewMockupBatchInputSchema,
   ReviewVersionInputSchema,
 } from "@yummyai/contracts";
@@ -58,6 +59,12 @@ export class PodBatchWorkflowController {
   getDesignBatch(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
     const context = requirePermission(request, Permission.DesignRead);
     return this.designs.getDesignBatch(context, entityId(id));
+  }
+
+  @Post("design-batches/:id/archive")
+  @RequiresPermission(Permission.DesignWrite)
+  archiveDesignBatch(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    return this.designs.archiveDesignBatch(requirePermission(request, Permission.DesignWrite), entityId(id), body);
   }
 
   @Post("design-batches/:id/cancel")
@@ -132,9 +139,15 @@ export class PodBatchWorkflowController {
 
   @Post("mockup-template-inspections/:id/confirm")
   @RequiresPermission(Permission.DesignReview)
-  confirmInspection(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
+  confirmInspection(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
     const context = requirePermission(request, Permission.DesignReview);
-    return this.mockups.confirmInspection(context, entityId(id));
+    return this.mockups.confirmInspection(context, entityId(id), ConfirmMockupTemplateInspectionInputSchema.parse(body).expectedFingerprint);
+  }
+
+  @Get("mockup-template-inspections/:id")
+  @RequiresPermission(Permission.DesignRead)
+  getInspection(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
+    return this.mockups.getInspection(requirePermission(request, Permission.DesignRead), entityId(id));
   }
 
   @Get("mockup-template-packs")

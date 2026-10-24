@@ -1,12 +1,26 @@
 "use client";
 
-import type { CustomizationDefinition, ProductStatus } from "@yummyai/contracts";
+import type { CustomizationDefinition, LegacySpuCandidate, ProductStatus } from "@yummyai/contracts";
 import type { CustomProductProfileV1 } from "@yummyai/contracts/catalog/custom-product-package";
-import { ArrowUpRight, Boxes, CircleDollarSign, Factory, FileSearch2, FileText, PackageCheck, Palette } from "lucide-react";
+import {
+  ArrowUpRight,
+  Boxes,
+  CircleDollarSign,
+  Factory,
+  FileSearch2,
+  FileText,
+  PackageCheck,
+  Palette,
+} from "lucide-react";
 import Link from "next/link";
 import { useActionState, useState } from "react";
+import { Permission } from "@yummyai/authz/permissions";
+import { useErpAccess } from "../identity/erp-access";
 
-import { CustomizationSchemaEditor } from "./customization-schema-editor";
+import {
+  CustomizationSchemaEditor,
+  validateCustomizationSchema,
+} from "./customization-schema-editor";
 import { CustomProductPackagePanel } from "./custom-product-package-panel";
 import { saveProductPlanCustomization, type ProductDevelopmentState } from "./product-actions";
 import { ProductDevelopmentActions } from "./product-development-actions";
@@ -21,9 +35,11 @@ export interface ProductPlanView {
   customization: CustomizationDefinition;
   customProductProfile?: CustomProductProfileV1;
   ownerUserId?: string;
+  teamId?: string;
   ownerName?: string;
   createdAt?: string;
   updatedAt?: string;
+  legacySpuCandidates?: LegacySpuCandidate[];
   spu?: {
     id: string;
     code: string;
@@ -59,7 +75,14 @@ export interface ProductPlanView {
   }>;
 }
 
-const stages: ProductStatus[] = ["researching", "pending_approval", "approved", "developing", "listing", "ready"];
+const stages: ProductStatus[] = [
+  "researching",
+  "pending_approval",
+  "approved",
+  "developing",
+  "listing",
+  "ready",
+];
 const initialSaveState: ProductDevelopmentState = { message: "", status: "idle" };
 
 export function isCustomProductProfileEditable(status: ProductStatus): boolean {
@@ -67,8 +90,23 @@ export function isCustomProductProfileEditable(status: ProductStatus): boolean {
 }
 
 export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView }) {
+  const { can } = useErpAccess();
+  const ambiguous = Boolean(initialPlan.legacySpuCandidates?.length);
+  const canWrite = !ambiguous && can(Permission.ProductWrite, {
+    ownerId: initialPlan.ownerUserId,
+    teamId: initialPlan.teamId,
+  });
+  const readOnlyReason = ambiguous
+    ? "历史商品关系待核对 共享企划暂时只读"
+    : can(Permission.ProductWrite) ? "当前商品超出编辑范围" : "当前账户只读";
   const [customization, setCustomization] = useState(initialPlan.customization);
-  const [saveState, saveAction, savePending] = useActionState(saveProductPlanCustomization.bind(null, initialPlan.id), initialSaveState);
+  const [customizationValid, setCustomizationValid] = useState(
+    () => validateCustomizationSchema(initialPlan.customization).length === 0,
+  );
+  const [saveState, saveAction, savePending] = useActionState(
+    saveProductPlanCustomization.bind(null, initialPlan.id),
+    initialSaveState,
+  );
   const stageIndex = stages.indexOf(initialPlan.status);
   return (
     <div className="product-workbench">
@@ -82,11 +120,17 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
           <span>PLAN ID</span>
           <code>{initialPlan.id}</code>
           <strong>{statusLabel(initialPlan.status)}</strong>
+          {!canWrite && <span>{readOnlyReason}</span>}
         </div>
       </header>
       <nav className="lifecycle-track" aria-label="产品生命周期">
         {stages.map((stage, index) => (
-          <div key={stage} className={index < stageIndex ? "stage-done" : index === stageIndex ? "stage-current" : ""}>
+          <div
+            key={stage}
+            className={
+              index < stageIndex ? "stage-done" : index === stageIndex ? "stage-current" : ""
+            }
+          >
             <span>{index < stageIndex ? "✓" : String(index + 1).padStart(2, "0")}</span>
             <strong>{statusLabel(stage)}</strong>
           </div>
@@ -96,7 +140,11 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
         <div>
           <CircleDollarSign size={18} />
           <span>目标成本</span>
-          <strong className="mono">{initialPlan.targetCost ? `${initialPlan.targetCost.currency} ${initialPlan.targetCost.amount.toFixed(2)}` : "待核算"}</strong>
+          <strong className="mono">
+            {initialPlan.targetCost
+              ? `${initialPlan.targetCost.currency} ${initialPlan.targetCost.amount.toFixed(2)}`
+              : "待核算"}
+          </strong>
         </div>
         <div>
           <PackageCheck size={18} />
@@ -106,19 +154,46 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
         <div>
           <Boxes size={18} />
           <span>SKU 数量</span>
-          <strong className="mono">{initialPlan.spu?.skus.length ?? 0}</strong>
+          <strong className="mono">{ambiguous ? "请按原商品查看" : initialPlan.spu?.skus.length ?? 0}</strong>
         </div>
         <div>
           <Factory size={18} />
-          <span>供应商候选</span>
+          <span>调研供应商候选</span>
           <strong className="mono">{initialPlan.suppliers?.length ?? 0}</strong>
         </div>
       </section>
+      {ambiguous ? (
+        <section className="product-legacy-notice" aria-labelledby="product-legacy-title">
+          <div>
+            <PackageCheck aria-hidden="true" size={18} />
+            <div>
+              <h3 id="product-legacy-title">历史商品关系待核对</h3>
+              <p>此企划关联多个历史 SPU 请明确选择要查看的原商品 共享企划暂时只读</p>
+            </div>
+          </div>
+          <ul>
+            {initialPlan.legacySpuCandidates!.map((candidate) => (
+              <li key={candidate.id}>
+                <Link href={`/product-specifications?spu=${encodeURIComponent(candidate.id)}`}>
+                  <span><strong>{candidate.code}</strong><span>{candidate.name}</span></span>
+                  <ArrowUpRight aria-hidden="true" size={15} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <ProductDevelopmentActions plan={initialPlan} />
-      <CustomizationSchemaEditor initialSchema={customization} onChange={setCustomization} />
+      <CustomizationSchemaEditor
+        initialSchema={customization}
+        onChange={setCustomization}
+        onValidityChange={setCustomizationValid}
+        editable={canWrite && initialPlan.status === "researching"}
+      />
       <CustomProductPackagePanel
         customizationFieldKeys={customization.fields.map((field) => field.key)}
-        editable={isCustomProductProfileEditable(initialPlan.status)}
+        editable={canWrite && isCustomProductProfileEditable(initialPlan.status)}
+        readOnlyReason={!canWrite ? readOnlyReason : undefined}
         planId={initialPlan.id}
         profile={initialPlan.customProductProfile}
         researchItemIds={initialPlan.sourceReportIds}
@@ -130,7 +205,7 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
               <p className="section-code">SPU / SKU REGISTER</p>
               <h2 id="sku-title">商品变体</h2>
             </div>
-            <span className="mono">{initialPlan.spu?.code ?? "SPU 待创建"}</span>
+            <span className="mono">{ambiguous ? "按原商品查看" : initialPlan.spu?.code ?? "SPU 待创建"}</span>
           </header>
           {initialPlan.spu ? (
             <table>
@@ -152,19 +227,24 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
                         .map(([key, value]) => `${key}: ${value}`)
                         .join(" · ") || "标准款"}
                     </td>
-                    <td className="mono">{sku.unitCost ? `${sku.unitCost.currency} ${sku.unitCost.amount.toFixed(2)}` : "—"}</td>
+                    <td className="mono">
+                      {sku.unitCost
+                        ? `${sku.unitCost.currency} ${sku.unitCost.amount.toFixed(2)}`
+                        : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           ) : (
-            <p className="panel-empty">产品计划审批后才能创建 SPU 与 SKU。</p>
+            <p className="panel-empty">{ambiguous ? "请从上方历史商品入口查看各自的规格与变体" : "产品计划审批后才能创建 SPU 与 SKU。"}</p>
           )}
         </section>
         <section className="supplier-frame" aria-labelledby="supplier-title">
           <header>
             <p className="section-code">SUPPLIER CANDIDATES</p>
-            <h2 id="supplier-title">供应商优先级</h2>
+            <h2 id="supplier-title">调研供应商候选</h2>
+            <p>早期调研记录；正式合作与报价请在下方“产品供应商”中维护。</p>
           </header>
           <ol>
             {initialPlan.suppliers?.map((supplier) => (
@@ -173,10 +253,17 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
                 <div>
                   <strong>{supplier.name}</strong>
                   <small>
-                    {supplier.minimumOrderQuantity ? `MOQ ${supplier.minimumOrderQuantity}` : "MOQ 待确认"} · {supplier.leadTimeDays ?? "—"} 天
+                    {supplier.minimumOrderQuantity
+                      ? `MOQ ${supplier.minimumOrderQuantity}`
+                      : "MOQ 待确认"}{" "}
+                    · {supplier.leadTimeDays ?? "—"} 天
                   </small>
                 </div>
-                <b className="mono">{supplier.quotedCost ? `${supplier.quotedCost.currency} ${supplier.quotedCost.amount.toFixed(2)}` : "待报价"}</b>
+                <b className="mono">
+                  {supplier.quotedCost
+                    ? `${supplier.quotedCost.currency} ${supplier.quotedCost.amount.toFixed(2)}`
+                    : "待报价"}
+                </b>
               </li>
             ))}
           </ol>
@@ -191,7 +278,12 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
           <span>仅显示当前租户可见的真实记录</span>
         </header>
         <div>
-          <AssociationColumn icon={<FileSearch2 size={17} />} title="研究来源" count={initialPlan.sourceReportIds.length} empty="尚未关联研究报告。">
+          <AssociationColumn
+            icon={<FileSearch2 size={17} />}
+            title="研究来源"
+            count={initialPlan.sourceReportIds.length}
+            empty="尚未关联研究报告。"
+          >
             {initialPlan.sourceReportIds.map((reportId) => (
               <Link href={`/analysis/${reportId}`} key={reportId}>
                 <span>
@@ -202,7 +294,16 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
               </Link>
             ))}
           </AssociationColumn>
-          <AssociationColumn icon={<Palette size={17} />} title="设计任务" count={initialPlan.designTasks?.length ?? 0} empty={initialPlan.spu ? "当前 SPU/SKU 尚未创建设计任务。" : "创建 SPU/SKU 后才能关联设计任务。"}>
+          <AssociationColumn
+            icon={<Palette size={17} />}
+            title="设计任务"
+            count={initialPlan.designTasks?.length ?? 0}
+            empty={
+              initialPlan.spu
+                ? "当前 SPU/SKU 尚未创建设计任务。"
+                : "创建 SPU/SKU 后才能关联设计任务。"
+            }
+          >
             {initialPlan.designTasks?.map((task) => (
               <Link href={`/design?task=${encodeURIComponent(task.id)}`} key={task.id}>
                 <span>
@@ -215,7 +316,14 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
               </Link>
             ))}
           </AssociationColumn>
-          <AssociationColumn icon={<FileText size={17} />} title="Listing" count={initialPlan.listings?.length ?? 0} empty={initialPlan.spu ? "当前 SPU 尚未创建 Listing。" : "创建 SPU 后才能关联 Listing。"}>
+          <AssociationColumn
+            icon={<FileText size={17} />}
+            title="Listing"
+            count={initialPlan.listings?.length ?? 0}
+            empty={
+              initialPlan.spu ? "当前 SPU 尚未创建 Listing。" : "创建 SPU 后才能关联 Listing。"
+            }
+          >
             {initialPlan.listings?.map((listing) => (
               <Link href={`/listings/${listing.id}`} key={listing.id}>
                 <span>
@@ -232,21 +340,53 @@ export function ProductEditor({ initialPlan }: { initialPlan: ProductPlanView })
           </AssociationColumn>
         </div>
       </section>
-      <form action={saveAction} className="editor-footer">
-        <input name="customization" type="hidden" value={JSON.stringify(customization)} />
-        <span className="mono">
-          SCHEMA V{customization.version} · {customization.fields.length} FIELDS
-        </span>
-        {saveState.status !== "idle" ? <small role={saveState.status === "error" ? "alert" : "status"}>{saveState.message}</small> : null}
-        <button disabled={savePending || initialPlan.status !== "researching"} type="submit">
-          {savePending ? "保存中…" : initialPlan.status === "researching" ? "保存产品计划" : "产品计划已锁定"}
-        </button>
-      </form>
+      {canWrite ? (
+        <form action={saveAction} className="editor-footer">
+          <input name="customization" type="hidden" value={JSON.stringify(customization)} />
+          <span className="mono">
+            SCHEMA V{customization.version} · {customization.fields.length} FIELDS
+          </span>
+          {saveState.status !== "idle" ? (
+            <small role={saveState.status === "error" ? "alert" : "status"}>
+              {saveState.message}
+            </small>
+          ) : null}
+          <button
+            disabled={savePending || !customizationValid || initialPlan.status !== "researching"}
+            type="submit"
+          >
+            {savePending
+              ? "保存中…"
+              : initialPlan.status === "researching"
+                ? "保存产品计划"
+                : "产品计划已锁定"}
+          </button>
+        </form>
+      ) : (
+        <div className="editor-footer">
+          <span>{ambiguous ? readOnlyReason : "当前账户只读 产品事实与定制字段可查看"}</span>
+          <span className="mono">
+            SCHEMA V{customization.version} · {customization.fields.length} FIELDS
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
-function AssociationColumn({ children, count, empty, icon, title }: { children?: React.ReactNode; count: number; empty: string; icon: React.ReactNode; title: string }) {
+function AssociationColumn({
+  children,
+  count,
+  empty,
+  icon,
+  title,
+}: {
+  children?: React.ReactNode;
+  count: number;
+  empty: string;
+  icon: React.ReactNode;
+  title: string;
+}) {
   return (
     <article>
       <header>

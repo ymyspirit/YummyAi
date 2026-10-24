@@ -1,0 +1,2 @@
+ALTER TABLE "ai_assist_runs" DROP CONSTRAINT "ai_assist_runs_kind_check";--> statement-breakpoint
+ALTER TABLE "ai_assist_runs" ADD CONSTRAINT "ai_assist_runs_kind_check" CHECK ("ai_assist_runs"."kind" in ('creative','order_review','artwork_preflight','template_config','sku_package'));

@@ -1,0 +1,26 @@
+{
+  "name": "@yummyai/order-intake",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@yummyai/ai-core": "workspace:*",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/storage": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "fast-xml-parser": "^5.11.1",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

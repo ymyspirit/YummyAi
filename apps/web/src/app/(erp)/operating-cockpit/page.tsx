@@ -8,9 +8,14 @@ import {
 } from "@yummyai/contracts/planning";
 import { Activity, ShieldAlert } from "lucide-react";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { OperatingCockpit } from "../../../features/operating-cockpit/operating-cockpit";
 import { apiFetch } from "../../../server-api";
+import { erpAmbientIdentity } from "../../../erp-auth/request";
+import { assertErpIdentityCurrent } from "../../../erp-auth/server";
+import { erpSessionAuthority } from "@yummyai/contracts/auth/session";
+import { authorize } from "@yummyai/authz/authorize";
+import { Permission } from "@yummyai/authz/permissions";
+import { PersonalSessionError } from "../../../identity/core";
 
 export const dynamic = "force-dynamic";
 
@@ -31,11 +36,6 @@ export default async function OperatingCockpitPage() {
 
   return (
     <div className="research-shell operating-cockpit-shell">
-      <ErpSidebar
-        active="operating-cockpit"
-        contextLabel="FORECAST / CONTROL"
-        note="预测、指标快照、对账与 Webhook 投递都保留固定输入、版本和可下钻证据。"
-      />
       <main className="research-main operating-cockpit-main">
         <header className="operating-cockpit-header">
           <div>
@@ -75,7 +75,19 @@ async function loadPlanningWorkspace(): Promise<{ data: PlanningWorkspaceView } 
 }
 
 async function loadIntegrationWorkspace(): Promise<{ data: IntegrationWorkspaceView } | LoadFailure> {
-  return loadWorkspace("integrations", IntegrationWorkspaceViewSchema, "integration:read");
+  try {
+    const identity = await erpAmbientIdentity();
+    try { authorize(identity.view, Permission.IntegrationRead); } catch { return { error: "当前成员没有开放集成读取权限", kind: "forbidden" }; }
+    const base = process.env.API_BASE_URL?.replace(/\/$/, ""); if (!base) return { error: "尚未配置运营 API", kind: "failed" };
+    const response = await apiFetch(base + "/v1/integrations/workspace", { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) { await response.body?.cancel(); return { error: response.status === 401 ? "请重新登录自己的运营账户" : response.status === 403 ? "当前成员没有开放集成读取权限" : "开放集成工作区暂时无法读取", kind: response.status === 401 ? "unauthorized" : response.status === 403 ? "forbidden" : "failed" }; }
+    const reader = response.body?.getReader(); if (!reader) throw new Error("body"); let size = 0; const chunks: Uint8Array[] = [];
+    try { for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > 8 * 1024 * 1024) { await reader.cancel(); throw new Error("size"); } chunks.push(part.value); } } finally { reader.releaseLock(); }
+    const data = IntegrationWorkspaceViewSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))));
+    await assertErpIdentityCurrent(identity); const authority = erpSessionAuthority(identity.view);
+    if (data.contextAuthority !== authority || data.agentCatalog.contextAuthority !== authority) throw new Error("authority");
+    return { data };
+  } catch (error) { return { error: error instanceof PersonalSessionError && error.status === 401 ? "请重新登录自己的运营账户" : "当前开放集成资料与权限尚未核对 请刷新重读", kind: error instanceof PersonalSessionError && error.status === 401 ? "unauthorized" : "failed" }; }
 }
 
 async function loadWorkspace<T>(
@@ -93,7 +105,7 @@ async function loadWorkspace<T>(
     if (response.status === 403) return { error: `当前成员没有 ${permission} 权限。`, kind: "forbidden" };
     if (!response.ok) return { error: `工作区读取失败 (${response.status})。`, kind: "failed" };
     return { data: schema.parse(await response.json()) };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "工作区读取失败。", kind: "failed" };
+  } catch {
+    return { error: "工作区读取失败 请核对当前权限后重读", kind: "failed" };
   }
 }

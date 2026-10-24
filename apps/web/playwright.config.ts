@@ -8,6 +8,10 @@ if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
 
 export default defineConfig({
   testDir: "./e2e",
+  // Portable smoke coverage. Personal and isolated workflow families retain
+  // their explicit configurations, supported browsers and runner guards.
+  testMatch: ["p0-flow.spec.ts", "tenant-isolation.spec.ts", "pod-batch-workbenches.spec.ts", "product-development.spec.ts",
+    "order-centers.spec.ts", "canvas-bridge.spec.ts", "creative-studio.spec.ts", "creative-project-orders.spec.ts"],
   timeout: 45_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
@@ -29,7 +33,7 @@ export default defineConfig({
       url: "http://localhost:3100",
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { ...process.env, NODE_OPTIONS: "", DASHBOARD_DEMO_MODE: "1", ANALYSIS_DEMO_MODE: "1", PRODUCT_DEMO_MODE: "1", DESIGN_DEMO_MODE: "1", LISTING_DEMO_MODE: "1" },
+      env: { ...process.env, NODE_OPTIONS: "", DASHBOARD_DEMO_MODE: "1", ANALYSIS_DEMO_MODE: "1", PRODUCT_DEMO_MODE: process.env.E2E_REAL_PRODUCTS === "1" ? "0" : "1", DESIGN_DEMO_MODE: "1", LISTING_DEMO_MODE: "1" },
     },
   ],
 });

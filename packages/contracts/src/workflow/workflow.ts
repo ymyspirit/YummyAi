@@ -66,6 +66,7 @@ export const WorkflowRunEventTypeSchema = z.enum([
   "node_rejected",
   "node_reopened",
   "node_note_updated",
+  "node_responsibility_updated",
   "artifact_linked",
 ]);
 
@@ -235,7 +236,7 @@ export const WorkflowNodeCommandSchema = z.discriminatedUnion("type", [
     reason: z.string().trim().min(1).max(2_000),
     reworkTargetNodeId: z.string().trim().min(1).max(120).optional(),
   }).strict(),
-  WorkflowNodeCommandBaseSchema.extend({ type: z.literal("retry") }).strict(),
+  WorkflowNodeCommandBaseSchema.extend({ type: z.literal("retry"), parameters: z.record(z.string(), z.unknown()).optional() }).strict(),
   WorkflowNodeCommandBaseSchema.extend({
     type: z.literal("reopen"),
     reason: z.string().trim().min(1).max(2_000).optional(),

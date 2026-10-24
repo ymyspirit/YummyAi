@@ -1,0 +1,340 @@
+{
+  "status": "pass",
+  "scope": "standalone-fictional-prototype-and-overview-only",
+  "date": "2026-10-15",
+  "widths": [
+    1440,
+    1024,
+    390
+  ],
+  "overviewWidths": [
+    1280,
+    390
+  ],
+  "assertions": [
+    {
+      "id": "P01",
+      "name": "desktop initial render and fictional-data notice",
+      "status": "pass"
+    },
+    {
+      "id": "P02",
+      "name": "desktop no page overflow at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "P03",
+      "name": "search filters list and synchronizes detail",
+      "status": "pass"
+    },
+    {
+      "id": "P04",
+      "name": "selection persists after refresh",
+      "status": "pass"
+    },
+    {
+      "id": "P05",
+      "name": "empty results remove stale detail and offer recovery",
+      "status": "pass"
+    },
+    {
+      "id": "P06",
+      "name": "clear selection resets count and disables bulk action",
+      "status": "pass"
+    },
+    {
+      "id": "P07",
+      "name": "status filter selects only matching fixture",
+      "status": "pass"
+    },
+    {
+      "id": "P08",
+      "name": "review requires checklist and changes only demo status",
+      "status": "pass"
+    },
+    {
+      "id": "P09",
+      "name": "factory acceptance requires confirmation and persists",
+      "status": "pass"
+    },
+    {
+      "id": "P10",
+      "name": "product solution view and cross-product specification boundary",
+      "status": "pass"
+    },
+    {
+      "id": "P11",
+      "name": "fully loaded unit cost reacts to review labor",
+      "status": "pass",
+      "observed": {
+        "before": "¥4.76",
+        "after": "¥5.96"
+      }
+    },
+    {
+      "id": "P12",
+      "name": "zero accepted deliveries does not produce fabricated cost",
+      "status": "pass"
+    },
+    {
+      "id": "P13",
+      "name": "eight stages expose concrete factory-network deliverables",
+      "status": "pass"
+    },
+    {
+      "id": "L1440-订单与制作",
+      "name": "订单与制作 layout after transition at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "L1440-商品方案",
+      "name": "商品方案 layout after transition at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "L1440-工厂协同",
+      "name": "工厂协同 layout after transition at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "L1440-合格交付成本",
+      "name": "合格交付成本 layout after transition at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "L1440-建设阶段",
+      "name": "建设阶段 layout after transition at 1440",
+      "status": "pass"
+    },
+    {
+      "id": "L1024-订单与制作",
+      "name": "订单与制作 layout after transition at 1024",
+      "status": "pass"
+    },
+    {
+      "id": "L1024-商品方案",
+      "name": "商品方案 layout after transition at 1024",
+      "status": "pass"
+    },
+    {
+      "id": "L1024-工厂协同",
+      "name": "工厂协同 layout after transition at 1024",
+      "status": "pass"
+    },
+    {
+      "id": "L1024-合格交付成本",
+      "name": "合格交付成本 layout after transition at 1024",
+      "status": "pass"
+    },
+    {
+      "id": "L1024-建设阶段",
+      "name": "建设阶段 layout after transition at 1024",
+      "status": "pass"
+    },
+    {
+      "id": "L390-订单与制作",
+      "name": "订单与制作 layout after transition at 390",
+      "status": "pass"
+    },
+    {
+      "id": "L390-商品方案",
+      "name": "商品方案 layout after transition at 390",
+      "status": "pass"
+    },
+    {
+      "id": "L390-工厂协同",
+      "name": "工厂协同 layout after transition at 390",
+      "status": "pass"
+    },
+    {
+      "id": "L390-合格交付成本",
+      "name": "合格交付成本 layout after transition at 390",
+      "status": "pass"
+    },
+    {
+      "id": "L390-建设阶段",
+      "name": "建设阶段 layout after transition at 390",
+      "status": "pass"
+    },
+    {
+      "id": "P14",
+      "name": "mobile menu Escape restores focus and hides offscreen navigation",
+      "status": "pass"
+    },
+    {
+      "id": "P15",
+      "name": "mobile detail dialog is readable and contained",
+      "status": "pass"
+    },
+    {
+      "id": "P16",
+      "name": "closing mobile detail restores focus to the originating order",
+      "status": "pass"
+    },
+    {
+      "id": "P17",
+      "name": "reduced-motion preference removes movement duration",
+      "status": "pass"
+    },
+    {
+      "id": "P18",
+      "name": "current prototype build has no browser console errors",
+      "status": "pass",
+      "observed": []
+    },
+    {
+      "id": "P20",
+      "name": "overview mobile initial load contains content within the page",
+      "status": "pass",
+      "observed": {
+        "panels": 6,
+        "scroll": 375,
+        "viewport": 375,
+        "width": 390
+      }
+    },
+    {
+      "id": "P19",
+      "name": "linear overview resizes without stale card geometry",
+      "status": "pass",
+      "observed": {
+        "panels": 6,
+        "scroll": 1265,
+        "svg": 1,
+        "viewport": 1265,
+        "width": 1280
+      }
+    },
+    {
+      "id": "P21",
+      "name": "final mobile preview resets fictional data and captures actual viewport",
+      "status": "pass",
+      "observed": {
+        "scroll": 375,
+        "scrollY": 0,
+        "selection": "已选择 0 条",
+        "skipTop": -70,
+        "viewport": 375,
+        "width": 390
+      }
+    }
+  ],
+  "layoutResults": [
+    {
+      "width": 1440,
+      "scroll": 1425,
+      "title": "订单与制作",
+      "viewport": 1425
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "title": "商品方案",
+      "viewport": 1440
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "title": "工厂协同",
+      "viewport": 1440
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "title": "合格交付成本",
+      "viewport": 1440
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "title": "建设阶段",
+      "viewport": 1440
+    },
+    {
+      "width": 1024,
+      "scroll": 1009,
+      "title": "订单与制作",
+      "viewport": 1009
+    },
+    {
+      "width": 1024,
+      "scroll": 1009,
+      "title": "商品方案",
+      "viewport": 1009
+    },
+    {
+      "width": 1024,
+      "scroll": 1009,
+      "title": "工厂协同",
+      "viewport": 1009
+    },
+    {
+      "width": 1024,
+      "scroll": 1009,
+      "title": "合格交付成本",
+      "viewport": 1009
+    },
+    {
+      "width": 1024,
+      "scroll": 1009,
+      "title": "建设阶段",
+      "viewport": 1009
+    },
+    {
+      "width": 390,
+      "scroll": 375,
+      "title": "订单与制作",
+      "viewport": 375
+    },
+    {
+      "width": 390,
+      "scroll": 375,
+      "title": "商品方案",
+      "viewport": 375
+    },
+    {
+      "width": 390,
+      "scroll": 375,
+      "title": "工厂协同",
+      "viewport": 375
+    },
+    {
+      "width": 390,
+      "scroll": 375,
+      "title": "合格交付成本",
+      "viewport": 375
+    },
+    {
+      "width": 390,
+      "scroll": 375,
+      "title": "建设阶段",
+      "viewport": 375
+    }
+  ],
+  "screenshots": [
+    "evidence/prototype-desktop-1440.png",
+    "evidence/prototype-mobile-390.png",
+    "evidence/overview-desktop-1280.png",
+    "evidence/overview-mobile-390.png"
+  ],
+  "repairs": [
+    "Bundled JavaScript replacement escaped dollar signs correctly",
+    "Filtered detail follows visible result and clears on empty results",
+    "View transition overlay does not consume clicks",
+    "Closed mobile navigation is hidden and keyboard focus returns correctly",
+    "Navigation readiness follows transition completion for stable measurement",
+    "Overview uses linear document layout to avoid stale card geometry after resize"
+  ],
+  "dataCleanup": "All fictional selections and state changes reset before delivery; no application business data created",
+  "overviewLayout": "linear document; flow diagram scrolls inside its own container on phone",
+  "prototypeSha256": "7f32120c6e7cbda5b584d38991e458d074505aa769de5c3cbc49dfb38ff37972",
+  "overviewSha256": "ffd1db4f545104863c9000bd103b9feaf43834ab422b7baf77f0e8b1c0abc1ce",
+  "finalBuildConsoleErrors": [],
+  "cleanup": {
+    "fictionalStateReset": true,
+    "viewportOverridesReset": true,
+    "emulatedReducedMotionReset": true,
+    "browserTabs": "closed after evidence capture",
+    "previewServer": "stopped after evidence capture"
+  }
+}

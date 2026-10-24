@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { Permission } from "@yummyai/authz";
 import { createEntityId, type ReviewDesignVersionInput, type RightsSource, type TenantContext, type UploadDesignVersionInput } from "@yummyai/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -13,7 +14,7 @@ import {
   type DesignVersionRecord,
 } from "./design.service.js";
 
-const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: [], dataScope: "tenant" };
+const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: Object.values(Permission), dataScope: "tenant" };
 
 describe("design service", () => {
   it("creates a new version instead of overwriting an approved design", async () => {
@@ -122,7 +123,7 @@ class MemoryDesignRepository implements DesignRepository {
     found.rightsApprovedAt = new Date();
     return found;
   }
-  async promoteAsset(_context: TenantContext, source: DesignAssetRecord) { return { ...source, id: createEntityId(), domain: "authorized" as const }; }
+  async promoteAsset(_context: TenantContext, source: DesignAssetRecord) { return source; }
   async signAsset() { return "https://signed.example/file"; }
   async promoteApprovedCreativeBindings() { return []; }
 

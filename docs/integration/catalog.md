@@ -39,8 +39,10 @@ because SPU creation copies the approved schema into catalog master data.
 
 `CustomProductPackageV1` is the reviewed handoff from YummyAI research and
 catalog data to Amazon Studio. The product plan stores its editable
-`custom_product_profile` JSONB value; the ZIP is generated on demand and is not
-stored as mutable catalog state.
+`custom_product_profile` JSONB projection. Profile changes also create immutable
+owner receipts. Direct download generates a ZIP on demand; workflow exports store
+the actual private ZIP and checksum in an immutable receipt. Neither rewrites an
+older exported file. API and Worker share `@yummyai/catalog-core`.
 
 ### REST workflow
 
@@ -51,6 +53,20 @@ stored as mutable catalog state.
 | `GET /v1/products/plans/:id/custom-package/completeness` | Evaluate release readiness                       | `ProductRead`                  |
 | `GET /v1/products/plans/:id/custom-package?mode=draft`   | Download a draft ZIP, including blockers         | `ProductRead`, `AssetRead`     |
 | `GET /v1/products/plans/:id/custom-package?mode=release` | Download only when all release gates pass        | `ProductRead`, `AssetRead`     |
+| `GET /v1/products/plans/:id/custom-package/receipts/:receiptId` | Inspect an immutable owner result without its private key | `ProductRead`; `ResearchRead` when sources are pinned |
+| `POST /v1/products/plans/:id/custom-package/receipts/:receiptId/read-url` | Authorize an existing private workflow ZIP for 60 seconds | `ProductRead`, `AssetRead`; current source access when applicable |
+
+Service checks also require ProductRead for the underlying plan and current
+self/team/tenant object scope. Research-backed reads require ResearchRead.
+Private file reads additionally require AssetRead. Export bytes must match each
+registered file's exact size and checksum. Competitor and
+customer-provided sources cannot be promoted into exportable product assets.
+
+Migrations 0109/0110 and fixed execution inputs are described in
+[workflow execution](workflow-node-execution.md). A queued operation detects
+changes to its product basis instead of overwriting a newer operator edit.
+Provisional inference does not populate unrelated product types, audiences or
+manufacturing materials from a hardcoded template.
 
 The provisional request contains a research item ID and target marketplace:
 

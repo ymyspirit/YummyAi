@@ -1,0 +1,43 @@
+.agent-readiness { min-width: 0; margin-block: 12px; padding: 12px 0; color: var(--ink); border-block: 1px solid var(--line); font-size: 12px; animation: agent-readiness-enter 160ms ease-out; }
+.agent-readiness > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.agent-readiness h3 { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; }
+.agent-readiness p { margin: 8px 0; line-height: 1.65; overflow-wrap: anywhere; }
+.agent-readiness :is(button, a) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; text-decoration: none; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: transform 140ms ease, background-color 140ms ease, opacity 140ms ease; }
+.agent-readiness :is(button, a):hover:not(:disabled) { background: var(--surface-muted); transform: translateY(-1px); }
+.agent-readiness :is(button, a):active:not(:disabled) { transform: scale(.96); }
+.agent-readiness :is(button, a, summary):focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 3px; }
+.agent-readiness button:disabled { opacity: .55; cursor: not-allowed; }
+.agent-readiness svg { flex-shrink: 0; }
+.agent-readiness-result, .agent-readiness-error { animation: agent-readiness-enter 160ms ease-out; }
+.agent-readiness-status { font-weight: 600; }
+.agent-readiness-error { display: flex; align-items: flex-start; gap: 6px; color: var(--danger, #b91c1c); }
+.agent-readiness-blocked { font-weight: 600; }
+.agent-readiness-blockers { display: grid; gap: 8px; margin: 8px 0; padding-left: 18px; }
+.agent-readiness-blockers li { min-width: 0; overflow-wrap: anywhere; }
+.agent-readiness-blockers span { display: block; margin-top: 2px; color: var(--muted-ink); line-height: 1.6; }
+.agent-readiness .agent-readiness-settings { color: var(--accent, #2563eb); }
+.agent-readiness-muted { color: var(--muted-ink); }
+.agent-readiness time { font-variant-numeric: tabular-nums; }
+.agent-readiness-unchecked { padding: 8px 10px; background: var(--surface-muted); border-left: 2px solid var(--accent, #2563eb); }
+.agent-readiness-checks { margin-block: 8px; }
+.agent-readiness-checks summary { width: fit-content; max-width: 100%; padding: 7px 0; min-height: 32px; cursor: pointer; overflow-wrap: anywhere; transition: color 140ms ease; }
+.agent-readiness-checks dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 16px; margin: 5px 0 0; }
+.agent-readiness-checks dl > div { min-width: 0; }
+.agent-readiness-checks dt { color: var(--muted-ink); }
+.agent-readiness-checks dd { margin: 2px 0 0; overflow-wrap: anywhere; line-height: 1.6; }
+.agent-readiness-checks::details-content { opacity: 0; block-size: 0; overflow: clip; interpolate-size: allow-keywords; transition: block-size 160ms ease, opacity 140ms ease, content-visibility 160ms allow-discrete; }
+.agent-readiness-checks[open]::details-content { opacity: 1; block-size: auto; }
+.agent-readiness-spinning { animation: agent-readiness-spin 1s linear infinite; }
+.agent-runtime-readiness { min-width: 0; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); animation: agent-readiness-enter 160ms ease-out; }
+.agent-runtime-readiness > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.agent-runtime-readiness h4 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; }
+.agent-runtime-services { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 8px 0; }
+.agent-runtime-services > div { min-width: 0; }
+.agent-runtime-services dt { color: var(--muted-ink); }
+.agent-runtime-services dd { margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; }
+.agent-runtime-reasons { display: grid; gap: 4px; margin: 8px 0; padding-left: 18px; overflow-wrap: anywhere; }
+.agent-runtime-readiness > [role="status"] { transition: color 140ms ease; }
+@keyframes agent-readiness-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes agent-readiness-spin { to { transform: rotate(360deg); } }
+@media (max-width: 600px) { .agent-readiness :is(button, a) { min-height: 44px; } .agent-readiness-checks dl, .agent-runtime-services { grid-template-columns: minmax(0, 1fr); } .agent-readiness-checks summary { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .agent-readiness, .agent-readiness-result, .agent-readiness-error, .agent-readiness-spinning, .agent-runtime-readiness { animation: none; } .agent-readiness :is(button, a, summary), .agent-readiness-checks::details-content, .agent-runtime-readiness > [role="status"] { transition: none; } .agent-readiness :is(button, a):hover:not(:disabled), .agent-readiness :is(button, a):active:not(:disabled) { transform: none; } }

@@ -1,0 +1,12 @@
+export function workflowCenterEnabled(
+  tenantId: string,
+  configuredTenantIds = process.env.WORKFLOW_CENTER_TENANT_IDS,
+) {
+  const configured = configuredTenantIds?.trim();
+  if (!configured || configured === "*") return true;
+  return configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .includes(tenantId);
+}

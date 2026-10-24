@@ -1,16 +1,20 @@
 import { expect, test } from "@playwright/test";
 import { createEntityId } from "@yummyai/contracts";
 
+import { NAVIGATION_GROUPS } from "../src/features/navigation/navigation-registry";
+
+const creativeNavigationItems = NAVIGATION_GROUPS.find((group) => group.id === "creative")!.items;
+
 const workbenches = [
   {
-    heading: "画图设计",
+    heading: "批量生图",
     path: "/creative-designs",
     boundary: "授权素材",
     emptyState: "建立第一批创意需求",
     nextPath: "/pod-workbench/mockup-batches",
   },
   {
-    heading: "批量套图",
+    heading: "商品套图",
     path: "/pod-workbench/mockup-batches",
     boundary: "正式设计",
     emptyState: "等待第一批正式设计",
@@ -26,14 +30,14 @@ for (const workbench of workbenches) {
 
     await expect(page.getByRole("heading", { name: workbench.heading, level: 1 })).toBeVisible();
     await expect(page.getByText(workbench.boundary, { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: workbench.emptyState })).toBeVisible();
-    await expect(page.locator('a[href="/creative-designs"]').first()).toBeVisible();
+    await expect(page.locator(".pod-batch-workbench")).toBeVisible();
+    await expect(page.locator('a[href="/creative-designs/canvas"]').first()).toBeVisible();
     await expect(page.locator('a[href="/pod-workbench/mockup-batches"]').first()).toBeVisible();
     await expect(page.locator(`a[href="${workbench.nextPath}"]`).first()).toBeVisible();
 
     const creativeNavigation = page.locator('[aria-labelledby="rail-group-creative"]');
-    await expect(creativeNavigation.getByRole("link")).toHaveCount(4);
-    for (const label of ["画图设计", "POD 作图中心", "设计校样", "批量套图"]) {
+    await expect(creativeNavigation.getByRole("link")).toHaveCount(creativeNavigationItems.length);
+    for (const { label } of creativeNavigationItems) {
       await expect(creativeNavigation.getByRole("link", { name: label })).toBeVisible();
     }
 
@@ -72,5 +76,5 @@ test("legacy batch-design URL redirects to the independent creative workspace", 
   const batchId = createEntityId();
   await page.goto(`/pod-workbench/batch-designs?batch=${batchId}`);
   await expect(page).toHaveURL(`/creative-designs?batch=${batchId}`);
-  await expect(page.getByRole("heading", { name: "画图设计", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "批量生图", level: 1 })).toBeVisible();
 });

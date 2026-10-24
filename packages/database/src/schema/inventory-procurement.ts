@@ -1,8 +1,10 @@
 import type {
-  ProcurementPurchaseLine,
+  ProcurementPurchaseLineSnapshot,
   ProcurementRequestLine,
+  ProcurementUnit,
 } from "@yummyai/contracts";
 import { sql } from "drizzle-orm";
+import { exactAggregateStockQuantity, exactStockQuantity, stockQuantity } from "../stock-quantity.js";
 import {
   bigint,
   boolean,
@@ -27,6 +29,7 @@ import {
   inventoryStockItems,
 } from "./inventory.js";
 import { fulfillmentSuppliers } from "./order-routing.js";
+import { productSupplyVersions } from "./product-supply.js";
 
 export const inventoryProcurementRequisitions = pgTable("inventory_procurement_requisitions", {
   id: uuid("id").primaryKey(),
@@ -82,9 +85,11 @@ export const inventoryProcurementRfqs = pgTable("inventory_procurement_rfqs", {
   idempotencyKey: text("idempotency_key").notNull(),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  creationTransactionId: text("creation_transaction_id"),
 }, (table) => [
   check("inventory_procurement_rfqs_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_procurement_rfqs_status_check", sql`${table.status} in ('open','closed','cancelled')`),
+  check("procurement_rfq_creation_transaction_check", sql`${table.creationTransactionId} is null or ${table.creationTransactionId} ~ '^[0-9]+$'`),
   foreignKey({
     columns: [table.tenantId, table.requisitionId],
     foreignColumns: [inventoryProcurementRequisitions.tenantId, inventoryProcurementRequisitions.id],
@@ -111,7 +116,9 @@ export const inventorySupplierQuoteVersions = pgTable("inventory_supplier_quote_
   lineSnapshot: jsonb("line_snapshot").$type<Array<{
     lineKey: string;
     unitCostMinor: number;
-    minimumOrderQuantity: number;
+    minimumOrderQuantity: number | string;
+    priceBasisQuantity?: number | string;
+    unit?: ProcurementUnit;
     leadTimeDays: number;
   }>>().notNull(),
   totalMinor: bigint("total_minor", { mode: "number" }).notNull(),
@@ -141,12 +148,17 @@ export const inventorySupplierQuoteVersions = pgTable("inventory_supplier_quote_
 ]);
 
 export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
+  archivedAt: timestamp("archived_at", { mode: "date", withTimezone: true }),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   code: text("code").notNull(),
   supplierId: uuid("supplier_id").notNull(),
   requisitionId: uuid("requisition_id"),
   quoteId: uuid("quote_id"),
+  sourceSupplyVersionId: uuid("source_supply_version_id"),
+  sourceSupplyRequestHash: text("source_supply_request_hash"),
+  purpose: text("purpose").default("general").notNull(),
+  receivingPolicy: text("receiving_policy").default("inspection_required"),
   status: text("status").default("draft").notNull(),
   currentVersion: integer("current_version").default(1).notNull(),
   expectedAt: timestamp("expected_at", { mode: "date", withTimezone: true }).notNull(),
@@ -158,6 +170,7 @@ export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
   check("inventory_purchase_orders_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_purchase_orders_status_check", sql`${table.status} in ('draft','approved','rejected','partially_received','received','reconciliation_required','cancelled')`),
   check("inventory_purchase_orders_version_check", sql`${table.currentVersion} > 0`),
+  check("purchase_order_receiving_policy_check", sql`${table.receivingPolicy} is null or ${table.receivingPolicy}='inspection_required'`),
   foreignKey({
     columns: [table.tenantId, table.supplierId],
     foreignColumns: [fulfillmentSuppliers.tenantId, fulfillmentSuppliers.id],
@@ -174,6 +187,7 @@ export const inventoryPurchaseOrders = pgTable("inventory_purchase_orders", {
     name: "inventory_purchase_orders_quote_fk",
   }).onDelete("restrict"),
   unique("inventory_purchase_orders_tenant_id_unique").on(table.tenantId, table.id),
+  foreignKey({ columns: [table.tenantId, table.sourceSupplyVersionId], foreignColumns: [productSupplyVersions.tenantId, productSupplyVersions.id], name: "inventory_purchase_orders_supply_fk" }),
   uniqueIndex("inventory_purchase_orders_code_unique").on(table.tenantId, table.code),
   uniqueIndex("inventory_purchase_orders_idempotency_unique").on(table.tenantId, table.idempotencyKey),
   index("inventory_purchase_orders_status_idx").on(table.tenantId, table.status, table.expectedAt),
@@ -186,7 +200,7 @@ export const inventoryPurchaseOrderVersions = pgTable("inventory_purchase_order_
   versionNumber: integer("version_number").notNull(),
   currency: text("currency").notNull(),
   expectedAt: timestamp("expected_at", { mode: "date", withTimezone: true }).notNull(),
-  lineSnapshot: jsonb("line_snapshot").$type<ProcurementPurchaseLine[]>().notNull(),
+  lineSnapshot: jsonb("line_snapshot").$type<ProcurementPurchaseLineSnapshot[]>().notNull(),
   totalMinor: bigint("total_minor", { mode: "number" }).notNull(),
   checksum: text("checksum").notNull(),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -267,16 +281,22 @@ export const inventoryProcurementReceiptLines = pgTable("inventory_procurement_r
   lineKey: text("line_key").notNull(),
   stockItemId: uuid("stock_item_id").notNull(),
   destinationLocationId: uuid("destination_location_id").notNull(),
-  receivedQuantity: integer("received_quantity").notNull(),
-  rejectedQuantity: integer("rejected_quantity").notNull(),
+  receivedQuantity: stockQuantity("received_quantity").notNull(),
+  rejectedQuantity: stockQuantity("rejected_quantity").notNull(),
   rejectionReasonCode: text("rejection_reason_code"),
   unit: text("unit").notNull(),
   unitCostMinor: bigint("unit_cost_minor", { mode: "number" }).notNull(),
+  priceBasisQuantity: stockQuantity("price_basis_quantity"),
+  stockUnit: text("stock_unit"),
+  stockReceivedQuantity: stockQuantity("stock_received_quantity"),
+  stockRejectedQuantity: stockQuantity("stock_rejected_quantity"),
   lotId: uuid("lot_id"),
   movementId: uuid("movement_id"),
 }, (table) => [
   check("inventory_procurement_receipt_lines_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_procurement_receipt_lines_quantity_check", sql`${table.receivedQuantity} >= 0 and ${table.rejectedQuantity} >= 0 and (${table.receivedQuantity} + ${table.rejectedQuantity}) > 0`),
+  check("inventory_receipt_received_exact_check", exactStockQuantity(table.receivedQuantity, table.unit)),
+  check("inventory_receipt_rejected_exact_check", exactStockQuantity(table.rejectedQuantity, table.unit)),
   check("inventory_procurement_receipt_lines_rejection_check", sql`(${table.rejectedQuantity} = 0 and ${table.rejectionReasonCode} is null) or (${table.rejectedQuantity} > 0 and ${table.rejectionReasonCode} is not null)`),
   check("inventory_procurement_receipt_lines_unit_check", sql`${table.unit} in ('each','pair','set','meter','gram','kilogram')`),
   check("inventory_procurement_receipt_lines_cost_check", sql`${table.unitCostMinor} >= 0`),
@@ -310,13 +330,15 @@ export const inventoryProcurementReceiptLines = pgTable("inventory_procurement_r
 ]);
 
 export const inventorySupplierInvoices = pgTable("inventory_supplier_invoices", {
+  allocationStatus: text("allocation_status"),
+  creationTransactionId: text("creation_transaction_id"),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   purchaseOrderId: uuid("purchase_order_id").notNull(),
   invoiceNumber: text("invoice_number").notNull(),
   currency: text("currency").notNull(),
   totalMinor: bigint("total_minor", { mode: "number" }).notNull(),
-  varianceMinor: bigint("variance_minor", { mode: "number" }).notNull(),
+  varianceMinor: bigint("variance_minor", { mode: "number" }),
   status: text("status").notNull(),
   issuedAt: timestamp("issued_at", { mode: "date", withTimezone: true }).notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
@@ -342,9 +364,12 @@ export const inventorySupplierInvoiceLines = pgTable("inventory_supplier_invoice
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   invoiceId: uuid("invoice_id").notNull(),
   lineKey: text("line_key").notNull(),
-  invoicedQuantity: integer("invoiced_quantity").notNull(),
+  invoicedQuantity: stockQuantity("invoiced_quantity").notNull(),
+  unit: text("unit"),
+  priceBasisQuantity: stockQuantity("price_basis_quantity"),
+  allocatedQuantity: stockQuantity("allocated_quantity"),
   unitCostMinor: bigint("unit_cost_minor", { mode: "number" }).notNull(),
-  varianceMinor: bigint("variance_minor", { mode: "number" }).notNull(),
+  varianceMinor: bigint("variance_minor", { mode: "number" }),
 }, (table) => [
   check("inventory_supplier_invoice_lines_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_supplier_invoice_lines_quantity_check", sql`${table.invoicedQuantity} > 0`),
@@ -391,9 +416,9 @@ export const inventoryReplenishmentPolicyVersions = pgTable("inventory_replenish
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   policyId: uuid("policy_id").notNull(),
   versionNumber: integer("version_number").notNull(),
-  reorderPoint: integer("reorder_point").notNull(),
-  safetyStock: integer("safety_stock").notNull(),
-  minimumOrderQuantity: integer("minimum_order_quantity").notNull(),
+  reorderPoint: stockQuantity("reorder_point").notNull(),
+  safetyStock: stockQuantity("safety_stock").notNull(),
+  minimumOrderQuantity: stockQuantity("minimum_order_quantity").notNull(),
   leadTimeDays: integer("lead_time_days").notNull(),
   serviceLevelBps: integer("service_level_bps").notNull(),
   reviewIntervalDays: integer("review_interval_days").notNull(),
@@ -423,9 +448,9 @@ export const inventoryReplenishmentSuggestions = pgTable("inventory_replenishmen
   policyVersionId: uuid("policy_version_id").notNull(),
   stockItemId: uuid("stock_item_id").notNull(),
   locationId: uuid("location_id").notNull(),
-  availableQuantity: integer("available_quantity").notNull(),
-  inTransitQuantity: integer("in_transit_quantity").notNull(),
-  suggestedQuantity: integer("suggested_quantity").notNull(),
+  availableQuantity: stockQuantity("available_quantity").notNull(),
+  inTransitQuantity: stockQuantity("in_transit_quantity").notNull(),
+  suggestedQuantity: stockQuantity("suggested_quantity").notNull(),
   status: text("status").default("open").notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -433,6 +458,7 @@ export const inventoryReplenishmentSuggestions = pgTable("inventory_replenishmen
 }, (table) => [
   check("inventory_replenishment_suggestions_id_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_replenishment_suggestions_quantity_check", sql`${table.inTransitQuantity} >= 0 and ${table.suggestedQuantity} >= 0`),
+  check("inventory_replenishment_suggestions_exact_quantity_check", sql`${exactAggregateStockQuantity(table.availableQuantity)} and ${exactAggregateStockQuantity(table.inTransitQuantity)}`),
   check("inventory_replenishment_suggestions_status_check", sql`${table.status} in ('open','converted','dismissed')`),
   foreignKey({
     columns: [table.tenantId, table.policyId],

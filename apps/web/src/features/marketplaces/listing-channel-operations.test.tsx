@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { ListingChannelOperations } from "./listing-channel-operations";
+import { ErpIdentityContext } from "../identity/erp-access";
+import { syncActor } from "./listing-sync.test-fixture";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -10,12 +12,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("./marketplace-actions", () => ({
   createListingReplication: vi.fn(),
   createMarketplaceAutomationRule: vi.fn(),
-  createMarketplaceListingSync: vi.fn(),
   setMarketplaceAutomationEnabled: vi.fn(),
 }));
 
 describe("Listing channel operations", () => {
-  it("offers precise full-content and price/inventory synchronization actions", () => {
+  it("preserves replication and automation while hiding private sync facts from an anonymous initial render", () => {
     const html = renderToStaticMarkup(<ListingChannelOperations
       accounts={[]}
       automations={[]}
@@ -34,16 +35,13 @@ describe("Listing channel operations", () => {
     />);
 
     expect(html).toContain("在线 Listing 同步");
-    for (const label of [
-      "读取价格与库存",
-      "读取完整内容",
-      "写入批准价格与库存",
-      "写入完整批准内容",
-    ]) expect(html).toContain(label);
+    expect(html).toContain("当前无原刊登同步读取权限");
+    for (const label of ["多站点复制", "目标语言", "创建站点草稿", "自动化规则", "保存规则"]) expect(html).toContain(label);
+    expect(html).not.toContain("保存原同步任务");
   });
 
-  it("offers a published Amazon JSON Feed item as an online sync source", () => {
-    const html = renderToStaticMarkup(<ListingChannelOperations
+  it("does not turn a parent published Feed summary into a verified sync source before the personal workspace GET", () => {
+    const html = renderToStaticMarkup(<ErpIdentityContext.Provider value={{ session: syncActor, localDevelopment: false, logout() {} }}><ListingChannelOperations
       accounts={[]}
       automations={[]}
       listing={{
@@ -91,9 +89,11 @@ describe("Listing channel operations", () => {
       }]}
       replications={[]}
       syncs={[]}
-    />);
+    /></ErpIdentityContext.Provider>);
 
-    expect(html).toContain("SKU-FEED-1");
-    expect(html).toContain('value="feed-request"');
+    expect(html).toContain("正在核对本人原同步依据");
+    expect(html).not.toContain("SKU-FEED-1");
+    expect(html).not.toContain('value="feed-request"');
+    expect(html).toContain("多站点复制"); expect(html).toContain("自动化规则");
   });
 });

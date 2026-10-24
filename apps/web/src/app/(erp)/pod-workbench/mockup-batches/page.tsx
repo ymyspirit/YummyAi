@@ -1,4 +1,3 @@
-import { ErpSidebar } from "../../../../features/navigation/erp-sidebar";
 import { MockupBatchWorkbench } from "../../../../features/pod/mockup-batch-workbench";
 import type { BatchCapabilities, MockupBatch, MockupOptions } from "../../../../features/pod/pod-batch-types";
 import { apiFetch } from "../../../../server-api";
@@ -11,9 +10,8 @@ export default async function MockupBatchesPage({ searchParams }: { searchParams
   const loaded = await loadConsole(requestedBatchId);
   return (
     <div className="research-shell pod-batch-shell">
-      <ErpSidebar active="mockup-batches" contextLabel="MOCKUP OPS" note="只消费已批准正式设计与模板包；输出审核后显式绑定 Listing，不自动发布。" />
       <main className="research-main pod-batch-main">
-        <MockupBatchWorkbench {...loaded} />
+        <MockupBatchWorkbench {...loaded} initialDesignVersionId={typeof params.designVersionId==="string"?params.designVersionId:undefined} />
       </main>
     </div>
   );
@@ -41,12 +39,14 @@ async function loadConsole(requestedBatchId?: string): Promise<{
     const options = await optionsResponse.json() as MockupOptions;
     const allPacks = (await packsResponse.json() as { items: Array<{ id: string; name: string; versionNumber: number; status: string; platform: string; locale: string }> }).items;
     const batches = await batchesResponse.json() as MockupBatch[];
+    const goldenAssetIds = options.inspections.flatMap(inspection => inspection.status === "completed" && !inspection.confirmedAt && inspection.compilation?.previewAssetId ? [inspection.compilation.previewAssetId] : []);
     const batchId = requestedBatchId ?? batches[0]?.id;
-    if (!batchId) return { capabilities, options, allPacks, batches, assetUrls: {} };
+    if (!batchId) return { capabilities, options, allPacks, batches, assetUrls: await signAssets(base, goldenAssetIds) };
     const detailResponse = await apiFetch(`${base}/v1/pod/mockup-batches/${batchId}`, { cache: "no-store" });
     if (!detailResponse.ok) return { capabilities, options, allPacks, batches, assetUrls: {}, error: `套图批次详情读取失败 (${detailResponse.status})。` };
     const batch = await detailResponse.json() as MockupBatch;
-    const assetIds = [...new Set(batch.items?.flatMap((item) => item.outputs.flatMap((output) => output.assetId ? [output.assetId] : [])) ?? [])];
+    const assetIds = [...new Set([...(batch.items?.flatMap((item) => item.outputs.flatMap((output) => output.assetId ? [output.assetId] : [])) ?? []),
+      ...goldenAssetIds])];
     return { capabilities, options, allPacks, batches, batch, assetUrls: await signAssets(base, assetIds) };
   } catch (error) {
     return { allPacks: [], batches: [], assetUrls: {}, error: error instanceof Error ? error.message : "批量套图控制台读取失败。" };

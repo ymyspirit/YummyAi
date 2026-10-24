@@ -3,12 +3,14 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   connectDatabase,
   marketplacePublicationEvents,
+  marketplacePublicationIntents,
   marketplacePublicationRequests,
   marketplaceQuotaSnapshots,
+  marketplaceStoreNodeExecutions,
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AuditService } from "../audit/audit.service.js";
@@ -17,6 +19,7 @@ import {
   MarketplacePublicationService,
   type MarketplacePublicationEnqueuer,
 } from "./marketplace-publication.service.js";
+import { publicationNodePreviewFixture } from "./publication-node-preview.test-fixture.js";
 
 class FakeEnqueuer implements MarketplacePublicationEnqueuer {
   enqueue = vi.fn<MarketplacePublicationEnqueuer["enqueue"]>(async () => undefined);
@@ -25,21 +28,16 @@ class FakeEnqueuer implements MarketplacePublicationEnqueuer {
 
 describe("marketplace publication requests", () => {
   const database = connectDatabase();
+  const fixture = publicationNodePreviewFixture(database);
   const enqueuer = new FakeEnqueuer();
-  const service = new MarketplacePublicationService(database, enqueuer, new AuditService(database));
+  let service: MarketplacePublicationService;
   const accountService = new MarketplaceAccountService(database, new AuditService(database));
-  const tenantId = createEntityId();
-  const otherTenantId = createEntityId();
-  const userId = createEntityId();
-  const context: TenantContext = {
-    tenantId,
-    userId,
-    permissions: [Permission.ListingPublish, Permission.ListingRead],
-    dataScope: "tenant",
-  };
-  const otherContext: TenantContext = { ...context, tenantId: otherTenantId };
-  const accountId = createEntityId();
-  const capabilityId = createEntityId();
+  let tenantId: string;
+  let userId: string;
+  let context: TenantContext;
+  let otherContext: TenantContext;
+  let accountId: string;
+  let capabilityId: string;
   const listingId = createEntityId();
   const listingVersionId = createEntityId();
   const assetId = createEntityId();
@@ -51,16 +49,23 @@ describe("marketplace publication requests", () => {
 
   beforeAll(async () => {
     await migrateDatabase(database);
+    await fixture.initialize();
+    tenantId = fixture.a.tenantId;
+    userId = fixture.a.userId;
+    const permissions = [Permission.ListingPublish, Permission.ListingRead, Permission.StoreRead];
+    context = { tenantId, userId, permissions, dataScope: "tenant" };
+    otherContext = { tenantId: fixture.foreign.tenantId, userId: fixture.foreign.userId, permissions, dataScope: "tenant" };
+    const original = await fixture.bootstrapStore();
+    accountId = original.store.id;
+    capabilityId = original.capabilityId;
+    service = new MarketplacePublicationService(database, enqueuer, new AuditService(database), fixture.service);
+    const heartbeat = await fixture.runNode(original.node.keys);
+    const workspace = await fixture.service.workspace(await fixture.current(), accountId);
+    await fixture.waitSavedHeartbeat(original.node.keys, heartbeat, {
+      accountId, nodeId: original.node.nodeId, bindingRevision: workspace.binding.revision,
+    });
     const planId = createEntityId();
     const spuId = createEntityId();
-    await database.client.unsafe(
-      `insert into organizations (id, name, slug) values ($1, 'Publication tenant', $2), ($3, 'Other publication tenant', $4)`,
-      [tenantId, `publication-${tenantId}`, otherTenantId, `other-publication-${otherTenantId}`],
-    );
-    await database.client.unsafe(
-      `insert into app_users (id, oidc_subject, email, display_name) values ($1, $2, $3, 'Publication Admin')`,
-      [userId, `publication-${userId}`, `${userId}@example.test`],
-    );
     await database.client.unsafe(
       `insert into product_plans (id, tenant_id, name, status, source_report_ids, customization, created_by)
        values ($1, $2, 'Publication plan', 'approved', '[]'::jsonb, '{"version":1,"fields":[]}'::jsonb, $3)`,
@@ -78,39 +83,19 @@ describe("marketplace publication requests", () => {
       [assetId, tenantId, userId, `tenants/${tenantId}/authorized/${assetId}.jpg`, "a".repeat(64)],
     );
     await database.client.unsafe(
-      `insert into marketplace_accounts
-       (id, tenant_id, platform, display_name, external_account_id, region, marketplace_ids, authorization_mode,
-        status, requested_scopes, granted_scopes, capabilities, credential_status, health_status,
-        last_capability_sync_at, capability_expires_at, created_by)
-       values ($1, $2, 'amazon', 'Publication Amazon', 'A1SELLER', 'NA', '["ATVPDKIKX0DER"]'::jsonb,
-        'amazon_private', 'active', '["product-listing"]'::jsonb, '["product-listing"]'::jsonb,
-        '["listing_read","listing_write"]'::jsonb, 'valid', 'healthy', now(), now() + interval '24 hours', $3)`,
-      [accountId, tenantId, userId],
-    );
-    await database.client.unsafe(
-      `insert into marketplace_capability_snapshots
-       (id, tenant_id, account_id, version, platform, external_account_id, marketplace_ids, capabilities,
-        source_version, source_checksum, data, synced_at, expires_at, created_by)
-       values ($1, $2, $3, 1, 'amazon', 'A1SELLER', '["ATVPDKIKX0DER"]'::jsonb,
-        '["listing_read","listing_write"]'::jsonb, 'amazon-sellers-v1:2026-07', 'capability-checksum',
-        $4::jsonb, now(), now() + interval '24 hours', $5)`,
-      [capabilityId, tenantId, accountId, JSON.stringify({
-        productDefinitions: [{ productType: "HOME", marketplaceIds: ["ATVPDKIKX0DER"], schemaChecksum: "schema-checksum" }],
-      }), userId],
-    );
-    await database.client.unsafe(
       `insert into listings (id, tenant_id, spu_id, platform, locale, status, created_by)
        values ($1, $2, $3, 'amazon', 'en-US', 'approved', $4)`,
       [listingId, tenantId, spuId, userId],
     );
     await insertApprovedVersion(listingVersionId, 1);
-  });
+  }, 120_000);
 
   afterAll(async () => {
-    await database.client.end();
-  });
+    try { await fixture.close(); }
+    finally { await database.client.end(); }
+  }, 120_000);
 
-  it("pins one immutable tenant-scoped request and is idempotent before enqueue", async () => {
+  it("pins one immutable tenant-scoped request and is idempotent before node dispatch", async () => {
     const input = { accountId, listingId, listingVersionId, marketplaceId: "ATVPDKIKX0DER", variantSkuId };
     const first = await service.create(context, input);
     const second = await service.create(context, input);
@@ -129,18 +114,28 @@ describe("marketplace publication requests", () => {
       current: { status: "queued" },
     });
     expect(first.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
-    expect(enqueuer.enqueue).toHaveBeenCalledTimes(3);
-    expect(enqueuer.enqueue).toHaveBeenLastCalledWith({
-      delayMs: 0,
-      publicationRequestId: secondVariant.id,
-      requestedBy: userId,
-      tenantId,
-    });
+    expect(enqueuer.enqueue).not.toHaveBeenCalled();
 
     const requests = await withTenant(database.db, context, (tx) => tx.select().from(marketplacePublicationRequests));
     const events = await withTenant(database.db, context, (tx) => tx.select().from(marketplacePublicationEvents));
     expect(requests).toHaveLength(2);
     expect(events).toHaveLength(2);
+    const intents = await withTenant(database.db, context, (tx) => tx.select().from(marketplacePublicationIntents)
+      .where(inArray(marketplacePublicationIntents.requestId, [first.id, secondVariant.id])));
+    expect(intents).toHaveLength(2);
+    expect(intents.every((intent) => intent.route === "node_preview" && intent.createdBy === userId &&
+      intent.membershipId === fixture.a.membershipId && intent.authorityCeiling.permissions.includes(Permission.StoreRead))).toBe(true);
+    expect(new Set(intents.map((intent) => intent.nodeExecutionId)).size).toBe(2);
+    const executions = await withTenant(database.db, context, (tx) => tx.select().from(marketplaceStoreNodeExecutions)
+      .where(inArray(marketplaceStoreNodeExecutions.id, intents.map((intent) => intent.nodeExecutionId!))));
+    expect(executions).toHaveLength(2);
+    for (const intent of intents) {
+      expect(executions.find((execution) => execution.id === intent.nodeExecutionId)).toMatchObject({
+        accountId, createdBy: userId, membershipId: fixture.a.membershipId, state: "waiting_node",
+        requestId: intent.requestKey, requestChecksum: intent.requestChecksum,
+        input: { publicationRequestId: intent.requestId },
+      });
+    }
     expect(JSON.stringify(requests)).not.toContain("refreshToken");
     await withTenant(database.db, context, async (tx) => {
       await tx.insert(marketplaceQuotaSnapshots).values([
@@ -201,11 +196,11 @@ describe("marketplace publication requests", () => {
       scheduledFor,
       current: { status: "scheduled" },
     });
-    expect(enqueuer.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
-      publicationRequestId: scheduled.id,
-      delayMs: expect.any(Number),
-    }));
-    expect(enqueuer.enqueue.mock.calls.at(-1)?.[0].delayMs).toBeGreaterThan(3_500_000);
+    expect(enqueuer.enqueue).not.toHaveBeenCalled();
+    const pending = await service.getPreview(context, scheduled.id);
+    expect(pending.execution).toMatchObject({
+      state: "waiting_node", expiresAt: new Date(Date.parse(scheduledFor) + 24 * 60 * 60 * 1_000).toISOString(),
+    });
 
     const cancelled = await service.cancel(context, scheduled.id, { reason: "Campaign timing changed" });
     expect(cancelled.current).toMatchObject({
@@ -214,6 +209,7 @@ describe("marketplace publication requests", () => {
       message: "Campaign timing changed",
     });
     expect(enqueuer.cancel).toHaveBeenCalledWith(scheduled.id);
+    expect((await service.getPreview(context, scheduled.id)).execution?.state).toBe("cancelled");
     expect((await service.events(context, scheduled.id)).map((event) => event.status))
       .toEqual(["scheduled", "cancelled"]);
     await expect(service.cancel(otherContext, scheduled.id, { reason: "Cross tenant" }))
@@ -221,6 +217,8 @@ describe("marketplace publication requests", () => {
   });
 
   it("creates one immutable Amazon submit child only after validation passes", async () => {
+    // Historical provider event fixture: the real node preview HTTP path has its
+    // own family; this case preserves the original owner's continuation gate.
     await withTenant(database.db, context, async (tx) => {
       await tx.insert(marketplacePublicationEvents).values({
         id: createEntityId(),
@@ -244,6 +242,13 @@ describe("marketplace publication requests", () => {
       capabilitySnapshotId: capabilityId,
       current: { status: "queued" },
     });
+    expect(enqueuer.enqueue).toHaveBeenCalledTimes(2);
+    expect(enqueuer.enqueue).toHaveBeenLastCalledWith({
+      delayMs: 0, publicationRequestId: first.id, requestedBy: userId, tenantId,
+    });
+    const [intent] = await withTenant(database.db, context, (tx) => tx.select().from(marketplacePublicationIntents)
+      .where(eq(marketplacePublicationIntents.requestId, first.id)));
+    expect(intent).toMatchObject({ route: "central", membershipId: fixture.a.membershipId, createdBy: userId });
     const [stored] = await withTenant(database.db, context, (tx) =>
       tx.select().from(marketplacePublicationRequests)
         .where(eq(marketplacePublicationRequests.id, first.id))

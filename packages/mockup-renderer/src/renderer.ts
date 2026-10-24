@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import sharp from "sharp";
 
@@ -22,13 +22,17 @@ export async function renderCompiledMockup(
   runner: ImageMagickRunner = new NativeImageMagickRunner(),
 ) {
   const bundle = { ...rawBundle, manifest: MockupRenderManifestSchema.parse(rawBundle.manifest) };
-  const metadata = await sharp(Buffer.from(artwork)).metadata();
+  const source = sharp(Buffer.from(artwork), { limitInputPixels: 64_000_000, failOn: "error" });
+  const metadata = await source.metadata();
   if (!metadata.width || !metadata.height) throw new MockupTemplatePolicyError("ARTWORK_DIMENSIONS_MISSING", "Artwork dimensions are required");
-  const taskDirectory = await mkdtemp(join(tmpdir(), "yummyai-mockup-"));
+  if ((metadata.pages ?? 1) !== 1) throw new MockupTemplatePolicyError("ARTWORK_MULTIPAGE_UNSUPPORTED", "Mockup artwork must be one fixed image");
+  const taskRoot = await realpath(tmpdir());
+  const taskDirectory = await mkdtemp(join(taskRoot, "yummyai-mockup-"));
   const artworkPath = join(taskDirectory, "artwork.png");
   const warpedPath = join(taskDirectory, "warped.png");
   try {
-    await writeFile(artworkPath, artwork);
+    // The external renderer receives an actual PNG rather than relying on a filename to select its decoder.
+    await writeFile(artworkPath, await source.png().toBuffer());
     const [x0, y0, x1, y1, x2, y2, x3, y3] = bundle.manifest.transform;
     const controlPoints = [
       `0,0 ${x0},${y0}`,
@@ -63,8 +67,15 @@ export async function renderCompiledMockup(
     }
     return { bytes: new Uint8Array(output), width: outputMetadata.width, height: outputMetadata.height };
   } finally {
-    await rm(taskDirectory, { recursive: true, force: true });
+    await removeTemporaryRender(taskRoot, taskDirectory);
   }
+}
+
+async function removeTemporaryRender(taskRoot: string, taskDirectory: string) {
+  const target = resolve(taskDirectory);
+  if (dirname(target) !== resolve(taskRoot) || !basename(target).startsWith("yummyai-mockup-") || (await lstat(target)).isSymbolicLink())
+    throw new MockupTemplatePolicyError("MOCKUP_CLEANUP_PATH_INVALID", "Temporary render cleanup escaped its original directory");
+  await rm(target, { recursive: true, force: true });
 }
 
 function positiveInteger(value: string | undefined, fallback: number) {

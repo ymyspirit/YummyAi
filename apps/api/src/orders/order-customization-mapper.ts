@@ -11,7 +11,7 @@ export interface MappedCustomizationResult {
   mappedFieldKeys: string[];
   missingFieldKeys: string[];
   unmappedSourceLabels: string[];
-  diagnostics: Array<{ code: "invalid_value" | "duplicate_value" | "unmapped_value"; fieldKey: string | null }>;
+  diagnostics: Array<{ code: "invalid_value" | "duplicate_value" | "unmapped_value" | "ambiguous_field"; fieldKey: string | null }>;
   completeness: number;
 }
 
@@ -24,19 +24,31 @@ export function mapOrderCustomization(
   const files: MappedCustomizationResult["fileReferences"] = [];
   const diagnostics: MappedCustomizationResult["diagnostics"] = [];
   const mapped = new Set<string>();
+  const seen = new Set<string>();
   const unmappedSourceLabels: string[] = [];
 
   for (const source of sourceValues) {
-    const field = findField(schema.fields, source.key, source.label);
+    const candidates = customizationFieldCandidates(schema.fields, source.key, source.label);
+    if (candidates.length > 1) {
+      diagnostics.push({ code: "ambiguous_field", fieldKey: null });
+      unmappedSourceLabels.push(source.label);
+      continue;
+    }
+    const field = candidates[0];
     if (!field) {
       unmappedSourceLabels.push(source.label);
       diagnostics.push({ code: "unmapped_value", fieldKey: null });
       continue;
     }
-    if (mapped.has(field.key)) {
+    if (seen.has(field.key)) {
       diagnostics.push({ code: "duplicate_value", fieldKey: field.key });
+      mapped.delete(field.key);
+      delete values[field.key];
+      const fileIndex = files.findIndex(file => file.fieldKey === field.key);
+      if (fileIndex >= 0) files.splice(fileIndex, 1);
       continue;
     }
+    seen.add(field.key);
     const normalized = normalizeValue(field, source);
     if (!normalized) {
       diagnostics.push({ code: "invalid_value", fieldKey: field.key });
@@ -47,7 +59,7 @@ export function mapOrderCustomization(
     else values[field.key] = normalized.value;
   }
 
-  const required = schema.fields.filter((field) => field.required && isVisible(field, values));
+  const required = schema.fields.filter((field) => field.required && customizationFieldVisible(field, values));
   const missingFieldKeys = required.filter((field) => !mapped.has(field.key)).map((field) => field.key);
   const completeness = required.length === 0 ? 100 : Math.round(((required.length - missingFieldKeys.length) / required.length) * 100);
   return {
@@ -61,9 +73,17 @@ export function mapOrderCustomization(
   };
 }
 
-function findField(fields: CustomizationField[], key: string, label: string) {
-  const sourceCandidates = new Set([normalizeIdentity(key), normalizeIdentity(label)]);
-  return fields.find((field) => sourceCandidates.has(normalizeIdentity(field.key)) || sourceCandidates.has(normalizeIdentity(field.label)));
+export function customizationFieldCandidates(fields: CustomizationField[], key: string, label: string) {
+  const exact = fields.find(field => field.key === key);
+  if (exact) {
+    const labelMatches = fields.filter(field => [normalizeIdentity(field.key), normalizeIdentity(field.label)].includes(normalizeIdentity(label)));
+    // A canonical key disambiguates shared labels. A label pointing solely at
+    // another field is contradictory and must still be reviewed.
+    return labelMatches.length && !labelMatches.some(field => field.key === exact.key)
+      ? [exact, ...labelMatches] : [exact];
+  }
+  const sourceCandidates = new Set([normalizeIdentity(key), normalizeIdentity(label)].filter(Boolean));
+  return fields.filter((field) => sourceCandidates.has(normalizeIdentity(field.key)) || sourceCandidates.has(normalizeIdentity(field.label)));
 }
 
 function normalizeValue(field: CustomizationField, source: OrderCustomizationValue): { kind: "value"; value: string | string[] } | { kind: "file"; value: string } | null {
@@ -72,6 +92,7 @@ function normalizeValue(field: CustomizationField, source: OrderCustomizationVal
   const entries = source.type === "choice" ? source.values : [source.value];
   if (field.type === "short_text" || field.type === "long_text") {
     const value = entries.join(", ");
+    if (field.required && !value.trim()) return null;
     const minimum = field.validation?.minLength ?? 0;
     const maximum = field.validation?.maxLength ?? (field.type === "short_text" ? 500 : 10_000);
     if (value.length < minimum || value.length > maximum) return null;
@@ -79,8 +100,8 @@ function normalizeValue(field: CustomizationField, source: OrderCustomizationVal
     return { kind: "value", value };
   }
   if (field.type === "single_choice") {
-    const option = field.options.find((candidate) => entries.some((entry) => normalizeIdentity(entry) === normalizeIdentity(candidate.value) || normalizeIdentity(entry) === normalizeIdentity(candidate.label)));
-    return option ? { kind: "value", value: option.value } : null;
+    const options = field.options.filter((candidate) => entries.some((entry) => normalizeIdentity(entry) === normalizeIdentity(candidate.value) || normalizeIdentity(entry) === normalizeIdentity(candidate.label)));
+    return entries.length === 1 && options.length === 1 ? { kind: "value", value: options[0]!.value } : null;
   }
   if (field.type === "multiple_choice") {
     const selected = field.options.filter((candidate) => entries.some((entry) => normalizeIdentity(entry) === normalizeIdentity(candidate.value) || normalizeIdentity(entry) === normalizeIdentity(candidate.label))).map((option) => option.value);
@@ -91,10 +112,12 @@ function normalizeValue(field: CustomizationField, source: OrderCustomizationVal
   if (field.type === "date") {
     const value = entries[0] ?? "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    if (entries.length !== 1 || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) return null;
     if (field.minDate && value < field.minDate || field.maxDate && value > field.maxDate) return null;
     return { kind: "value", value };
   }
   if (field.type === "color") {
+    if (entries.length !== 1) return null;
     const value = entries[0] ?? "";
     const color = field.palette.find((candidate) => candidate.toLowerCase() === value.toLowerCase());
     return color ? { kind: "value", value: color } : null;
@@ -102,7 +125,7 @@ function normalizeValue(field: CustomizationField, source: OrderCustomizationVal
   return null;
 }
 
-function isVisible(field: CustomizationField, values: Record<string, string | string[]>): boolean {
+export function customizationFieldVisible(field: CustomizationField, values: Record<string, string | string[]>): boolean {
   if (!field.visibleWhen) return true;
   const actual = values[field.visibleWhen.fieldKey];
   const expected = field.visibleWhen.value;

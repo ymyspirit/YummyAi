@@ -14,6 +14,8 @@ export const Permission = {
   FinanceRead: "finance:read",
   FinanceReview: "finance:review",
   FinanceWrite: "finance:write",
+  FactoryTaskRead: "factory_task:read",
+  FactoryTaskRespond: "factory_task:respond",
   InventoryRead: "inventory:read",
   InventoryWrite: "inventory:write",
   ListingRead: "listing:read",
@@ -23,14 +25,18 @@ export const Permission = {
   JobRead: "job:read",
   MembershipManage: "membership:manage",
   ModelConfigure: "model:configure",
+  ModelBillingReconcile: "model:billing_reconcile",
   NotificationRead: "notification:read",
   OrderPiiRead: "order:pii:read",
   OrderPiiAnonymize: "order:pii:anonymize",
   OrderRead: "order:read",
   OrderWrite: "order:write",
+  OrderAssign: "order:assign",
   ProductRead: "product:read",
+  ManufacturingReview: "manufacturing:review",
   ProductWrite: "product:write",
   ProcurementApprove: "procurement:approve",
+  ProcurementAssign: "procurement:assign",
   ProcurementRead: "procurement:read",
   ProcurementWrite: "procurement:write",
   ResearchRead: "research:read",
@@ -40,6 +46,7 @@ export const Permission = {
   StoreRead: "store:read",
   WorkflowRead: "workflow:read",
   WorkflowRun: "workflow:run",
+  WorkflowAssign: "workflow:assign",
   WorkflowManage: "workflow:manage",
   WorkflowApprove: "workflow:approve",
   SupplierPerformanceRead: "supplier_performance:read",
@@ -58,3 +65,23 @@ export const Permission = {
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
+
+const ordinaryErpPermissions = new Set<string>(
+  Object.values(Permission).filter(
+    (permission) =>
+      permission !== Permission.FactoryTaskRead && permission !== Permission.FactoryTaskRespond,
+  ),
+);
+/** The ordinary ERP session and object snapshots must use the same authority projection. */
+export function erpPermissions(permissions: readonly string[]) {
+  return permissions.filter((permission) => ordinaryErpPermissions.has(permission)).sort();
+}
+import type { TenantContext } from "@yummyai/contracts";
+
+
+/** Presentation only; preserve the full context for every owner authorization. */
+export function erpPermissionContext(context: TenantContext): TenantContext {
+  const permissions = erpPermissions(context.permissions);
+  return { ...context, permissions, ...(context.permissionScopes ? { permissionScopes:
+    Object.fromEntries(permissions.map(permission => [permission, context.permissionScopes![permission]])) } : {}) };
+}

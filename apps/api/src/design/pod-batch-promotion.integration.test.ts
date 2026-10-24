@@ -2,6 +2,9 @@ import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   assetFiles,
+  captureCreativeExecutionAuthority,
+  creativeExecutions,
+  creativeExecutionChecksum,
   canvasPrintSpecVersions,
   connectDatabase,
   creativeDesignBatchItems,
@@ -33,6 +36,9 @@ import { AuditService } from "../audit/audit.service.js";
 import { DrizzleCatalogRepository, ProductService } from "../catalog/product.service.js";
 import { DesignService, DrizzleDesignRepository } from "./design.service.js";
 import { PodGovernanceService } from "./pod-governance.service.js";
+import { CreativeExecutionOperatorService } from "./creative-execution-operator.service.js";
+import { creativeHarness, selectCreativeMethod } from "@yummyai/pod-core";
+import type { CreativeExecutionKind } from "@yummyai/contracts/harness";
 
 describe("controlled creative-to-design promotion", () => {
   const database = connectDatabase();
@@ -40,13 +46,29 @@ describe("controlled creative-to-design promotion", () => {
   const context: TenantContext = {
     tenantId: createEntityId(),
     userId,
-    permissions: [Permission.DesignRead, Permission.DesignWrite, Permission.DesignReview],
+    permissions: [Permission.DesignRead, Permission.DesignWrite, Permission.DesignReview, Permission.AssetRead, Permission.ProductRead, Permission.ListingRead, Permission.ListingWrite],
     dataScope: "tenant",
   };
   const catalog = new ProductService(new DrizzleCatalogRepository(database));
   const storage = {} as Storage;
   const designs = new DesignService(new DrizzleDesignRepository(database, storage));
   const governance = new PodGovernanceService(database, new AuditService(database));
+  const operator = new CreativeExecutionOperatorService(database);
+  async function syntheticReadRecord(kind: CreativeExecutionKind, id: string, stepKey: string) {
+    return withTenant(database.db, context, async tx => {
+      const effect = kind === "creative_candidate" ? "external_request" : "internal_write";
+      const captured = await captureCreativeExecutionAuthority(tx, context, creativeHarness(kind, effect).requiredPermissions);
+      const method = await selectCreativeMethod(tx, captured.authority, kind, effect);
+      const [row] = await tx.insert(creativeExecutions).values({
+        id: createEntityId(), tenantId: context.tenantId, requestedBy: userId, kind, stepKey, effect,
+        candidateId: kind === "creative_candidate" ? id : null, creativeVersionId: kind === "creative_adaptation" ? id : null,
+        inspectionId: kind === "template_compile" ? id : null, mockupItemId: kind === "mockup_render" ? id : null,
+        authoritySnapshot: captured.snapshot, authorityChecksum: captured.checksum, ...method,
+        inputFingerprint: creativeExecutionChecksum({ kind, id, purpose: "synthetic read policy fixture; never executed" }),
+      }).returning();
+      return row!;
+    });
+  }
   const specId = createEntityId();
   const creativeVersionId = createEntityId();
   let compatibleSkuId: string;
@@ -60,13 +82,14 @@ describe("controlled creative-to-design promotion", () => {
       "insert into app_users (id, oidc_subject, email, display_name) values ($1, $2, $3, 'Canvas Reviewer')",
       [userId, `canvas-promotion-${userId}`, `${userId}@example.test`],
     );
-    const plan = await catalog.createPlan(context, { name: "Canvas promotion plan", sourceReportIds: [createEntityId()], customization: { version: 1, fields: [] } });
-    await catalog.transition(context, plan.id, "pending_approval");
-    await catalog.transition(context, plan.id, "approved");
-    const spu = await catalog.createSpu(context, plan.id, { code: "CANVAS-PROMO-SPU", name: "Canvas promotion" });
+    const catalogCreator = { ...context, permissions: [...context.permissions, Permission.ProductWrite] };
+    const plan = await catalog.createPlan(catalogCreator, { name: "Canvas promotion plan", sourceReportIds: [createEntityId()], customization: { version: 1, fields: [] } });
+    await catalog.transition(catalogCreator, plan.id, "pending_approval");
+    await catalog.transition(catalogCreator, plan.id, "approved");
+    const spu = await catalog.createSpu(catalogCreator, plan.id, { code: "CANVAS-PROMO-SPU", name: "Canvas promotion" });
     spuId = spu.id;
-    compatibleSkuId = (await catalog.createSku(context, { spuId, code: "CANVAS-4X3-A", attributes: { canvas_aspect_ratio: "4:3" } })).id;
-    secondSkuId = (await catalog.createSku(context, { spuId, code: "CANVAS-SECOND", attributes: { canvas_aspect_ratio: "1:1" } })).id;
+    compatibleSkuId = (await catalog.createSku(catalogCreator, { spuId, code: "CANVAS-4X3-A", attributes: { canvas_aspect_ratio: "4:3" } })).id;
+    secondSkuId = (await catalog.createSku(catalogCreator, { spuId, code: "CANVAS-SECOND", attributes: { canvas_aspect_ratio: "1:1" } })).id;
 
     const assetId = createEntityId();
     const batchId = createEntityId();
@@ -84,7 +107,7 @@ describe("controlled creative-to-design promotion", () => {
         id: assetId, tenantId: context.tenantId, objectKey: `authorized/${assetId}`,
         assetDomain: "authorized", fileName: "canvas-4x3.png", mediaType: "image/png", byteSize: 1024,
         checksumSha256: "a".repeat(64), rightsStatus: "approved",
-        rightsMetadata: { source: { kind: "ai_generated", reference: candidateId } }, aiGenerated: true,
+        rightsMetadata: { source: { kind: "ai_generated", reference: candidateId }, approvedAt: new Date().toISOString(), approvedBy: userId }, aiGenerated: true,
       });
       await tx.insert(creativeDesignBatches).values({
         id: batchId, tenantId: context.tenantId, name: "Promotion source", itemCount: 1,
@@ -92,7 +115,7 @@ describe("controlled creative-to-design promotion", () => {
       });
       await tx.insert(creativeDesignBatchItems).values({
         id: itemId, tenantId: context.tenantId, batchId, ordinal: 0, rowKey: "row-1", name: "Promotion source",
-        prompt: "Original canvas landscape", candidateCount: 1, printSpecVersionIds: [specId],
+        prompt: "Original canvas landscape", candidateCount: 2, printSpecVersionIds: [specId],
         focalPoint: { xPermille: 500, yPermille: 500 }, status: "completed",
       });
       await tx.insert(creativeDesignCandidates).values({
@@ -153,6 +176,7 @@ describe("controlled creative-to-design promotion", () => {
     const firstOutputAssetId = createEntityId();
     const secondOutputAssetId = createEntityId();
     const inspectionId = createEntityId();
+    const detailInspectionId = createEntityId();
     const packVersionId = createEntityId();
     const firstSlotId = createEntityId();
     const secondSlotId = createEntityId();
@@ -187,10 +211,13 @@ describe("controlled creative-to-design promotion", () => {
           canvasWidth: 1200, canvasHeight: 900, slotKey: "hero", transform: [0, 0, 1200, 0, 1200, 900, 0, 900],
           backgroundAssetId: firstOutputAssetId, foregroundAssetId: firstOutputAssetId,
           previewAssetId: firstOutputAssetId, manifestAssetId: firstOutputAssetId,
-          checksumSha256: "d".repeat(64), ssimPermille: 1000, compilerVersion: "controlled-psd-v1",
+          checksumSha256: "e".repeat(64), ssimPermille: 1000, compilerVersion: "controlled-psd-v1",
         },
         requestedBy: userId, confirmedBy: userId, completedAt: now, confirmedAt: now,
       });
+      const [originalInspection] = await tx.select().from(mockupTemplateSourceInspections).where(eq(mockupTemplateSourceInspections.id, inspectionId));
+      await tx.insert(mockupTemplateSourceInspections).values({ ...originalInspection!, id: detailInspectionId, slotKey: "detail",
+        compilation: { ...originalInspection!.compilation!, slotKey: "detail" } });
       await tx.insert(mockupTemplatePackVersions).values({
         id: packVersionId, tenantId: context.tenantId, packId: createEntityId(), versionNumber: 1,
         name: "Amazon canvas pair", platform: "amazon", locale: "en-US", status: "approved",
@@ -198,7 +225,7 @@ describe("controlled creative-to-design promotion", () => {
       });
       await tx.insert(mockupTemplateSlots).values([
         { id: firstSlotId, tenantId: context.tenantId, templatePackVersionId: packVersionId, inspectionId, slotKey: "hero", label: "Hero", ordinal: 0, required: true, acceptedPrintSpecVersionIds: [specId] },
-        { id: secondSlotId, tenantId: context.tenantId, templatePackVersionId: packVersionId, inspectionId, slotKey: "detail", label: "Detail", ordinal: 1, required: true, acceptedPrintSpecVersionIds: [specId] },
+        { id: secondSlotId, tenantId: context.tenantId, templatePackVersionId: packVersionId, inspectionId: detailInspectionId, slotKey: "detail", label: "Detail", ordinal: 1, required: true, acceptedPrintSpecVersionIds: [specId] },
       ]);
       await tx.insert(mockupBatches).values({
         id: batchId, tenantId: context.tenantId, name: "Reviewed mockups", templatePackVersionId: packVersionId,
@@ -233,13 +260,50 @@ describe("controlled creative-to-design promotion", () => {
 
     await expect(governance.createListingArtifactBinding(context, {
       listingVersionId, assetId: firstOutputAssetId, assetVersion: 1, contentKind: "image", slotKey: "gallery.hero",
-    })).resolves.toMatchObject({ status: "candidate" });
+    })).rejects.toThrow(/整款审核与槽位映射/);
     await expect(governance.createApprovedMockupListingBindings(context, {
       batchId, itemId, listingVersionId,
       slots: [
         { outputId: firstOutputId, slotKey: "gallery.1" },
         { outputId: secondOutputId, slotKey: "gallery.2" },
       ],
-    })).resolves.toHaveLength(2);
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await withTenant(database.db, context, tx => tx.select().from(listingArtifactBindings)
+      .where(eq(listingArtifactBindings.listingVersionId, listingVersionId)))).toEqual([]);
+    const inspectionExecution = await syntheticReadRecord("template_compile", inspectionId, "compile");
+    const mockupExecution = await syntheticReadRecord("mockup_render", itemId, `slot:${firstSlotId}`);
+    expect((await operator.history(context, "inspection", inspectionId)).entries.map(row => row.id)).toEqual([inspectionExecution.id]);
+    expect((await operator.history(context, "mockup_batch", batchId)).entries.map(row => row.id)).toEqual([mockupExecution.id]);
+    const selfOnly = { ...context, userId: createEntityId(), dataScope: "self" as const };
+    await expect(operator.history(selfOnly, "inspection", inspectionId)).rejects.toMatchObject({ status: 403 });
+    await expect(operator.history(selfOnly, "mockup_batch", batchId)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("reads candidate and adaptation history by their actual batch while preserving archived evidence", async () => {
+    const [source] = await withTenant(database.db, context, tx => tx.select({ candidateId: creativeDesignVersions.sourceCandidateId,
+      batchId: creativeDesignBatchItems.batchId }).from(creativeDesignVersions)
+      .innerJoin(creativeDesignCandidates, eq(creativeDesignCandidates.id, creativeDesignVersions.sourceCandidateId))
+      .innerJoin(creativeDesignBatchItems, eq(creativeDesignBatchItems.id, creativeDesignCandidates.itemId)).where(eq(creativeDesignVersions.id, creativeVersionId)));
+    expect((await operator.history(context, "design_batch", source!.batchId)).entries).toEqual([]);
+    const first = await syntheticReadRecord("creative_candidate", source!.candidateId, "generate");
+    const second = await syntheticReadRecord("creative_adaptation", creativeVersionId, `spec:${specId}`);
+    const history = await operator.history(context, "design_batch", source!.batchId);
+    expect(new Set(history.entries.map(row => row.id))).toEqual(new Set([first.id, second.id]));
+    const collaborator = createEntityId(), privateVersion = createEntityId(), privateCandidate = createEntityId();
+    await database.client.unsafe("insert into app_users(id,oidc_subject,email,display_name) values($1,$2,$3,'Synthetic collaborator')", [collaborator, `operator-${collaborator}`, `${collaborator}@example.test`]);
+    await withTenant(database.db, context, async tx => {
+      const [original] = await tx.select().from(creativeDesignCandidates).where(eq(creativeDesignCandidates.id, source!.candidateId));
+      await tx.insert(creativeDesignCandidates).values({ ...original!, id: privateCandidate, ordinal: 1 });
+      await tx.insert(creativeDesignVersions).values({ id: privateVersion, tenantId: context.tenantId,
+        familyId: createEntityId(), versionNumber: 1, sourceCandidateId: privateCandidate, name: "Synthetic collaborator version", status: "adapting", createdBy: collaborator });
+    });
+    const hidden = await syntheticReadRecord("creative_adaptation", privateVersion, `spec:${specId}`);
+    const self = { ...context, dataScope: "self" as const };
+    expect(new Set((await operator.history(self, "design_batch", source!.batchId)).entries.map(row => row.id))).toEqual(new Set([first.id, second.id]));
+    await expect(operator.act(self, hidden.id, { action: "record_check", commandId: "5788284c-9d7c-4c3c-9bb7-b4e66976a206", expectedFingerprint: "a".repeat(64),
+      finding: "needs_owner_review", proofChecksum: "b".repeat(64), matchesOriginalRequest: true })).rejects.toMatchObject({ status: 403 });
+    await withTenant(database.db, context, tx => tx.update(creativeDesignBatches).set({ archivedAt: new Date() }).where(eq(creativeDesignBatches.id, source!.batchId)));
+    expect((await operator.history(context, "design_batch", source!.batchId)).entries).toHaveLength(3);
+    await expect(operator.history({ ...context, userId: createEntityId(), dataScope: "self" }, "design_batch", source!.batchId)).rejects.toMatchObject({ status: 403 });
   });
 });

@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   CreateFulfillmentSupplierInputSchema, CreateRoutingPolicyInputSchema,
+  UpdateFulfillmentSupplierInputSchema,
   CreateSupplierCapacityWindowInputSchema, CreateSupplierCapabilitySnapshotInputSchema,
   CreateSupplierQuoteInputSchema, ManualRoutingOverrideInputSchema, ReviewRoutingDecisionInputSchema,
 } from "@yummyai/contracts";
@@ -26,6 +27,13 @@ export class SupplierRoutingController {
   @Post("capability-snapshots")
   @RequiresPermission(Permission.OrderWrite)
   capability(@Req() request: AuthenticatedRequest, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.OrderWrite); return this.routing.addCapability(context, CreateSupplierCapabilitySnapshotInputSchema.parse(body)); }
+
+  @Patch("suppliers/:id")
+  @RequiresPermission(Permission.OrderWrite)
+  updateSupplier(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request); authorize(context, Permission.OrderWrite);
+    return this.routing.updateSupplier(context, z.uuidv7().parse(id), UpdateFulfillmentSupplierInputSchema.parse(body));
+  }
 
   @Post("quotes")
   @RequiresPermission(Permission.OrderWrite)

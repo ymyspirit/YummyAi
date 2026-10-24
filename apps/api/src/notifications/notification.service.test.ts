@@ -25,6 +25,13 @@ describe("notification service", () => {
 
 class MemoryNotifications implements NotificationRepository {
   rows: NotificationRecord[] = [];
+  async inbox(context: TenantContext, options: { unreadOnly: boolean; limit: number; after?: string }) {
+    const filtered = await this.list(context, { unreadOnly: options.unreadOnly, limit: 100 });
+    const start = options.after ? filtered.findIndex((row) => row.id === options.after) + 1 : 0;
+    const items = filtered.slice(start, start + options.limit);
+    return { items, total: filtered.length, unread: this.rows.filter((row) => !row.readAt).length,
+      nextCursor: start + items.length < filtered.length ? items.at(-1)!.id : null };
+  }
   async create(_context: TenantContext, input: Parameters<NotificationRepository["create"]>[1]) { const row: NotificationRecord = { id: createEntityId(), kind: input.kind, title: input.title, body: input.body, resourceType: input.resourceType, resourceId: input.resourceId, metadata: input.metadata, createdAt: new Date().toISOString() }; this.rows.push(row); return row; }
   async list(_context: TenantContext, options: { unreadOnly: boolean; limit: number }) { return this.rows.filter((row) => !options.unreadOnly || !row.readAt).slice(0, options.limit); }
   async markRead(_context: TenantContext, id: string) { const row = this.rows.find((entry) => entry.id === id); if (row) row.readAt = new Date().toISOString(); return row; }

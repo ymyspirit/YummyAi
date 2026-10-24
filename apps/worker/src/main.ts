@@ -12,12 +12,15 @@ export function createWorker(
   queueName: QueueNameValue,
   processor: EnvelopeProcessor,
   redisUrl = required("REDIS_URL"),
+  options: { autorun?: boolean; name?: string } = {},
 ): Worker {
   const wrapped: Processor = async (job) => {
     const envelope = JobEnvelopeSchema.parse(job.data);
     return processor(JobEnvelopeSchema.parse({ ...envelope, attempt: job.attemptsMade }));
   };
   return new Worker(queueName, wrapped, {
+    autorun: options.autorun ?? true,
+    ...(options.name === undefined ? {} : { name: options.name }),
     connection: redisConnection(redisUrl),
     settings: { backoffStrategy: providerAwareBackoff },
   });

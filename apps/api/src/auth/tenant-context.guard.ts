@@ -9,9 +9,19 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
-import { IntegrationApiScopeSchema, type TenantContext } from "@yummyai/contracts";
-import type { DatabaseConnection } from "@yummyai/database";
-import { sql } from "drizzle-orm";
+import { IntegrationApiDelegationSchema, IntegrationApiScopeSchema, type TenantContext } from "@yummyai/contracts";
+import {
+  factoryAccessGrants,
+  fulfillmentFactories,
+  fulfillmentSuppliers,
+  memberships,
+  integrationApiClients,
+  loadCurrentMembershipContext,
+  withTenant,
+  type DatabaseConnection,
+} from "@yummyai/database";
+import { intersectPermissionContexts, summarizeRoleGrants, Permission } from "@yummyai/authz";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { type OidcClaims, TokenVerifier } from "./oidc-jwt.strategy.js";
 import { PUBLIC_ROUTE } from "./public.decorator.js";
@@ -19,6 +29,7 @@ import { PUBLIC_ROUTE } from "./public.decorator.js";
 export interface AuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
   tenantContext?: TenantContext;
+  authenticationKind?: "oidc" | "api_client";
 }
 
 export abstract class MembershipContextLoader {
@@ -30,7 +41,9 @@ export abstract class ApiClientContextLoader {
 }
 
 export class DatabaseApiClientContextLoader extends ApiClientContextLoader {
-  constructor(private readonly database: DatabaseConnection) { super(); }
+  constructor(private readonly database: DatabaseConnection) {
+    super();
+  }
 
   async load(token: string): Promise<TenantContext | null> {
     const match = /^yai_([0-9a-f-]{36})\.[A-Za-z0-9_-]{40,}$/i.exec(token);
@@ -39,27 +52,35 @@ export class DatabaseApiClientContextLoader extends ApiClientContextLoader {
     const rows = await this.database.db.transaction(async (tx) => {
       await tx.execute(sql.raw("set local role yummyai_app"));
       return tx.execute(sql<Record<string, unknown>>`
-        select tenant_id, created_by, scopes
-        from authenticate_integration_api_client(${match[1]}::uuid, ${digest})
+        select tenant_id, created_by, scopes, delegation
+        from authenticate_integration_api_client_v2(${match[1]}::uuid, ${digest})
       `);
     });
     const client = rows[0];
-    if (!client || typeof client.tenant_id !== "string" || typeof client.created_by !== "string") return null;
-    const scopes = Array.isArray(client.scopes) ? client.scopes.flatMap((scope) => {
-      const parsed = IntegrationApiScopeSchema.safeParse(scope);
-      return parsed.success ? [parsed.data] : [];
-    }) : [];
-    if (!scopes.length) return null;
-    return { tenantId: client.tenant_id, userId: client.created_by, permissions: scopes.sort(), dataScope: "tenant" };
+    if (!client || typeof client.tenant_id !== "string" || typeof client.created_by !== "string")
+      return null;
+    const parsedScopes = IntegrationApiScopeSchema.array().min(1).max(9).safeParse(client.scopes);
+    const parsedDelegation = IntegrationApiDelegationSchema.safeParse(client.delegation);
+    if (!parsedScopes.success || !parsedDelegation.success) return null;
+    const scopes = parsedScopes.data, delegation = parsedDelegation.data;
+    if (new Set(scopes).size !== scopes.length || Object.keys(delegation.permissionScopes).length !== scopes.length ||
+      scopes.some(scope => !delegation.permissionScopes[scope])) return null;
+    const ceiling: TenantContext = { tenantId: client.tenant_id, userId: client.created_by,
+      ...summarizeRoleGrants(scopes.map(scope => ({ permissions: [scope], scope: delegation.permissionScopes[scope]! }))),
+      teamIds: delegation.teamIds };
+    return withTenant(this.database.db, ceiling, async tx => {
+      const [live] = await tx.select({ id: integrationApiClients.id }).from(integrationApiClients)
+        .where(and(eq(integrationApiClients.id, match[1]!), eq(integrationApiClients.secretDigest, digest),
+          eq(integrationApiClients.status, "active"), sql`(${integrationApiClients.expiresAt} is null or ${integrationApiClients.expiresAt}>clock_timestamp())`))
+        .limit(1).for("share");
+      if (!live) return null;
+      const [member] = await tx.select({ id: memberships.id }).from(memberships)
+        .where(and(eq(memberships.userId, ceiling.userId), eq(memberships.status, "active"))).limit(1).for("share");
+      if (!member || member.id !== delegation.membershipId) return null;
+      const current = intersectPermissionContexts(ceiling, await loadCurrentMembershipContext(tx, ceiling, { lock: true }));
+      return current.permissions.length ? current : null;
+    });
   }
-}
-
-interface MembershipRow {
-  data_scopes: string[] | null;
-  permissions: string[] | null;
-  status: string;
-  tenant_id: string;
-  user_id: string;
 }
 
 export class DatabaseMembershipContextLoader extends MembershipContextLoader {
@@ -68,40 +89,77 @@ export class DatabaseMembershipContextLoader extends MembershipContextLoader {
   }
 
   async load(claims: OidcClaims): Promise<TenantContext | null> {
-    const rows = await this.database.client.unsafe<MembershipRow[]>(
-      `select
-         m.tenant_id,
-         m.user_id,
-         m.status,
-         coalesce(array_agg(distinct permission.value) filter (where permission.value is not null), '{}') as permissions,
-         coalesce(array_agg(distinct r.data_scope) filter (where r.data_scope is not null), '{}') as data_scopes
-       from app_users u
-       join memberships m on m.user_id = u.id
-       left join membership_roles mr on mr.membership_id = m.id and mr.tenant_id = m.tenant_id
-       left join roles r on r.id = mr.role_id and r.tenant_id = m.tenant_id
-       left join lateral jsonb_array_elements_text(coalesce(r.permissions, '[]'::jsonb)) permission(value) on true
-       where u.oidc_subject = $1 and m.tenant_id = $2
-       group by m.tenant_id, m.user_id, m.status`,
-      [claims.sub, claims.tenant_id],
+    // Only the global subject lookup precedes tenant context. Memberships,
+    // role grants and factory assignments are read under the ordinary RLS role.
+    const [user] = await this.database.client.unsafe<{ id: string }[]>(
+      "select id from app_users where oidc_subject = $1 limit 1",
+      [claims.sub],
     );
-    const membership = rows[0];
-
-    if (!membership || membership.status !== "active") {
-      return null;
-    }
-
-    const dataScope = membership.data_scopes?.includes("tenant")
-      ? "tenant"
-      : membership.data_scopes?.includes("team")
-        ? "team"
-        : "self";
-
-    return {
-      tenantId: membership.tenant_id,
-      userId: membership.user_id,
-      permissions: [...(membership.permissions ?? [])].sort(),
-      dataScope,
+    if (!user) return null;
+    const seed: TenantContext = {
+      tenantId: claims.tenant_id,
+      userId: user.id,
+      permissions: [],
+      dataScope: "self",
     };
+    return withTenant(this.database.db, seed, async (tx) => {
+      const [member] = await tx
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(and(eq(memberships.userId, user.id), eq(memberships.status, "active")))
+        .limit(1)
+        .for("share");
+      if (!member) return null;
+      const base = await loadCurrentMembershipContext(tx, seed, { lock: true });
+      // Factory grants supply only portal rights. Every task still verifies the
+      // current member, grant and individual file assignment at its owning entry.
+      const factoryRights = await tx
+        .select({ canRespond: factoryAccessGrants.canRespond })
+        .from(factoryAccessGrants)
+        .innerJoin(
+          memberships,
+          and(
+            eq(memberships.id, factoryAccessGrants.membershipId),
+            eq(memberships.tenantId, factoryAccessGrants.tenantId),
+          ),
+        )
+        .innerJoin(
+          fulfillmentFactories,
+          and(
+            eq(fulfillmentFactories.id, factoryAccessGrants.factoryId),
+            eq(fulfillmentFactories.tenantId, factoryAccessGrants.tenantId),
+          ),
+        )
+        .innerJoin(
+          fulfillmentSuppliers,
+          and(
+            eq(fulfillmentSuppliers.id, fulfillmentFactories.supplierId),
+            eq(fulfillmentSuppliers.tenantId, fulfillmentFactories.tenantId),
+          ),
+        )
+        .where(
+          and(
+            eq(memberships.userId, base.userId),
+            eq(memberships.status, "active"),
+            isNull(factoryAccessGrants.revokedAt),
+            sql`${factoryAccessGrants.expiresAt}>clock_timestamp()`,
+            eq(fulfillmentFactories.status, "active"),
+            eq(fulfillmentSuppliers.status, "active"),
+          ),
+        );
+      const extra = [
+        ...(factoryRights.length ? [Permission.FactoryTaskRead] : []),
+        ...(factoryRights.some((right) => right.canRespond) ? [Permission.FactoryTaskRespond] : []),
+      ];
+      return {
+        ...base,
+        permissions: [...new Set([...base.permissions, ...extra])].sort(),
+        permissionScopes: {
+          ...base.permissionScopes,
+          ...Object.fromEntries(extra.map((p) => [p, "self" as const])),
+        },
+      };
+    });
   }
 }
 
@@ -110,7 +168,9 @@ export class TenantContextGuard implements CanActivate {
   constructor(
     @Inject(TokenVerifier) private readonly verifier: TokenVerifier,
     @Inject(MembershipContextLoader) private readonly memberships: MembershipContextLoader,
-    @Optional() @Inject(ApiClientContextLoader) private readonly apiClients?: ApiClientContextLoader,
+    @Optional()
+    @Inject(ApiClientContextLoader)
+    private readonly apiClients?: ApiClientContextLoader,
     @Optional() @Inject(Reflector) private readonly reflector?: Reflector,
   ) {}
 
@@ -130,8 +190,10 @@ export class TenantContextGuard implements CanActivate {
 
     if (token.startsWith("yai_")) {
       const tenantContext = await this.apiClients?.load(token);
-      if (!tenantContext) throw new UnauthorizedException("The API client token is invalid, expired, or revoked");
+      if (!tenantContext)
+        throw new UnauthorizedException("The API client token is invalid, expired, or revoked");
       request.tenantContext = tenantContext;
+      request.authenticationKind = "api_client";
       return true;
     }
 
@@ -148,6 +210,7 @@ export class TenantContextGuard implements CanActivate {
     }
 
     request.tenantContext = tenantContext;
+    request.authenticationKind = "oidc";
     return true;
   }
 }

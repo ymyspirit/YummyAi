@@ -1,0 +1,42 @@
+.sp-agent { border-block: 1px solid var(--line); margin: 18px 0; padding: 16px 0; min-width: 0; scroll-margin-block: 84px 32px; animation: sp-agent-enter .2s ease both; view-transition-name: sales-preparation; }
+.sp-agent-heading, .sp-agent-heading h3, .sp-agent-summary, .sp-agent-actions, .sp-agent-analysis { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sp-agent-heading { justify-content: space-between; }
+.sp-agent h3 { margin: 0; font-size: 15px; }
+.sp-agent p { margin: 6px 0; overflow-wrap: anywhere; }
+.sp-agent-heading p, .sp-agent-note, .sp-agent-summary span, .sp-agent-history time { font-size: 12px; color: var(--muted-ink); }
+.sp-agent-summary { padding: 12px 14px; margin: 12px 0; background: var(--surface-muted); border-left: 3px solid var(--erp-accent); }
+.sp-agent-summary p { flex-basis: 100%; font-size: 13px; }
+.sp-agent-steps { list-style: none; padding: 0; margin: 12px 0; }
+.sp-agent-steps li { display: grid; grid-template-columns: 17px minmax(0,1fr) auto; gap: 10px; align-items: start; border-bottom: 1px solid var(--line); padding: 11px 0; animation: sp-agent-enter .22s ease both; }
+.sp-agent-steps li:nth-child(2) { animation-delay: 30ms; }
+.sp-agent-steps li:nth-child(3) { animation-delay: 60ms; }
+.sp-agent-steps li:nth-child(4) { animation-delay: 90ms; }
+.sp-agent-steps svg { margin-top: 3px; color: var(--muted-ink); }
+.sp-agent-steps li[data-state="passed"] svg { color: var(--success); }
+.sp-agent-steps strong { font-size: 13px; }
+.sp-agent-steps p { font-size: 12px; color: var(--muted-ink); }
+.sp-agent a { color: var(--erp-accent); font-size: 12px; }
+.sp-agent-actions { margin: 14px 0; align-items: end; }
+.sp-agent label { display: grid; gap: 5px; font-size: 12px; max-width: 100%; }
+.sp-agent select { max-width: 100%; min-width: 140px; min-height: 32px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: var(--surface); }
+.sp-agent-basis { border-left: 2px solid var(--line); padding: 12px; margin: 12px 0; font-size: 13px; animation: sp-agent-enter .2s ease both; }
+.sp-agent-basis dl { display: flex; gap: 18px; flex-wrap: wrap; margin: 0; }
+.sp-agent-basis dd { margin: 3px 0 7px; overflow-wrap: anywhere; }
+.sp-agent-basis button { margin-top: 10px; }
+.sp-agent-history { font-size: 12px; margin-top: 14px; }
+.sp-agent-history summary { cursor: pointer; padding: 5px 0; }
+.sp-agent-history ol { padding-left: 18px; }
+.sp-agent-history li { padding: 6px 0; overflow-wrap: anywhere; animation: sp-agent-enter .2s ease both; }
+.sp-agent-history time { margin-right: 12px; font-variant-numeric: tabular-nums; }
+.sp-agent-history-select { margin-top: 12px; }
+.sp-agent button, .sp-agent a, .sp-agent select, .sp-agent summary { transition: background .16s ease, color .16s ease, transform .16s ease; }
+.sp-agent button:not(:disabled):hover { transform: translateY(-1px); }
+.sp-agent button:not(:disabled):active { transform: scale(.98); }
+.sp-agent :is(button,a,select,summary):focus-visible { outline: 2px solid var(--erp-accent); outline-offset: 3px; }
+.sp-agent-loading { animation: sp-agent-enter .2s ease both; }
+@keyframes sp-agent-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes sp-agent-leave { to { opacity: 0; transform: translateY(-3px); } }
+::view-transition-old(sales-preparation) { animation: sp-agent-leave .16s ease both; }
+::view-transition-new(sales-preparation) { animation: sp-agent-enter .2s ease both; }
+@media (max-width: 600px) { .sp-agent-steps li { grid-template-columns: 17px minmax(0,1fr); } .sp-agent-steps li > a { grid-column: 2; } .sp-agent-actions { gap: 8px; } .sp-agent-actions label { width: 100%; } .sp-agent-history time { display: block; } }
+@media (prefers-reduced-motion: reduce) { .sp-agent, .sp-agent * { animation: none !important; transition: none !important; transform: none !important; } ::view-transition-old(sales-preparation), ::view-transition-new(sales-preparation) { animation: none; } }

@@ -126,7 +126,7 @@ export function OrderInbox({
                         </ol>
                       </details>
                     </td>
-                    <td className="order-money">{formatMoney(order.orderTotal.amountMinor, order.orderTotal.currency)}</td>
+                    <td className="order-money">{order.orderTotal === null ? "金额未知" : formatMoney(order.orderTotal.amountMinor, order.orderTotal.currency)}</td>
                     <td>
                       <span className={`order-state state-${order.workflowState}`}>{workflowLabel(order.workflowState)}</span>
                       {order.sideState ? <span className={`order-side-state ${order.sideState}`}><CircleAlert size={12} />{sideStateLabel(order.sideState)}</span> : null}
@@ -342,7 +342,8 @@ function addressLabel(order: OrderView): string {
 }
 
 function formatMoney(amountMinor: number, currency: string): string {
-  return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format(amountMinor / 100);
+  const formatter = new Intl.NumberFormat("zh-CN", { style: "currency", currency });
+  return formatter.format(amountMinor / 10 ** (formatter.resolvedOptions().maximumFractionDigits ?? 2));
 }
 
 function formatDate(value: string): string {

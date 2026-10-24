@@ -19,6 +19,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { PublicationPreviewWorkspace } from "./publication-preview-workspace";
 
 import {
   cancelMarketplacePublication,
@@ -47,11 +48,17 @@ const terminalStatuses = new Set([
 export function PublicationPanel({
   accounts,
   error,
+  initialAccountId,
+  initialMarketplaceId,
+  initialRequestId,
   listing,
   publications,
 }: {
   accounts: MarketplaceAccountView[];
   error?: string;
+  initialAccountId?: string;
+  initialMarketplaceId?: string;
+  initialRequestId?: string;
   listing: {
     id: string;
     platform: "amazon" | "etsy";
@@ -64,15 +71,19 @@ export function PublicationPanel({
 }) {
   const router = useRouter();
   const eligibleAccounts = accounts.filter((account) => account.platform === listing.platform && account.status === "active");
-  const [accountId, setAccountId] = useState(eligibleAccounts[0]?.id ?? "");
-  const selectedAccount = eligibleAccounts.find((account) => account.id === accountId) ?? eligibleAccounts[0];
-  const [marketplaceId, setMarketplaceId] = useState(selectedAccount?.marketplaceIds[0] ?? "");
+  const [accountId, setAccountId] = useState(initialAccountId
+    ? eligibleAccounts.find(account => account.id === initialAccountId)?.id ?? ""
+    : eligibleAccounts[0]?.id ?? "");
+  const selectedAccount = eligibleAccounts.find((account) => account.id === accountId);
+  const [marketplaceId, setMarketplaceId] = useState(initialMarketplaceId
+    ? selectedAccount?.marketplaceIds.includes(initialMarketplaceId) ? initialMarketplaceId : ""
+    : selectedAccount?.marketplaceIds[0] ?? "");
   const [scheduledFor, setScheduledFor] = useState("");
   const [state, action] = useActionState(
     createMarketplacePublication.bind(null, listing.id, listing.versionId, listing.platform),
     initialState,
   );
-  const hasRunningRequest = publications.some((publication) => !terminalStatuses.has(publication.current.status));
+  const hasRunningRequest = listing.platform === "etsy" && publications.some((publication) => !terminalStatuses.has(publication.current.status));
 
   useEffect(() => {
     if (state.status === "success") router.refresh();
@@ -92,6 +103,8 @@ export function PublicationPanel({
         ? "没有健康且已同步能力的同平台店铺。"
         : undefined;
 
+  if (["amazon"].includes(listing.platform)) return <PublicationPreviewWorkspace listingId={listing.id} listingVersionId={listing.versionId} initialRequestId={initialRequestId} initialAccountId={initialAccountId} initialMarketplaceId={initialMarketplaceId} />;
+
   return (
     <section className="publication-panel" aria-labelledby="publication-title">
       <header className="publication-panel-header">
@@ -99,25 +112,30 @@ export function PublicationPanel({
         <button aria-label="刷新发布状态" className="publication-refresh" onClick={() => router.refresh()} title="刷新发布状态" type="button"><RefreshCw size={16} /></button>
       </header>
 
+      {initialRequestId && <PublicationPreviewWorkspace listingId={listing.id} listingVersionId={listing.versionId} initialRequestId={initialRequestId} readOnlyRequest />}
+
       <form action={action} className="publication-launch">
         <label>
           <span>目标店铺</span>
           <select
             disabled={Boolean(lockedReason)}
             name="accountId"
+            required
             onChange={(event) => {
               setAccountId(event.target.value);
               const next = eligibleAccounts.find((account) => account.id === event.target.value);
-              setMarketplaceId(next?.marketplaceIds[0] ?? "");
+              setMarketplaceId(initialMarketplaceId && next?.marketplaceIds.includes(initialMarketplaceId) ? initialMarketplaceId : next?.marketplaceIds[0] ?? "");
             }}
             value={selectedAccount?.id ?? ""}
           >
+            <option value="">请选择已授权店铺</option>
             {eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName}</option>)}
           </select>
         </label>
         <label>
           <span>Marketplace</span>
-          <select disabled={Boolean(lockedReason)} name="marketplaceId" onChange={(event) => setMarketplaceId(event.target.value)} value={marketplaceId}>
+          <select disabled={Boolean(lockedReason)} name="marketplaceId" required onChange={(event) => setMarketplaceId(event.target.value)} value={marketplaceId}>
+            <option value="">请选择授权站点</option>
             {(selectedAccount?.marketplaceIds ?? []).map((marketplace) => <option key={marketplace} value={marketplace}>{marketplace}</option>)}
           </select>
         </label>
@@ -138,9 +156,10 @@ export function PublicationPanel({
           />
           <input name="scheduledFor" type="hidden" value={scheduledFor} />
         </label>
-        <PublishSubmit disabled={Boolean(lockedReason)} platform={listing.platform} scheduled={Boolean(scheduledFor)} />
+        <PublishSubmit disabled={Boolean(lockedReason) || !selectedAccount || !marketplaceId} platform={listing.platform} scheduled={Boolean(scheduledFor)} />
       </form>
       {(lockedReason || error) && <p className="publication-lock"><CircleAlert size={14} />{error ?? lockedReason}</p>}
+      {initialAccountId && !eligibleAccounts.some(account => account.id === initialAccountId) && <p className="publication-lock">销售方案所选店铺当前不可用，请核对授权后重新选择。</p>}
       <ActionNotice state={state} />
 
       <div className="publication-ledger">

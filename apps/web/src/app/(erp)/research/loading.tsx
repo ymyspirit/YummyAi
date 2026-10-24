@@ -1,13 +1,7 @@
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 
 export default function ResearchLoading() {
   return (
     <div className="research-shell" aria-busy="true">
-      <ErpSidebar
-        active="research"
-        contextLabel="EVIDENCE ERP"
-        note="公开页面证据、版本快照与媒体状态均保留来源链路。"
-      />
       <main className="research-main">
         <header className="page-header">
           <div>

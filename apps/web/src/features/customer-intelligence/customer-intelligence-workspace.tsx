@@ -1,7 +1,8 @@
-import type { CustomerIntelligenceWorkspaceView } from "@yummyai/contracts/customer-intelligence";
+import { summarizeAdvertisingReports, type CustomerIntelligenceWorkspaceView } from "@yummyai/contracts/customer-intelligence";
 import { Activity, AlertTriangle, BadgeCheck, CircleAlert, FileBarChart2, MessageSquareText, Radar, ShieldCheck } from "lucide-react";
 
 export function CustomerIntelligenceWorkspace({ data }: { data: CustomerIntelligenceWorkspaceView }) {
+  const advertisingGroups = summarizeAdvertisingReports(data.advertisingReports);
   const latestAnalysis = data.analyses[0];
   const recommendations = latestAnalysis?.recommendations ?? [];
   const negativeThemes = latestAnalysis?.themes.filter((theme) => (theme.negativeBps ?? 0) >= 5000) ?? [];
@@ -21,14 +22,23 @@ export function CustomerIntelligenceWorkspace({ data }: { data: CustomerIntellig
 
     <section className="customer-intelligence-signals" aria-label="广告与 VOC 摘要">
       <Signal code="REPORTS" label="广告报告" value={data.advertisingReports.length} />
-      <Signal code="SPEND" label="记录广告花费" value={formatSpend(data.advertisingReports)} />
+      <Signal code="SCOPES" label="独立广告口径" value={advertisingGroups.length} />
       <Signal code="SIGNALS" label="脱敏客户信号" value={data.signals.length} />
       <Signal code="NEGATIVE" label="高负向主题" value={negativeThemes.length} tone={negativeThemes.length ? "amber" : "green"} />
     </section>
 
     <section className="customer-intelligence-panel" aria-labelledby="customer-intelligence-reports-title">
-      <PanelHeader code="SOURCE CURRENCY / ATTRIBUTION" title="广告报告" detail={`${data.advertisingReports.length} 份不可变报告`} id="customer-intelligence-reports-title" />
-      <div className="customer-intelligence-table-scroll"><table className="customer-intelligence-table"><thead><tr><th>来源 / 报告</th><th>期间</th><th>归因窗口</th><th>花费</th><th>销售额</th><th>CTR</th><th>ROAS</th></tr></thead><tbody>{data.advertisingReports.map((report) => <tr key={report.id}><td><strong>{providerLabel(report.provider)}</strong><code>{report.externalReportId}</code></td><td><time dateTime={report.periodStart}>{formatDate(report.periodStart)}</time><span>至 {formatDate(report.periodEnd)}</span></td><td><b>{report.attributionWindowDays} 天</b><span>{report.sourceCurrency}</span></td><td className="customer-intelligence-money">{formatMoney(report.totals.spendMinor, report.sourceCurrency)}</td><td className="customer-intelligence-money">{formatMoney(report.totals.salesMinor, report.sourceCurrency)}</td><td>{ratio(report.totals.clicks, report.totals.impressions)}</td><td>{ratio(report.totals.salesMinor, report.totals.spendMinor)}</td></tr>)}</tbody></table></div>
+      <PanelHeader code="SOURCE CURRENCY / ATTRIBUTION" title="广告报告" detail={`${data.advertisingReports.length} 份不可变报告 · ${advertisingGroups.length} 个独立口径`} id="customer-intelligence-reports-title" />
+      <p className="customer-intelligence-inline-empty">按来源、账户、范围、币种、归因窗口和统计层级分别核对。不同口径不合计；同口径期间重叠时仅展示原报表。关键词和搜索词仅代表报告覆盖的数据。</p>
+      {advertisingGroups.map((group) => <div key={group.key}>
+        <p className="customer-intelligence-inline-empty" style={{ display: "block", overflowWrap: "anywhere" }}><strong>{providerLabel(group.provider)} · {levelLabel(group.entityLevel)} · {group.sourceCurrency} · {group.attributionWindowDays} 天归因</strong><br />账户 {group.accountId ?? "人工来源"} · 范围 {group.scopeKey}</p>
+        {group.overlappingPeriods ? <InlineEmpty message="期间重叠，已停止合计；请核对报表范围后选择一份有效来源。" /> : null}
+        <div className="customer-intelligence-table-scroll"><table className="customer-intelligence-table"><thead><tr><th>报告</th><th>期间</th><th>花费</th><th>归因销售额</th><th>CTR</th><th>ROAS</th></tr></thead><tbody>
+          {group.entries.map((entry) => <tr key={entry.reportId}><td><code>{entry.externalReportId}</code></td><td><time dateTime={entry.periodStart}>{formatDate(entry.periodStart)}</time><span>至 {formatDate(entry.periodEnd)}</span></td><AdvertisingCells totals={entry.totals} currency={group.sourceCurrency} /></tr>)}
+          {group.entries.length > 1 && group.totals ? <tr><td><strong>同口径非重叠期间合计</strong></td><td>{group.entries.length} 份报告</td><AdvertisingCells totals={group.totals} currency={group.sourceCurrency} /></tr> : null}
+        </tbody></table></div>
+      </div>)}
+      {data.advertisingReports.some((report) => !report.lines.length) ? <InlineEmpty message="部分报表缺少指标行，无法核验统计层级，未纳入金额展示。" /> : null}
       {!data.advertisingReports.length ? <InlineEmpty message="尚无广告报告；来源币种与归因窗口会在接收后固定。" /> : null}
     </section>
 
@@ -52,7 +62,10 @@ function sourceLabel(source: string) { return source === "return_reason" ? "退�
 function sentimentLabel(sentiment: string) { return sentiment === "negative" ? "负向" : sentiment === "positive" ? "正向" : sentiment === "mixed" ? "混合" : "中性"; }
 function statusLabel(status: string) { return status === "approved" ? "已批准" : status === "rejected" ? "已驳回" : "待审阅"; }
 function actionLabel(action: string) { return action === "investigate_product" ? "调查产品" : action === "review_listing_expectations" ? "复核 Listing 预期" : action === "review_campaign_terms" ? "复核广告词" : "复核服务流程"; }
-function formatSpend(reports: CustomerIntelligenceWorkspaceView["advertisingReports"]) { const report = reports[0]; return report ? formatMoney(reports.reduce((sum, row) => sum + row.totals.spendMinor, 0), report.sourceCurrency) : "—"; }
+function levelLabel(level: string) { return ({ campaign: "广告活动", ad_group: "广告组", keyword: "关键词", search_term: "搜索词" } as Record<string, string>)[level]; }
+function AdvertisingCells({ totals, currency }: { totals: ReturnType<typeof summarizeAdvertisingReports>[number]["totals"]; currency: string }) {
+  return <><td className="customer-intelligence-money">{totals ? formatMoney(totals.spendMinor, currency) : "无法安全汇总"}</td><td className="customer-intelligence-money">{totals ? formatMoney(totals.salesMinor, currency) : "—"}</td><td>{totals ? ratio(totals.clicks, totals.impressions) : "—"}</td><td>{totals?.spendMinor ? `${(totals.salesMinor / totals.spendMinor).toFixed(2)}×` : "—"}</td></>;
+}
 function formatMoney(minor: number, currency: string) { return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(minor / 100); }
 function ratio(numerator: number, denominator: number) { return denominator ? `${((numerator / denominator) * 100).toFixed(1)}%` : "—"; }
-function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" }).format(new Date(value)); }
+function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(new Date(value)); }

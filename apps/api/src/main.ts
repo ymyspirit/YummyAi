@@ -8,6 +8,9 @@ import { AppModule } from "./app.module.js";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: false });
+  // 64 MiB production source images require up to 85.4 MiB as JSON/base64.
+  // Apply this larger gate only to the production editor's authenticated upload route.
+  app.useBodyParser("json", { limit: "90mb", type: (request) => !!request.url?.match(/^\/v1\/production-editor\/projects\/[^/]+\/images(?:\?|$)/) && !!request.headers["content-type"]?.startsWith("application/json") });
   // Asset uploads are JSON/base64. A 20 MB binary expands to about 26.7 MB,
   // so keep the transport limit aligned with the design UI's 20 MB file gate.
   app.useBodyParser("json", { limit: "28mb" });

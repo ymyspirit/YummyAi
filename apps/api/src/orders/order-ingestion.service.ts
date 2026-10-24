@@ -43,7 +43,7 @@ export class OrderIngestionService {
     await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${input.accountId}:${input.platform}:${stream}`}, 0))`);
       const [account] = await tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
-      if (!account || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the ingestion stream");
+      if (!account || account.deletedAt || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the ingestion stream");
       await tx.insert(orderConnectorCheckpoints).values({
         id: createEntityId(), tenantId: context.tenantId, accountId: input.accountId, platform: input.platform, stream,
       }).onConflictDoNothing();

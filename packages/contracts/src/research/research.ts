@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResearchStudyStatusSchema } from "@yummyai/contracts/research/creative";
 
 import { CapturePlatformSchema } from "@yummyai/contracts/capture";
 import { EntityIdSchema } from "@yummyai/contracts/common/ids";
@@ -38,6 +39,7 @@ export const ResearchItemClassificationSchema = z.object({
 
 export const ResearchItemSummarySchema = z.object({
   id: EntityIdSchema,
+  archivedAt: z.iso.datetime().nullable().optional(),
   lastCapturedAt: z.iso.datetime(),
   latestStatus: z.enum(["normalizing", "complete", "partial", "failed"]),
   latestTitle: z.string().nullable(),
@@ -46,6 +48,18 @@ export const ResearchItemSummarySchema = z.object({
   platform: CapturePlatformSchema,
   shopName: z.string().nullable(),
   classification: ResearchItemClassificationSchema,
+  thumbnailUrl: z.url().nullable().optional(),
+  priceRaw: z.string().nullable().optional(),
+  latestSnapshotId: EntityIdSchema.optional(),
+  study: z
+    .object({
+      status: ResearchStudyStatusSchema,
+      theme: z.string(),
+      version: z.int().nonnegative(),
+      snapshotId: z.string(),
+      creativeCount: z.int().nonnegative(),
+    })
+    .optional(),
 });
 
 export const ResearchListResponseSchema = z.object({
@@ -79,25 +93,25 @@ export const AssignResearchProductTypeResultSchema = z.object({
   updated: z.int().positive(),
 });
 
-export type ResearchClassificationStatus = z.infer<
-  typeof ResearchClassificationStatusSchema
->;
-export type ResearchClassificationSource = z.infer<
-  typeof ResearchClassificationSourceSchema
->;
+export const ResearchVisibilitySchema = z.enum(["active", "archived", "all"]);
+export const SetResearchArchivedInputSchema = z.object({
+  itemIds: z
+    .array(EntityIdSchema)
+    .min(1)
+    .max(100)
+    .refine((ids) => new Set(ids).size === ids.length, "itemIds must be unique"),
+  archived: z.boolean(),
+});
+
+export type ResearchClassificationStatus = z.infer<typeof ResearchClassificationStatusSchema>;
+export type ResearchClassificationSource = z.infer<typeof ResearchClassificationSourceSchema>;
 export type ResearchClassificationEvidenceSource = z.infer<
   typeof ResearchClassificationEvidenceSourceSchema
 >;
 export type ResearchProductType = z.infer<typeof ResearchProductTypeSchema>;
-export type ResearchItemClassification = z.infer<
-  typeof ResearchItemClassificationSchema
->;
+export type ResearchItemClassification = z.infer<typeof ResearchItemClassificationSchema>;
 export type ResearchItemSummary = z.infer<typeof ResearchItemSummarySchema>;
 export type ResearchListResponse = z.infer<typeof ResearchListResponseSchema>;
 export type ResearchProductTypeFacet = z.infer<typeof ResearchProductTypeFacetSchema>;
-export type AssignResearchProductTypeInput = z.infer<
-  typeof AssignResearchProductTypeInputSchema
->;
-export type AssignResearchProductTypeResult = z.infer<
-  typeof AssignResearchProductTypeResultSchema
->;
+export type AssignResearchProductTypeInput = z.infer<typeof AssignResearchProductTypeInputSchema>;
+export type AssignResearchProductTypeResult = z.infer<typeof AssignResearchProductTypeResultSchema>;

@@ -1,3 +1,4 @@
+import { stockQuantityString, sumStockQuantities, type StockQuantity } from "@yummyai/contracts/inventory/quantity";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
@@ -11,8 +12,8 @@ import {
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
-import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AuditService } from "../audit/audit.service.js";
 import { InventoryService } from "./inventory.service.js";
@@ -99,6 +100,18 @@ describe.sequential("inventory kernel", () => {
 
   afterAll(async () => {
     await database.client.end();
+  });
+
+  it("edits master metadata through tenant scope without changing identifiers or units", async () => {
+    const warehouse = await service.createWarehouse(contextA, { code: "EDIT-WH", name: "Before", type: "owned", countryCode: "CN", timeZone: "Asia/Shanghai" });
+    const location = await service.createLocation(contextA, { warehouseId: warehouse.id, code: "EDIT-LOC", name: "Before" });
+    const item = await service.createStockItem(contextA, { code: "EDIT-MAT", name: "Before", skuId: null, baseUnit: "each" });
+    await expect(service.updateWarehouse(contextB, warehouse.id, { name: "Wrong tenant", countryCode: "US", timeZone: "UTC" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateLocation(contextB, location.id, { name: "Wrong tenant" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateStockItem(contextB, item.id, { name: "Wrong tenant" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.updateWarehouse(contextA, warehouse.id, { name: "Updated warehouse", countryCode: "US", timeZone: "America/New_York" })).resolves.toMatchObject({ id: warehouse.id, code: "EDIT-WH", name: "Updated warehouse" });
+    await expect(service.updateLocation(contextA, location.id, { name: "Updated location" })).resolves.toMatchObject({ id: location.id, warehouseId: warehouse.id, code: "EDIT-LOC" });
+    await expect(service.updateStockItem(contextA, item.id, { name: "Updated stock" })).resolves.toMatchObject({ id: item.id, code: "EDIT-MAT", baseUnit: "each", name: "Updated stock" });
   });
 
   it("records opening stock once and rejects changed idempotent input", async () => {
@@ -364,6 +377,110 @@ describe.sequential("inventory kernel", () => {
     });
   });
 
+  it.each(["movement", "reservation", "release", "transfer_dispatch", "transfer_receive", "procurement_receipt"] as const)("keeps concurrent %s consistent with a projection rebuild", async kind => {
+    const items = await Promise.all(["A", "B"].map(suffix => service.createStockItem(contextA, {
+      skuId: null, code: `REBUILD-${kind.toUpperCase()}-${suffix}`, name: `Rebuild ${kind} ${suffix}`, baseUnit: "each",
+    })));
+    const first = items[0]!, second = items[1]!;
+    const movement = (itemId: string, quantityDelta: number) => ({
+      ...movementInput({ quantityDelta, idempotencyKey: createEntityId() }), stockItemId: itemId, lotId: null,
+    });
+    await service.recordMovement(contextA, movement(first.id, 10));
+    await service.recordMovement(contextA, movement(second.id, 10));
+    const reservation = { ...reservationInput({ quantity: 2, idempotencyKey: createEntityId() }), stockItemId: second.id, lotId: null };
+    const existing = kind === "release" ? await service.createReservation(contextA, reservation) : undefined;
+    const transfer = kind.startsWith("transfer_") ? await service.createTransfer(contextA, {
+      stockItemId: second.id, lotId: null, sourceLocationId, destinationLocationId, quantity: 1, unit: "each", idempotencyKey: createEntityId(),
+    }) : undefined;
+    if (kind === "transfer_receive") await service.dispatchTransfer(contextA, transfer!.transfer.id, { expectedVersion: 1, occurredAt, idempotencyKey: createEntityId() });
+    let otherMovement: (() => Promise<unknown>) | undefined;
+    if (kind === "movement") {
+      const warehouse = await service.createWarehouse(contextB, { code: "REBUILD-FOREIGN", name: "Foreign warehouse", type: "owned", countryCode: "US", timeZone: "UTC" });
+      const location = await service.createLocation(contextB, { warehouseId: warehouse.id, code: "MAIN", name: "Foreign location" });
+      const item = await service.createStockItem(contextB, { skuId: null, code: "REBUILD-FOREIGN", name: "Foreign stock", baseUnit: "each" });
+      otherMovement = () => service.recordMovement(contextB, { ...movement(item.id, 1), locationId: location.id });
+    }
+    let unlock!: () => void, ready!: (pid: number) => void;
+    const release = new Promise<void>(resolve => { unlock = resolve; });
+    const locked = new Promise<number>(resolve => { ready = resolve; });
+    const controller = withTenant(database.db, contextA, async tx => {
+      await tx.select({ id: inventoryBalances.id }).from(inventoryBalances)
+        .where(eq(inventoryBalances.stockItemId, first.id)).for("update");
+      const [backend] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      ready(backend!.pid);
+      await release;
+    });
+    const outstanding: Promise<unknown>[] = [controller];
+    try {
+      const blockerPid = await Promise.race([locked, controller.then(() => { throw new Error("Controller ended before acquiring its row lock"); })]);
+      const rebuild = service.rebuildProjection(contextA, { idempotencyKey: createEntityId() });
+      outstanding.push(rebuild);
+      let rebuildPid = 0;
+      await vi.waitFor(async () => {
+        const rows = await database.client<{ pid: number }[]>`
+          select pid from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'
+          and ${blockerPid} = any(pg_blocking_pids(pid)) and query like 'delete from "inventory_balances"%'
+        `;
+        expect(rows).toHaveLength(1);
+        rebuildPid = rows[0]!.pid;
+      }, { timeout: 10_000, interval: 10 });
+      let writerSettled = false;
+      const writer = kind === "movement" ? service.recordMovement(contextA, movement(second.id, 1))
+        : kind === "reservation" ? service.createReservation(contextA, reservation)
+          : kind === "release" ? service.releaseReservation(contextA, existing!.reservation.id, {
+            expectedVersion: existing!.reservation.version, outcome: "released", reasonCode: "REBUILD_ACCEPTANCE", idempotencyKey: createEntityId(),
+          }) : kind === "transfer_dispatch" ? service.dispatchTransfer(contextA, transfer!.transfer.id, { expectedVersion: 1, occurredAt, idempotencyKey: createEntityId() })
+            : kind === "transfer_receive" ? service.receiveTransfer(contextA, transfer!.transfer.id, { expectedVersion: 2, occurredAt, idempotencyKey: createEntityId() })
+              : withTenant(database.db, contextA, tx => service.receiveProcurementStock(tx, contextA, {
+                stockItemId: second.id, locationId: sourceLocationId, receiptId: createEntityId(), lotCode: "CONCURRENT-RECEIPT", quantity: 2,
+                unit: "each", unitCostMinor: 450, currency: "USD", receivedAt: occurredAt, expiresAt: null, idempotencyKey: createEntityId(),
+              }));
+      outstanding.push(writer);
+      void writer.then(() => { writerSettled = true; }, () => { writerSettled = true; });
+      let waitingEvent: string | undefined;
+      await vi.waitFor(async () => {
+        const waiting = await database.client<{ wait_event: string }[]>`
+          select wait_event from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'
+          and ${rebuildPid} = any(pg_blocking_pids(pid))
+        `;
+        waitingEvent = waiting[0]?.wait_event;
+        expect(writerSettled || waiting.length > 0).toBe(true);
+      }, { timeout: 10_000, interval: 10 });
+      if (otherMovement) {
+        let otherSettled = false;
+        const unrelated = otherMovement();
+        outstanding.push(unrelated);
+        void unrelated.then(() => { otherSettled = true; }, () => { otherSettled = true; });
+        await vi.waitFor(() => expect(otherSettled).toBe(true), { timeout: 10_000, interval: 10 });
+        await unrelated;
+      }
+      unlock();
+      const results = await Promise.allSettled([controller, rebuild, writer]);
+      expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+      const balances = (await service.listBalances(contextA)).filter(row => row.stockItemId === second.id);
+      const balance = balances.find(row => row.locationId === sourceLocationId && row.lotId === null)!;
+      const sourceQuantity = kind.startsWith("transfer_") ? 9 : kind === "movement" ? 11 : 10;
+      expect(balance).toMatchObject({
+        physicalQuantity: sourceQuantity,
+        reservedQuantity: kind === "reservation" ? 2 : 0,
+        availableQuantity: kind === "reservation" ? 8 : sourceQuantity,
+      });
+      const ledger = await withTenant(database.db, contextA, tx => tx.select({
+        quantity: sql<number>`sum(${inventoryMovements.quantityDelta})::integer`,
+      }).from(inventoryMovements).where(and(eq(inventoryMovements.stockItemId, second.id), eq(inventoryMovements.bucket, "physical"))));
+      const totalPhysical = kind === "procurement_receipt" ? 12 : kind === "transfer_receive" ? 10 : sourceQuantity;
+      expect(ledger[0]!.quantity).toBe(totalPhysical);
+      expect(sumStockQuantities(balances.map(row => row.physicalQuantity))).toBe(totalPhysical);
+      if (kind.startsWith("transfer_")) expect(balances.find(row => row.locationId === destinationLocationId)).toMatchObject({
+        physicalQuantity: kind === "transfer_receive" ? 1 : 0, inTransitQuantity: kind === "transfer_dispatch" ? 1 : 0,
+      });
+      expect(waitingEvent).toBe("advisory");
+    } finally {
+      unlock();
+      await Promise.allSettled(outstanding);
+    }
+  });
+
   function movementInput({
     quantityDelta,
     idempotencyKey,
@@ -408,6 +525,69 @@ describe.sequential("inventory kernel", () => {
       idempotencyKey,
     };
   }
+  it("keeps fractional stock exact through replay, reservation, paired transfer and rebuild", async () => {
+    const item = await service.createStockItem(contextA, { code: "DECIMAL-FABRIC", name: "Synthetic fabric", skuId: null, baseUnit: "meter" });
+    const input = { stockItemId: item.id, locationId: sourceLocationId, lotId: null, bucket: "physical" as const,
+      type: "opening" as const, quantityDelta: "1.050000000", unit: "meter" as const, sourceType: "opening" as const,
+      sourceId: "decimal-fabric-opening", reasonCode: "INITIAL_COUNT", occurredAt, idempotencyKey: "decimal-fabric-opening" };
+    const first = await service.recordMovement(contextA, input);
+    const replay = await service.recordMovement(contextA, { ...input, quantityDelta: "1.05" });
+    expect(replay.movement.id).toBe(first.movement.id);
+    expect(first.balance).toMatchObject({ physicalQuantity: "1.05", reservedQuantity: 0, availableQuantity: "1.05" });
+    const reservation = await service.createReservation(contextA, { stockItemId: item.id, locationId: sourceLocationId,
+      lotId: null, quantity: "0.7", unit: "meter", sourceType: "manual", sourceId: "decimal-reservation", expiresAt: null, idempotencyKey: "decimal-reservation" });
+    const transfer = await service.createTransfer(contextA, { stockItemId: item.id, lotId: null, sourceLocationId,
+      destinationLocationId, quantity: "0.35", unit: "meter", idempotencyKey: "decimal-transfer" });
+    await service.dispatchTransfer(contextA, transfer.transfer.id, { expectedVersion: 1, occurredAt, idempotencyKey: "decimal-transfer-dispatch" });
+    expect((await service.listBalances(contextA)).find(row => row.stockItemId === item.id && row.locationId === sourceLocationId))
+      .toMatchObject({ physicalQuantity: "0.7", reservedQuantity: "0.7", availableQuantity: 0 });
+    await service.receiveTransfer(contextA, transfer.transfer.id, { expectedVersion: 2, occurredAt, idempotencyKey: "decimal-transfer-receive" });
+    await service.releaseReservation(contextA, reservation.reservation.id, { expectedVersion: 1, outcome: "released", reasonCode: "PLAN_RELEASED", idempotencyKey: "decimal-reservation-release" });
+    await service.recordMovement(contextA, { ...input, type: "pick", quantityDelta: "-0.7", sourceType: "manual", sourceId: "decimal-material-issue", reasonCode: "MANUAL_PICK", idempotencyKey: "decimal-material-issue" });
+    const before = (await service.listBalances(contextA)).filter(row => row.stockItemId === item.id);
+    expect(before.find(row => row.locationId === sourceLocationId)).toMatchObject({ physicalQuantity: 0, reservedQuantity: 0, availableQuantity: 0 });
+    expect(before.find(row => row.locationId === destinationLocationId)).toMatchObject({ physicalQuantity: "0.35", inTransitQuantity: 0 });
+    const [ledger] = await withTenant(database.db, contextA, tx => tx.execute<{ amount: string }>(sql`select sum(quantity_delta)::text as amount from inventory_movements where stock_item_id=${item.id} and bucket='physical'`));
+    expect(stockQuantityString(ledger!.amount)).toBe("0.35");
+    const rebuild = await service.rebuildProjection(contextA, { idempotencyKey: "decimal-stock-rebuild" });
+    expect(normalizeBalances(rebuild.balances.filter(row => row.stockItemId === item.id))).toEqual(normalizeBalances(before));
+  });
+
+  it("serializes reservations at one billionth of a base unit and preserves tenant isolation", async () => {
+    const item = await service.createStockItem(contextA, { code: "NANO-MATERIAL", name: "Synthetic measured material", skuId: null, baseUnit: "gram" });
+    const movement = { stockItemId: item.id, locationId: sourceLocationId, lotId: null, bucket: "physical" as const,
+      type: "opening" as const, quantityDelta: "0.000000009", unit: "gram" as const, sourceType: "opening" as const,
+      sourceId: "nano-opening", reasonCode: "INITIAL_COUNT", occurredAt, idempotencyKey: "nano-material-opening" };
+    await service.recordMovement(contextA, movement);
+    const reserve = (key: string) => service.createReservation(contextA, { stockItemId: item.id, locationId: sourceLocationId,
+      lotId: null, quantity: "0.000000005", unit: "gram", sourceType: "manual", sourceId: key, expiresAt: null, idempotencyKey: key });
+    const results = await Promise.allSettled([reserve("nano-reservation-a"), reserve("nano-reservation-b")]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect((await service.listBalances(contextA)).find(row => row.stockItemId === item.id)).toMatchObject({ physicalQuantity: "0.000000009", reservedQuantity: "0.000000005", availableQuantity: "0.000000004" });
+    await expect(service.recordMovement(contextB, { ...movement, idempotencyKey: "foreign-nano-material" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.recordMovement(contextA, { ...movement, type: "adjustment", quantityDelta: "-0.000000005", idempotencyKey: "nano-over-reserved" })).rejects.toThrow("available stock negative");
+  });
+
+  it("rejects unsupported precision, nonfinite amounts and fractional counted units in PostgreSQL", async () => {
+    const material = await service.createStockItem(contextA, { code: "SQL-PRECISION", name: "Synthetic precision probe", skuId: null, baseUnit: "meter" });
+    const cases = [
+      { item: material.id, unit: "meter", amount: "0.0000000001" },
+      { item: material.id, unit: "meter", amount: "NaN" },
+      { item: material.id, unit: "meter", amount: "Infinity" },
+      { item: material.id, unit: "meter", amount: "2147483647.000000001" },
+      { item: stockItemId, unit: "each", amount: "0.5" },
+    ];
+    for (const [index, value] of cases.entries()) {
+      const rejected = await withTenant(database.db, contextA, tx => tx.execute(sql`insert into inventory_movements
+        (id,tenant_id,stock_item_id,location_id,lot_id,bucket,type,quantity_delta,unit,source_type,source_id,reason_code,idempotency_key,recorded_by,occurred_at)
+        values(${createEntityId()},${tenantA},${value.item},${sourceLocationId},null,'physical','adjustment',${value.amount}::numeric,${value.unit},'manual','precision-probe','PRECISION_TEST',${'precision-invalid-'+index},${userA},${occurredAt}::timestamptz)`))
+        .then(() => null, error => error as { code?: string; cause?: { code?: string } });
+      expect(rejected?.code ?? rejected?.cause?.code).toBe("23514");
+    }
+    const [count] = await withTenant(database.db, contextA, tx => tx.execute<{ count: number }>(sql`select count(*)::integer as count from inventory_movements where idempotency_key like 'precision-invalid-%'`));
+    expect(count!.count).toBe(0);
+  });
 });
 
 function tenantContext(tenantId: string, userId: string): TenantContext {
@@ -428,12 +608,12 @@ function normalizeBalances<T extends {
   locationId: string;
   lotId: string | null;
   unit: string;
-  physicalQuantity: number;
-  reservedQuantity: number;
-  availableQuantity: number;
-  inTransitQuantity: number;
-  providerQuantity: number;
-  virtualQuantity: number;
+  physicalQuantity: StockQuantity;
+  reservedQuantity: StockQuantity;
+  availableQuantity: StockQuantity;
+  inTransitQuantity: StockQuantity;
+  providerQuantity: StockQuantity;
+  virtualQuantity: StockQuantity;
 }>(balances: T[]) {
   return balances.map((balance) => ({
     stockItemId: balance.stockItemId,

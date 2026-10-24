@@ -5,11 +5,14 @@
   "type": "module",
   "exports": "./src/index.ts",
   "scripts": {
+    "db:check": "tsx src/migrate.ts --check",
     "db:migrate": "tsx src/migrate.ts",
+    "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@yummyai/authz": "workspace:*",
     "@yummyai/contracts": "workspace:*",
     "@yummyai/platform-rules": "workspace:*",
     "dotenv": "^17.0.0",

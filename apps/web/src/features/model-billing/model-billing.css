@@ -1,0 +1,196 @@
+.model-billing-page {
+  max-width: 1440px;
+}
+.model-billing-page * {
+  min-width: 0;
+}
+.model-billing-page :is(p, span, small, strong, time) {
+  overflow-wrap: anywhere;
+}
+.model-billing-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 24px;
+}
+.model-billing-list {
+  border-right: 1px solid var(--line);
+  padding-right: 18px;
+}
+.model-billing-page :is(button, a, input, select) {
+  transition:
+    transform 160ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+.model-billing-page button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--surface, #fff);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.model-billing-page button:hover:not(:disabled) {
+  background: var(--info-soft, #eef5ff);
+  transform: scale(1.012);
+}
+.model-billing-page button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.model-billing-page :is(button, a, input, select):focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.model-billing-page button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.model-billing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 12px 0;
+}
+.model-billing-page label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.model-billing-page :is(input:not([type="checkbox"]), select) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface, #fff);
+  color: var(--ink);
+  font: inherit;
+}
+.model-billing-page input[readonly] {
+  background: var(--surface-muted, #f5f7fa);
+}
+.model-billing-list ul,
+.model-billing-detail ol {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.model-billing-list li > button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 12px 8px;
+}
+.model-billing-list li > button[aria-pressed="true"] {
+  background: var(--info-soft, #eef5ff);
+  color: var(--blue);
+}
+.model-billing-page small,
+.model-billing-list time {
+  font-size: 11px;
+  color: var(--muted-ink);
+}
+.model-billing-note {
+  padding: 10px 12px;
+  background: var(--surface-muted, #f5f7fa);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.model-billing-detail h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 16px;
+}
+.model-billing-detail fieldset {
+  display: grid;
+  gap: 14px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 18px 0;
+  margin: 18px 0;
+}
+.model-billing-detail legend {
+  font-size: 15px;
+  font-weight: 600;
+  padding-right: 12px;
+}
+.model-billing-detail .model-billing-check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.7;
+}
+.model-billing-check input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.model-billing-detail button[type="submit"] {
+  justify-self: start;
+  background: var(--action, #2859d6);
+  color: var(--on-action, #fff);
+}
+.model-billing-detail button[type="submit"]:hover:not(:disabled) {
+  background: var(--action, #2859d6);
+}
+.model-billing-detail > section[aria-label="人工核对历史"] ol > li {
+  display: grid;
+  gap: 7px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.model-billing-checksum {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.model-billing-page [role="alert"] {
+  color: var(--danger, #b42318);
+}
+.model-billing-layout,
+.model-billing-detail > *,
+.model-billing-list li {
+  animation: model-billing-enter 200ms ease-out;
+}
+@keyframes model-billing-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 850px) {
+  .model-billing-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .model-billing-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding-right: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-billing-page,
+  .model-billing-page * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

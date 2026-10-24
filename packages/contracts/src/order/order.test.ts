@@ -12,13 +12,30 @@ describe("order contracts", () => {
       redactedSource: { receipt_id: 1, name: "[REDACTED]" },
       protectedDetails: { buyer: { name: "Buyer", email: "buyer@example.test", phone: null }, shippingAddress: { recipient: "Buyer", lines: ["1 Test Street"], city: "Test", region: null, postalCode: "00000", countryCode: "US" }, customizations: [] },
     });
-    expect(parsed.orderTotal.amountMinor).toBe(2640);
+    expect(parsed.orderTotal?.amountMinor).toBe(2640);
     expect(parsed.protectedDetails?.buyer.email).toBe("buyer@example.test");
   });
 
   it("rejects PII and encrypted envelopes on the public order view", () => {
     expect(OrderViewSchema.safeParse({ ...fixtureOrder(), buyer: { name: "Buyer" } }).success).toBe(false);
     expect(OrderViewSchema.safeParse({ ...fixtureOrder(), encryptedEnvelope: "v1.secret" }).success).toBe(false);
+  });
+
+  it("preserves unknown money as null and distinguishes known zero from missing values", () => {
+    const fixture = fixtureOrder();
+    const unknown = OrderViewSchema.parse({ ...fixture, orderTotal: null, lines: [{ ...fixture.lines[0], unitPrice: null }] });
+    expect(unknown.orderTotal).toBeNull();
+    expect(unknown.lines[0]?.unitPrice).toBeNull();
+    const zero = OrderViewSchema.parse({ ...fixture, orderTotal: { amountMinor: 0, currency: "USD" } });
+    expect(zero.orderTotal).toEqual({ amountMinor: 0, currency: "USD" });
+    expect(OrderViewSchema.safeParse({ ...fixture, orderTotal: { amountMinor: null, currency: "USD" } }).success).toBe(false);
+    expect(OrderViewSchema.safeParse({ ...fixture, orderTotal: { amountMinor: 100, currency: null } }).success).toBe(false);
+    expect(NormalizeOrderInputSchema.parse({
+      accountId: fixture.accountId, platform: fixture.platform, externalEventId: "fulfillment-report-1",
+      externalOrderId: fixture.externalOrderId, providerStatus: "not_provided", placedAt: fixture.placedAt,
+      orderTotal: null, lines: [{ externalLineId: "transaction-1", title: "Personalized pillow", quantity: 1, unitPrice: null }],
+      redactedSource: { source: "manual_report" },
+    }).orderTotal).toBeNull();
   });
 
   it("exposes protected details only through a purpose-bound fulfillment view", () => {

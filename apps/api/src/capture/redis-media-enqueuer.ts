@@ -21,7 +21,7 @@ export class RedisMediaEnqueuer implements CaptureMediaEnqueuer, OnModuleDestroy
       idempotencyKey: input.mediaId,
       jobId: createEntityId(),
       maxAttempts: 3,
-      payload: input,
+      payload: { mediaId: input.mediaId, snapshotId: input.snapshotId },
       requestedAt: new Date().toISOString(),
       requestedBy: input.requestedBy,
       tenantId: input.tenantId,

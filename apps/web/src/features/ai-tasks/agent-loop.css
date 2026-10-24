@@ -1,0 +1,47 @@
+.agent-loop { margin:24px 0; padding:20px 0; border-block:1px solid var(--line); color:var(--ink); font-size:13px; line-height:1.65; min-width:0; max-width:100%; overflow-wrap:anywhere; animation:al-enter 180ms ease-out both; }
+.agent-loop *, .agent-loop *::before, .agent-loop *::after { box-sizing:border-box; min-width:0; }
+.agent-loop :is(h2,h3,h4,h5,p) { margin:0; }
+.agent-loop :is(h2,h3,h4) { display:flex; align-items:center; gap:8px; font-weight:600; }
+.agent-loop h2 { font-size:17px; line-height:1.4; }.agent-loop h3 { font-size:14px; }.agent-loop h4 { font-size:13px; }.agent-loop h5 { font-size:12px; font-weight:600; }
+.agent-loop > * + *, .agent-loop section > * + *, .agent-loop article > * + *, .agent-loop fieldset > * + * { margin-top:12px; }
+.agent-loop :is(header,.al-actions,.al-id-form) { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+.agent-loop header > :first-child { min-width:0; }.agent-loop .al-heading { align-items:flex-start; }
+.agent-loop .al-heading p { margin-top:6px; }.agent-loop .al-actions { justify-content:flex-start; }
+.agent-loop :is(button,input,select,textarea) { font:inherit; max-width:100%; }
+.agent-loop button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:36px; border:1px solid var(--line); border-radius:6px; padding:7px 11px; background:var(--surface); color:var(--ink); cursor:pointer; white-space:normal; overflow-wrap:anywhere; transition:background 140ms,border-color 140ms,transform 140ms,opacity 140ms; }
+.agent-loop button:not(:disabled):hover { background:var(--surface-muted); border-color:var(--blue); transform:translateY(-1px); }.agent-loop button:not(:disabled):active { transform:scale(.98); }
+.agent-loop button:disabled { opacity:.48; cursor:not-allowed; }.agent-loop :is(button,input,select,textarea,summary,a):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.agent-loop .al-primary { background:var(--action); color:var(--on-action); border-color:var(--action); }.agent-loop .al-primary:not(:disabled):hover { background:var(--action); filter:brightness(.95); }
+.agent-loop :is(input:not([type=checkbox]),select,textarea) { width:100%; border:1px solid var(--line); border-radius:6px; padding:9px 10px; min-height:38px; background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgb(15 23 42 / 2%); }
+.agent-loop textarea { resize:vertical; line-height:1.7; }.agent-loop label { display:grid; gap:7px; font-weight:500; }.agent-loop fieldset { margin:12px 0 0; padding:0; border:0; }
+.agent-loop fieldset:disabled { opacity:.75; }.agent-loop code { white-space:normal; font-family:var(--font-mono,ui-monospace,monospace); font-size:11px; overflow-wrap:anywhere; word-break:break-word; }
+.agent-loop a { color:var(--blue); text-decoration:none; overflow-wrap:anywhere; }.agent-loop a:hover { text-decoration:underline; text-underline-offset:3px; }
+.agent-loop .al-muted { color:var(--muted-ink); font-size:12px; font-weight:400; }.agent-loop .al-prose { white-space:pre-wrap; }
+.agent-loop .al-warning { color:var(--amber,var(--ink)); padding:8px 10px; border-left:2px solid var(--amber,var(--blue)); background:var(--warning-soft,var(--surface-muted)); font-size:12px; }
+.agent-loop .al-error { color:var(--danger); padding:10px 12px; background:var(--danger-soft); border:1px solid color-mix(in srgb,var(--danger),transparent 75%); border-radius:6px; }
+.agent-loop .al-recovery, .agent-loop .al-composer, .agent-loop .al-history, .agent-loop .al-detail, .agent-loop .al-contract { border-top:1px solid var(--line); padding-top:16px; margin-top:18px; }
+.agent-loop .al-intent, .agent-loop .al-receipt { padding:12px 0; border-top:1px solid var(--line); animation:al-enter 160ms ease-out both; }
+.agent-loop .al-fields { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr); gap:12px; }.agent-loop .al-tool-options { display:flex; gap:16px; flex-wrap:wrap; }
+.agent-loop .al-tool-options label { display:flex; align-items:center; flex-wrap:wrap; gap:7px; }.agent-loop input[type=checkbox] { accent-color:var(--blue); width:16px; height:16px; margin:0; flex:none; }
+.agent-loop .al-tool-options small { color:var(--muted-ink); font-size:11px; font-weight:400; }
+.agent-loop .al-id-form { align-items:flex-end; }.agent-loop .al-id-form label { flex:1 1 280px; }.agent-loop .al-id-form button { flex:0 1 auto; min-height:38px; }
+.agent-loop .al-recent, .agent-loop .al-steps, .agent-loop .al-claims { list-style:none; margin:12px 0 0; padding:0; }
+.agent-loop .al-recent li + li { border-top:1px solid var(--line); }.agent-loop .al-recent button { display:grid; width:100%; justify-content:start; text-align:left; border:0; background:transparent; }
+.agent-loop .al-badge { display:inline-flex; align-items:center; padding:2px 6px; background:var(--surface-muted); border:1px solid var(--line); border-radius:4px; color:var(--muted-ink); font-size:11px; }
+.agent-loop .al-badge[data-state=running], .agent-loop .al-badge[data-state=submitted], .agent-loop .al-badge[data-state=response_ready] { color:var(--blue); background:var(--info-soft); }
+.agent-loop .al-badge[data-state=completed] { color:var(--success); background:var(--success-soft); }.agent-loop .al-badge[data-state=failed], .agent-loop .al-badge[data-state=uncertain] { color:var(--danger); background:var(--danger-soft); }
+.agent-loop .al-evidence { display:grid; gap:16px; animation:al-enter 180ms ease-out both; }.agent-loop .al-evidence > * { margin-top:0; }
+.agent-loop .al-evidence > section, .agent-loop .al-collection, .agent-loop .al-step { padding:12px 0; border-top:1px solid var(--line); }
+.agent-loop .al-step + .al-step { margin-top:6px; }.agent-loop .al-step > * + *, .agent-loop .al-claims li > * + * { margin-top:8px; }
+.agent-loop .al-claims li { border-top:1px solid var(--line); padding:10px 0; }.agent-loop .al-claims p { display:flex; flex-wrap:wrap; gap:8px; }
+.agent-loop .al-pairs { display:grid; gap:8px; margin:12px 0 0; }.agent-loop .al-pairs > div { display:grid; grid-template-columns:minmax(100px,150px) minmax(0,1fr); gap:10px; }
+.agent-loop .al-pairs dt { color:var(--muted-ink); font-size:12px; }.agent-loop .al-pairs dd { margin:0; }
+.agent-loop details { margin-top:10px; border-top:1px solid var(--line); padding-top:9px; interpolate-size:allow-keywords; }.agent-loop summary { cursor:pointer; color:var(--ink); font-weight:500; transition:color 140ms; }
+.agent-loop summary:hover { color:var(--blue); }.agent-loop details > *:not(summary) { margin-top:10px; animation:al-enter 150ms ease-out both; }
+.agent-loop details::details-content { opacity:0; block-size:0; overflow:hidden; transition:block-size 180ms ease,opacity 150ms ease,content-visibility 180ms allow-discrete; }
+.agent-loop details[open]::details-content { opacity:1; block-size:auto; }
+.agent-loop .agent-read-rows { list-style:none; padding:0; margin:12px 0 0; display:grid; gap:12px; }.agent-loop .agent-read-rows > li { padding:12px 0; border-top:1px solid var(--line); }
+.agent-loop .agent-read-rows dl { margin:12px 0 0; display:grid; gap:8px; }.agent-loop .agent-read-rows dl > div { display:grid; grid-template-columns:100px minmax(0,1fr); gap:10px; }.agent-loop .agent-read-rows dt { color:var(--muted-ink); }.agent-loop .agent-read-rows dd { margin:0; }
+@keyframes al-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:720px) { .agent-loop { padding-block:16px; }.agent-loop .al-heading { flex-direction:column; }.agent-loop .al-fields { grid-template-columns:minmax(0,1fr); }.agent-loop button { min-height:40px; }.agent-loop .al-id-form { align-items:stretch; }.agent-loop .al-id-form label, .agent-loop .al-id-form button { flex-basis:100%; }.agent-loop .al-tool-options { display:grid; gap:12px; }.agent-loop .al-tool-options small { flex-basis:100%; margin-left:23px; }.agent-loop .al-pairs > div { grid-template-columns:minmax(0,1fr); gap:3px; }.agent-loop .al-intent h4 { display:block; }.agent-loop .al-intent h4 code { display:block; margin-top:4px; }.agent-loop .agent-read-rows dl > div { grid-template-columns:82px minmax(0,1fr); gap:8px; } }
+@media(prefers-reduced-motion:reduce) { .agent-loop, .agent-loop *, .agent-loop *::before, .agent-loop *::after, .agent-loop details::details-content { animation:none !important; transition:none !important; scroll-behavior:auto !important; }.agent-loop button:not(:disabled):hover, .agent-loop button:not(:disabled):active { transform:none; } }

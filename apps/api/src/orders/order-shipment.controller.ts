@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Header, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   AppendShipmentVersionInputSchema, CreateShipmentInputSchema, RecordShipmentWritebackEventInputSchema,
@@ -50,6 +50,23 @@ export class OrderShipmentController {
 @Controller("v1/orders")
 export class OrderShipmentCommandController {
   constructor(@Inject(OrderShipmentService) private readonly shipment: OrderShipmentService) {}
+
+  @Get(":id/shipment-create-workspace")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead, Permission.OrderPiiRead)
+  createWorkspace(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query() query: unknown) {
+    if (!z.object({}).strict().safeParse(query).success) throw new BadRequestException("装箱创建依据不接受查询参数");
+    const orderId = z.uuidv7().safeParse(id);
+    if (!orderId.success) throw new BadRequestException("原订单编号格式无效");
+    return this.shipment.createWorkspace(requireContext(request), orderId.data);
+  }
+
+  @Get(":id/shipment-sources")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.OrderRead)
+  sources(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("excludeShipmentId") exclude: unknown) {
+    return this.shipment.productionSources(requireContext(request), z.uuidv7().parse(id), exclude === undefined ? undefined : z.uuidv7().parse(exclude));
+  }
 
   @Post(":id/shipments")
   @RequiresPermission(Permission.OrderWrite)

@@ -14,6 +14,7 @@ import {
 
 import { skus } from "./catalog.js";
 import { organizations, users } from "./identity.js";
+import { exactStockQuantity, stockQuantity } from "../stock-quantity.js";
 
 export const inventoryWarehouses = pgTable("inventory_warehouses", {
   id: uuid("id").primaryKey(),
@@ -95,6 +96,7 @@ export const inventoryLots = pgTable("inventory_lots", {
   sourceId: text("source_id").notNull(),
   unitCostMinor: bigint("unit_cost_minor", { mode: "number" }),
   unitCostCurrency: text("unit_cost_currency"),
+  unitCostQuantity: stockQuantity("unit_cost_quantity"),
   receivedAt: timestamp("received_at", { mode: "date", withTimezone: true }),
   expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -123,7 +125,7 @@ export const inventoryMovements = pgTable("inventory_movements", {
   lotId: uuid("lot_id"),
   bucket: text("bucket").notNull(),
   type: text("type").notNull(),
-  quantityDelta: integer("quantity_delta").notNull(),
+  quantityDelta: stockQuantity("quantity_delta").notNull(),
   unit: text("unit").notNull(),
   sourceType: text("source_type").notNull(),
   sourceId: text("source_id").notNull(),
@@ -135,8 +137,9 @@ export const inventoryMovements = pgTable("inventory_movements", {
 }, (table) => [
   check("inventory_movements_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_movements_bucket_check", sql`${table.bucket} in ('physical','in_transit','provider','virtual')`),
-  check("inventory_movements_type_check", sql`${table.type} in ('opening','receipt','allocation','release','pick','ship','return','adjustment','transfer_outbound','transfer_inbound','damage','reconciliation')`),
+  check("inventory_movements_type_check", sql`${table.type} in ('opening','receipt','allocation','release','pick','ship','return','adjustment','transfer_outbound','transfer_inbound','damage','reconciliation','consumption')`),
   check("inventory_movements_quantity_check", sql`${table.quantityDelta} <> 0`),
+  check("inventory_movements_exact_quantity_check", exactStockQuantity(table.quantityDelta, table.unit)),
   check("inventory_movements_unit_check", sql`${table.unit} in ('each','pair','set','meter','gram','kilogram')`),
   check("inventory_movements_source_check", sql`${table.sourceType} in ('opening','order','order_line','receipt','return','transfer','adjustment','reconciliation','manual')`),
   foreignKey({
@@ -168,17 +171,18 @@ export const inventoryBalances = pgTable("inventory_balances", {
   locationId: uuid("location_id").notNull(),
   lotId: uuid("lot_id"),
   unit: text("unit").notNull(),
-  physicalQuantity: integer("physical_quantity").default(0).notNull(),
-  reservedQuantity: integer("reserved_quantity").default(0).notNull(),
-  inTransitQuantity: integer("in_transit_quantity").default(0).notNull(),
-  providerQuantity: integer("provider_quantity").default(0).notNull(),
-  virtualQuantity: integer("virtual_quantity").default(0).notNull(),
+  physicalQuantity: stockQuantity("physical_quantity").default(0).notNull(),
+  reservedQuantity: stockQuantity("reserved_quantity").default(0).notNull(),
+  inTransitQuantity: stockQuantity("in_transit_quantity").default(0).notNull(),
+  providerQuantity: stockQuantity("provider_quantity").default(0).notNull(),
+  virtualQuantity: stockQuantity("virtual_quantity").default(0).notNull(),
   projectionVersion: integer("projection_version").default(1).notNull(),
   updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   check("inventory_balances_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_balances_unit_check", sql`${table.unit} in ('each','pair','set','meter','gram','kilogram')`),
   check("inventory_balances_quantities_check", sql`${table.physicalQuantity} >= 0 and ${table.reservedQuantity} >= 0 and ${table.physicalQuantity} >= ${table.reservedQuantity} and ${table.inTransitQuantity} >= 0 and ${table.providerQuantity} >= 0 and ${table.virtualQuantity} >= 0`),
+  check("inventory_balances_exact_quantity_check", sql`${exactStockQuantity(table.physicalQuantity, table.unit)} and ${exactStockQuantity(table.reservedQuantity, table.unit)} and ${exactStockQuantity(table.inTransitQuantity, table.unit)} and ${exactStockQuantity(table.providerQuantity, table.unit)} and ${exactStockQuantity(table.virtualQuantity, table.unit)}`),
   check("inventory_balances_version_check", sql`${table.projectionVersion} > 0`),
   foreignKey({
     columns: [table.tenantId, table.stockItemId],
@@ -206,7 +210,7 @@ export const inventoryReservations = pgTable("inventory_reservations", {
   stockItemId: uuid("stock_item_id").notNull(),
   locationId: uuid("location_id").notNull(),
   lotId: uuid("lot_id"),
-  quantity: integer("quantity").notNull(),
+  quantity: stockQuantity("quantity").notNull(),
   unit: text("unit").notNull(),
   sourceType: text("source_type").notNull(),
   sourceId: text("source_id").notNull(),
@@ -220,6 +224,7 @@ export const inventoryReservations = pgTable("inventory_reservations", {
 }, (table) => [
   check("inventory_reservations_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_reservations_quantity_check", sql`${table.quantity} > 0`),
+  check("inventory_reservations_exact_quantity_check", exactStockQuantity(table.quantity, table.unit)),
   check("inventory_reservations_unit_check", sql`${table.unit} in ('each','pair','set','meter','gram','kilogram')`),
   check("inventory_reservations_source_check", sql`${table.sourceType} in ('order','order_line','transfer','manual')`),
   check("inventory_reservations_status_check", sql`${table.status} in ('active','released','fulfilled','cancelled')`),
@@ -251,6 +256,8 @@ export const inventoryReservationEvents = pgTable("inventory_reservation_events"
   reservationId: uuid("reservation_id").notNull(),
   sequence: integer("sequence").notNull(),
   action: text("action").notNull(),
+  quantityDelta: stockQuantity("quantity_delta"),
+  movementId: uuid("movement_id"),
   fromStatus: text("from_status"),
   toStatus: text("to_status").notNull(),
   reasonCode: text("reason_code").notNull(),
@@ -260,8 +267,10 @@ export const inventoryReservationEvents = pgTable("inventory_reservation_events"
 }, (table) => [
   check("inventory_reservation_events_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_reservation_events_sequence_check", sql`${table.sequence} > 0`),
-  check("inventory_reservation_events_action_check", sql`${table.action} in ('reserved','released','fulfilled','cancelled')`),
+  check("inventory_reservation_events_action_check", sql`${table.action} in ('reserved','released','fulfilled','cancelled','consumed')`),
   check("inventory_reservation_events_status_check", sql`${table.toStatus} in ('active','released','fulfilled','cancelled')`),
+  check("inventory_reservation_events_consumption_check", sql`(${table.action}='consumed' and ${table.quantityDelta} is not null and ${table.quantityDelta}<0 and ${table.quantityDelta}>=-2147483647 and scale(${table.quantityDelta})<=9 and ${table.movementId} is not null and ${table.fromStatus} is not null and ${table.fromStatus}='active' and ${table.toStatus} in ('active','fulfilled')) or (${table.action}<>'consumed' and ${table.quantityDelta} is null and ${table.movementId} is null)`),
+  foreignKey({ columns: [table.tenantId, table.movementId], foreignColumns: [inventoryMovements.tenantId, inventoryMovements.id], name: "inventory_reservation_events_movement_fk" }),
   foreignKey({
     columns: [table.tenantId, table.reservationId],
     foreignColumns: [inventoryReservations.tenantId, inventoryReservations.id],
@@ -279,7 +288,7 @@ export const inventoryTransfers = pgTable("inventory_transfers", {
   lotId: uuid("lot_id"),
   sourceLocationId: uuid("source_location_id").notNull(),
   destinationLocationId: uuid("destination_location_id").notNull(),
-  quantity: integer("quantity").notNull(),
+  quantity: stockQuantity("quantity").notNull(),
   unit: text("unit").notNull(),
   status: text("status").default("draft").notNull(),
   version: integer("version").default(1).notNull(),
@@ -291,6 +300,7 @@ export const inventoryTransfers = pgTable("inventory_transfers", {
   check("inventory_transfers_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("inventory_transfers_locations_check", sql`${table.sourceLocationId} <> ${table.destinationLocationId}`),
   check("inventory_transfers_quantity_check", sql`${table.quantity} > 0`),
+  check("inventory_transfers_exact_quantity_check", exactStockQuantity(table.quantity, table.unit)),
   check("inventory_transfers_unit_check", sql`${table.unit} in ('each','pair','set','meter','gram','kilogram')`),
   check("inventory_transfers_status_check", sql`${table.status} in ('draft','in_transit','received','cancelled')`),
   check("inventory_transfers_version_check", sql`${table.version} > 0`),

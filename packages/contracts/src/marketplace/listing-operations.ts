@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
-import { MarketplacePublicationIssueSchema } from "./publication.js";
-import { MarketplacePlatformSchema } from "./store.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+import { MarketplacePublicationIssueSchema } from "@yummyai/contracts/marketplace/publication";
+import { MarketplacePlatformSchema } from "@yummyai/contracts/marketplace/store";
 
 export const ListingReplicationOverridesSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),

@@ -1,7 +1,7 @@
 import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 
-export type AssetDomain = "research" | "quarantine" | "authorized" | "order";
+export type AssetDomain = "research" | "quarantine" | "authorized" | "order" | "advertising";
 
 export interface StoredAsset {
   id: string;
@@ -29,7 +29,7 @@ export function assertAssetAccess(
   asset: StoredAsset,
   requiredDomain: AssetDomain,
 ): void {
-  authorize(context, Permission.AssetRead);
+  authorize(context, requiredDomain === "advertising" ? Permission.CustomerIntelligenceRead : Permission.AssetRead);
   if (requiredDomain === "order") authorize(context, Permission.OrderPiiRead);
   const expectedPrefix = `tenants/${context.tenantId}/${asset.assetDomain}/`;
 

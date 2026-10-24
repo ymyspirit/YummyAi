@@ -1,10 +1,13 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, foreignKey, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import type { ShiposShipmentSource } from "@yummyai/contracts/suppliers/shipos";
 
 import { assetFiles } from "./assets.js";
 import { organizations, users } from "./identity.js";
 import { marketplaceAccounts } from "./marketplace.js";
 import { orderLines, orders } from "./order.js";
+import { productionOrders, productionOrderVersions, qualityInspections } from "./order-production.js";
+import { qualityInspectionGroups } from "./quality-groups.js";
 
 export const shipments = pgTable("shipments", {
   id: uuid("id").primaryKey(),
@@ -28,6 +31,8 @@ export const shipments = pgTable("shipments", {
 ]);
 
 export const shipmentVersions = pgTable("shipment_versions", {
+  productionSourceVersion: integer("production_source_version"),
+  requestChecksum: text("request_checksum"),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   shipmentId: uuid("shipment_id").notNull(),
@@ -36,6 +41,7 @@ export const shipmentVersions = pgTable("shipment_versions", {
   promisedDeliveryAt: timestamp("promised_delivery_at", { mode: "date", withTimezone: true }),
   estimatedDeliveryAt: timestamp("estimated_delivery_at", { mode: "date", withTimezone: true }),
   shipFromCountryCode: text("ship_from_country_code").notNull(),
+  shiposSource: jsonb("shipos_source").$type<ShiposShipmentSource>(),
   idempotencyKey: text("idempotency_key").notNull(),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
@@ -44,8 +50,10 @@ export const shipmentVersions = pgTable("shipment_versions", {
   check("shipment_versions_number_check", sql`${table.versionNumber} > 0`),
   check("shipment_versions_country_check", sql`${table.shipFromCountryCode} ~ '^[A-Z]{2}$'`),
   check("shipment_versions_delivery_check", sql`(${table.promisedDeliveryAt} is null or ${table.promisedDeliveryAt} >= ${table.shipDate}) and (${table.estimatedDeliveryAt} is null or ${table.estimatedDeliveryAt} >= ${table.shipDate})`),
+  check("shipment_versions_source_check", sql`(${table.productionSourceVersion} is null and ${table.requestChecksum} is null) or (${table.productionSourceVersion} is not null and ${table.productionSourceVersion} in (1,2) and ${table.requestChecksum} is not null and ${table.requestChecksum} ~ '^[a-f0-9]{64}$')`),
   foreignKey({ columns: [table.tenantId, table.shipmentId], foreignColumns: [shipments.tenantId, shipments.id], name: "shipment_versions_shipment_fk" }).onDelete("restrict"),
   uniqueIndex("shipment_versions_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_versions_source_identity_unique").on(table.tenantId, table.id, table.shipmentId),
   uniqueIndex("shipment_versions_number_unique").on(table.tenantId, table.shipmentId, table.versionNumber),
   uniqueIndex("shipment_versions_idempotency_unique").on(table.tenantId, table.shipmentId, table.idempotencyKey),
 ]);
@@ -79,6 +87,8 @@ export const shipmentPackages = pgTable("shipment_packages", {
   foreignKey({ columns: [table.tenantId, table.shipmentVersionId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id], name: "shipment_packages_version_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.labelAssetId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "shipment_packages_label_asset_fk" }).onDelete("restrict"),
   uniqueIndex("shipment_packages_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_packages_source_identity_unique").on(table.tenantId, table.id, table.shipmentId, table.shipmentVersionId),
+  foreignKey({ columns: [table.tenantId, table.shipmentVersionId, table.shipmentId], foreignColumns: [shipmentVersions.tenantId, shipmentVersions.id, shipmentVersions.shipmentId], name: "shipment_packages_source_version_fk" }).onDelete("restrict"),
   uniqueIndex("shipment_packages_reference_unique").on(table.tenantId, table.shipmentVersionId, table.packageReferenceId),
   index("shipment_packages_tracking_idx").on(table.tenantId, table.carrierCode, table.trackingNumber),
 ]);
@@ -100,7 +110,36 @@ export const shipmentPackageLines = pgTable("shipment_package_lines", {
   foreignKey({ columns: [table.tenantId, table.packageId], foreignColumns: [shipmentPackages.tenantId, shipmentPackages.id], name: "shipment_package_lines_package_fk" }).onDelete("restrict"),
   foreignKey({ columns: [table.tenantId, table.orderLineId], foreignColumns: [orderLines.tenantId, orderLines.id], name: "shipment_package_lines_order_line_fk" }).onDelete("restrict"),
   uniqueIndex("shipment_package_lines_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_package_lines_source_identity_unique").on(table.tenantId, table.id, table.shipmentId, table.shipmentVersionId, table.packageId, table.orderLineId),
+  foreignKey({ columns: [table.tenantId, table.packageId, table.shipmentId, table.shipmentVersionId], foreignColumns: [shipmentPackages.tenantId, shipmentPackages.id, shipmentPackages.shipmentId, shipmentPackages.shipmentVersionId], name: "shipment_package_lines_source_package_fk" }).onDelete("restrict"),
   uniqueIndex("shipment_package_lines_pair_unique").on(table.tenantId, table.packageId, table.orderLineId),
+]);
+
+/** Shipping owns allocations; production and inspection facts remain in their own modules. */
+export const shipmentProductionAllocations = pgTable("shipment_production_allocations", {
+  id: uuid("id").primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  shipmentId: uuid("shipment_id").notNull(), shipmentVersionId: uuid("shipment_version_id").notNull(),
+  packageId: uuid("package_id").notNull(), packageLineId: uuid("package_line_id").notNull(), orderLineId: uuid("order_line_id").notNull(),
+  productionOrderId: uuid("production_order_id").notNull(), productionVersionId: uuid("production_version_id").notNull(),
+  qualityInspectionId: uuid("quality_inspection_id").notNull(),
+  qualityResult: text("quality_result").default("passed"),
+  qualityGroupId: uuid("quality_group_id"), groupQualityResult: text("group_quality_result"),
+  productionProjectionVersion: integer("production_projection_version").notNull(), quantity: integer("quantity").notNull(),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}, table => [
+  check("shipment_production_allocations_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
+  check("shipment_production_allocations_quantity_check", sql`${table.quantity}>0 and ${table.productionProjectionVersion}>0`),
+  check("shipment_allocations_quality_domain_check", sql`(${table.qualityGroupId} is null and ${table.qualityResult} is not null and ${table.qualityResult}='passed' and ${table.groupQualityResult} is null) or (${table.qualityGroupId} is not null and ${table.qualityResult} is null and ${table.groupQualityResult} is not null and ${table.groupQualityResult}='passed')`),
+  foreignKey({ columns: [table.tenantId, table.packageLineId, table.shipmentId, table.shipmentVersionId, table.packageId, table.orderLineId], foreignColumns: [shipmentPackageLines.tenantId, shipmentPackageLines.id, shipmentPackageLines.shipmentId, shipmentPackageLines.shipmentVersionId, shipmentPackageLines.packageId, shipmentPackageLines.orderLineId], name: "shipment_production_allocations_line_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.productionOrderId, table.orderLineId], foreignColumns: [productionOrders.tenantId, productionOrders.id, productionOrders.orderLineId], name: "shipment_production_allocations_production_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.productionVersionId, table.productionOrderId], foreignColumns: [productionOrderVersions.tenantId, productionOrderVersions.id, productionOrderVersions.productionOrderId], name: "shipment_production_allocations_version_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.qualityInspectionId, table.productionOrderId, table.productionVersionId, table.qualityResult], foreignColumns: [qualityInspections.tenantId, qualityInspections.id, qualityInspections.productionOrderId, qualityInspections.productionVersionId, qualityInspections.result], name: "shipment_production_allocations_quality_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.tenantId, table.qualityGroupId, table.productionOrderId, table.productionVersionId, table.qualityInspectionId, table.groupQualityResult], foreignColumns: [qualityInspectionGroups.tenantId, qualityInspectionGroups.id, qualityInspectionGroups.productionOrderId, qualityInspectionGroups.productionVersionId, qualityInspectionGroups.inspectionId, qualityInspectionGroups.result], name: "shipment_allocations_group_passed_fk" }).onDelete("restrict"),
+  uniqueIndex("shipment_production_allocations_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("shipment_production_allocations_lot_unique").on(table.tenantId, table.packageLineId, table.productionOrderId).where(sql`${table.qualityGroupId} is null`),
+  uniqueIndex("shipment_allocations_group_unique").on(table.tenantId, table.packageLineId, table.qualityGroupId).where(sql`${table.qualityGroupId} is not null`),
+  index("shipment_production_allocations_lot_idx").on(table.tenantId, table.productionOrderId, table.productionVersionId),
 ]);
 
 export const shipmentVersionReviews = pgTable("shipment_version_reviews", {
@@ -178,6 +217,7 @@ export const shipmentWritebackEvents = pgTable("shipment_writeback_events", {
 ]);
 
 export const shipmentTrackingEvents = pgTable("shipment_tracking_events", {
+  recordedBy: uuid("recorded_by").references(() => users.id, { onDelete: "set null" }),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   shipmentId: uuid("shipment_id").notNull(),

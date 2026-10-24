@@ -14,6 +14,9 @@ import {
   connectDatabase,
   marketplaceAuthorizationSessions,
   marketplaceCredentials,
+  memberships,
+  membershipRoles,
+  roles,
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
@@ -57,7 +60,7 @@ class FakeAuthorizationGateway implements MarketplaceAuthorizationGateway {
     return Promise.resolve({
       credential: { kind: "etsy_oauth", refreshToken: "etsy-refresh-secret", userId: "12345678" },
       externalAccountId: "12345678",
-      expiresAt: new Date("2026-10-17T00:00:00.000Z"),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
       grantedScopes: account.requestedScopes,
     });
   }
@@ -111,6 +114,13 @@ describe("marketplace authorization", () => {
       `insert into app_users (id, oidc_subject, email, display_name) values ($1, $2, $3, 'Authorization Admin')`,
       [userId, `authorization-${userId}`, `${userId}@example.test`],
     );
+    for (const actor of [context, otherContext]) await withTenant(database.db, actor, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId: actor.tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: actor.tenantId, name: "Authorization fixture " + roleId,
+        permissions: [...actor.permissions], dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: actor.tenantId, membershipId, roleId });
+    });
     amazonAccountId = (await accountService.create(context, CreateMarketplaceAccountInputSchema.parse({
       platform: "amazon",
       displayName: "Amazon private",
@@ -180,7 +190,7 @@ describe("marketplace authorization", () => {
     expect(JSON.stringify(events)).not.toMatch(/lwa-rotated-secret|Atzr\|rotated/);
   });
 
-  it("uses one-time state, encrypted PKCE, and the scopes frozen at OAuth start", async () => {
+  it("invalidates state after configuration changes and restarts one-time encrypted PKCE with the newly frozen scopes", async () => {
     const started = await service.startOAuth(context, etsyAccountId);
     const state = new URL(started.authorizationUrl).searchParams.get("state")!;
     expect(state).toHaveLength(43);
@@ -198,20 +208,34 @@ describe("marketplace authorization", () => {
     await accountService.update(context, etsyAccountId, {
       requestedScopes: ["listings_r", "listings_w", "shops_r", "transactions_r"],
     });
+    // Schema178 intentionally invalidates the original177 frozen-scope session on configuration changes.
+    await expect(service.completeOAuth(context, etsyAccountId, { state, code: "invalidated-code" }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(gateway.exchangeCalls).toBe(0);
+    const restarted = await service.startOAuth(context, etsyAccountId);
+    const nextState = new URL(restarted.authorizationUrl).searchParams.get("state")!;
+    const [nextSession] = await withTenant(database.db, context, tx => tx.select().from(marketplaceAuthorizationSessions).where(and(
+      eq(marketplaceAuthorizationSessions.accountId, etsyAccountId), isNull(marketplaceAuthorizationSessions.consumedAt),
+    )));
+    expect(nextState).not.toBe(state);
+    expect(nextSession!.stateDigest).not.toBe(nextState);
+    const nextVerifier = vault.withSecret(nextSession!.encryptedPkceVerifier!, value => value);
+    expect(nextVerifier).not.toBe(verifier);
+    expect(createHash("sha256").update(nextVerifier).digest("base64url")).toBe(gateway.lastChallenge);
     const completed = await service.completeOAuth(context, etsyAccountId, {
-      state,
+      state: nextState,
       code: "etsy-one-time-code",
     } satisfies MarketplaceOAuthCompleteInput);
     expect(completed).toMatchObject({
       externalAccountId: "12345678",
       credentialStatus: "valid",
-      grantedScopes: ["listings_r", "listings_w", "shops_r"],
+      grantedScopes: ["listings_r", "listings_w", "shops_r", "transactions_r"],
       status: "pending_authorization",
     });
-    expect(gateway.lastExchange?.input.pkceVerifier).toBe(verifier);
-    expect(gateway.lastExchange?.account.requestedScopes).toEqual(["listings_r", "listings_w", "shops_r"]);
+    expect(gateway.lastExchange?.input.pkceVerifier).toBe(nextVerifier);
+    expect(gateway.lastExchange?.account.requestedScopes).toEqual(["listings_r", "listings_w", "shops_r", "transactions_r"]);
 
-    await expect(service.completeOAuth(context, etsyAccountId, { state, code: "replayed-code" }))
+    await expect(service.completeOAuth(context, etsyAccountId, { state: nextState, code: "replayed-code" }))
       .rejects.toMatchObject({ status: 400 });
     expect(gateway.exchangeCalls).toBe(1);
   });

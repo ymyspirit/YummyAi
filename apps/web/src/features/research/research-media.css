@@ -1,0 +1,275 @@
+.research-private-gallery {
+  min-width: 0;
+  animation: research-media-enter 180ms ease-out;
+}
+.research-media-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+.research-media-toolbar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.research-private-gallery :where(button, a),
+.research-private-dialog button {
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+.research-private-gallery button,
+.research-private-dialog button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.research-private-gallery button:disabled,
+.research-private-dialog button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.research-private-gallery button:not(:disabled):active,
+.research-private-dialog button:not(:disabled):active {
+  transform: scale(0.97);
+}
+.research-private-gallery :where(button, a):focus-visible,
+.research-private-dialog button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.research-private-gallery .research-gallery-stage {
+  aspect-ratio: auto;
+  height: clamp(250px, 32vw, 420px);
+  min-height: 250px;
+  background: var(--surface-muted);
+}
+.research-private-gallery .research-gallery-stage > :where(img, video) {
+  max-height: 420px;
+  object-fit: contain;
+  animation: research-media-enter 160ms ease-out;
+}
+.research-private-gallery .dossier-media-empty {
+  padding: 20px 14px;
+  gap: 9px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  color: var(--muted-ink);
+  text-align: center;
+}
+.research-media-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted-ink);
+}
+.research-media-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.research-media-summary .media-failed {
+  color: var(--danger);
+}
+.research-media-notice {
+  padding: 8px 10px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.research-private-gallery .research-gallery-thumbs {
+  max-height: 240px;
+  overflow: auto;
+}
+.research-private-gallery .research-gallery-thumbs > button {
+  position: relative;
+}
+.research-private-gallery .research-gallery-thumbs > button[aria-pressed="true"] {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+.media-dot {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-ink);
+}
+.media-dot.archived {
+  background: var(--success);
+}
+.media-dot.failed {
+  background: var(--danger);
+}
+.media-dot.queued,
+.media-dot.processing {
+  background: var(--blue);
+}
+.research-media-evidence,
+.research-media-boundary {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--muted-ink);
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.research-media-evidence code {
+  display: block;
+  font-size: 10px;
+}
+.research-private-gallery .research-media-load {
+  width: calc(100% - 20px);
+  margin: 6px 10px;
+}
+.research-private-dialog {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: min(1120px, 96vw);
+  max-height: 94vh;
+  background: var(--surface);
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(5px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.research-private-dialog[data-phase="open"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+.research-private-dialog[data-phase="closing"] {
+  opacity: 0;
+  transform: translateY(5px);
+}
+.research-private-dialog::backdrop {
+  background: rgb(0 0 0 / 70%);
+}
+.research-private-dialog > img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: 76vh;
+  object-fit: contain;
+  margin: auto;
+}
+.research-lightbox-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.research-lightbox-tools button {
+  width: 34px;
+  height: 34px;
+}
+.research-private-thumb {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+}
+.research-private-thumb > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.research-private-thumb .research-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  color: var(--muted-ink);
+  background: var(--surface-muted);
+}
+.research-private-thumb small {
+  max-width: 100%;
+  font-size: 9px;
+  text-align: center;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.research-private-thumb .research-thumb-retry {
+  position: absolute;
+  inset: auto 0 0;
+  min-height: 20px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--blue);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.media-spin {
+  animation: research-media-spin 1s linear infinite;
+}
+@keyframes research-media-enter {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes research-media-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+@media (max-width: 600px) {
+  .research-private-gallery .research-gallery-stage {
+    min-height: 220px;
+    height: min(330px, 85vw);
+  }
+  .research-private-dialog {
+    padding: 12px;
+  }
+  .research-private-gallery .research-gallery-stage > :where(img, video) {
+    max-height: 330px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-private-gallery,
+  .research-private-gallery *,
+  .research-private-dialog,
+  .research-private-dialog * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

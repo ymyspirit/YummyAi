@@ -1,0 +1,187 @@
+.wf-responsibility {
+  border-block: 1px solid var(--line);
+  padding: 12px 0;
+  margin: 14px 0;
+  animation: wf-responsibility-enter 0.18s ease-out;
+  min-width: 0;
+}
+.wf-responsibility header,
+.wf-responsibility header strong,
+.wf-responsibility > p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wf-responsibility header {
+  justify-content: space-between;
+}
+.wf-responsibility dl {
+  margin: 10px 0;
+  font-size: 12px;
+}
+.wf-responsibility dl > div {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+}
+.wf-responsibility dt,
+.wf-responsibility > p {
+  color: var(--muted-ink);
+}
+.wf-responsibility dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.wf-responsibility > p {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.wf-responsibility-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.oc-page.task-drawer.wf-responsibility-drawer {
+  width: min(640px, calc(100vw - 24px));
+  animation: wf-responsibility-drawer-in 0.18s ease-out;
+}
+.oc-page.task-drawer.wf-responsibility-drawer.wf-responsibility-closing {
+  animation: wf-responsibility-drawer-out 0.16s ease-in both;
+}
+.wf-responsibility-drawer::backdrop {
+  animation: wf-responsibility-enter 0.18s ease-out;
+}
+.wf-responsibility-drawer.wf-responsibility-closing::backdrop {
+  animation: wf-responsibility-drawer-fade 0.16s ease-in both;
+}
+@keyframes wf-responsibility-drawer-in {
+  from {
+    opacity: 0;
+    translate: 20px 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes wf-responsibility-drawer-out {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  to {
+    opacity: 0;
+    translate: 20px 0;
+  }
+}
+@keyframes wf-responsibility-drawer-fade {
+  to {
+    opacity: 0;
+  }
+}
+.wf-responsibility .oc-button,
+.wf-responsibility-form .oc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wf-responsibility .oc-button.primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+.wf-responsibility .oc-button:disabled,
+.wf-responsibility-form .oc-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.wf-responsibility :is(button, input, select, textarea):focus-visible,
+.wf-responsibility-form :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.wf-responsibility-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.wf-responsibility-form label > div {
+  display: flex;
+  gap: 6px;
+}
+.wf-responsibility-form :is(input, select, textarea) {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 8px;
+  font: inherit;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.wf-responsibility-form textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.wf-responsibility-form p {
+  margin: 0;
+  color: var(--muted-ink);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.wf-responsibility-form [role="alert"] {
+  color: var(--danger);
+}
+.wf-responsibility button,
+.wf-responsibility-form button {
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+.wf-responsibility button:not(:disabled):hover,
+.wf-responsibility-form button:not(:disabled):hover {
+  transform: scale(1.015);
+}
+.wf-responsibility button:not(:disabled):active,
+.wf-responsibility-form button:not(:disabled):active {
+  transform: scale(0.98);
+}
+@keyframes wf-responsibility-enter {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-responsibility-drawer,
+  .wf-responsibility-drawer::backdrop {
+    animation: none !important;
+    transition: none !important;
+  }
+  .wf-responsibility,
+  .wf-responsibility *,
+  .wf-responsibility-form * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

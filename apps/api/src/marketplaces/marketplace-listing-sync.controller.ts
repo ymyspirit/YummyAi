@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Header, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import { CreateMarketplaceListingSyncInputSchema, ListMarketplaceListingSyncsInputSchema } from "@yummyai/contracts";
+import { ListingSyncIntentLookupSchema } from "@yummyai/contracts/marketplace/listing-sync-intent";
 import { z } from "zod";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
@@ -12,18 +13,38 @@ export class MarketplaceListingSyncController {
   constructor(@Inject(MarketplaceListingSyncService) private readonly service: MarketplaceListingSyncService) {}
 
   @Post()
+  @Header("Cache-Control", "private, no-store")
   @RequiresPermission(Permission.ListingPublish)
   create(@Req() request: AuthenticatedRequest, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.ListingPublish); return this.service.create(context, CreateMarketplaceListingSyncInputSchema.parse(body)); }
 
   @Get()
+  @Header("Cache-Control", "private, no-store")
   @RequiresPermission(Permission.ListingRead)
   list(@Req() request: AuthenticatedRequest, @Query() query: unknown) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.list(context, ListMarketplaceListingSyncsInputSchema.parse(query)); }
 
+  @Get("receipt")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.ListingRead)
+  receipt(@Req() request: AuthenticatedRequest, @Query() query: unknown) {
+    const context = requireContext(request); authorize(context, Permission.ListingRead);
+    return this.service.receipt(context, ListingSyncIntentLookupSchema.parse(query));
+  }
+
+  @Get("workspace")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.ListingRead)
+  workspace(@Req() request: AuthenticatedRequest, @Query() query: unknown) {
+    const context = requireContext(request); authorize(context, Permission.ListingRead);
+    return this.service.workspace(context, z.object({ listingId: z.uuidv7() }).strict().parse(query).listingId);
+  }
+
   @Get(":id")
+  @Header("Cache-Control", "private, no-store")
   @RequiresPermission(Permission.ListingRead)
   get(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.get(context, z.uuidv7().parse(id)); }
 
   @Get(":id/events")
+  @Header("Cache-Control", "private, no-store")
   @RequiresPermission(Permission.ListingRead)
   events(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.events(context, z.uuidv7().parse(id)); }
 }

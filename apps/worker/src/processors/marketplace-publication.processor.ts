@@ -1,5 +1,9 @@
+import { readMarketplaceCredentialFailureFence, revokeMarketplaceCredentialIfCurrent, withWorkerMarketplaceCredential,
+  type MarketplaceCredentialFailureFence } from "./marketplace-credential-failure.js";
 import type { SecretVault } from "@yummyai/ai-core";
 import { Permission } from "@yummyai/authz";
+import {catalogAssetReadFilter,PublicationAuthorityError,readPublicationAuthority} from "@yummyai/catalog-core";
+import {publicationPreviewPayloadText} from "@yummyai/contracts/marketplace/publication-preview";
 import {
   MarketplacePublicationStatusSchema,
   MarketplacePublicationActionSchema,
@@ -21,6 +25,7 @@ import {
   marketplaceCredentials,
   marketplacePublicationEvents,
   marketplacePublicationRequests,
+  marketplacePublicationIntents,
   marketplaceQuotaSnapshots,
   type DatabaseConnection,
   type MarketplacePublicationAssetPin,
@@ -32,6 +37,7 @@ import {
   type JobEnvelope,
 } from "@yummyai/jobs";
 import {
+  EtsyPersonalizationSafetyError,
   MarketplaceConnectorError,
   MarketplacePublicationPayloadSchema,
   type MarketplaceDraftGateway,
@@ -42,10 +48,10 @@ import {
 } from "@yummyai/marketplace-connectors";
 import type { Storage } from "@yummyai/storage";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { z } from "zod";
 import { createHash } from "node:crypto";
 
 export interface PublicationExecutionSnapshot {
+  authority?:TenantContext;
   requestId: string;
   accountId: string;
   action: MarketplacePublicationAction;
@@ -59,6 +65,7 @@ export interface PublicationExecutionSnapshot {
 }
 
 export interface PublicationExecutionRepository {
+  beforeProviderRequest?(context:TenantContext,snapshot:PublicationExecutionSnapshot):Promise<void>;
   withAccountLease<T>(
     context: TenantContext,
     requestId: string,
@@ -73,6 +80,7 @@ export interface PublicationExecutionRepository {
     context: TenantContext,
     accountId: string,
     callback: (credential: Readonly<Record<string, string>>) => Promise<T>,
+    requestId?:string,
   ): Promise<T>;
   readMedia(
     context: TenantContext,
@@ -100,6 +108,7 @@ export interface PublicationFailureEvent {
   message: string;
   retryable: boolean;
   revokeAccount?: boolean;
+  credentialFence?: MarketplaceCredentialFailureFence;
 }
 
 export class MarketplacePublicationProcessor {
@@ -120,19 +129,20 @@ export class MarketplacePublicationProcessor {
     return this.repository.withAccountLease(context, payload.publicationRequestId, async () => {
       const snapshot = await this.repository.claim(context, payload.publicationRequestId, envelope.attempt);
       if (!snapshot) return { requestId: payload.publicationRequestId, status: "no_op" };
+      const authority=snapshot.authority??context;
       if (snapshot.action === "amazon_validation_preview" || snapshot.action === "etsy_create_draft") {
-        const step = await this.execute(context, snapshot, envelope, snapshot.action === "etsy_create_draft", (credential) =>
-          this.gateway.create(snapshot.account, credential, snapshot.payload),
+        const step = await this.execute(authority, snapshot, envelope, snapshot.action === "etsy_create_draft", (credential,gateway) =>
+          gateway.create(snapshot.account, credential, snapshot.payload),
         );
         return { requestId: snapshot.requestId, status: step.status };
       }
       if (snapshot.action === "amazon_submit") {
-        return this.submitAmazon(context, snapshot, envelope);
+        return this.submitAmazon(authority, snapshot, envelope);
       }
       if (snapshot.action === "amazon_feed_submit") {
-        return this.reconcileAmazonFeedItem(context, snapshot, envelope);
+        return this.reconcileAmazonFeedItem(authority, snapshot, envelope);
       }
-      return this.activateEtsy(context, snapshot, envelope);
+      return this.activateEtsy(authority, snapshot, envelope);
     });
   }
 
@@ -143,8 +153,8 @@ export class MarketplacePublicationProcessor {
   ): Promise<{ requestId: string; status: string }> {
     let externalListingId = snapshot.externalListingId;
     if (!hasProgress(snapshot.resumeStatus, ["submission_accepted", "sync_pending"])) {
-      const submitted = await this.execute(context, snapshot, envelope, true, (credential) =>
-        this.gateway.submit(snapshot.account, credential, snapshot.payload),
+      const submitted = await this.execute(context, snapshot, envelope, true, (credential,gateway) =>
+        gateway.submit(snapshot.account, credential, snapshot.payload),
       );
       if (!submitted.result || submitted.result.status === "publication_failed") {
         return { requestId: snapshot.requestId, status: submitted.status };
@@ -154,8 +164,8 @@ export class MarketplacePublicationProcessor {
     if (!externalListingId) {
       return this.recordTerminal(context, snapshot.requestId, "PUBLICATION_EXTERNAL_ID_MISSING", "Amazon submission did not record its SKU");
     }
-    const synced = await this.execute(context, snapshot, envelope, false, (credential) =>
-      this.gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId!),
+    const synced = await this.execute(context, snapshot, envelope, false, (credential,gateway) =>
+      gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId!),
     );
     await retryPendingStatus(synced.result, envelope);
     if (synced.result?.status === "sync_pending") {
@@ -177,8 +187,8 @@ export class MarketplacePublicationProcessor {
         "Amazon Feed item did not record its SKU",
       );
     }
-    const synced = await this.execute(context, snapshot, envelope, false, (credential) =>
-      this.gateway.getStatus(snapshot.account, credential, snapshot.payload, snapshot.externalListingId!),
+    const synced = await this.execute(context, snapshot, envelope, false, (credential,gateway) =>
+      gateway.getStatus(snapshot.account, credential, snapshot.payload, snapshot.externalListingId!),
     );
     await retryPendingStatus(synced.result, envelope);
     if (synced.result?.status === "sync_pending") {
@@ -201,8 +211,8 @@ export class MarketplacePublicationProcessor {
       const configuresExternalState = snapshot.payload.platform === "etsy" && Boolean(
         snapshot.payload.inventory || snapshot.payload.personalization,
       );
-      const configured = await this.execute(context, snapshot, envelope, configuresExternalState, (credential) =>
-        this.gateway.configure(snapshot.account, credential, snapshot.payload, externalListingId),
+      const configured = await this.execute(context, snapshot, envelope, configuresExternalState, (credential,gateway) =>
+        gateway.configure(snapshot.account, credential, snapshot.payload, externalListingId),
       );
       if (!configured.result) return { requestId: snapshot.requestId, status: configured.status };
       progress = configured.result.status;
@@ -217,20 +227,20 @@ export class MarketplacePublicationProcessor {
         if (failure.retryable) throw error;
         return { requestId: snapshot.requestId, status: failure.status };
       }
-      const uploaded = await this.execute(context, snapshot, envelope, true, (credential) =>
-        this.gateway.uploadMedia(snapshot.account, credential, externalListingId, media),
+      const uploaded = await this.execute(context, snapshot, envelope, true, (credential,gateway) =>
+        gateway.uploadMedia(snapshot.account, credential, externalListingId, media),
       );
       if (!uploaded.result) return { requestId: snapshot.requestId, status: uploaded.status };
       progress = uploaded.result.status;
     }
     if (!hasProgress(progress, ["activation_accepted", "sync_pending"])) {
-      const activated = await this.execute(context, snapshot, envelope, true, (credential) =>
-        this.gateway.activate(snapshot.account, credential, externalListingId),
+      const activated = await this.execute(context, snapshot, envelope, true, (credential,gateway) =>
+        gateway.activate(snapshot.account, credential, externalListingId),
       );
       if (!activated.result) return { requestId: snapshot.requestId, status: activated.status };
     }
-    const synced = await this.execute(context, snapshot, envelope, false, (credential) =>
-      this.gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId),
+    const synced = await this.execute(context, snapshot, envelope, false, (credential,gateway) =>
+      gateway.getStatus(snapshot.account, credential, snapshot.payload, externalListingId),
     );
     await retryPendingStatus(synced.result, envelope);
     if (synced.result?.status === "sync_pending") {
@@ -263,13 +273,18 @@ export class MarketplacePublicationProcessor {
     snapshot: PublicationExecutionSnapshot,
     envelope: JobEnvelope,
     mutation: boolean,
-    operation: (credential: Readonly<Record<string, string>>) => Promise<MarketplaceDraftResult>,
+    operation: (credential: Readonly<Record<string, string>>,gateway:MarketplaceDraftGateway) => Promise<MarketplaceDraftResult>,
   ): Promise<{ result?: MarketplaceDraftResult; status: string }> {
     let result: MarketplaceDraftResult;
+    let guardFailure:unknown;
     try {
-      result = await this.repository.withCredential(context, snapshot.accountId, operation);
+      const gateway=this.repository.beforeProviderRequest?this.gateway.withRequestGuard?.(async()=>{
+        try{await this.repository.beforeProviderRequest!(context,snapshot);}catch(error){guardFailure=error;throw error;}
+      }):this.gateway;
+      if(!gateway)throw new PublicationAuthorityError("publication_transport_guard_missing");
+      result = await this.repository.withCredential(context, snapshot.accountId, credential=>operation(credential,gateway),snapshot.requestId);
     } catch (error) {
-      const failure = classifyFailure(error, envelope);
+      const failure = classifyFailure(guardFailure??error, envelope);
       await this.repository.fail(context, snapshot.requestId, failure);
       if (failure.retryable) throw error;
       return { status: failure.status };
@@ -350,6 +365,17 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .orderBy(desc(marketplacePublicationEvents.sequence))
         .limit(1);
       if (!latest || isTerminal(latest.status)) return undefined;
+      const [intent]=await tx.select().from(marketplacePublicationIntents).where(eq(marketplacePublicationIntents.requestId,requestId)).limit(1);
+      // A node-owned request can never be dispatched by a legacy queue job.
+      if(intent?.route==="node_preview")return undefined;
+      if(!intent||intent.route!=="central"||request.action==="amazon_validation_preview"){
+        await insertEvent(tx,context,requestId,latest.sequence+1,{status:"reconciliation_required",code:"PUBLICATION_LEGACY_AUTHORITY_MISSING",message:"Original execution authority is missing; manual reconciliation is required",retryable:false});return undefined;
+      }
+      let current;
+      try{current=await readPublicationAuthority(tx,context,requestId,Permission.ListingPublish,true);}catch(error){
+        if(!publicationAuthorityFailure(error))throw error;
+        await insertEvent(tx,context,requestId,latest.sequence+1,{status:"reconciliation_required",code:"PUBLICATION_AUTHORITY_CHANGED",message:"Original publication authority is no longer current",retryable:false});return undefined;
+      }
       let nextSequence = latest.sequence + 1;
       const [progress] = await tx.select().from(marketplacePublicationEvents)
         .where(and(
@@ -422,6 +448,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         retryable: false,
       });
       return {
+        authority:current.authority,
         requestId,
         accountId: account.id,
         action: MarketplacePublicationActionSchema.parse(request.action),
@@ -452,18 +479,25 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
     if (pins.length === 0 || pins.length > 20) {
       throw new MarketplaceConnectorError("etsy", "validation", "Etsy activation requires between 1 and 20 listing images");
     }
-    const storageContext: TenantContext = {
-      ...context,
-      permissions: [...new Set([...context.permissions, Permission.AssetRead])],
-    };
+    await this.beforeProviderRequest(context,snapshot);
     return Promise.all(pins.map(async (pin) => {
+      const assetContext=()=>withTenant(this.database.db,context,async tx=>{
+        const current=await readPublicationAuthority(tx,context,snapshot.requestId,Permission.ListingPublish,true);
+        const [asset]=await tx.select().from(assetFiles).where(and(eq(assetFiles.id,pin.assetId),isNull(assetFiles.deletedAt),
+          catalogAssetReadFilter(current.authority,assetFiles.ownerUserId,assetFiles.id))).limit(1);
+        if(!asset||validatePinnedAssets([pin],[asset]))throw new PublicationAuthorityError("publication_asset_changed");
+        return current.authority;
+      });
+      const storageContext=await assetContext();
       const bytes = await this.storage.readPrivate(storageContext, {
         id: pin.assetId,
         tenantId: context.tenantId,
         assetDomain: pin.assetDomain,
         objectKey: pin.objectKey,
       }, { requiredDomain: "authorized" });
+      try{await assetContext();}catch(error){bytes.fill(0);throw error;}
       if (createHash("sha256").update(bytes).digest("hex") !== pin.checksumSha256) {
+        bytes.fill(0);
         throw new MarketplaceConnectorError("etsy", "validation", `Pinned asset checksum changed: ${pin.assetId}`);
       }
       return {
@@ -480,11 +514,18 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
     context: TenantContext,
     accountId: string,
     callback: (credential: Readonly<Record<string, string>>) => Promise<T>,
+    requestId?:string,
   ): Promise<T> {
+    if(!requestId)throw new PublicationAuthorityError("publication_original_request_required");
+    await withTenant(this.database.db,context,async tx=>{const current=await readPublicationAuthority(tx,context,requestId,Permission.ListingPublish,true);
+      if(current.intent?.route!=="central"||current.request.accountId!==accountId||current.request.action==="amazon_validation_preview")throw new PublicationAuthorityError();});
     const [credential] = await withTenant(this.database.db, context, (tx) =>
       tx.select({
         encryptedEnvelope: marketplaceCredentials.encryptedEnvelope,
-        accountStatus: marketplaceAccounts.status,
+        authorizationGeneration: marketplaceAccounts.authorizationGeneration,
+        credentialId: marketplaceCredentials.id,
+        credentialVersion: marketplaceCredentials.version,
+        accountStatus: marketplaceAccounts.status, refreshState: marketplaceAccounts.credentialRefreshState, useId: marketplaceAccounts.credentialUseId, deletedAt: marketplaceAccounts.deletedAt,
         platform: marketplaceAccounts.platform,
       })
         .from(marketplaceCredentials)
@@ -492,16 +533,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .where(eq(marketplaceCredentials.accountId, accountId))
         .limit(1),
     );
-    if (!credential || credential.accountStatus !== "active") {
-      throw new MarketplaceConnectorError(
-        credential?.platform === "etsy" ? "etsy" : "amazon",
-        "authorization",
-        "Marketplace credential is unavailable",
-      );
-    }
-    return this.secrets.withSecret(credential.encryptedEnvelope, (raw) =>
-      callback(z.record(z.string(), z.string()).parse(JSON.parse(raw))),
-    );
+    return withWorkerMarketplaceCredential(credential, this.secrets, callback);
   }
 
   async complete(context: TenantContext, requestId: string, result: MarketplaceDraftResult): Promise<void> {
@@ -513,6 +545,12 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .where(eq(marketplacePublicationEvents.requestId, requestId))
         .orderBy(desc(marketplacePublicationEvents.sequence)).limit(1);
       if (!request || !latest || isTerminal(latest.status)) return;
+      const current=await readPublicationAuthority(tx,context,requestId,Permission.ListingPublish,true);
+      if(current.intent?.route!=="central"||request.action==="amazon_validation_preview")throw new PublicationAuthorityError();
+      const [capability]=await tx.select().from(marketplaceCapabilitySnapshots).where(eq(marketplaceCapabilitySnapshots.id,request.capabilitySnapshotId)).limit(1);
+      if(!capability||validateRuntime(request,current.account,capability,current.listing,current.version,isSafeStatusRead(request.action,latest.status as MarketplacePublicationStatus)))throw new PublicationAuthorityError("publication_source_changed");
+      const ids=request.assetManifest.map(pin=>pin.assetId),assets=ids.length?await tx.select().from(assetFiles).where(and(inArray(assetFiles.id,ids),isNull(assetFiles.deletedAt))):[];
+      if(validatePinnedAssets(request.assetManifest,assets))throw new PublicationAuthorityError("publication_asset_changed");
       const [[identifierProgress], [mediaProgress]] = await Promise.all([
         tx.select().from(marketplacePublicationEvents)
           .where(and(
@@ -576,6 +614,22 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
     });
   }
 
+  async beforeProviderRequest(context:TenantContext,snapshot:PublicationExecutionSnapshot):Promise<void>{
+    await withTenant(this.database.db,context,async tx=>{
+      const current=await readPublicationAuthority(tx,context,snapshot.requestId,Permission.ListingPublish,true);
+      if(current.intent?.route!=="central"||current.request.accountId!==snapshot.accountId||current.request.action!==snapshot.action||current.request.action==="amazon_validation_preview"
+        ||checksum(snapshot.payload)!==current.request.payloadChecksum)throw new PublicationAuthorityError();
+      const [latest]=await tx.select().from(marketplacePublicationEvents).where(eq(marketplacePublicationEvents.requestId,snapshot.requestId)).orderBy(desc(marketplacePublicationEvents.sequence)).limit(1);
+      if(!latest||isTerminal(latest.status))throw new PublicationAuthorityError();
+      const [capability]=await tx.select().from(marketplaceCapabilitySnapshots).where(eq(marketplaceCapabilitySnapshots.id,current.request.capabilitySnapshotId)).limit(1);
+      if(!capability)throw new PublicationAuthorityError("publication_source_changed");
+      const safeStatusRead=isSafeStatusRead(snapshot.action,snapshot.resumeStatus);
+      if(validateRuntime(current.request,current.account,capability,current.listing,current.version,safeStatusRead))throw new PublicationAuthorityError("publication_source_changed");
+      if(!safeStatusRead){const ids=current.request.assetManifest.map(pin=>pin.assetId),assets=ids.length?await tx.select().from(assetFiles).where(and(inArray(assetFiles.id,ids),isNull(assetFiles.deletedAt))):[];
+        if(validatePinnedAssets(current.request.assetManifest,assets))throw new PublicationAuthorityError("publication_source_changed");}
+    });
+  }
+
   async fail(context: TenantContext, requestId: string, event: PublicationFailureEvent): Promise<void> {
     await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`);
@@ -586,19 +640,12 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         .orderBy(desc(marketplacePublicationEvents.sequence)).limit(1);
       if (!request || !latest || isTerminal(latest.status)) return;
       await insertEvent(tx, context, requestId, latest.sequence + 1, event);
-      if (event.revokeAccount) {
-        await tx.update(marketplaceAccounts).set({
-          status: "revoked",
-          credentialStatus: "revoked",
-          healthStatus: "unauthorized",
-          lastHealthAt: new Date(),
-          lastErrorCode: event.code,
-          updatedAt: new Date(),
-        }).where(eq(marketplaceAccounts.id, request.accountId));
-      }
+      if (event.revokeAccount) await revokeMarketplaceCredentialIfCurrent(tx, context, request.accountId, event.credentialFence, event.code);
     });
   }
 }
+
+function publicationAuthorityFailure(error:unknown){return error instanceof Error&&["PublicationAuthorityError","ForbiddenError","CatalogAccessNotFoundError"].includes(error.constructor.name);}
 
 type RequestRow = typeof marketplacePublicationRequests.$inferSelect;
 type AccountRow = typeof marketplaceAccounts.$inferSelect;
@@ -732,6 +779,7 @@ function validatePinnedAssets(
 }
 
 function classifyFailure(error: unknown, envelope: JobEnvelope): PublicationFailureEvent {
+  if(publicationAuthorityFailure(error))return {status:"reconciliation_required",code:"PUBLICATION_AUTHORITY_CHANGED",message:"发布执行条件已变化 请核对原任务",retryable:false};
   if (!(error instanceof MarketplaceConnectorError)) {
     const retryable = envelope.attempt + 1 < envelope.maxAttempts;
     return {
@@ -751,16 +799,19 @@ function classifyFailure(error: unknown, envelope: JobEnvelope): PublicationFail
     };
   }
   const retryable = error.retryable && envelope.attempt + 1 < envelope.maxAttempts;
+  const credentialFence = readMarketplaceCredentialFailureFence(error);
   return {
     status: retryable ? "retry_pending" : "failed",
     code,
     message: safeConnectorMessage(error),
     retryable,
     revokeAccount: error.code === "authorization",
+    ...(credentialFence ? { credentialFence } : {}),
   };
 }
 
 function safeConnectorMessage(error: MarketplaceConnectorError): string {
+  if (error instanceof EtsyPersonalizationSafetyError) return error.message;
   if (error.code === "authorization") return "Marketplace authorization is invalid or expired";
   if (error.code === "validation") return "Marketplace rejected the publication payload";
   if (error.code === "rate_limited") return "Marketplace rate limit delayed the publication";
@@ -808,16 +859,6 @@ async function insertEvent(
 }
 
 function checksum(value: unknown): string {
-  return createHash("sha256").update(stableStringify(value)).digest("hex");
+  return createHash("sha256").update(publicationPreviewPayloadText(value)).digest("hex");
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}

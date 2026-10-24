@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { TenantContext } from "@yummyai/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { isolatedDatabaseForTests } from "./testing/disposable-database.js";
 
 import {
   canvasPrintSpecVersions,
@@ -30,7 +31,7 @@ function context(tenantId: string): TenantContext {
 }
 
 describe("POD batch workflow persistence", () => {
-  const database = connectDatabase();
+  const database = connectDatabase(isolatedDatabaseForTests());
   const tenantA = context(uuidV7());
   const tenantB = context(uuidV7());
   const specAId = uuidV7();

@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
-import { MarketplacePlatformSchema } from "./store.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+import { MarketplacePlatformSchema } from "@yummyai/contracts/marketplace/store";
+
+/** Shared with the original connector and the strictly bounded node preview. */
+export const AmazonPublicationPayloadSchema = z.object({ marketplaceId: z.string().min(1).max(80), locale: z.string().min(2).max(20),
+  platform: z.literal("amazon"), productType: z.string().min(1).max(120), sku: z.string().min(1).max(160),
+  attributes: z.record(z.string(), z.unknown()) }).strict();
 
 export const CreateMarketplacePublicationInputSchema = z.object({
   accountId: EntityIdSchema,

@@ -162,6 +162,7 @@ export const CreativeDesignVersionSchema = z.object({
 
 export const CreativeDesignBatchItemSchema = CreateCreativeDesignBatchItemInputSchema.safeExtend({
   id: EntityIdSchema,
+  printSpecVersionIds: z.array(EntityIdSchema).max(POD_PRINT_SPEC_LIMIT),
   status: PodBatchStatusSchema,
   candidates: z.array(CreativeDesignCandidateSchema).max(POD_DESIGN_CANDIDATE_LIMIT),
   creativeVersions: z.array(CreativeDesignVersionSchema).max(POD_DESIGN_CANDIDATE_LIMIT),
@@ -172,6 +173,7 @@ export const CreativeDesignBatchItemSchema = CreateCreativeDesignBatchItemInputS
 export const CreativeDesignBatchSchema = z.object({
   id: EntityIdSchema,
   name: z.string().trim().min(1).max(160),
+  executionMode: z.enum(["processor", "infinite_canvas"]).default("processor"),
   recipeVersionId: EntityIdSchema.optional(),
   status: PodBatchStatusSchema,
   itemCount: z.int().min(1).max(POD_BATCH_ITEM_LIMIT),
@@ -235,7 +237,11 @@ export const MockupTemplateInspectionSchema = CreateMockupTemplateInspectionInpu
   errorMessage: z.string().trim().min(1).max(500).optional(),
   createdAt: IsoDateSchema,
   completedAt: IsoDateSchema.optional(),
+  reviewFingerprint: Sha256Schema.optional(),
+  executionEvidence: z.enum(["original_execution", "legacy_compilation"]).optional(),
 }).strict();
+
+export const ConfirmMockupTemplateInspectionInputSchema = z.object({ expectedFingerprint: Sha256Schema }).strict();
 
 export const MockupTemplatePackStatusSchema = z.enum(["draft", "approved", "rejected", "archived"]);
 export const MockupTemplateSlotInputSchema = z.object({
@@ -306,6 +312,7 @@ export const MockupBatchItemSchema = z.object({
   id: EntityIdSchema,
   designVersionId: EntityIdSchema,
   skuId: EntityIdSchema,
+  reviewFingerprint: Sha256Schema.optional(),
   status: PodBatchStatusSchema,
   outputs: z.array(MockupBatchOutputSchema).max(POD_MOCKUP_SLOT_LIMIT),
   reviewedBy: EntityIdSchema.optional(),
@@ -317,6 +324,7 @@ export const MockupBatchSchema = z.object({
   id: EntityIdSchema,
   name: z.string().trim().min(1).max(160),
   templatePackVersionId: EntityIdSchema,
+  templatePack: MockupTemplatePackVersionSchema.optional(),
   platform: z.enum(["amazon", "etsy"]),
   locale: z.string().trim().regex(/^[a-z]{2}-[A-Z]{2}$/),
   status: PodBatchStatusSchema,
@@ -333,6 +341,7 @@ export const MockupBatchSchema = z.object({
 export const ReviewMockupBatchInputSchema = z.object({
   decisions: z.array(z.object({
     itemId: EntityIdSchema,
+    expectedFingerprint: Sha256Schema,
     decision: z.enum(["approve", "reject"]),
     rejectionReason: z.string().trim().min(1).max(2_000).optional(),
   }).strict()).min(1).max(POD_BATCH_ITEM_LIMIT),

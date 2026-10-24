@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { authorize, Permission } from "@yummyai/authz";
 import {
   AssignResearchProductTypeInputSchema,
   type AssignResearchProductTypeInput,
@@ -18,6 +19,7 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
+import { currentResearchAuthority, researchOwnerFilter } from "./research-access.js";
 
 export interface ResearchClassificationCandidate {
   evidenceKey: string;
@@ -42,6 +44,16 @@ export class ResearchClassificationService {
       classificationStatus: string;
     },
   ): Promise<void> {
+    authorize(context, Permission.CaptureWrite);
+    const authority = await currentResearchAuthority(tx, context),
+      scope = researchOwnerFilter(context, authority, Permission.CaptureWrite);
+    const [item] = await tx
+      .select({ id: researchItems.id })
+      .from(researchItems)
+      .where(and(eq(researchItems.id, itemId), scope))
+      .limit(1)
+      .for("update");
+    if (!item) throw new NotFoundException("Research item not found");
     if (
       current?.classificationStatus === "confirmed" ||
       current?.classificationSource === "manual"
@@ -76,11 +88,7 @@ export class ResearchClassificationService {
           updatedBy: context.userId,
         })
         .onConflictDoNothing();
-      [alias] = await tx
-        .select()
-        .from(researchProductTypeAliases)
-        .where(aliasConditions)
-        .limit(1);
+      [alias] = await tx.select().from(researchProductTypeAliases).where(aliasConditions).limit(1);
     }
 
     await tx
@@ -107,11 +115,14 @@ export class ResearchClassificationService {
     classification: ResearchItemClassification;
     updated: number;
   }> {
+    authorize(context, Permission.ResearchWrite);
     const input = AssignResearchProductTypeInputSchema.parse(rawInput);
     const productType = input.productTypeName
       ? normalizeResearchProductType(input.productTypeName)
       : null;
     const result = await withTenant(this.database.db, context, async (tx) => {
+      const authority = await currentResearchAuthority(tx, context),
+        scope = researchOwnerFilter(context, authority, Permission.ResearchWrite);
       const selected = await tx
         .select({
           id: researchItems.id,
@@ -121,7 +132,8 @@ export class ResearchClassificationService {
           evidenceSource: researchItems.classificationEvidenceSource,
         })
         .from(researchItems)
-        .where(inArray(researchItems.id, input.itemIds));
+        .where(and(inArray(researchItems.id, input.itemIds), scope))
+        .for("update");
       if (selected.length !== input.itemIds.length) {
         throw new NotFoundException("One or more research items were not found");
       }
@@ -137,10 +149,10 @@ export class ResearchClassificationService {
           classificationUpdatedBy: context.userId,
           classificationUpdatedAt: now,
         })
-        .where(inArray(researchItems.id, input.itemIds));
+        .where(and(inArray(researchItems.id, input.itemIds), scope));
 
       const cascadedIds = new Set<string>();
-      if (productType) {
+      if (productType && !scope) {
         const aliases = uniqueEvidenceAliases(selected);
         for (const alias of aliases) {
           await tx
@@ -261,13 +273,9 @@ function extractAmazonBestSellerCategory(draft: CaptureDraft): string | null {
   for (const section of draft.productInformation) {
     for (const item of section.items) {
       if (!/best sellers rank/i.test(item.label)) continue;
-      const linked = lastNonEmpty(
-        item.links.map((link) => cleanBestSellerCategory(link.label)),
-      );
+      const linked = lastNonEmpty(item.links.map((link) => cleanBestSellerCategory(link.label)));
       if (linked) return linked;
-      const matches = [
-        ...item.value.matchAll(/#[0-9,]+\s+in\s+([^#\n\r(]+)/gi),
-      ];
+      const matches = [...item.value.matchAll(/#[0-9,]+\s+in\s+([^#\n\r(]+)/gi)];
       const fromValue = lastNonEmpty(
         matches.map((match) => cleanBestSellerCategory(match[1] ?? "")),
       );
@@ -319,25 +327,16 @@ function uniqueEvidenceAliases(
     ) {
       continue;
     }
-    aliases.set(
-      `${row.platform}\u0000${row.evidenceSource}\u0000${row.evidenceKey}`,
-      {
-        evidenceKey: row.evidenceKey,
-        evidenceLabel: row.evidenceLabel,
-        evidenceSource: row.evidenceSource,
-        platform: row.platform,
-      },
-    );
+    aliases.set(`${row.platform}\u0000${row.evidenceSource}\u0000${row.evidenceKey}`, {
+      evidenceKey: row.evidenceKey,
+      evidenceLabel: row.evidenceLabel,
+      evidenceSource: row.evidenceSource,
+      platform: row.platform,
+    });
   }
   return [...aliases.values()];
 }
 
-function isEvidenceSource(
-  value: string | null,
-): value is ResearchClassificationEvidenceSource {
-  return (
-    value === "marketplace_taxonomy" ||
-    value === "ehunt_category" ||
-    value === "amazon_bsr"
-  );
+function isEvidenceSource(value: string | null): value is ResearchClassificationEvidenceSource {
+  return value === "marketplace_taxonomy" || value === "ehunt_category" || value === "amazon_bsr";
 }

@@ -1,0 +1,53 @@
+.agent-native-v2 { min-width:0; max-width:100%; overflow-wrap:anywhere; animation:anv2-enter 180ms ease-out both; }
+.agent-native-v2 .an-composer { margin-top:16px; padding-top:14px; }
+.agent-native-v2 .an-composer > summary { font-size:14px; font-weight:600; }
+.agent-native-v2 .an-composer form { margin-top:16px; }
+.agent-native-v2 .an-composer form > fieldset > * + * { margin-top:14px; }
+.agent-native-v2 .an-evidence { display:grid; gap:15px; margin-top:15px; animation:anv2-enter 180ms ease-out both; }
+.agent-native-v2 .an-evidence > * { margin-top:0; }
+.agent-native-v2 .an-evidence > section { border-top:1px solid var(--line); padding-top:12px; }
+.agent-native-v2 .an-evidence > header { align-items:flex-start; }
+.agent-native-v2 .an-evidence > header h3 { flex:1 1 260px; }
+.agent-native-v2 .anv2-bindings ol { list-style:none; margin:12px 0; padding:0; }
+.agent-native-v2 .anv2-bindings li { padding:10px 0; border-top:1px solid var(--line); animation:anv2-enter 160ms ease-out both; }
+.agent-native-v2 .anv2-bindings li[data-exiting=true] { animation:anv2-exit 120ms ease-in both; pointer-events:none; }
+.agent-native-v2 .anv2-bindings li > * + * { margin-top:6px; }
+.agent-native-v2 .anv2-bindings header { align-items:flex-start; }
+.agent-native-v2 .anv2-bindings header strong { flex:1 1 180px; }
+.agent-native-v2 .anv2-bindings header button { flex:none; }
+.agent-native-v2 .anv2-binding-editor { padding-block:12px; border-block:1px solid var(--line); }
+.agent-native-v2 .anv2-binding-fields { padding-top:12px; }
+.agent-native-v2 .anv2-binding-fields legend { padding-right:8px; font-weight:600; }
+.agent-native-v2 .anv2-binding-fields > * + * { margin-top:12px; }
+.agent-native-v2 .an-observation { margin-top:13px; }
+.agent-native-v2 .an-observation > * + * { margin-top:10px; }
+.agent-native-v2 .an-observation > .al-actions { padding-block:10px; border-block:1px solid var(--line); }
+.agent-native-v2 :is(.anv2-native,.anv2-resource) { margin:10px 0; padding:10px 0; border:0; font-size:12px; }
+.agent-native-v2 .anv2-native .atb-result { margin:0; }
+.agent-native-v2 .anv2-native .atb-pairs { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.agent-native-v2 .anv2-resource .ar-object-picker { margin-top:12px; }
+.agent-native-v2 .anv2-definition pre { max-width:100%; margin:10px 0; padding:10px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; border:1px solid var(--line); background:var(--surface-muted); font:11px/1.6 var(--font-mono,ui-monospace,monospace); }
+.agent-native-v2 .an-items { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+.agent-native-v2 .an-items .al-actions > a { display:inline-flex; gap:6px; align-items:center; min-height:36px; transition:color 140ms,opacity 140ms,transform 140ms; }
+.agent-native-v2 .an-items .al-actions > a:hover { transform:translateX(2px); }
+.agent-native-v2 .al-recent > li { overflow-wrap:anywhere; }
+.agent-native-v2 .al-recent code { display:block; }
+.agent-native-v2 .al-recovery details li > button { margin:7px 0 7px 8px; }
+.agent-native-v2 .al-id-form { margin-top:12px; }
+.agent-native-v2 .al-recovery article h4 code { display:inline; }
+.agent-native-v2 :is(input,select,textarea,button) { min-width:0; max-width:100%; }
+.agent-native-v2 input[type=date] { min-width:0; width:100%; appearance:none; }
+@keyframes anv2-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+@keyframes anv2-exit { to { opacity:0; transform:translateY(-3px); } }
+@media(max-width:720px) {
+  .agent-native-v2 .anv2-native .atb-pairs { grid-template-columns:minmax(0,1fr); }
+  .agent-native-v2 .al-recovery article h4 code { display:block; }
+  .agent-native-v2 .an-evidence > header { display:block; }
+  .agent-native-v2 .an-evidence > header > .al-badge { margin-top:8px; }
+  .agent-native-v2 .al-recovery details li > button { display:flex; width:100%; margin:8px 0; }
+  .agent-native-v2 .an-observation > .al-actions > span { flex-basis:100%; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .agent-native-v2, .agent-native-v2 *, .agent-native-v2 *::before, .agent-native-v2 *::after, .agent-native-v2 details::details-content { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+  .agent-native-v2 .an-items .al-actions > a:hover { transform:none; }
+}

@@ -1,0 +1,57 @@
+.listing-return-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin-bottom: 12px;
+  color: var(--action);
+  font-size: 13px;
+}
+.listing-workbench .listing-toolbar,
+.listing-workbench .listing-toolbar button {
+  background: var(--surface);
+  color: var(--ink);
+}
+.listing-queue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.listing-queue span {
+  margin-right: auto;
+  color: var(--muted-ink);
+  font-size: 13px;
+}
+.listing-queue button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.listing-queue button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pd-queue {
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.pd-queue span {
+  margin-right: auto;
+}
+.procurement-order-table tr[data-focused="true"] td {
+  background: var(--action-soft);
+  border-top: 1px solid var(--action);
+  border-bottom: 1px solid var(--action);
+}
+.procurement-order-table tr[data-focused="true"] {
+  outline: 2px solid var(--action);
+  outline-offset: -2px;
+}

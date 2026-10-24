@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
   UnprocessableEntityException,
@@ -28,7 +29,11 @@ import {
   marketplaceCapabilitySnapshots,
   marketplacePublicationEvents,
   marketplacePublicationRequests,
+  marketplacePublicationIntents,
+  type marketplaceStoreNodeExecutions,
+  loadCurrentMembershipContext,
   type DatabaseConnection,
+  type TenantTransaction,
   type MarketplacePublicationAssetPin,
   withTenant,
 } from "@yummyai/database";
@@ -39,9 +44,17 @@ import {
 import type { ListingDraft } from "@yummyai/platform-rules";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import {Permission,intersectPermissionContexts} from "@yummyai/authz";
+import {catalogOwnerFilter,currentPublicationObjectAuthority,readPublicationAuthority} from "@yummyai/catalog-core";
+import type {CreatePublicationPreviewInput,PublicationPreviewLookup,PublicationPreviewWorkspaceInput,PublicationPreviewReadCheckInput,StoreNodePublicationResult} from "@yummyai/contracts/marketplace/publication-preview";
+import {publicationPreviewPayloadText} from "@yummyai/contracts/marketplace/publication-preview";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION, MARKETPLACE_PUBLICATION_ENQUEUER } from "../platform.tokens.js";
+import {StoreNodeService} from "./store-node.service.js";
+import {PublicationPreviewOperations} from "./publication-preview-operations.js";
+import {PublicationSubmitOperations} from "./publication-submit-operations.js";
+import type {CreatePublicationSubmitInput,CreatePublicationStatusInput,PublicationSubmitLookup,PublicationSubmitWorkspaceInput,StoreNodeAmazonSubmissionResult,StoreNodeAmazonStatusResult} from "@yummyai/contracts/marketplace/publication-submit";
 
 export interface MarketplacePublicationEnqueuer {
   enqueue(input: {
@@ -59,20 +72,23 @@ export class MarketplacePublicationService {
     @Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection,
     @Inject(MARKETPLACE_PUBLICATION_ENQUEUER) private readonly enqueuer: MarketplacePublicationEnqueuer,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(StoreNodeService) private readonly identity?: StoreNodeService,
   ) {}
 
   async create(
     context: TenantContext,
     input: CreateMarketplacePublicationInput,
   ): Promise<MarketplacePublicationRequestView> {
-    const prepared = await this.prepareForBatch(context, input);
     const scheduledFor = normalizeSchedule(input.scheduledFor);
     const request = await withTenant(this.database.db, context, async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${prepared.idempotencyKey}, 0))`);
+      const {account}=await currentPublicationObjectAuthority(tx,context,input.listingId,input.accountId,Permission.ListingPublish);
+      const idempotencyKey=initialPublicationKey(context,input,account.platform);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${idempotencyKey}, 0))`);
       const [existing] = await tx.select().from(marketplacePublicationRequests)
-        .where(eq(marketplacePublicationRequests.idempotencyKey, prepared.idempotencyKey))
+        .where(eq(marketplacePublicationRequests.idempotencyKey, idempotencyKey))
         .limit(1);
-      if (existing) return existing;
+      if (existing) {await readPublicationAuthority(tx,context,existing.id,Permission.ListingPublish);return existing;}
+      const prepared=await this.prepareInTransaction(context,input,tx);
       const [created] = await tx.insert(marketplacePublicationRequests).values({
         id: createEntityId(),
         tenantId: context.tenantId,
@@ -98,6 +114,7 @@ export class MarketplacePublicationService {
         status: scheduledFor ? "scheduled" : "queued",
         actorUserId: context.userId,
       });
+      await this.admitInTransaction(context,created!,tx,prepared,input);
       return created!;
     });
 
@@ -126,11 +143,7 @@ export class MarketplacePublicationService {
   ): Promise<MarketplacePublicationRequestView> {
     const shouldCancel = await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`);
-      const [request] = await tx.select({ id: marketplacePublicationRequests.id })
-        .from(marketplacePublicationRequests)
-        .where(eq(marketplacePublicationRequests.id, requestId))
-        .limit(1);
-      if (!request) throw new NotFoundException("Marketplace publication request not found");
+      await readPublicationAuthority(tx,context,requestId,Permission.ListingPublish);
       const [latest] = await tx.select().from(marketplacePublicationEvents)
         .where(eq(marketplacePublicationEvents.requestId, requestId))
         .orderBy(desc(marketplacePublicationEvents.sequence))
@@ -140,6 +153,8 @@ export class MarketplacePublicationService {
       if (!["scheduled", "queued", "retry_pending"].includes(latest.status)) {
         throw new ConflictException("Only waiting marketplace publications can be cancelled");
       }
+      await this.preview().cancelCoordination(tx,requestId);
+      await this.submission().cancelCoordination(tx,context,requestId);
       await tx.insert(marketplacePublicationEvents).values({
         id: createEntityId(),
         tenantId: context.tenantId,
@@ -175,13 +190,11 @@ export class MarketplacePublicationService {
   async continue(
     context: TenantContext,
     parentRequestId: string,
+    confirmation?:CreatePublicationSubmitInput,
   ): Promise<MarketplacePublicationRequestView> {
     const request = await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${parentRequestId}, 0))`);
-      const [parent] = await tx.select().from(marketplacePublicationRequests)
-        .where(eq(marketplacePublicationRequests.id, parentRequestId))
-        .limit(1);
-      if (!parent) throw new NotFoundException("Marketplace publication request not found");
+      const {request:parent}=await readPublicationAuthority(tx,context,parentRequestId,Permission.ListingPublish);
       const [parentEvent] = await tx.select().from(marketplacePublicationEvents)
         .where(eq(marketplacePublicationEvents.requestId, parentRequestId))
         .orderBy(desc(marketplacePublicationEvents.sequence))
@@ -199,6 +212,9 @@ export class MarketplacePublicationService {
         .where(eq(marketplacePublicationRequests.idempotencyKey, idempotencyKey))
         .limit(1);
       if (existing) return existing;
+
+      if(continuation.action==="amazon_submit"&&!confirmation)
+        throw new ConflictException({code:"publication_submit_confirmation_required"});
 
       const [[account], [listing], [version], [capability]] = await Promise.all([
         tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, parent.accountId)).limit(1),
@@ -262,6 +278,8 @@ export class MarketplacePublicationService {
         status: "queued",
         actorUserId: context.userId,
       });
+      if(continuation.action==="amazon_submit")await this.submission().admit(tx,context,created!,confirmation!);
+      else await this.admitInTransaction(context,created!,tx);
       return created!;
     });
 
@@ -281,13 +299,7 @@ export class MarketplacePublicationService {
   }
 
   async get(context: TenantContext, requestId: string): Promise<MarketplacePublicationRequestView> {
-    const [request] = await withTenant(this.database.db, context, (tx) =>
-      tx.select().from(marketplacePublicationRequests)
-        .where(eq(marketplacePublicationRequests.id, requestId))
-        .limit(1),
-    );
-    if (!request) throw new NotFoundException("Marketplace publication request not found");
-    return toRequestView(request, await this.latestEvent(context, requestId));
+    return withTenant(this.database.db,context,async tx=>{const {request}=await readPublicationAuthority(tx,context,requestId);return this.viewInTransaction(tx,request);});
   }
 
   async list(
@@ -295,13 +307,20 @@ export class MarketplacePublicationService {
     input: ListMarketplacePublicationsInput,
   ): Promise<MarketplacePublicationRequestView[]> {
     return withTenant(this.database.db, context, async (tx) => {
-      const requests = await tx.select().from(marketplacePublicationRequests)
+      const authority=intersectPermissionContexts(context,await loadCurrentMembershipContext(tx,context,{lock:true}));
+      const rows = await tx.select({request:marketplacePublicationRequests}).from(marketplacePublicationRequests)
+        .innerJoin(listings,eq(listings.id,marketplacePublicationRequests.listingId))
+        .innerJoin(marketplaceAccounts,eq(marketplaceAccounts.id,marketplacePublicationRequests.accountId))
         .where(and(
+          catalogOwnerFilter(authority,Permission.ListingRead,listings.createdBy),
+          catalogOwnerFilter(authority,Permission.StoreRead,marketplaceAccounts.createdBy),
+          isNull(marketplaceAccounts.deletedAt),
           input.accountId ? eq(marketplacePublicationRequests.accountId, input.accountId) : undefined,
           input.listingId ? eq(marketplacePublicationRequests.listingId, input.listingId) : undefined,
         ))
         .orderBy(desc(marketplacePublicationRequests.createdAt))
         .limit(input.limit);
+      const requests=rows.map(row=>row.request);
       if (requests.length === 0) return [];
       const events = await tx.select().from(marketplacePublicationEvents)
         .where(inArray(marketplacePublicationEvents.requestId, requests.map((request) => request.id)))
@@ -319,17 +338,20 @@ export class MarketplacePublicationService {
   }
 
   async events(context: TenantContext, requestId: string): Promise<MarketplacePublicationEventView[]> {
-    await this.get(context, requestId);
-    const events = await withTenant(this.database.db, context, (tx) =>
-      tx.select().from(marketplacePublicationEvents)
+    return withTenant(this.database.db, context, async tx => {
+      await readPublicationAuthority(tx,context,requestId);
+      const events=await tx.select().from(marketplacePublicationEvents)
         .where(eq(marketplacePublicationEvents.requestId, requestId))
-        .orderBy(marketplacePublicationEvents.sequence),
-    );
-    return events.map(toEventView);
+        .orderBy(marketplacePublicationEvents.sequence);
+      return events.map(toEventView);
+    });
   }
 
   async prepareForBatch(context: TenantContext, input: CreateMarketplacePublicationInput): Promise<PreparedPublication> {
-    return withTenant(this.database.db, context, async (tx) => {
+    return withTenant(this.database.db,context,tx=>this.prepareInTransaction(context,input,tx));
+  }
+  async prepareInTransaction(context:TenantContext,input:CreateMarketplacePublicationInput,tx:TenantTransaction):Promise<PreparedPublication>{
+      await currentPublicationObjectAuthority(tx,context,input.listingId,input.accountId,Permission.ListingPublish);
       const [[account], [listing], [version], [capability]] = await Promise.all([
         tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1),
         tx.select().from(listings).where(eq(listings.id, input.listingId)).limit(1),
@@ -378,7 +400,37 @@ export class MarketplacePublicationService {
         }),
         payload,
       };
-    });
+  }
+
+  private preview(){return new PublicationPreviewOperations(this.database,this.audit,this,this.identity);}
+  private submission(){return new PublicationSubmitOperations(this,this.database,this.audit,this.identity);}
+  submissionWorkspace(context:TenantContext,input:PublicationSubmitWorkspaceInput){return this.submission().workspace(context,input);}
+  createSubmission(context:TenantContext,input:CreatePublicationSubmitInput){return this.submission().create(context,input);}
+  submissionReceipt(context:TenantContext,input:PublicationSubmitLookup){return this.submission().receipt(context,input);}
+  getSubmission(context:TenantContext,id:string){return this.submission().get(context,id);}
+  createStatusRead(context:TenantContext,id:string,input:CreatePublicationStatusInput){return this.submission().createStatus(context,id,input);}
+  statusReceipt(context:TenantContext,input:PublicationSubmitLookup){return this.submission().statusReceipt(context,input);}
+  cancelSubmission(context:TenantContext,id:string,input:CancelMarketplacePublicationInput){return this.submission().cancel(context,id,input);}
+  assertSubmissionNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect){return this.submission().assertNode(tx,row);}
+  submissionNodeDueInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect){return this.submission().due(tx,row);}
+  adoptSubmissionNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect,result:StoreNodeAmazonSubmissionResult|StoreNodeAmazonStatusResult){return this.submission().adopt(tx,row,result);}
+  failSubmissionNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect,unknown:boolean,code:string){return this.submission().failure(tx,row,unknown,code);}
+  previewWorkspace(context:TenantContext,input:PublicationPreviewWorkspaceInput){return this.preview().workspace(context,input);}
+  checkPreviewWorkspaceRead(context:TenantContext,input:PublicationPreviewReadCheckInput){return this.preview().checkWorkspaceRead(context,input);}
+  checkPreviewRequestRead(context:TenantContext,id:string){return this.preview().checkRequestRead(context,id);}
+  createPreview(context:TenantContext,input:CreatePublicationPreviewInput){return this.preview().create(context,input);}
+  previewReceipt(context:TenantContext,input:PublicationPreviewLookup){return this.preview().receipt(context,input);}
+  getPreview(context:TenantContext,id:string){return this.preview().get(context,id);}
+  cancelPreview(context:TenantContext,id:string,input:CancelMarketplacePublicationInput){return this.preview().cancel(context,id,input);}
+  admitInTransaction(context:TenantContext,request:RequestRow,tx:TenantTransaction,prepared?:PreparedPublication,source?:CreateMarketplacePublicationInput){return this.preview().admit(tx,context,request,prepared,undefined,source);}
+  previewNodeDueInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect,now:Date){return this.preview().due(tx,row,now);}
+  cancelPreviewCoordinationInTransaction(tx:TenantTransaction,requestId:string){return this.preview().cancelCoordination(tx,requestId);}
+  assertPreviewNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect){return this.preview().assertNode(tx,row);}
+  adoptPreviewNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect,result:StoreNodePublicationResult){return this.preview().adopt(tx,row,result);}
+  failPreviewNodeInTransaction(tx:TenantTransaction,row:typeof marketplaceStoreNodeExecutions.$inferSelect,unknown:boolean,code:string){return this.preview().failure(tx,row,unknown,code);}
+  async viewInTransaction(tx:TenantTransaction,request:RequestRow){
+    const [event]=await tx.select().from(marketplacePublicationEvents).where(eq(marketplacePublicationEvents.requestId,request.id)).orderBy(desc(marketplacePublicationEvents.sequence)).limit(1);
+    if(!event)throw new NotFoundException("Marketplace publication event not found");return toRequestView(request,toEventView(event));
   }
 
   private async latestEvent(context: TenantContext, requestId: string): Promise<MarketplacePublicationEventView> {
@@ -393,13 +445,15 @@ export class MarketplacePublicationService {
   }
 
   private async enqueueIfRequired(context: TenantContext, request: RequestRow): Promise<void> {
+    const [intent]=await withTenant(this.database.db,context,tx=>tx.select().from(marketplacePublicationIntents).where(eq(marketplacePublicationIntents.requestId,request.id)).limit(1));
+    if(!intent||intent.route!=="central")return;
     const current = await this.latestEvent(context, request.id);
     if (terminalStatus.has(current.status)) return;
     try {
       await this.enqueuer.enqueue({
         delayMs: Math.max(0, (request.scheduledFor?.getTime() ?? Date.now()) - Date.now()),
         publicationRequestId: request.id,
-        requestedBy: context.userId,
+        requestedBy: request.createdBy!,
         tenantId: context.tenantId,
       });
     } catch {
@@ -653,7 +707,7 @@ function pinAssets(references: readonly PublicationAssetReference[], assets: rea
       fileName: asset.fileName,
       mediaType: asset.mediaType,
       publicationRole: reference.publicationRole,
-      rank: reference.rank,
+      ...(reference.rank === undefined ? {} : { rank: reference.rank }),
     };
   });
 }
@@ -702,19 +756,10 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 }
 
 function checksum(value: unknown): string {
-  return createHash("sha256").update(stableStringify(value)).digest("hex");
+  return createHash("sha256").update(publicationPreviewPayloadText(value)).digest("hex");
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
+function initialPublicationKey(context:TenantContext,input:CreateMarketplacePublicationInput,platform:string){return checksum({version:1,tenantId:context.tenantId,accountId:input.accountId,listingVersionId:input.listingVersionId,marketplaceId:input.marketplaceId,variantSkuId:input.variantSkuId??null,action:platform==="amazon"?"amazon_validation_preview":"etsy_create_draft"});}
 
 function toRequestView(request: RequestRow, current: MarketplacePublicationEventView): MarketplacePublicationRequestView {
   const payload = MarketplacePublicationPayloadSchema.safeParse(request.payload);

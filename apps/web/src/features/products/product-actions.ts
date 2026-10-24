@@ -7,7 +7,9 @@ import { revalidatePath } from "next/cache";
 import { apiFetch } from "../../server-api";
 
 export interface ProductCreateState {
-  fieldErrors?: Partial<Record<"description" | "name" | "sourceReportIds" | "targetCost", string>>;
+  fieldErrors?: Partial<
+    Record<"description" | "name" | "sourceReportIds" | "targetCost" | "teamId", string>
+  >;
   message: string;
   planId?: string;
   status: "idle" | "success" | "error";
@@ -24,9 +26,11 @@ export async function createProductPlan(
 ): Promise<ProductCreateState> {
   const name = value(formData, "name");
   const description = value(formData, "description");
+  const teamId = value(formData, "teamId");
   const targetCostAmount = value(formData, "targetCostAmount");
   const sourceReportIds = list(value(formData, "sourceReportIds"));
   const fieldErrors: ProductCreateState["fieldErrors"] = {};
+  if (teamId && !UUID_V7_PATTERN.test(teamId)) fieldErrors.teamId = "请选择有效团队";
   if (!name || name.length > 200) fieldErrors.name = "产品名称为必填项，最多 200 个字符。";
   if (description.length > 4_000) fieldErrors.description = "产品描述最多 4000 个字符。";
   if (sourceReportIds.length > 50 || sourceReportIds.some((id) => !UUID_V7_PATTERN.test(id))) {
@@ -45,6 +49,7 @@ export async function createProductPlan(
   }
 
   const input: ProductPlanInput = {
+    ...(teamId ? { teamId } : {}),
     name,
     ...(description ? { description } : {}),
     sourceReportIds,

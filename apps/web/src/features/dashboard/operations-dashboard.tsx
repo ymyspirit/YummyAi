@@ -1,4 +1,6 @@
 import { Activity, AlertTriangle, ArrowRight, ArrowUpRight, Bot, CheckCircle2, Clock3, FileCheck2, Layers3, ScanSearch, Sparkles, TimerReset } from "lucide-react";
+import { Suspense } from "react";
+import { FulfillmentAttention } from "./fulfillment-attention";
 
 import { JobProgress, type JobProgressView } from "../jobs/job-progress";
 import { NotificationMenu, type NotificationView } from "../notifications/notification-menu";
@@ -22,11 +24,11 @@ export interface OperationsDashboardView {
 
 const funnelOrder = ["researching", "pending_approval", "approved", "developing", "listing", "ready"];
 
-export function OperationsDashboard({ data }: { data: OperationsDashboardView }) {
+export function OperationsDashboard({ data, liveNotifications = true }: { data: OperationsDashboardView; liveNotifications?: boolean }) {
   const funnelMax = Math.max(1, ...funnelOrder.map((status) => data.productFunnel[status] ?? 0));
   const actions = actionItems(data);
   return <div className="ops-workbench">
-    <header className="ops-header"><div><p className="kicker">P0 / OPERATIONS CONTROL</p><h1>运营总览</h1><p>从研究抓取到刊登审批，只呈现当前阶段可执行、可追责的运营信号。</p></div><div className="ops-header-tools"><div className="ops-range"><span>LOCAL DATE RANGE</span><strong>{data.range.from} — {data.range.to}</strong><small>{data.range.timezone} · 生成于 {formatTime(data.generatedAt)}</small></div><NotificationMenu initialNotifications={data.notifications} /></div></header>
+    <header className="ops-header"><div><h1>运营总览</h1><p>查看业务进度、待办事项和需要处理的异常。</p></div><div className="ops-header-tools"><div className="ops-range"><span>统计时间</span><strong>{data.range.from} — {data.range.to}</strong><small>{data.range.timezone} · 更新于 {formatTime(data.generatedAt)}</small></div><NotificationMenu initialNotifications={data.notifications} live={liveNotifications} /></div></header>
 
     <section className="ops-pulse" aria-label="核心指标">
       <Metric icon={<ScanSearch size={19} />} code="CAPTURE" label="研究抓取" value={String(data.capture.total)} detail={`${data.capture.complete} 完整 · ${data.capture.failed} 失败`} freshness={data.freshness.capture} href={researchHref(data)} tone="blue" />
@@ -36,8 +38,9 @@ export function OperationsDashboard({ data }: { data: OperationsDashboardView })
     </section>
 
     <section className="ops-action-center" aria-labelledby="action-center-title">
-      <header><div><p className="section-code">UNIFIED ACTION CENTER</p><h2 id="action-center-title">统一行动中心</h2><span>风险、失败任务和个人待办按真实来源合并，不生成推测性分数。</span></div><strong>{actions.length} ITEMS</strong></header>
-      {actions.length ? <ol>{actions.map((item) => <li key={item.id}><span className={`action-priority ${item.priority}`}>{item.priority === "high" ? <AlertTriangle size={15} /> : <Clock3 size={15} />}</span><div><small>{item.source}</small><strong>{item.title}</strong><p>{item.detail}</p></div><b>{item.meta}</b><a href={item.href}>处理<ArrowRight size={14} /></a></li>)}</ol> : <div className="ops-action-clear"><CheckCircle2 size={22} /><div><strong>当前无待处理事项</strong><span>风险、失败任务与个人待办均为空。</span></div></div>}
+      <header><div><h2 id="action-center-title">统一行动中心</h2><span>查看当前履约待办与所选统计范围内的业务提醒</span></div></header>
+      <Suspense fallback={<p className="ops-empty">正在读取履约待办</p>}><FulfillmentAttention /></Suspense>
+      {actions.length ? <ol aria-label="其他业务提醒">{actions.map((item) => <li key={item.id}><span className={`action-priority ${item.priority}`}>{item.priority === "high" ? <AlertTriangle size={15} /> : <Clock3 size={15} />}</span><div><small>{item.source}</small><strong>{item.title}</strong><p>{item.detail}</p></div><b>{item.meta}</b><a href={item.href}>处理<ArrowRight size={14} /></a></li>)}</ol> : <div className="ops-action-clear"><CheckCircle2 size={22} /><div><strong>当前无其他业务提醒</strong><span>当前统计范围内没有研究、设计或后台任务提醒</span></div></div>}
     </section>
 
     <div className="ops-grid">

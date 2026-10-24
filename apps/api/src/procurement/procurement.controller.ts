@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   CreateInventoryPurchaseOrderInputSchema,
@@ -11,6 +11,7 @@ import {
   ReviewInventoryPurchaseOrderInputSchema,
   ReviseInventoryPurchaseOrderInputSchema,
   UpsertReplenishmentPolicyInputSchema,
+  ArchiveRecordInputSchema,
 } from "@yummyai/contracts";
 import { z } from "zod";
 
@@ -24,10 +25,10 @@ export class ProcurementController {
 
   @Get("workspace")
   @RequiresPermission(Permission.ProcurementRead)
-  workspace(@Req() request: AuthenticatedRequest) {
+  workspace(@Req() request: AuthenticatedRequest, @Query("includeArchived") includeArchived?: string) {
     const context = requireContext(request);
     authorize(context, Permission.ProcurementRead);
-    return this.service.workspace(context);
+    return this.service.workspace(context, parsed(z.enum(["true", "false"]).optional(), includeArchived) === "true");
   }
 
   @Post("requisitions")
@@ -35,7 +36,7 @@ export class ProcurementController {
   createRequisition(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
     const context = requireContext(request);
     authorize(context, Permission.ProcurementWrite);
-    return this.service.createRequisition(context, CreateProcurementRequisitionInputSchema.parse(body));
+    return this.service.createRequisition(context, parsed(CreateProcurementRequisitionInputSchema, body));
   }
 
   @Post("requisitions/:requisitionId/rfqs")
@@ -49,8 +50,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.createRfq(
       context,
-      z.uuidv7().parse(requisitionId),
-      CreateProcurementRfqInputSchema.parse(body),
+      parsed(z.uuidv7(), requisitionId),
+      parsed(CreateProcurementRfqInputSchema, body),
     );
   }
 
@@ -65,9 +66,17 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.recordSupplierQuote(
       context,
-      z.uuidv7().parse(rfqId),
-      RecordProcurementSupplierQuoteInputSchema.parse(body),
+      parsed(z.uuidv7(), rfqId),
+      parsed(RecordProcurementSupplierQuoteInputSchema, body),
     );
+  }
+
+  @Post("purchase-orders/:id/archive")
+  @RequiresPermission(Permission.ProcurementWrite)
+  archivePurchaseOrder(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    const context = requireContext(request);
+    authorize(context, Permission.ProcurementWrite);
+    return this.service.archivePurchaseOrder(context, parsed(z.uuidv7(), id), parsed(ArchiveRecordInputSchema, body));
   }
 
   @Post("purchase-orders")
@@ -75,7 +84,7 @@ export class ProcurementController {
   createPurchaseOrder(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
     const context = requireContext(request);
     authorize(context, Permission.ProcurementWrite);
-    return this.service.createPurchaseOrder(context, CreateInventoryPurchaseOrderInputSchema.parse(body));
+    return this.service.createPurchaseOrder(context, parsed(CreateInventoryPurchaseOrderInputSchema, body));
   }
 
   @Post("purchase-orders/:purchaseOrderId/revisions")
@@ -89,8 +98,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.revisePurchaseOrder(
       context,
-      z.uuidv7().parse(purchaseOrderId),
-      ReviseInventoryPurchaseOrderInputSchema.parse(body),
+      parsed(z.uuidv7(), purchaseOrderId),
+      parsed(ReviseInventoryPurchaseOrderInputSchema, body),
     );
   }
 
@@ -105,8 +114,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementApprove);
     return this.service.reviewPurchaseOrder(
       context,
-      z.uuidv7().parse(purchaseOrderId),
-      ReviewInventoryPurchaseOrderInputSchema.parse(body),
+      parsed(z.uuidv7(), purchaseOrderId),
+      parsed(ReviewInventoryPurchaseOrderInputSchema, body),
     );
   }
 
@@ -121,8 +130,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.recordReceipt(
       context,
-      z.uuidv7().parse(purchaseOrderId),
-      RecordProcurementReceiptInputSchema.parse(body),
+      parsed(z.uuidv7(), purchaseOrderId),
+      parsed(RecordProcurementReceiptInputSchema, body),
     );
   }
 
@@ -137,8 +146,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.recordInvoice(
       context,
-      z.uuidv7().parse(purchaseOrderId),
-      RecordProcurementInvoiceInputSchema.parse(body),
+      parsed(z.uuidv7(), purchaseOrderId),
+      parsed(RecordProcurementInvoiceInputSchema, body),
     );
   }
 
@@ -149,7 +158,7 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.upsertReplenishmentPolicy(
       context,
-      UpsertReplenishmentPolicyInputSchema.parse(body),
+      parsed(UpsertReplenishmentPolicyInputSchema, body),
     );
   }
 
@@ -164,8 +173,8 @@ export class ProcurementController {
     authorize(context, Permission.ProcurementWrite);
     return this.service.createReplenishmentSuggestion(
       context,
-      z.uuidv7().parse(policyId),
-      CreateReplenishmentSuggestionInputSchema.parse(body),
+      parsed(z.uuidv7(), policyId),
+      parsed(CreateReplenishmentSuggestionInputSchema, body),
     );
   }
 }
@@ -173,4 +182,10 @@ export class ProcurementController {
 function requireContext(request: AuthenticatedRequest) {
   if (!request.tenantContext) throw new Error("Tenant context is required");
   return request.tenantContext;
+}
+
+function parsed<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new BadRequestException("请求参数无效 请核对填写与当前版本");
+  return result.data;
 }

@@ -1,4 +1,19 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Req } from "@nestjs/common";
+import { WorkflowResponsibilityInputSchema } from "@yummyai/contracts/workflow/responsibility";
+import { WorkflowTaskInboxQuerySchema } from "@yummyai/contracts/workflow/task-inbox";
+import { WorkflowResponsibilityService } from "./workflow-responsibility.service.js";
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  StreamableFile,
+} from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import {
   CloneWorkflowDefinitionInputSchema,
@@ -15,6 +30,7 @@ import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
 import { WorkflowDefinitionService } from "./workflow-definition.service.js";
 import { assertWorkflowCenterEnabled } from "./workflow-feature.js";
 import { WorkflowRunService } from "./workflow-run.service.js";
+import { WorkflowOperatorService } from "./workflow-operator.service.js";
 
 @Controller("v1/workflows")
 export class WorkflowDefinitionController {
@@ -65,11 +81,7 @@ export class WorkflowDefinitionController {
 
   @Post("definitions/:id/clone")
   @RequiresPermission(Permission.WorkflowManage)
-  clone(
-    @Req() request: AuthenticatedRequest,
-    @Param("id") id: string,
-    @Body() body: unknown,
-  ) {
+  clone(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
     const context = requireContext(request);
     authorize(context, Permission.WorkflowManage);
     return this.definitions.clone(
@@ -81,11 +93,7 @@ export class WorkflowDefinitionController {
 
   @Post("definitions/:id/publish")
   @RequiresPermission(Permission.WorkflowManage)
-  publish(
-    @Req() request: AuthenticatedRequest,
-    @Param("id") id: string,
-    @Body() body: unknown,
-  ) {
+  publish(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
     const context = requireContext(request);
     authorize(context, Permission.WorkflowManage);
     const input = PublishWorkflowDefinitionInputSchema.parse(body);
@@ -95,7 +103,52 @@ export class WorkflowDefinitionController {
 
 @Controller("v1/workflow-runs")
 export class WorkflowRunController {
-  constructor(@Inject(WorkflowRunService) private readonly runs: WorkflowRunService) {}
+  constructor(
+    @Inject(WorkflowRunService) private readonly runs: WorkflowRunService,
+    @Inject(WorkflowOperatorService) private readonly operator: WorkflowOperatorService,
+    @Inject(WorkflowResponsibilityService)
+    private readonly responsibilities: WorkflowResponsibilityService,
+  ) {}
+
+  @Get("tasks")
+  @RequiresPermission(Permission.WorkflowRead)
+  tasks(@Req() request: AuthenticatedRequest, @Query() query: unknown) {
+    return this.responsibilities.tasks(requireContext(request), WorkflowTaskInboxQuerySchema.parse(query));
+  }
+
+  @Get(":id/nodes/:nodeId/responsibility")
+  @RequiresPermission(Permission.WorkflowRead)
+  responsibility(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+    @Query("q") query?: string,
+  ) {
+    return this.responsibilities.get(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.string().min(1).max(120).parse(nodeId),
+      z
+        .string()
+        .max(100)
+        .parse(query ?? ""),
+    );
+  }
+  @Post(":id/nodes/:nodeId/responsibility")
+  @RequiresPermission(Permission.WorkflowAssign)
+  assign(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+    @Body() body: unknown,
+  ) {
+    return this.responsibilities.update(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.string().min(1).max(120).parse(nodeId),
+      WorkflowResponsibilityInputSchema.parse(body),
+    );
+  }
 
   @Get()
   @RequiresPermission(Permission.WorkflowRead)
@@ -115,10 +168,7 @@ export class WorkflowRunController {
 
   @Get("by-plan/:productPlanId")
   @RequiresPermission(Permission.WorkflowRead)
-  getByPlan(
-    @Req() request: AuthenticatedRequest,
-    @Param("productPlanId") productPlanId: string,
-  ) {
+  getByPlan(@Req() request: AuthenticatedRequest, @Param("productPlanId") productPlanId: string) {
     const context = requireContext(request);
     authorize(context, Permission.WorkflowRead);
     return this.runs.getByProductPlan(context, z.uuidv7().parse(productPlanId));
@@ -148,6 +198,71 @@ export class WorkflowRunController {
       z.string().trim().min(1).max(120).parse(nodeId),
       WorkflowNodeCommandSchema.parse(body),
     );
+  }
+
+  @Get(":id/nodes/:nodeId/execution")
+  @RequiresPermission(Permission.WorkflowRead)
+  execution(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+  ) {
+    return this.operator.inspect(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.string().min(1).max(120).parse(nodeId),
+    );
+  }
+  @Get(":id/nodes/:nodeId/repair-options")
+  @RequiresPermission(Permission.WorkflowRead)
+  repairOptions(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+    @Query("q") query?: string,
+  ) {
+    return this.operator.repairOptions(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.string().min(1).max(120).parse(nodeId),
+      z
+        .string()
+        .max(100)
+        .parse(query ?? ""),
+    );
+  }
+  @Get(":id/artifacts/:linkId")
+  @RequiresPermission(Permission.WorkflowRead)
+  artifact(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("linkId") linkId: string,
+  ) {
+    return this.operator.artifact(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.uuidv7().parse(linkId),
+    );
+  }
+  @Get(":id/artifacts/:linkId/file")
+  @Header("Cache-Control", "private, no-store")
+  @Header("X-Content-Type-Options", "nosniff")
+  @RequiresPermission(Permission.WorkflowRead)
+  async artifactFile(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("linkId") linkId: string,
+  ) {
+    const result = await this.operator.download(
+      requireContext(request),
+      z.uuidv7().parse(id),
+      z.uuidv7().parse(linkId),
+    );
+    return new StreamableFile(Buffer.from(result.bytes), {
+      type: "application/zip",
+      length: result.bytes.byteLength,
+      disposition: `attachment; filename*=UTF-8''${encodeURIComponent(result.fileName)}`,
+    });
   }
 }
 

@@ -8,6 +8,9 @@ import {
   auditEvents,
   connectDatabase,
   marketplaceAccounts,
+  memberships,
+  membershipRoles,
+  roles,
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
@@ -42,6 +45,13 @@ describe("marketplace account foundation", () => {
       `insert into app_users (id, oidc_subject, email, display_name) values ($1, $2, $3, 'Store Admin')`,
       [userId, `store-${userId}`, `${userId}@example.test`],
     );
+    for (const actor of [context, otherContext]) await withTenant(database.db, actor, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId: actor.tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: actor.tenantId, name: "Store fixture " + roleId,
+        permissions: [...actor.permissions], dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: actor.tenantId, membershipId, roleId });
+    });
   });
 
   afterAll(async () => {
@@ -80,6 +90,13 @@ describe("marketplace account foundation", () => {
     await expect(service.get(otherContext, accountId)).rejects.toMatchObject({ status: 404 });
   });
 
+  it("allows choosing an Amazon authorization mode later without accepting another platform", async () => {
+    const amazon = await service.create(context, CreateMarketplaceAccountInputSchema.parse({ platform: "amazon", displayName: "Manual Amazon", region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private" }));
+    await expect(service.update(context, amazon.id, { authorizationMode: "amazon_public" })).resolves.toMatchObject({ authorizationMode: "amazon_public", hasCredential: false, status: "pending_authorization" });
+    await expect(service.update(context, amazon.id, { authorizationMode: "etsy_oauth" })).rejects.toMatchObject({ status: 409 });
+    await expect(service.update(otherContext, amazon.id, { displayName: "Wrong tenant" })).rejects.toMatchObject({ status: 404 });
+  });
+
   it("rejects a duplicate display identity in the same platform", async () => {
     await expect(service.create(context, CreateMarketplaceAccountInputSchema.parse({
       platform: "etsy",
@@ -100,5 +117,26 @@ describe("marketplace account foundation", () => {
     expect(health).toMatchObject({ status: "degraded", healthStatus: "degraded", lastErrorCode: "UPSTREAM_503" });
     const otherRows = await withTenant(database.db, otherContext, (tx) => tx.select().from(marketplaceAccounts));
     expect(otherRows).toEqual([]);
+  });
+
+  it("removes the shop from live access while preserving its identity and audit history", async () => {
+    await expect(service.remove(otherContext, accountId)).rejects.toMatchObject({ status: 404 });
+    await expect(service.remove({ ...context, permissions: [Permission.StoreRead] }, accountId)).rejects.toThrow();
+    const removed = await service.remove(context, accountId);
+    expect(removed.id).toBe(accountId);
+    expect((await service.list(context)).some((row) => row.id === accountId)).toBe(false);
+    await expect(service.get(context, accountId)).rejects.toMatchObject({ status: 404 });
+    await expect(service.update(context, accountId, { enabled: true })).rejects.toMatchObject({ status: 404 });
+    expect(await service.remove(context, accountId)).toEqual(removed);
+    const retained = await withTenant(database.db, context, async (tx) => ({
+      accounts: await tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, accountId)),
+      events: await tx.select().from(auditEvents).where(eq(auditEvents.entityId, accountId)),
+    }));
+    expect(retained.accounts[0]).toMatchObject({ displayName: "Etsy US", status: "disabled" });
+    expect(retained.accounts[0]?.deletedAt?.toISOString()).toBe(removed.deletedAt);
+    expect(retained.events.filter((event) => event.action === "marketplace_account.remove")).toHaveLength(1);
+    expect(retained.events.some((event) => event.action === "marketplace_account.create")).toBe(true);
+    await expect(withTenant(database.db, context, (tx) => tx.update(marketplaceAccounts)
+      .set({ deletedAt: null, status: "pending_authorization" }).where(eq(marketplaceAccounts.id, accountId)))).rejects.toThrow();
   });
 });

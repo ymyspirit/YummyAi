@@ -71,7 +71,15 @@ describe("POD batch workflow contracts", () => {
 
   it("requires a reason when rejecting a mockup item", () => {
     const itemId = createEntityId();
-    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, decision: "reject" }] }).success).toBe(false);
-    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, decision: "reject", rejectionReason: "Frame perspective changed the artwork." }] }).success).toBe(true);
+    const expectedFingerprint = "a".repeat(64);
+    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, expectedFingerprint, decision: "reject" }] }).success).toBe(false);
+    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, expectedFingerprint, decision: "reject", rejectionReason: "Frame perspective changed the artwork." }] }).success).toBe(true);
+  });
+
+  it("requires the exact reviewed basis for every mockup approval", () => {
+    const itemId = createEntityId();
+    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, decision: "approve" }] }).success).toBe(false);
+    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, decision: "approve", expectedFingerprint: "latest" }] }).success).toBe(false);
+    expect(ReviewMockupBatchInputSchema.safeParse({ decisions: [{ itemId, decision: "approve", expectedFingerprint: "a".repeat(64) }] }).success).toBe(true);
   });
 });

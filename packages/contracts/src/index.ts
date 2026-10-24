@@ -1,5 +1,6 @@
 export { createEntityId, EntityIdSchema } from "./common/ids.js";
 export * from "./workflow/workflow.js";
+export * from "./harness/execution.js";
 export {
   AMAZON_CUSTOM_WORKFLOW_STEP_KEYS,
   AMAZON_CUSTOM_WORKFLOW_STEPS,
@@ -167,6 +168,7 @@ export {
   ProcurementInvoiceViewSchema,
   ProcurementLocationViewSchema,
   ProcurementPurchaseLineSchema,
+  ProcurementPurchaseLineSnapshotSchema,
   ProcurementReceiptLineInputSchema,
   ProcurementReceiptLineViewSchema,
   ProcurementReceiptViewSchema,
@@ -196,16 +198,23 @@ export {
   type CreateReplenishmentSuggestionInput,
   type InventoryPurchaseOrderView,
   type ProcurementPurchaseLine,
+  type ProcurementPurchaseLineSnapshot,
   type ProcurementRequestLine,
   type ProcurementUnit,
   type ProcurementWorkspaceView,
   type RecordProcurementInvoiceInput,
+  type ProcurementInvoiceView,
   type RecordProcurementReceiptInput,
   type RecordProcurementSupplierQuoteInput,
   type ReviewInventoryPurchaseOrderInput,
   type ReviseInventoryPurchaseOrderInput,
   type UpsertReplenishmentPolicyInput,
 } from "./procurement/procurement.js";
+export * from "./procurement/incoming.js";
+export * from "./procurement/incoming-command.js";
+export * from "./procurement/procurement-cycle.js";
+export * from "./procurement/procurement-command.js";
+export * from "./procurement/invoice-reconciliation.js";
 export {
   AddResponsibilityEvidenceInputSchema,
   AfterSalesCaseStatusSchema,
@@ -234,6 +243,7 @@ export {
   CreateSpuInputSchema,
   CustomizationFieldSchema,
   CustomizationSchema,
+  LegacySpuCandidateSchema,
   MoneySchema,
   ProductPlanInputSchema,
   ProductStatusSchema,
@@ -243,6 +253,7 @@ export {
   type CreateSpuInput,
   type CustomizationDefinition,
   type CustomizationField,
+  type LegacySpuCandidate,
   type Money,
   type ProductPlanInput,
   type ProductStatus,
@@ -493,6 +504,7 @@ export {
   CreateMarketplaceAccountInputSchema,
   MarketplaceAccountStatusSchema,
   MarketplaceAccountViewSchema,
+  MarketplaceAccountRemovalViewSchema,
   MarketplaceAuthorizationModeSchema,
   MarketplaceCapabilitySchema,
   MarketplaceCapabilitySnapshotViewSchema,
@@ -510,6 +522,7 @@ export {
   type CreateMarketplaceAccountInput,
   type MarketplaceAccountStatus,
   type MarketplaceAccountView,
+  type MarketplaceAccountRemovalView,
   type MarketplaceAuthorizationMode,
   type MarketplaceCapability,
   type MarketplaceCapabilitySnapshotView,
@@ -615,6 +628,7 @@ export {
   CreateProductionOrderInputSchema,
   CreateProductionBatchInputSchema,
   CreateProductionRecoveryInputSchema,
+  ProductionRecoveryResultSchema,
   CreateQualityStandardInputSchema,
   ProductionMilestoneTypeSchema,
   ProductionOrderStatusSchema,
@@ -656,6 +670,10 @@ export {
 } from "./order/shipment.js";
 export {
   CreateFulfillmentSupplierInputSchema,
+  UpdateFulfillmentSupplierInputSchema,
+  FulfillmentSupplierViewSchema,
+  type UpdateFulfillmentSupplierInput,
+  type FulfillmentSupplierView,
   CreateRoutingPolicyInputSchema,
   CreateSupplierCapacityWindowInputSchema,
   CreateSupplierCapabilitySnapshotInputSchema,
@@ -804,6 +822,7 @@ export {
   type EtsyCaptureDraft,
 } from "./capture/capture.js";
 export { TenantContextSchema, type TenantContext } from "./tenant/tenant-context.js";
+export * from "./order/report.js";
 export {
   ExportFileSchema,
   ExportManifestSchema,
@@ -818,3 +837,10 @@ export {
   type ReviewStatus,
   type SubmitReviewInput,
 } from "./review/review.js";
+export * from "./pod/production-editor.js";
+export * from "./pod/production-editor-api.js";
+export * from "./pod/production-cutout.js";
+export * from "./order/workspace.js";
+export * from "./order/design-agent.js";
+export { ArchiveRecordInputSchema } from "./common/archive.js";
+export * from "./order/production-command.js";

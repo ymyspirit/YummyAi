@@ -1,0 +1,70 @@
+/* Operations-role task presentation; workflow states and write gates stay intact. */
+.oc-operator-queues { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.oc-operator-queues nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.oc-operator-queues nav button { padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted-ink); font: inherit; cursor: pointer; }
+.oc-operator-queues nav button.active { color: var(--action); border-bottom-color: var(--action); font-weight: 600; }
+.oc-operator-queues nav b { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.oc-operator-queues p { margin: 3px 0 9px; color: var(--muted-ink); font-size: 11px; }
+.oc-workbench .oc-filter-primary { grid-template-columns: minmax(190px, 1.4fr) minmax(120px, .8fr) minmax(110px, .7fr) minmax(170px, 1fr); }
+.oc-workbench .oc-filter-primary > * { grid-column: auto; min-width: 0; }
+.oc-workbench .oc-filter-buttons { grid-column: 1 / -1; justify-content: flex-end; }
+.oc-lifecycle-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; border-bottom: 1px solid var(--line); padding: 2px 0 10px; margin-bottom: 12px; color: var(--muted-ink); font-size: 12px; }
+.oc-lifecycle-summary b { color: var(--ink); margin-left: 5px; font-variant-numeric: tabular-nums; }
+.oc-lifecycle-summary small { flex-basis: 100%; font-size: 11px; }
+.oc-lifecycle-badge { display: inline-flex; align-items: center; padding: 3px 8px; color: var(--action); background: var(--surface-muted); border: 1px solid var(--line); border-radius: 4px; font-size: 12px; white-space: normal; }
+.oc-lifecycle-badge.voided { color: var(--muted-ink); }
+.oc-order-progress { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.oc-order-progress > span:first-child { color: var(--muted-ink); font-size: 12px; margin-right: 8px; }
+.oc-order-progress ol { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; color: var(--muted-ink); font-size: 12px; }
+.oc-order-progress li[aria-current] { color: var(--action); font-weight: 600; }
+.oc-order-progress small { flex-basis: 100%; color: var(--muted-ink); font-size: 11px; }
+@container artwork-review (min-width: 741px) {
+  .oc-review-detail .oc-artwork-preview { height: clamp(220px, 32vh, 380px); }
+}
+.oc-basic-date { display: grid; gap: 4px; }
+.oc-basic-date > span { font-size: 11px; color: var(--muted-ink); }
+.oc-workbench .oc-product-columns, .oc-workbench .oc-product-row { grid-template-columns: 18px minmax(220px, 1.55fr) minmax(190px, 1.1fr) minmax(140px, .8fr) 115px; }
+.oc-workbench .oc-product-status, .oc-workbench .oc-row-actions { grid-column: auto; }
+.oc-row-context { margin-top: 6px; }
+.oc-row-context > summary, .oc-row-more > summary, .oc-other-stages > summary { color: var(--muted-ink); cursor: pointer; font-size: 12px; }
+.oc-row-context[open] { padding-bottom: 6px; }
+.oc-next-task { display: block; font-size: 13px; color: var(--ink); }
+.oc-product-status .oc-task-owner { font-size: 12px; color: var(--muted-ink); }
+.oc-product-status .oc-task-description { font-size: 12px; margin: 6px 0; }
+.oc-product-status > small { display: block; color: var(--muted-ink); font-size: 10px; margin-top: 5px; }
+.oc-task-deadline { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.oc-task-deadline time { font-variant-numeric: tabular-nums; }
+.oc-task-deadline small { font-size: 10px; color: var(--muted-ink); }
+.oc-task-deadline.warning > strong { color: var(--warning-ink, #a36a17); }
+.oc-task-deadline.danger > strong { color: var(--danger, #b45353); }
+.oc-row-more { align-self: center; text-align: center; width: 100%; }
+.oc-row-more[open] { display: grid; gap: 6px; }
+.oc-row-more button { margin-top: 6px; max-width: 100%; }
+.oc-current-task { border-left: 3px solid var(--action); padding: 7px 12px; margin: 12px 0; background: var(--surface-muted); }
+.oc-current-task > span { margin-left: 14px; color: var(--muted-ink); font-size: 12px; }
+.oc-current-task > p { margin: 3px 0 0; font-size: 12px; }
+.oc-other-stages { margin: 9px 0; }
+.oc-other-stages .oc-journey { margin-top: 8px; }
+.oc-review-quick-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+@media (max-width: 1250px) {
+  .oc-workbench .oc-filter-primary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .oc-workbench .oc-filter-buttons { justify-content: flex-end; }
+  .oc-workbench .oc-product-columns { display: none; }
+  .oc-workbench .oc-product-row { grid-template-columns: 18px minmax(0, 1.4fr) minmax(0, 1fr); }
+  .oc-workbench .oc-product-basis { grid-column: 2; grid-row: 1 / 3; }
+  .oc-workbench .oc-product-status { grid-column: 3; }
+  .oc-workbench .oc-task-deadline { grid-column: 3; }
+  .oc-workbench .oc-row-actions { grid-column: 2 / 4; flex-direction: row; justify-content: flex-end; }
+  .oc-row-more { width: auto; align-self: auto; }
+}
+@media (max-width: 650px) {
+  .oc-operator-queues nav { gap: 6px 12px; }
+  .oc-operator-queues nav button { font-size: 12px; }
+  .oc-workbench .oc-filter-primary { grid-template-columns: minmax(0, 1fr); }
+  .oc-workbench .oc-filter-buttons { justify-content: flex-start; flex-wrap: wrap; }
+  .oc-workbench .oc-product-row { grid-template-columns: 18px minmax(0, 1fr); }
+  .oc-workbench .oc-product-basis { grid-column: 2; grid-row: auto; }
+  .oc-workbench .oc-product-status, .oc-workbench .oc-task-deadline, .oc-workbench .oc-row-actions { grid-column: 2; }
+  .oc-workbench .oc-row-actions { justify-content: flex-start; }
+  .oc-current-task > span { display: block; margin: 3px 0; }
+}

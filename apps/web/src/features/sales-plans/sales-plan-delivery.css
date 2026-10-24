@@ -1,0 +1,228 @@
+.sd-workspace {
+  min-width: 0;
+  scroll-margin-top: 88px;
+  border-block: 1px solid var(--line);
+  margin-block: 20px;
+  padding-block: 12px;
+  view-transition-name: sales-plan-delivery;
+}
+.sd-workspace h3 {
+  margin: 0;
+}
+.sd-workspace p,
+.sd-workspace pre,
+.sd-workspace span,
+.sd-workspace small,
+.sd-workspace a {
+  overflow-wrap: anywhere;
+}
+.sd-workspace pre {
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 13px;
+  margin-block: 8px;
+}
+.sd-meta,
+.sd-workspace small {
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+.sd-section {
+  border-top: 1px solid var(--line);
+  padding-block: 12px;
+}
+.sd-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.sd-sku,
+.sd-field,
+.sd-package {
+  min-width: 0;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.sd-sku {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sd-sku p {
+  margin-block: 5px;
+  font-size: 13px;
+}
+.sd-sku a {
+  flex-shrink: 0;
+}
+.sd-field span {
+  display: block;
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+.sd-images {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.sd-image {
+  min-width: 0;
+}
+.sd-image img {
+  width: 100%;
+  max-width: 240px;
+  height: 180px;
+  object-fit: contain;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+}
+.sd-image label,
+.sd-checks > label {
+  display: block;
+}
+.sd-image select,
+.sd-checks textarea {
+  width: 100%;
+  max-width: 100%;
+}
+.sd-checks {
+  border-top: 1px solid var(--line);
+  padding-block: 14px;
+}
+.sd-checks > label:has(input) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-block: 10px;
+}
+.sd-checks input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.sd-checks textarea {
+  min-height: 70px;
+  margin-block: 8px;
+}
+.sd-package {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sd-package details {
+  flex-basis: 100%;
+}
+.sd-blockers ul {
+  padding-left: 20px;
+}
+.sd-blockers li {
+  margin-block: 8px;
+}
+.sd-blockers small {
+  display: block;
+}
+.sd-blockers a {
+  margin-left: 10px;
+}
+.sd-review-history {
+  border-left: 3px solid var(--erp-accent);
+  padding: 8px 12px;
+  background: var(--surface-muted);
+  margin-block: 12px;
+}
+.sd-workspace .oc-notice {
+  color: var(--ink);
+  background: var(--surface-muted);
+  border-color: var(--line);
+}
+.sd-workspace .oc-button {
+  white-space: nowrap;
+}
+.sd-history-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.sd-history-table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sd-history-table th,
+.sd-history-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.sd-history-table th:first-child {
+  width: 40%;
+}
+.sd-history-table th:nth-child(2) {
+  width: 10%;
+}
+.sd-history-table td small {
+  display: block;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.sd-history-table td .oc-button {
+  white-space: normal;
+}
+.sd-history-table tr {
+  animation: sd-history-enter 180ms ease-out both;
+}
+.sd-history-pages {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block: 12px;
+}
+.sd-history a[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: wait;
+}
+.sd-history h4 {
+  margin: 0;
+}
+@keyframes sd-history-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sd-history-table tr {
+    animation: none;
+  }
+}
+@media (max-width: 700px) {
+  .sd-images {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sd-sku {
+    display: block;
+  }
+  .sd-workspace .sl-heading {
+    align-items: start;
+    flex-wrap: wrap;
+  }
+  .sd-package {
+    align-items: start;
+  }
+}

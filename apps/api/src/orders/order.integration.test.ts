@@ -38,6 +38,12 @@ describe("order kernel", () => {
       `insert into marketplace_accounts (id, tenant_id, platform, display_name, region, authorization_mode, created_by) values ($1,$2,'etsy',$3,'GLOBAL','etsy_oauth',$4),($5,$6,'etsy',$7,'GLOBAL','etsy_oauth',$8)`,
       [accountA, tenantA, "Order Shop A", userA, accountB, tenantB, "Order Shop B", userB],
     );
+    for (const actor of [contextA, contextB]) {
+      const member = createEntityId(), role = createEntityId();
+      await database.client.unsafe("insert into memberships(id,tenant_id,user_id,status) values($1,$2,$3,'active')", [member, actor.tenantId, actor.userId]);
+      await database.client.unsafe("insert into roles(id,tenant_id,name,permissions,data_scope) values($1,$2,$3,$4::jsonb,'tenant')", [role, actor.tenantId, "Order kernel role " + role, JSON.stringify(actor.permissions)]);
+      await database.client.unsafe("insert into membership_roles(tenant_id,membership_id,role_id) values($1,$2,$3)", [actor.tenantId, member, role]);
+    }
     await withTenant(database.db, contextA, async (tx) => {
       const customization = { version: 1, fields: [] };
       await tx.insert(productPlans).values({ id: productPlanId, tenantId: tenantA, name: "Pinned order catalog", customization, status: "approved", createdBy: userA });

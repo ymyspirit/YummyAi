@@ -1,31 +1,50 @@
+import { OrderReadOwner } from "@yummyai/order-core";
 import { createHash } from "node:crypto";
+import { originalOwnerOperation } from "../shared/original-owner-error.js";
 
+import { ConflictException,HttpException,Inject,Injectable,NotFoundException,UnprocessableEntityException } from "@nestjs/common";
 import type { SecretVault } from "@yummyai/ai-core";
-import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import {
-  AnonymizeOrderProtectedDetailsCommandSchema, ListOrdersInputSchema, NormalizeOrderInputSchema, OpenOrderExceptionCommandSchema, OrderEventViewSchema,
-  OrderExceptionCategorySchema, OrderExceptionViewSchema, OrderFulfillmentViewSchema, OrderPiiAccessPurposeSchema,
-  OrderProtectedDetailsSchema, OrderSideStateCommandSchema, OrderSideStateSchema, OrderTransitionCommandSchema,
-  OrderViewSchema, OrderWorkflowStateSchema, ResolveOrderExceptionCommandSchema, createEntityId,
-  type AnonymizeOrderProtectedDetailsCommand, type ListOrdersInput, type NormalizeOrderInput, type OpenOrderExceptionCommand, type OrderEventView,
-  type OrderExceptionView, type OrderFulfillmentView, type OrderPiiAccessPurpose, type OrderSideStateCommand,
-  type OrderTransitionCommand, type OrderView, type ResolveOrderExceptionCommand, type TenantContext,
+AnonymizeOrderProtectedDetailsCommandSchema,
+NormalizeOrderInputSchema,OpenOrderExceptionCommandSchema,OrderEventViewSchema,
+OrderExceptionCategorySchema,OrderExceptionViewSchema,OrderFulfillmentViewSchema,OrderPiiAccessPurposeSchema,
+OrderProtectedDetailsSchema,OrderSideStateCommandSchema,OrderSideStateSchema,OrderTransitionCommandSchema,
+OrderWorkflowStateSchema,ResolveOrderExceptionCommandSchema,createEntityId,
+type AnonymizeOrderProtectedDetailsCommand,type ListOrdersInput,type NormalizeOrderInput,type OpenOrderExceptionCommand,type OrderEventView,
+type OrderExceptionView,type OrderFulfillmentView,type OrderPiiAccessPurpose,type OrderSideStateCommand,
+type OrderTransitionCommand,type OrderView,type ResolveOrderExceptionCommand,type TenantContext
 } from "@yummyai/contracts";
 import {
-  listingVersions, listings, marketplaceAccounts, marketplacePublicationEvents, marketplacePublicationRequests,
-  orderCustomizationRequirements,
-  orderEvents, orderExceptionEvents, orderExceptions, orderExternalReferences, orderLineCatalogLinks, orderLines,
-  orderRoutingDecisions, purchaseOrders, purchaseOrderVersions,
-  productionOrders, qualityInspections,
-  shipmentPackageLines, shipmentVersions, shipments,
-  orderProtectedAccessEvents, orderProtectedDetails, orderSourceSnapshots, orders, skus, type DatabaseConnection,
-  type TenantTransaction, withTenant,
+type AgentExceptionItem,type AgentExceptionPageInput,
+type AgentReadOwnerPage,type AgentReadOwnerPosition,
+} from "@yummyai/contracts/ai/agent-read";
+import { OpenReviewedOrderExceptionSchema,ResolveReviewedOrderExceptionSchema } from "@yummyai/contracts/order/exception-operations";
+import {
+listingVersions,listings,marketplaceAccounts,marketplacePublicationEvents,marketplacePublicationRequests,
+orderCustomizationRequirements,
+orderEvents,orderExceptionEvents,orderExceptions,orderExternalReferences,orderLineCatalogLinks,orderLines,
+orderPrivateSourceAvailable,
+orderProtectedAccessEvents,orderProtectedDetails,
+orderRoutingDecisions,
+orderSourceSnapshots,orders,
+productionOrders,
+purchaseOrderVersions,
+purchaseOrders,
+qualityInspections,
+shipmentPackageLines,shipmentVersions,shipments,
+skus,
+withTenant,
+type DatabaseConnection,
+type TenantTransaction,
 } from "@yummyai/database";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { OrderExceptionAccessError,orderExceptionActor,qualityInspectionOrder,readOrderExceptionOperations,readOrderExceptionParent } from "@yummyai/order-core";
+import { and,asc,desc,eq,inArray,isNotNull,isNull,sql } from "drizzle-orm";
 
+import { readOrderExceptionPage } from "@yummyai/workflow-core";
+import { rethrowAgentReadError } from "../ai/agent-read-errors.js";
 import { AuditService } from "../audit/audit.service.js";
-import { DATABASE_CONNECTION, ORDER_PII_VAULT } from "../platform.tokens.js";
-import { assertOrderTransition, nextOrderSideState } from "./order-state-machine.js";
+import { DATABASE_CONNECTION,ORDER_PII_VAULT } from "../platform.tokens.js";
+import { assertOrderTransition,nextOrderSideState } from "./order-state-machine.js";
 
 @Injectable()
 export class OrderService {
@@ -35,11 +54,15 @@ export class OrderService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
+  fulfillmentCandidates(context: TenantContext, input: ListOrdersInput) {
+    return originalOwnerOperation(() => new OrderReadOwner(this.database).fulfillmentCandidates(context, input));
+  }
+
   async ingestNormalized(context: TenantContext, rawInput: NormalizeOrderInput): Promise<OrderView> {
     return (await this.materializeNormalized(context, rawInput)).order;
   }
 
-  async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
+  async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput, options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
     const input = NormalizeOrderInputSchema.parse(rawInput);
     assertRedactedSource(input.redactedSource);
     const orderId = createEntityId();
@@ -52,7 +75,7 @@ export class OrderService {
       )).limit(1);
       if (existingDelivery) return { orderId: existingDelivery.normalizedOrderId, replayed: true };
       const [account] = await tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
-      if (!account || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the normalized order");
+      if (!account || account.deletedAt || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the normalized order");
       const [existingOrder] = await tx.select().from(orders).where(and(
         eq(orders.accountId, input.accountId), eq(orders.platform, input.platform), eq(orders.externalOrderId, input.externalOrderId),
       )).limit(1);
@@ -64,7 +87,53 @@ export class OrderService {
       });
       if (existingOrder) {
         const sequence = existingOrder.latestEventSequence + 1;
-        if (input.protectedDetails && encryptedEnvelope) {
+        const knownLines = await tx.select().from(orderLines).where(eq(orderLines.orderId, existingOrder.id));
+        const sourceCurrencies = new Set([
+          existingOrder.orderCurrency, input.orderTotal?.currency,
+          ...knownLines.map((line) => line.unitPriceCurrency), ...input.lines.map((line) => line.unitPrice?.currency),
+        ].filter((currency): currency is string => currency !== null && currency !== undefined));
+        const compatibleMoney = sourceCurrencies.size === 1
+          && new Set(input.lines.map((line) => line.externalLineId)).size === input.lines.length;
+        // Reports and provider syncs may fill absent facts, but only if the
+        // observed line identity and currency still agree with stored evidence.
+        for (const line of input.lines) {
+          const known = knownLines.find((candidate) => candidate.externalLineId === line.externalLineId);
+          if (!compatibleMoney || !known || !line.unitPrice || known.unitPriceMinor !== null || known.unitPriceCurrency !== null
+            || known.quantity !== line.quantity || known.skuCode !== line.skuCode) continue;
+          await tx.update(orderLines).set({ unitPriceMinor: line.unitPrice.amountMinor, unitPriceCurrency: line.unitPrice.currency })
+            .where(and(eq(orderLines.id, known.id), isNull(orderLines.unitPriceMinor), isNull(orderLines.unitPriceCurrency)));
+        }
+        if (!options.manualReport && compatibleMoney && input.orderTotal
+          && existingOrder.orderTotalMinor === null && existingOrder.orderCurrency === null
+          && hasCompleteProviderMoneyEvidence(input, knownLines)) {
+          await tx.update(orders).set({ orderTotalMinor: input.orderTotal.amountMinor, orderCurrency: input.orderTotal.currency })
+            .where(and(eq(orders.id, existingOrder.id), isNull(orders.orderTotalMinor), isNull(orders.orderCurrency)));
+        }
+        // A manually downloaded report has no reliable platform update timestamp.
+        // Add newly observed lines without replacing known amounts or PII.
+        if (options.manualReport) {
+          const newLines = input.lines.filter((line) => !knownLines.some((known) => known.externalLineId === line.externalLineId)).map((line) => ({
+            id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id,
+            externalLineId: line.externalLineId, externalListingId: line.externalListingId, skuCode: line.skuCode, title: line.title,
+            quantity: line.quantity, unitPriceMinor: line.unitPrice?.amountMinor ?? null, unitPriceCurrency: line.unitPrice?.currency ?? null, customizationCount: line.customizationCount,
+          }));
+          if (newLines.length) {
+            await tx.insert(orderLines).values(newLines);
+            await tx.insert(orderExternalReferences).values(newLines.map((line) => ({
+              id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, orderLineId: line.id,
+              provider: input.platform, kind: "order_line", externalId: line.externalLineId,
+            })));
+            await linkOrderLinesToCatalog(tx, context, input.accountId, input.platform, newLines);
+            await tx.update(orders).set({
+              lineCount: knownLines.length + newLines.length,
+              // The old total cannot cover any newly discovered line. Keep
+              // known line prices; report reconciliation can
+              // restore the total once every source amount is available.
+              orderTotalMinor: null, orderCurrency: null,
+            }).where(eq(orders.id, existingOrder.id));
+          }
+        }
+        if (input.protectedDetails && encryptedEnvelope && !options.manualReport) {
           const [currentProtected] = await tx.select().from(orderProtectedDetails)
             .where(eq(orderProtectedDetails.orderId, existingOrder.id)).limit(1);
           if (!currentProtected) {
@@ -85,13 +154,13 @@ export class OrderService {
         }
         await tx.insert(orderEvents).values({
           id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, sequence,
-          type: "provider_update_received", code: input.providerStatus,
+          type: "provider_update_received", code: options.manualReport ? "manual_report_received" : input.providerStatus,
           idempotencyKey: `provider:${input.platform}:${input.externalEventId}`, actorUserId: context.userId,
-          metadata: { sourceSnapshotId: snapshotId, previousProviderStatus: existingOrder.providerStatus, providerStatus: input.providerStatus },
+          metadata: { sourceSnapshotId: snapshotId, previousProviderStatus: existingOrder.providerStatus, providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus },
         });
         await tx.update(orders).set({
-          providerStatus: input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
-          ...(input.protectedDetails && existingOrder.addressStatus !== "anonymized" ? {
+          providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
+          ...(input.protectedDetails && !options.manualReport && existingOrder.addressStatus !== "anonymized" ? {
             addressStatus: "protected" as const,
             addressCountryCode: input.protectedDetails.shippingAddress.countryCode,
           } : {}),
@@ -103,14 +172,14 @@ export class OrderService {
       await tx.insert(orders).values({
         id: orderId, tenantId: context.tenantId, accountId: input.accountId, sourceSnapshotId: snapshotId,
         platform: input.platform, externalOrderId: input.externalOrderId, providerStatus: input.providerStatus,
-        orderTotalMinor: input.orderTotal.amountMinor, orderCurrency: input.orderTotal.currency, lineCount: input.lines.length,
+        orderTotalMinor: input.orderTotal?.amountMinor ?? null, orderCurrency: input.orderTotal?.currency ?? null, lineCount: input.lines.length,
         addressStatus: input.protectedDetails ? "protected" : "missing", addressCountryCode: countryCode,
         placedAt: new Date(input.placedAt), latestEventSequence: 1,
       });
       const lineRows = input.lines.map((line) => ({
         id: createEntityId(), tenantId: context.tenantId, orderId, externalLineId: line.externalLineId,
         externalListingId: line.externalListingId, skuCode: line.skuCode, title: line.title, quantity: line.quantity,
-        unitPriceMinor: line.unitPrice.amountMinor, unitPriceCurrency: line.unitPrice.currency, customizationCount: line.customizationCount,
+        unitPriceMinor: line.unitPrice?.amountMinor ?? null, unitPriceCurrency: line.unitPrice?.currency ?? null, customizationCount: line.customizationCount,
       }));
       await tx.insert(orderLines).values(lineRows);
       await tx.insert(orderExternalReferences).values([
@@ -120,7 +189,7 @@ export class OrderService {
       await linkOrderLinesToCatalog(tx, context, input.accountId, input.platform, lineRows);
       if (encryptedEnvelope) await tx.insert(orderProtectedDetails).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, encryptedEnvelope,
-        countryCode, retentionExpiresAt: retentionExpiry(),
+        countryCode, retentionExpiresAt: options.protectedExpiresAt ?? retentionExpiry(),
       });
       await tx.insert(orderEvents).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, sequence: 1, type: "order_ingested",
@@ -138,27 +207,23 @@ export class OrderService {
     return { order, replayed: outcome.replayed, unlinkedLineIds: order.lines.filter((line) => !linked.has(line.id)).map((line) => line.externalLineId) };
   }
 
-  async list(context: TenantContext, rawInput: ListOrdersInput): Promise<OrderView[]> {
-    const input = ListOrdersInputSchema.parse(rawInput);
-    const rows = await withTenant(this.database.db, context, (tx) => tx.select().from(orders).where(and(
-      input.accountId ? eq(orders.accountId, input.accountId) : undefined,
-      input.workflowState ? eq(orders.workflowState, input.workflowState) : undefined,
-      input.sideState === "none" ? isNull(orders.sideState) : input.sideState ? eq(orders.sideState, input.sideState) : undefined,
-      input.platform ? eq(orders.platform, input.platform) : undefined,
-    )).orderBy(desc(orders.placedAt), desc(orders.id)).limit(input.limit));
-    return this.withLines(context, rows);
-  }
+  async list(context:TenantContext,rawInput:ListOrdersInput):Promise<OrderView[]>{return originalOwnerOperation(()=>new OrderReadOwner(this.database).list(context,rawInput));}
 
-  async get(context: TenantContext, orderId: string): Promise<OrderView> {
-    const [row] = await withTenant(this.database.db, context, (tx) => tx.select().from(orders).where(eq(orders.id, orderId)).limit(1));
-    if (!row) throw new NotFoundException("Order not found");
-    return (await this.withLines(context, [row]))[0]!;
-  }
+  async get(context:TenantContext,orderId:string):Promise<OrderView>{return originalOwnerOperation(()=>new OrderReadOwner(this.database).get(context,orderId));}
 
   async events(context: TenantContext, orderId: string): Promise<OrderEventView[]> {
     await this.get(context, orderId);
     const rows = await withTenant(this.database.db, context, (tx) => tx.select().from(orderEvents).where(eq(orderEvents.orderId, orderId)).orderBy(asc(orderEvents.sequence)));
     return rows.map(toEventView);
+  }
+
+  operatorEvents(context: TenantContext, orderId: string): Promise<OrderEventView[]> {
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      await orderExceptionActor(tx, context);
+      await readOrderExceptionParent(tx, orderId);
+      const rows = await tx.select().from(orderEvents).where(eq(orderEvents.orderId, orderId)).orderBy(asc(orderEvents.sequence));
+      return rows.map(toEventView);
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }));
   }
 
   async transition(context: TenantContext, orderId: string, rawCommand: OrderTransitionCommand): Promise<OrderView> {
@@ -209,39 +274,105 @@ export class OrderService {
   }
 
   async openException(context: TenantContext, orderId: string, rawCommand: OpenOrderExceptionCommand): Promise<OrderExceptionView> {
-    const command = OpenOrderExceptionCommandSchema.parse(rawCommand);
-    let exceptionId = createEntityId();
-    await withTenant(this.database.db, context, async (tx) => {
-      const row = await lockOrder(tx, orderId);
-      const [existing] = await tx.select({ exceptionId: orderExceptionEvents.exceptionId }).from(orderExceptionEvents).where(and(eq(orderExceptionEvents.orderId, orderId), eq(orderExceptionEvents.idempotencyKey, command.idempotencyKey))).limit(1);
-      if (existing) { exceptionId = existing.exceptionId; return; }
-      const sequence = row.latestEventSequence + 1;
-      await tx.insert(orderExceptions).values({ id: exceptionId, tenantId: context.tenantId, orderId, category: command.category, code: command.code, message: command.message, openedBy: context.userId });
-      await tx.insert(orderExceptionEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, exceptionId, sequence: 1, status: "open", idempotencyKey: command.idempotencyKey, actorUserId: context.userId });
-      await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_opened", code: command.code, message: command.message, idempotencyKey: command.idempotencyKey, actorUserId: context.userId, metadata: { exceptionId, category: command.category } });
-      await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, row.latestEventSequence)));
-    });
-    await this.audit.record(context, { action: "order.exception.open", resourceType: "order_exception", resourceId: exceptionId, result: "success", metadata: { orderId, category: command.category, code: command.code } });
+    const exceptionId = await withTenant(this.database.db, context, tx => this.openExceptionInTransaction(tx, context, orderId, rawCommand));
     return this.requireException(context, orderId, exceptionId);
+  }
+
+  async openExceptionInTransaction(tx: TenantTransaction, context: TenantContext, orderId: string, rawCommand: OpenOrderExceptionCommand) {
+    const command = OpenOrderExceptionCommandSchema.parse(rawCommand), row = await lockOrder(tx, orderId);
+    return this.openExceptionLocked(tx, context, row, command, checksum(command));
   }
 
   async resolveException(context: TenantContext, orderId: string, exceptionId: string, rawCommand: ResolveOrderExceptionCommand): Promise<OrderExceptionView> {
     const command = ResolveOrderExceptionCommandSchema.parse(rawCommand);
     await withTenant(this.database.db, context, async (tx) => {
       const row = await lockOrder(tx, orderId);
-      const [exception] = await tx.select().from(orderExceptions).where(and(eq(orderExceptions.id, exceptionId), eq(orderExceptions.orderId, orderId))).limit(1);
-      if (!exception) throw new NotFoundException("Order exception not found");
-      const [existing] = await tx.select().from(orderExceptionEvents).where(and(eq(orderExceptionEvents.orderId, orderId), eq(orderExceptionEvents.idempotencyKey, command.idempotencyKey))).limit(1);
-      if (existing) return;
-      const [latest] = await tx.select().from(orderExceptionEvents).where(eq(orderExceptionEvents.exceptionId, exceptionId)).orderBy(desc(orderExceptionEvents.sequence)).limit(1);
-      if (!latest || latest.status === "resolved") throw new ConflictException("Order exception is already resolved");
-      const sequence = row.latestEventSequence + 1;
-      await tx.insert(orderExceptionEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, exceptionId, sequence: latest.sequence + 1, status: "resolved", resolution: command.resolution, idempotencyKey: command.idempotencyKey, actorUserId: context.userId });
-      await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_resolved", code: exception.code, message: command.resolution, idempotencyKey: command.idempotencyKey, actorUserId: context.userId, metadata: { exceptionId, category: exception.category } });
-      await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, row.latestEventSequence)));
+      await this.resolveExceptionLocked(tx, context, row, exceptionId, command, checksum({ exceptionId, command }));
     });
-    await this.audit.record(context, { action: "order.exception.resolve", resourceType: "order_exception", resourceId: exceptionId, result: "success", metadata: { orderId } });
     return this.requireException(context, orderId, exceptionId);
+  }
+
+  exceptionOperations(context: TenantContext, orderId: string, query: unknown = {}) {
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      const actor = await orderExceptionActor(tx, context);
+      return readOrderExceptionOperations(tx, actor, orderId, query);
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }));
+  }
+
+  async openExceptionReviewed(context: TenantContext, orderId: string, raw: unknown) {
+    const input = OpenReviewedOrderExceptionSchema.parse(raw), command = OpenOrderExceptionCommandSchema.parse({ category: input.category, code: input.code, message: input.message, idempotencyKey: input.idempotencyKey });
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      const actor = await orderExceptionActor(tx, context, true), row = await lockOrder(tx, orderId);
+      await tx.select({ id: orders.id }).from(orders).where(eq(orders.id, orderId)).for("update");
+      const basis = await readOrderExceptionOperations(tx, actor, orderId);
+      const id = await this.openExceptionLocked(tx, actor, row, command, checksum(input), async () => {
+        if (basis.orderSequence !== input.expectedOrderSequence || basis.sourceChecksum !== input.expectedSourceChecksum) throw new ConflictException("订单依据已变化 请载入最新记录后核对");
+      });
+      return (await readOrderExceptionOperations(tx, actor, orderId, { exceptionId: id })).items[0]!.exception;
+    }));
+  }
+
+  async resolveExceptionReviewed(context: TenantContext, orderId: string, exceptionId: string, raw: unknown) {
+    const input = ResolveReviewedOrderExceptionSchema.parse(raw), command = ResolveOrderExceptionCommandSchema.parse({ resolution: input.resolution, idempotencyKey: input.idempotencyKey });
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      const actor = await orderExceptionActor(tx, context, true), row = await lockOrder(tx, orderId);
+      await tx.select({ id: orders.id }).from(orders).where(eq(orders.id, orderId)).for("update");
+      const basis = await readOrderExceptionOperations(tx, actor, orderId, { exceptionId }), item = basis.items[0];
+      if (!item) throw new NotFoundException("订单异常不存在或不在当前范围内");
+      await this.resolveExceptionLocked(tx, actor, row, exceptionId, command, checksum({ exceptionId, input }), async () => {
+        if (!item.canResolve || item.eventMissing || item.sequence !== input.expectedSequence || item.sourceChecksum !== input.expectedSourceChecksum) throw new ConflictException("异常依据已变化或尚不具备解决条件 请载入最新记录后核对");
+      });
+      return (await readOrderExceptionOperations(tx, actor, orderId, { exceptionId })).items[0]!.exception;
+    }));
+  }
+
+  async operatorExceptionViews(context: TenantContext, orderId: string) {
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      const actor = await orderExceptionActor(tx, context), items: OrderExceptionView[] = [];
+      for (let page = 1; ; page++) {
+        const value = await readOrderExceptionOperations(tx, actor, orderId, { page, pageSize: 100 });
+        items.push(...value.items.map(item => item.exception));
+        if (page * value.pageSize >= value.total) return items;
+      }
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }));
+  }
+
+  private async openExceptionLocked(tx: TenantTransaction, context: TenantContext, row: typeof orders.$inferSelect, command: OpenOrderExceptionCommand, digest: string, check?: () => Promise<void>) {
+    const orderId = row.id, [existing] = await tx.select().from(orderExceptionEvents).where(and(eq(orderExceptionEvents.orderId, orderId), eq(orderExceptionEvents.idempotencyKey, command.idempotencyKey))).limit(1);
+    if (existing) {
+      const [identity] = await tx.select().from(orderExceptions).where(eq(orderExceptions.id, existing.exceptionId)).limit(1), [event] = await tx.select().from(orderEvents).where(and(eq(orderEvents.orderId, orderId), eq(orderEvents.idempotencyKey, command.idempotencyKey))).limit(1);
+      if (!identity || existing.status !== "open" || event?.type !== "exception_opened" || identity.category !== command.category || identity.code !== command.code || identity.message !== command.message || (event.metadata.commandChecksum ? event.metadata.commandChecksum !== digest : Boolean(check))) throw new ConflictException("该请求编号已用于不同的异常或内容 请核对原操作");
+      return existing.exceptionId;
+    }
+    if ((await tx.select({ id: orderEvents.id }).from(orderEvents).where(and(eq(orderEvents.orderId, orderId), eq(orderEvents.idempotencyKey, command.idempotencyKey))).limit(1)).length) throw new ConflictException("该请求编号已用于其他订单操作 请核对原结果");
+    await check?.();
+    const exceptionId = createEntityId(), sequence = row.latestEventSequence + 1;
+    await tx.insert(orderExceptions).values({ id: exceptionId, tenantId: context.tenantId, orderId, category: command.category, code: command.code, message: command.message, openedBy: context.userId });
+    await tx.insert(orderExceptionEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, exceptionId, sequence: 1, status: "open", idempotencyKey: command.idempotencyKey, actorUserId: context.userId });
+    await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_opened", code: command.code, message: command.message, idempotencyKey: command.idempotencyKey, actorUserId: context.userId, metadata: { exceptionId, category: command.category, commandChecksum: digest } });
+    await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, row.latestEventSequence)));
+    await this.audit.recordInTransaction(tx, context, { action: "order.exception.open", resourceType: "order_exception", resourceId: exceptionId, result: "success", metadata: { orderId, category: command.category, code: command.code, commandChecksum: digest } });
+    return exceptionId;
+  }
+
+  private async resolveExceptionLocked(tx: TenantTransaction, context: TenantContext, row: typeof orders.$inferSelect, exceptionId: string, command: ResolveOrderExceptionCommand, digest: string, check?: () => Promise<void>) {
+    const orderId = row.id, [identity] = await tx.select().from(orderExceptions).where(and(eq(orderExceptions.id, exceptionId), eq(orderExceptions.orderId, orderId))).limit(1);
+    if (!identity) throw new NotFoundException("Order exception not found");
+    const [existing] = await tx.select().from(orderExceptionEvents).where(and(eq(orderExceptionEvents.orderId, orderId), eq(orderExceptionEvents.idempotencyKey, command.idempotencyKey))).limit(1);
+    if (existing) {
+      const [event] = await tx.select().from(orderEvents).where(and(eq(orderEvents.orderId, orderId), eq(orderEvents.idempotencyKey, command.idempotencyKey))).limit(1);
+      if (existing.exceptionId !== exceptionId || existing.status !== "resolved" || existing.resolution !== command.resolution || event?.type !== "exception_resolved" || (event.metadata.commandChecksum ? event.metadata.commandChecksum !== digest : Boolean(check))) throw new ConflictException("该请求编号已用于不同的处理操作 请核对原结果");
+      return;
+    }
+    if ((await tx.select({ id: orderEvents.id }).from(orderEvents).where(and(eq(orderEvents.orderId, orderId), eq(orderEvents.idempotencyKey, command.idempotencyKey))).limit(1)).length) throw new ConflictException("该请求编号已用于其他订单操作 请核对原结果");
+    await check?.();
+    const [latest] = await tx.select().from(orderExceptionEvents).where(eq(orderExceptionEvents.exceptionId, exceptionId)).orderBy(desc(orderExceptionEvents.sequence)).limit(1);
+    if (!latest || latest.status !== "open") throw new ConflictException("异常已解决或缺少有效事件 请核对原记录");
+    const sequence = row.latestEventSequence + 1;
+    await tx.insert(orderExceptionEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, exceptionId, sequence: latest.sequence + 1, status: "resolved", resolution: command.resolution, idempotencyKey: command.idempotencyKey, actorUserId: context.userId });
+    await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_resolved", code: identity.code, message: command.resolution, idempotencyKey: command.idempotencyKey, actorUserId: context.userId, metadata: { exceptionId, category: identity.category, commandChecksum: digest } });
+    await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, row.latestEventSequence)));
+    await this.audit.recordInTransaction(tx, context, { action: "order.exception.resolve", resourceType: "order_exception", resourceId: exceptionId, result: "success", metadata: { orderId, commandChecksum: digest } });
   }
 
   async exceptions(context: TenantContext, orderId: string): Promise<OrderExceptionView[]> {
@@ -255,15 +386,21 @@ export class OrderService {
   }
 
   async listExceptions(context: TenantContext, status?: "open" | "resolved"): Promise<OrderExceptionView[]> {
-    const identities = await withTenant(this.database.db, context, (tx) => tx.select().from(orderExceptions).orderBy(desc(orderExceptions.openedAt)));
-    if (!identities.length) return [];
-    const events = await withTenant(this.database.db, context, (tx) => tx.select().from(orderExceptionEvents)
-      .where(inArray(orderExceptionEvents.exceptionId, identities.map((entry) => entry.id)))
-      .orderBy(desc(orderExceptionEvents.sequence)));
-    const latest = new Map<string, typeof orderExceptionEvents.$inferSelect>();
-    for (const event of events) if (!latest.has(event.exceptionId)) latest.set(event.exceptionId, event);
-    const views = identities.map((identity) => toExceptionView(identity, latest.get(identity.id)!));
-    return status ? views.filter((view) => view.status === status) : views;
+    return exceptionErrors(() => withTenant(this.database.db, context, async tx => {
+      await orderExceptionActor(tx, context);
+      const identities = await tx.select().from(orderExceptions).where(orderPrivateSourceAvailable(sql`${orderExceptions.orderId}`)).orderBy(desc(orderExceptions.openedAt));
+      if (!identities.length) return [];
+      const events = await tx.select().from(orderExceptionEvents).where(inArray(orderExceptionEvents.exceptionId, identities.map(entry => entry.id))).orderBy(desc(orderExceptionEvents.sequence));
+      const latest = new Map<string, typeof orderExceptionEvents.$inferSelect>();
+      for (const event of events) if (!latest.has(event.exceptionId)) latest.set(event.exceptionId, event);
+      const views = identities.map(identity => toExceptionView(identity, latest.get(identity.id)));
+      return status ? views.filter(view => view.status === status) : views;
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }));
+  }
+
+  async agentExceptionPage(context: TenantContext, input: AgentExceptionPageInput, position: AgentReadOwnerPosition, signal?: AbortSignal): Promise<AgentReadOwnerPage<AgentExceptionItem>> {
+    try { return await readOrderExceptionPage(this.database, context, input, position, signal); }
+    catch (error) { rethrowAgentReadError(error); }
   }
 
   async fulfillmentDetails(context: TenantContext, orderId: string, rawPurpose: OrderPiiAccessPurpose): Promise<OrderFulfillmentView> {
@@ -324,13 +461,7 @@ export class OrderService {
     return item;
   }
 
-  private async withLines(context: TenantContext, rows: Array<typeof orders.$inferSelect>): Promise<OrderView[]> {
-    if (!rows.length) return [];
-    const lines = await withTenant(this.database.db, context, (tx) => tx.select().from(orderLines).where(inArray(orderLines.orderId, rows.map((row) => row.id))).orderBy(asc(orderLines.createdAt), asc(orderLines.id)));
-    const byOrder = new Map<string, Array<typeof orderLines.$inferSelect>>();
-    for (const line of lines) byOrder.set(line.orderId, [...(byOrder.get(line.orderId) ?? []), line]);
-    return rows.map((row) => toOrderView(row, byOrder.get(row.id) ?? []));
-  }
+  
 }
 
 interface CatalogLinkableLine {
@@ -470,7 +601,7 @@ async function assertProductionGate(
   if (target !== "awaiting_shipment") return;
   const latestProductionIds = lines.map((line) => latest.get(line.id)!.id);
   const inspections = await tx.select().from(qualityInspections).where(inArray(qualityInspections.productionOrderId, latestProductionIds))
-    .orderBy(desc(qualityInspections.inspectedAt));
+    .orderBy(qualityInspectionOrder(sql`${qualityInspections}`));
   const latestInspection = new Map<string, typeof qualityInspections.$inferSelect>();
   for (const inspection of inspections) if (!latestInspection.has(inspection.productionOrderId)) latestInspection.set(inspection.productionOrderId, inspection);
   if (latestProductionIds.some((id) => latestInspection.get(id)?.result !== "passed")) {
@@ -506,7 +637,30 @@ async function hasIdempotentEvent(tx: TenantTransaction, orderId: string, idempo
   return Boolean(event);
 }
 
+function hasCompleteProviderMoneyEvidence(input: NormalizeOrderInput, knownLines: Array<typeof orderLines.$inferSelect>): boolean {
+  // The marketplace adapters paginate orders, not the lines within one order.
+  // Their normalization snapshots retain the provider's complete line identity
+  // list. A generic/partial normalized payload cannot establish a grand total.
+  const source = input.redactedSource;
+  const sourceLineIds = input.platform === "amazon" && source.apiVersion === "2026-01-01" && source.orderId === input.externalOrderId
+    ? source.orderItemIds
+    : input.platform === "etsy" && source.apiVersion === "etsy-open-api-v3" && source.receiptId === input.externalOrderId
+      ? source.transactionIds : undefined;
+  if (!Array.isArray(sourceLineIds) || sourceLineIds.some((id) => typeof id !== "string")
+    || new Set(sourceLineIds).size !== sourceLineIds.length || sourceLineIds.length !== input.lines.length
+    || knownLines.length !== input.lines.length) return false;
+  return input.lines.every((line) => {
+    const known = knownLines.find((candidate) => candidate.externalLineId === line.externalLineId);
+    return sourceLineIds.includes(line.externalLineId) && line.unitPrice !== null && known !== undefined
+      && known.quantity === line.quantity && known.skuCode === line.skuCode
+      && (known.unitPriceMinor === null || (known.unitPriceMinor === line.unitPrice.amountMinor && known.unitPriceCurrency === line.unitPrice.currency));
+  });
+}
+
 function assertSequence(actual: number, expected: number) { if (actual !== expected) throw new ConflictException(`Order event sequence changed; expected ${expected}, current ${actual}`); }
+async function exceptionErrors<T>(operation: () => Promise<T>) {
+  try { return await operation(); } catch (error) { if (error instanceof OrderExceptionAccessError) throw new HttpException({ message: error.message }, error.status); throw error; }
+}
 function checksum(value: unknown) { return createHash("sha256").update(stableStringify(value)).digest("hex"); }
 function stableStringify(value: unknown): string { if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`; return JSON.stringify(value) ?? "null"; }
 function retentionExpiry() { const days = Number(process.env.ORDER_PII_RETENTION_DAYS ?? "90"); if (!Number.isInteger(days) || days < 1 || days > 3_650) throw new TypeError("ORDER_PII_RETENTION_DAYS must be an integer from 1 to 3650"); return new Date(Date.now() + days * 86_400_000); }
@@ -519,21 +673,12 @@ function assertRedactedSource(value: unknown, key = "root"): void {
   }
 }
 
-function toOrderView(row: typeof orders.$inferSelect, lines: Array<typeof orderLines.$inferSelect>): OrderView {
-  return OrderViewSchema.parse({
-    id: row.id, accountId: row.accountId, platform: row.platform, externalOrderId: row.externalOrderId,
-    providerStatus: row.providerStatus, workflowState: row.workflowState, sideState: row.sideState,
-    orderTotal: { amountMinor: row.orderTotalMinor, currency: row.orderCurrency }, lineCount: row.lineCount,
-    address: { status: row.addressStatus, countryCode: row.addressCountryCode }, latestEventSequence: row.latestEventSequence,
-    placedAt: row.placedAt.toISOString(), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-    lines: lines.map((line) => ({ id: line.id, externalLineId: line.externalLineId, externalListingId: line.externalListingId, skuCode: line.skuCode, title: line.title, quantity: line.quantity, unitPrice: { amountMinor: line.unitPriceMinor, currency: line.unitPriceCurrency }, customizationCount: line.customizationCount })),
-  });
-}
+
 
 function toEventView(row: typeof orderEvents.$inferSelect): OrderEventView {
   return OrderEventViewSchema.parse({ id: row.id, sequence: row.sequence, type: row.type, fromWorkflowState: row.fromWorkflowState, toWorkflowState: row.toWorkflowState, fromSideState: row.fromSideState, toSideState: row.toSideState, code: row.code, message: row.message, idempotencyKey: row.idempotencyKey, occurredAt: row.occurredAt.toISOString() });
 }
 
-function toExceptionView(identity: typeof orderExceptions.$inferSelect, latest: typeof orderExceptionEvents.$inferSelect): OrderExceptionView {
-  return OrderExceptionViewSchema.parse({ id: identity.id, orderId: identity.orderId, category: OrderExceptionCategorySchema.parse(identity.category), code: identity.code, message: identity.message, status: latest.status, resolution: latest.resolution, openedAt: identity.openedAt.toISOString(), resolvedAt: latest.status === "resolved" ? latest.occurredAt.toISOString() : null });
+function toExceptionView(identity: typeof orderExceptions.$inferSelect, latest: typeof orderExceptionEvents.$inferSelect | undefined): OrderExceptionView {
+  return OrderExceptionViewSchema.parse({ id: identity.id, orderId: identity.orderId, category: OrderExceptionCategorySchema.parse(identity.category), code: identity.code, message: identity.message, status: latest?.status ?? "open", resolution: latest?.resolution ?? null, openedAt: identity.openedAt.toISOString(), resolvedAt: latest?.status === "resolved" ? latest.occurredAt.toISOString() : null });
 }

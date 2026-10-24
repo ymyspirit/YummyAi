@@ -10,6 +10,7 @@ export async function withTenant<T>(
   db: Database,
   context: TenantContext,
   callback: (tx: TenantTransaction) => Promise<T>,
+  options?: { isolationLevel: "repeatable read"; accessMode: "read only" | "read write" },
 ): Promise<T> {
   const validatedContext = TenantContextSchema.parse(context);
 
@@ -18,5 +19,5 @@ export async function withTenant<T>(
     await tx.execute(sql`select set_config('app.tenant_id', ${validatedContext.tenantId}, true)`);
     await tx.execute(sql`select set_config('app.user_id', ${validatedContext.userId}, true)`);
     return callback(tx);
-  });
+  }, options);
 }

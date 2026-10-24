@@ -1,0 +1,14 @@
+{
+  "name": "@yummyai/store-api-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.17 <25" },
+  "scripts": {
+    "start": "node --import tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
+    "test": "vitest run"
+  },
+  "dependencies": { "@yummyai/contracts": "workspace:*", "@yummyai/marketplace-connectors": "workspace:*", "zod": "^4.2.0", "tsx": "^4.23.1" },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0", "vitest": "^3.2.0" }
+}

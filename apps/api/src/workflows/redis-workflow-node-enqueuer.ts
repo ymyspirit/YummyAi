@@ -12,6 +12,7 @@ export class RedisWorkflowNodeEnqueuer implements WorkflowNodeEnqueuer, OnModule
     tenantId: string;
     runId: string;
     nodeRunId: string;
+    attemptId: string;
     requestedBy: string;
   }) {
     await enqueueJob(
@@ -20,10 +21,10 @@ export class RedisWorkflowNodeEnqueuer implements WorkflowNodeEnqueuer, OnModule
       {
         attempt: 0,
         correlationId: input.runId,
-        idempotencyKey: input.nodeRunId,
+        idempotencyKey: input.attemptId,
         jobId: createEntityId(),
         maxAttempts: 3,
-        payload: { runId: input.runId, nodeRunId: input.nodeRunId },
+        payload: { runId: input.runId, nodeRunId: input.nodeRunId, attemptId: input.attemptId },
         requestedAt: new Date().toISOString(),
         requestedBy: input.requestedBy,
         tenantId: input.tenantId,

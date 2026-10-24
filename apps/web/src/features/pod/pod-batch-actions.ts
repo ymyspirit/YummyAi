@@ -10,6 +10,7 @@ import {
   CreateMockupListingBindingsInputSchema,
   CreateMockupTemplateInspectionInputSchema,
   CreateMockupTemplatePackVersionInputSchema,
+  ConfirmMockupTemplateInspectionInputSchema,
   ReviewMockupBatchInputSchema,
   ReviewVersionInputSchema,
 } from "@yummyai/contracts/pod/batch-workflows";
@@ -86,7 +87,10 @@ export async function createTemplateInspection(_state: PodBatchActionState = idl
 }
 
 export async function confirmTemplateInspection(_state: PodBatchActionState = idle, formData: FormData) {
-  return idAction(formData, ["inspectionId"], ([id]) => `/v1/pod/mockup-template-inspections/${id}/confirm`, "PSD 编译结果已确认。", "/pod-workbench/mockup-batches");
+  const id = EntityId.safeParse(text(formData, "inspectionId"));
+  const parsed = ConfirmMockupTemplateInspectionInputSchema.safeParse({ expectedFingerprint: text(formData, "expectedFingerprint") });
+  if (!id.success || !parsed.success) return failure("缺少模板检查版本 请刷新后重新查看");
+  return postParsed(`/v1/pod/mockup-template-inspections/${id.data}/confirm`, parsed, "PSD 编译结果已确认。", ["/pod-workbench/mockup-batches"]);
 }
 
 export async function createTemplatePack(_state: PodBatchActionState = idle, formData: FormData): Promise<PodBatchActionState> {
@@ -119,7 +123,7 @@ export async function rejectMockupItem(_state: PodBatchActionState = idle, formD
   const batchId = EntityId.safeParse(text(formData, "batchId"));
   const itemId = EntityId.safeParse(text(formData, "itemId"));
   const parsed = ReviewMockupBatchInputSchema.safeParse({
-    decisions: [{ itemId: text(formData, "itemId"), decision: "reject", rejectionReason: text(formData, "rejectionReason") }],
+    decisions: [{ itemId: text(formData, "itemId"), expectedFingerprint: text(formData, "expectedFingerprint"), decision: "reject", rejectionReason: text(formData, "rejectionReason") }],
   });
   if (!batchId.success || !itemId.success || !parsed.success) return failure("驳回款式时必须填写原因。 ");
   return postParsed(`/v1/pod/mockup-batches/${batchId.data}/review`, parsed, "该款式的可审核槽位已驳回，可逐槽位重试。", ["/pod-workbench/mockup-batches"]);

@@ -8,6 +8,7 @@ import {
 } from "@yummyai/contracts/pod/order-personalization";
 import {
   PodArtworkTaskListViewSchema,
+  PodArtworkTaskViewSchema,
   PodExecutableToolKeySchema,
   PodExportListViewSchema,
   PodTaskInputOptionsViewSchema,
@@ -17,6 +18,7 @@ import {
   type PodTaskInputOptionsView,
   type PodToolCatalogView,
 } from "@yummyai/contracts/pod";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
 import {
   PersonalizationTemplateVersionListSchema,
   PersonalizationTemplateSourceInspectionListSchema,
@@ -32,7 +34,6 @@ import {
   type PodListingArtifactOptionsView,
 } from "@yummyai/contracts/pod/listing-artifacts";
 
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import {
   PodWorkbench,
   type PodWorkbenchLoadError,
@@ -49,7 +50,8 @@ export default async function PodWorkbenchPage({ searchParams }: { searchParams:
   const requestedTool = typeof params.tool === "string" ? params.tool : undefined;
   const result = await loadToolCatalog();
   const catalog = result.catalog;
-  const taskResult = catalog ? await loadTasks() : undefined;
+  const requestedTaskId = typeof params.task === "string" && EntityIdSchema.safeParse(params.task).success ? params.task : undefined;
+  const taskResult = catalog ? await loadTasks(requestedTaskId) : undefined;
   const exportResult = taskResult && "items" in taskResult
     ? await loadTaskExports(taskResult.items)
     : undefined;
@@ -78,11 +80,6 @@ export default async function PodWorkbenchPage({ searchParams }: { searchParams:
     : undefined;
   return (
     <div className="research-shell pod-shell">
-      <ErpSidebar
-        active="pod-workbench"
-        contextLabel="POD OPS"
-        note="面向 Amazon 与 Etsy；生成和生产只使用授权资产或订单私有域素材。"
-      />
       <main className="research-main pod-main">
         <PodWorkbench
           {...(catalog ? { catalog } : { error: result.error })}
@@ -90,6 +87,7 @@ export default async function PodWorkbenchPage({ searchParams }: { searchParams:
           configurationError={inputOptions && "error" in inputOptions ? inputOptions.error : undefined}
           requestedModule={moduleKey}
           requestedTool={requestedTool}
+          requestedTaskId={requestedTaskId}
           personalizationError={personalizationResult && "error" in personalizationResult ? personalizationResult.error : undefined}
           personalizationOptions={personalizationResult && "data" in personalizationResult ? personalizationResult.data.options : undefined}
           personalizationInspections={personalizationResult && "data" in personalizationResult ? personalizationResult.data.inspections : []}
@@ -224,13 +222,20 @@ async function loadTaskExports(
   }
 }
 
-async function loadTasks(): Promise<{ items: PodArtworkTaskView[] } | { error: string }> {
+async function loadTasks(selectedId?: string): Promise<{ items: PodArtworkTaskView[] } | { error: string }> {
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { error: "尚未配置作图中心 API。" };
   try {
     const response = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/pod/tasks`, { cache: "no-store" });
     if (!response.ok) return { error: `任务中心读取失败 (${response.status})。` };
-    return PodArtworkTaskListViewSchema.parse(await response.json());
+    const list = PodArtworkTaskListViewSchema.parse(await response.json());
+    if (selectedId) {
+      const selected = await apiFetch(`${apiBase.replace(/\/$/, "")}/v1/pod/tasks/${selectedId}`, { cache: "no-store" });
+      if (!selected.ok) return { error: "指定任务不存在或已超出当前权限范围。" };
+      const task = PodArtworkTaskViewSchema.parse(await selected.json());
+      list.items = [task, ...list.items.filter(item => item.id !== task.id)];
+    }
+    return list;
   } catch (error) {
     return { error: error instanceof Error ? error.message : "任务中心读取失败。" };
   }

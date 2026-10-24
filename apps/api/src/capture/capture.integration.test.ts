@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
 import { ResearchClassificationService } from "../research/research-classification.service.js";
 import { ResearchController } from "../research/research.controller.js";
+import { ResearchStudyService } from "../research/research-study.service.js";
+import { ResearchArchiveService } from "../research/research-archive.service.js";
 import { ResearchRepository } from "../research/research.repository.js";
 import { CaptureService, type CaptureMediaEnqueuer } from "./capture.service.js";
 
@@ -32,7 +34,12 @@ describe("capture ingestion and research library", () => {
   const classifications = new ResearchClassificationService(database, audit);
   const service = new CaptureService(database, enqueuer, audit, classifications);
   const repository = new ResearchRepository(database);
-  const controller = new ResearchController(repository, classifications);
+  const controller = new ResearchController(
+    repository,
+    classifications,
+    new ResearchStudyService(database, audit),
+    new ResearchArchiveService(database, audit),
+  );
 
   beforeAll(async () => {
     await migrateDatabase(database);
@@ -55,18 +62,18 @@ describe("capture ingestion and research library", () => {
 
   afterAll(async () => {
     try {
-      await database.client.unsafe(
-        `delete from audit_events where tenant_id in ($1, $2)`,
-        [tenantId, otherTenantId],
-      );
-      await database.client.unsafe(
-        `delete from organizations where id in ($1, $2)`,
-        [tenantId, otherTenantId],
-      );
-      await database.client.unsafe(
-        `delete from app_users where id in ($1, $2)`,
-        [userId, otherUserId],
-      );
+      await database.client.unsafe(`delete from audit_events where tenant_id in ($1, $2)`, [
+        tenantId,
+        otherTenantId,
+      ]);
+      await database.client.unsafe(`delete from organizations where id in ($1, $2)`, [
+        tenantId,
+        otherTenantId,
+      ]);
+      await database.client.unsafe(`delete from app_users where id in ($1, $2)`, [
+        userId,
+        otherUserId,
+      ]);
     } finally {
       await database.client.end();
     }
@@ -121,7 +128,9 @@ describe("capture ingestion and research library", () => {
       },
     ]);
     const library = await repository.list(context, { limit: 100 });
-    expect(library.items.find((item) => item.id === first.researchItemId)?.shopName).toBe("Sample Studio");
+    expect(library.items.find((item) => item.id === first.researchItemId)?.shopName).toBe(
+      "Sample Studio",
+    );
   });
 
   it("records partial success when one included media job fails", async () => {
@@ -141,7 +150,8 @@ describe("capture ingestion and research library", () => {
     );
     expect(receipt.status).toBe("partial");
     const snapshot = await service.getSnapshot(context, receipt.snapshotId);
-    expect(snapshot.media.map((entry) => entry.status)).toEqual(["queued", "failed"]);
+    expect(snapshot.media.map((entry) => entry.status)).toEqual(["queued", "queued"]);
+    expect(snapshot.media[1]?.failureReason).toBe("MEDIA_QUEUE_UNAVAILABLE");
     expect(snapshot.draft.ehuntAnalysis?.tags[0]?.label).toBe("custom tissue paper");
   });
 
@@ -295,17 +305,26 @@ describe("capture ingestion and research library", () => {
       }),
     );
     await expect(
-      classifications.assign(otherContext, {
+      classifications.assign(
+        { ...otherContext, permissions: [...otherContext.permissions, Permission.ResearchWrite] },
+        {
+          itemIds: [receipt.researchItemId],
+          productTypeName: "Mugs",
+        },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(() =>
+      controller.assignProductType({ tenantContext: context } as never, {
         itemIds: [receipt.researchItemId],
         productTypeName: "Mugs",
       }),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(() =>
-      controller.assignProductType(
-        { tenantContext: context } as never,
-        { itemIds: [receipt.researchItemId], productTypeName: "Mugs" },
-      ),
     ).toThrow("Permission denied: research:write");
+    await expect(
+      classifications.assign(context, {
+        itemIds: [receipt.researchItemId],
+        productTypeName: "Mugs",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
   });
 });
 
@@ -375,9 +394,7 @@ function ehuntAnalysis(): NonNullable<CaptureDraft["ehuntAnalysis"]> {
     badges: ["BestSeller"],
     inventoryCount: 991,
     categoryPath: ["Paper & Party Supplies", "Paper", "Gift Wrapping"],
-    tags: [
-      { label: "custom tissue paper", metricRaw: "5.0M", metricValue: 5_000_000 },
-    ],
+    tags: [{ label: "custom tissue paper", metricRaw: "5.0M", metricValue: 5_000_000 }],
     annualTrendUrl: "https://ehunt.ai/product-detail/1729000001",
     shopName: "Sample Studio",
     shopRating: 4.9,

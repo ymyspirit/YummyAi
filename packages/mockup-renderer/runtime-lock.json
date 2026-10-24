@@ -1,0 +1,33 @@
+{
+  "version": "7.1.2-34",
+  "platform": "win32-x64",
+  "directory": "imagemagick-7.1.2-34-q16-hdri-x64",
+  "source": "https://download.imagemagick.org/archive/binaries/ImageMagick-7.1.2-34-portable-Q16-HDRI-x64.7z",
+  "digestSource": "https://download.imagemagick.org/archive/binaries/digest.rdf",
+  "archiveSha256": "8dcfd3644b7fc20a92aeedeb4798024e5947f25f4d7c0c313c883fbca3d723e6",
+  "files": {
+    "mogrify.exe": "2add9a8ea13c4311407350a754cee330295eb882dbc52a854a814309748bf4bb",
+    "composite.exe": "3adf33f9d44f64773d949d6404c18835baaae3197351d0dd3b57ff67a3ccea7e",
+    "magick.exe": "758641848857b4b88f54b53aa0816f29b2e3b9fe4a34ed7571c44d21785ad70d",
+    "locale.xml": "9a22865c9ba728a88aeea2bd64d238e39886ec1a87d791353e9266a3198ab296",
+    "type.xml": "ba4160241fb0fff29563b40430b24f5d993cd5f1e423f85ee99c17749901c8ad",
+    "log.xml": "c246daab249adda19a7754fe8769e6ef08a7d0b5c8ce4742a036593a6e47ea17",
+    "delegates.xml": "d6447b0e9c748690b63717d7942987f854b021761613fcb212f6148c8a63d665",
+    "stream.exe": "477fd9d2cd7c08bca8d0ce6f23a7a9c2abb1efcd89080807b3968a869ffc23da",
+    "ChangeLog.md": "a516c754211753dab050498d2fc104e6a37775191cce32b9eed459d89b0b9e1a",
+    "policy.xml": "0a0abfe60f9ba85c50660a998f9e9894c1f809bafaa91414f9cf0f1bc8d13138",
+    "type-ghostscript.xml": "8cdd0a89929342e438d90b4b95b4417fc90737858cefc9161f454e0f7e1435b4",
+    "mime.xml": "e7ca58e71b1e30cf2d18453e3fce2e266e3c85a090253f6d5a1d2ed2011b1c81",
+    "thresholds.xml": "068487187c65f8ba9963ee0d73b31261cde9cd255bf879edcb093241e1c6a36b",
+    "LICENSE.txt": "5ffcbc771d4cc2827ca8c4505f6b5b61e0bc1d933e0f41a47eea16ed06db4f90",
+    "colors.xml": "37b986dc355641021434859f77b5e1f30b21670c847706ee9b77418e0874dfa6",
+    "conjure.exe": "c41500213cd118053873bfa28b12f3ba7960ec748fccc29f943e5e0c646938b2",
+    "configure.xml": "e5c1bde8c9eeb9369e99944a7f8ffa69c2238585e499747765bb6b2e39ed894b",
+    "identify.exe": "980efb927ef9dcf5e0cab8813f09cce4da610d32e6b26a84eccd531e018d7b9d",
+    "montage.exe": "780f5efbeb6daa27edc9453f48d0221cfd7ab330cb10a60cfcc43fd0981b62c6",
+    "english.xml": "d32c7b50db08bd3be6a5d898f34eac1e34460fb91bec3b18f7364defe8774cb2",
+    "sRGB.icc": "83174717332326ddc198d9df188a4daec27b8979ba152cebbfc470c793d0bb11",
+    "NOTICE.txt": "e3b886c90cd022d1767f89d61522be57bb77b7e9c44d5bf92f57fa231ac7b6bf",
+    "compare.exe": "b5507da09be1ead223ff96f6ed78786245fcae06936f04bd31b1bbc566f9ddbb"
+  }
+}

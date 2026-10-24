@@ -8,6 +8,7 @@ import {
   type TenantContext,
 } from "@yummyai/contracts";
 import { describe, expect, it } from "vitest";
+import { ForbiddenError, Permission } from "@yummyai/authz";
 
 import {
   ApprovalEvidenceRequiredError,
@@ -23,6 +24,47 @@ const tenantA = context();
 const tenantB = context();
 
 describe("ProductService", () => {
+  it("rejects direct internal commands without their permission before creating data", async () => {
+    const repository = new MemoryCatalogRepository(),
+      service = new ProductService(repository);
+    const denied = { ...tenantA, permissions: [] };
+    const commands = [
+      () => service.createPlan(denied, planInput([])),
+      () => service.listPlans(denied),
+      () =>
+        service.updateCustomization(denied, createEntityId(), {
+          customization: { version: 1, fields: [] },
+        }),
+      () => service.transition(denied, createEntityId(), "pending_approval"),
+      () => service.createSpu(denied, createEntityId(), { code: "DENIED", name: "Denied" }),
+      () => service.createSku(denied, { spuId: createEntityId(), code: "DENIED", attributes: {} }),
+    ];
+    for (const command of commands)
+      await expect(
+        Promise.resolve().then(async () => {
+          await command();
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await repository.listPlans(tenantA)).toEqual([]);
+  });
+
+  it("does not let an internal self writer mutate another owner's plan", async () => {
+    const service = new ProductService(new MemoryCatalogRepository());
+    const own = await service.createPlan(tenantA, planInput([]));
+    const reader = {
+      ...tenantA,
+      userId: createEntityId(),
+      permissionScopes: {
+        [Permission.ProductRead]: "tenant" as const,
+        [Permission.ProductWrite]: "self" as const,
+      },
+    };
+    await expect(service.listPlans(reader)).resolves.toHaveLength(1);
+    await expect(service.transition(reader, own.id, "pending_approval")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect((await service.listPlans(tenantA))[0]?.status).toBe("researching");
+  });
   it("does not create an SPU from an unapproved product plan", async () => {
     const service = new ProductService(new MemoryCatalogRepository());
     const plan = await service.createPlan(tenantA, planInput([]));
@@ -122,6 +164,7 @@ class MemoryCatalogRepository implements CatalogRepository {
       id: createEntityId(),
       tenantId: context.tenantId,
       status: "researching",
+      ownerUserId: context.userId,
       ...input,
     };
     this.plans.push(plan);
@@ -159,6 +202,7 @@ class MemoryCatalogRepository implements CatalogRepository {
       ...input,
     };
     this.spus.push(spu);
+    plan.status = "developing";
     return spu;
   }
   async getSpu(context: TenantContext, id: string) {
@@ -199,7 +243,7 @@ function context(): TenantContext {
   return {
     tenantId: createEntityId(),
     userId: createEntityId(),
-    permissions: [],
+    permissions: [Permission.ProductRead, Permission.ProductWrite],
     dataScope: "tenant",
   };
 }

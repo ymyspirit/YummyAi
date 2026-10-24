@@ -1,3 +1,7 @@
+import { InvocationEvidence } from "../execution/invocation-evidence";
+import { MethodEvidence } from "../ai-assist/method-evidence";
+import { PodCompletionEvidence } from "./pod-completion-evidence";
+import { podToolLabel } from "@yummyai/contracts/pod/labels";
 import {
   CreativeDesignQualityCheckSnapshotSchema,
   ListingAssetQualityCheckSnapshotSchema,
@@ -96,6 +100,7 @@ export function PodWorkbench({
   productionManifests = [],
   requestedModule,
   requestedTool,
+  requestedTaskId,
   rightsError,
   rightsOptions,
   taskError,
@@ -121,6 +126,7 @@ export function PodWorkbench({
   productionManifests?: ProductionManifest[];
   requestedModule?: string;
   requestedTool?: string;
+  requestedTaskId?: string;
   rightsError?: string;
   rightsOptions?: PodTaskInputOptionsView;
   taskError?: string;
@@ -136,7 +142,7 @@ export function PodWorkbench({
       <header className="pod-header">
         <div>
           <p className="kicker">POD ARTWORK OPERATIONS</p>
-          <h1>POD 作图中心</h1>
+          <h1>图片处理工具</h1>
           <p>为 Amazon 和 Etsy 统一编排印花提取、设计处理、权利复核、套图、定制与生产文件。</p>
         </div>
         <div className="pod-marketplaces" aria-label="服务平台">
@@ -163,7 +169,7 @@ export function PodWorkbench({
         </section>
       ) : null}
 
-      {catalog ? <TaskCenter error={taskError} exportError={exportError} exportsByTask={exportsByTask} tasks={tasks} /> : null}
+      {catalog ? <TaskCenter error={taskError} exportError={exportError} exportsByTask={exportsByTask} tasks={tasks} selectedId={requestedTaskId} /> : null}
 
       <div className="pod-workspace">
         <nav className="pod-module-nav" aria-label="作图中心模块">
@@ -225,6 +231,13 @@ export function PodWorkbench({
                 renderTasks={orderPersonalizationRenderTasks}
               />
             </>
+          ) : null}
+          {moduleKey === "production_artwork" ? (
+              <div className="pod-production-editor-entry">
+                <div><strong>在线制作生产稿</strong><p>按产品选择工艺模板，排版后保存版本并生成生产文件。</p></div>
+                <Link href="/pod-workbench/production-editor?kind=shaped_pillow">异形抱枕作图</Link>
+                <Link href="/pod-workbench/production-editor?kind=tire_cover">定制备胎罩作图</Link>
+              </div>
           ) : null}
           {!error && moduleKey === "production_artwork" ? (
             <>
@@ -305,11 +318,13 @@ function ToolRow({ selected, tool }: { selected: boolean; tool: PodToolDefinitio
 }
 
 function TaskCenter({
+  selectedId,
   error,
   exportError,
   exportsByTask,
   tasks,
 }: {
+  selectedId?: string;
   error?: string;
   exportError?: string;
   exportsByTask: Record<string, PodExportView[]>;
@@ -325,7 +340,7 @@ function TaskCenter({
       {!error && exportError ? <p className="pod-task-error"><CircleAlert size={14} />{exportError}</p> : null}
       {!error && !tasks.length ? <p className="pod-task-empty">还没有 POD 作图任务。工具启用后，可从对应工具行创建异步任务。</p> : null}
       {!error && tasks.length ? <ol>{tasks.slice(0, 12).map((task) => (
-        <li key={task.id}>
+        <li key={task.id} id={`pod-task-${task.id}`} className={selectedId === task.id ? "pod-task-focused" : undefined} aria-current={selectedId === task.id ? "true" : undefined}>
           <span className={`pod-task-status pod-task-status-${task.status}`}>{taskStatusLabel(task.status)}</span>
           <div><strong>{task.title}</strong><small>{toolKeyLabel(task.toolKey)} · 尝试 {task.attemptCount}/{task.maxAttempts}</small></div>
           <progress aria-label={`${task.title}进度`} max={100} value={task.progressPercent} />
@@ -335,6 +350,10 @@ function TaskCenter({
             <PodExportControls exports={exportsByTask[task.id] ?? []} taskId={task.id} taskStatus={task.status} />
           </div>
           <ProductionTaskEvidence task={task} />
+          <PodCompletionEvidence key={task.id} taskId={task.id} record={task.completion} hasResult={Boolean(task.resultVersionId)} />
+          <MethodEvidence selection={task.methodSnapshot?.methodSelection} />
+          <InvocationEvidence entries={task.invocations}/>
+          {task.errorCode === "POD_RESULT_UNCERTAIN" ? <p className="pod-task-error">原请求的结果或费用尚未确定 请核对供应服务的原请求记录后处理</p> : null}
         </li>
       ))}</ol> : null}
     </section>
@@ -677,37 +696,5 @@ function taskStatusLabel(value: PodArtworkTaskView["status"]) {
 }
 
 function toolKeyLabel(value: PodArtworkTaskView["toolKey"]) {
-  return ({
-    pattern_crop: "图案裁剪",
-    print_extract: "印花图提取",
-    background_remove: "一键抠图",
-    super_resolution: "超分提质",
-    outpaint: "扩图",
-    crop_compress: "裁剪压缩",
-    vectorize: "转矢量图",
-    authorized_watermark_remove: "授权素材去水印",
-    rights_risk_scan: "侵权风险检查",
-    design_variation: "图裂变",
-    product_print_variation: "商品图裂变",
-    instruction_edit: "全能改图",
-    text_to_image: "文生图",
-    element_fusion: "元素融合",
-    licensed_brand_fusion: "授权品牌/IP 元素融合",
-    series_design: "多联图与系列图",
-    style_reference: "风格参考",
-    style_transfer: "风格转绘",
-    canvas_extend: "尺寸延展",
-    seamless_pattern: "连续图",
-    seamless_stitch: "连续图拼接",
-    print_composite: "印花合成",
-    meme_print: "梗图印花",
-    product_suite: "商品套图",
-    title_draft: "标题草稿",
-    virtual_try_on: "模特试衣",
-    background_replace: "换背景",
-    product_video: "商品短视频",
-    piece_extract: "裁片图提取",
-    piece_compose: "裁片图合成",
-    uv_layers: "UV 智能分层",
-  } as const)[value];
+  return podToolLabel(value, true);
 }

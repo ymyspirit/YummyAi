@@ -31,6 +31,17 @@ describe("OrderInbox", () => {
     expect(html).toContain("不可变来源快照");
   });
 
+  it("renders an unreported order total as unknown without fabricating a zero amount", () => {
+    const html = renderToStaticMarkup(<OrderInbox items={[{ ...fixture(), orderTotal: null }]} />);
+    expect(html).toContain('<td class="order-money">金额未知</td>');
+    expect(html.match(/<td class="order-money">(.*?)<\/td>/)?.[1]).not.toContain("0.00");
+  });
+
+  it.each([["USD", 0, "0.00"], ["JPY", 1200, "1,200"], ["BHD", 1234, "1.234"]] as const)("uses the reported %s currency precision", (currency, amountMinor, displayed) => {
+    const html = renderToStaticMarkup(<OrderInbox items={[{ ...fixture(), orderTotal: { currency, amountMinor } }]} />);
+    expect(html.match(/<td class="order-money">(.*?)<\/td>/)?.[1]).toContain(displayed);
+  });
+
   it("shows collected-versus-reported drift and PII-free ingestion risks", () => {
     const html = renderToStaticMarkup(<OrderInbox items={[]} runs={[ingestionFixture()]} />);
     expect(html).toContain("2 / 3");

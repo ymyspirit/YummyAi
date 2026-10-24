@@ -1,0 +1,30 @@
+{
+  "name": "@yummyai/order-design",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@langchain/core": "1.2.11",
+    "@langchain/langgraph": "1.4.16",
+    "@yummyai/ai-core": "workspace:*",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/knowledge-core": "workspace:*",
+    "@yummyai/production-editor": "workspace:*",
+    "@yummyai/storage": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "langsmith": "0.10.4",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

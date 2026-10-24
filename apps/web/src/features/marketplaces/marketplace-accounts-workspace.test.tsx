@@ -1,49 +1,135 @@
+import { createHash } from "node:crypto";
+import type { ReactNode } from "react";
 import type { MarketplaceAccountView } from "@yummyai/contracts";
+import { Permission, type Permission as PermissionValue } from "@yummyai/authz/permissions";
+import { ErpSessionViewSchema, erpSessionAuthority, type ErpSessionView } from "@yummyai/contracts/auth/session";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { MarketplaceAccountDetail, MarketplaceAccountsWorkspace } from "./marketplace-accounts-workspace";
+import { MarketplaceAccountDetail, MarketplaceAccountsWorkspace, MarketplaceOAuthAction } from "./marketplace-accounts-workspace";
+import { ErpIdentityContext, useErpAccess } from "../identity/erp-access";
 
-describe("marketplace accounts workspace", () => {
-  it("renders an operator-facing store ledger without exposing connection controls", () => {
-    const html = renderToStaticMarkup(
-      <MarketplaceAccountsWorkspace accounts={[account()]} publications={[]} />,
-    );
-    for (const label of ["店铺巡检台账", "授权健康", "能力新鲜度", "可发布", "需处理原因"]) expect(html).toContain(label);
-    expect(html).toContain("/stores/0198fbef-4a10-7000-8000-000000000810");
-    expect(html).not.toContain("同步能力");
-    expect(html).not.toContain("refresh-token-value");
-    expect(html).not.toContain("client-secret-value");
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("./marketplace-actions", () => ({
+  authorizeAmazonPrivate: vi.fn(), revokeMarketplaceAuthorization: vi.fn(),
+  setMarketplaceAccountEnabled: vi.fn(), startMarketplaceOAuth: vi.fn(), syncMarketplaceCapabilities: vi.fn(),
+}));
+
+const readWrite = [Permission.StoreRead, Permission.StoreManage, Permission.StoreAuthorize];
+const session = (permissions: PermissionValue[] = readWrite): ErpSessionView => ErpSessionViewSchema.parse({
+  authenticated: true, canUseErp: true, permissions, dataScope: "tenant", teamIds: [],
+  userId: "019f0000-0000-7000-8000-000000000001", tenantId: "019f0000-0000-7000-8000-000000000002",
+  displayName: "Synthetic operator", organizationName: "Synthetic organization",
+});
+const stamp = (identity: ErpSessionView) => createHash("sha256").update(erpSessionAuthority(identity)).digest("hex");
+const person = (identity: ErpSessionView | null, children: ReactNode) => (
+  <ErpIdentityContext.Provider value={{ session: identity, localDevelopment: false, logout() {} }}>{children}</ErpIdentityContext.Provider>
+);
+const list = (contextAuthority: string) => <MarketplaceAccountsWorkspace accounts={[account()]} contextAuthority={contextAuthority} publications={[]} />;
+const detail = (contextAuthority: string, counts: [number | null, number | null, number | null] = [12, 13, 14]) => (
+  <MarketplaceAccountDetail account={account()} contextAuthority={contextAuthority} listingCount={counts[0]} orderCount={counts[1]} publicationCount={counts[2]} />
+);
+function AccessProbe() {
+  const access = useErpAccess();
+  return <output data-store-read={String(access.can(Permission.StoreRead))} data-store-manage={String(access.can(Permission.StoreManage))}
+    data-store-authorize={String(access.can(Permission.StoreAuthorize))} />;
+}
+function hidesPriorFacts(html: string) {
+  for (const value of [account().displayName, account().externalAccountId!, "listing_write", "9123/10000", "2 个", "4 个", "3 次", "12 个", "13 个", "14 次"])
+    expect(html).not.toContain(value);
+  expect(html).not.toContain('type="password"');
+}
+
+// Pre-effect SSR gates only. Current list/detail facts, quota and nullable display
+// after an actual authority read remain personal-browser verification.
+describe("marketplace initial personal authority boundaries", () => {
+  it("hides old account facts for anonymous viewers and a member whose StoreRead was removed", () => {
+    const originalStamp = stamp(session());
+    const fragments = <>{list(originalStamp)}{detail(originalStamp)}</>;
+    for (const html of [renderToStaticMarkup(fragments), renderToStaticMarkup(person(null, fragments)),
+      renderToStaticMarkup(person(session([Permission.StoreManage, Permission.StoreAuthorize]), fragments))]) {
+      expect(html).toContain("当前店铺资料不可读取"); hidesPriorFacts(html);
+      expect(html).not.toContain("新增店铺"); expect(html).not.toContain("店铺巡检台账");
+    }
   });
 
-  it("keeps credentials, capabilities, and quota telemetry in the store detail", () => {
-    const html = renderToStaticMarkup(<MarketplaceAccountDetail account={account()} listingCount={2} orderCount={4} publicationCount={3} />);
-    for (const label of ["连接", "授权", "能力", "可发布", "概览", "Listings", "订单", "健康与能力", "设置", "listing_write", "同步能力", "9123/10000/日", "2 个", "3 次", "4 个"]) expect(html).toContain(label);
-    for (const anchor of ["#store-overview", "#store-listings", "#store-orders", "#store-health", "#store-settings"]) expect(html).toContain(anchor);
-    expect(html).not.toContain("refresh-token-value");
-    expect(html).not.toContain("buyer@example.test");
+  it("requires a new authority read before showing detail props even for the matching real personal context", () => {
+    const identity = session(), html = renderToStaticMarkup(person(identity, detail(stamp(identity))));
+    expect(html).toContain('aria-label="店铺授权状态"'); expect(html).toContain("核对当前店铺授权");
+    expect(html).toContain("重新读取授权状态"); hidesPriorFacts(html);
+    for (const control of ["验证并保存", "同步能力", "撤销授权", "Seller ID", "Refresh token"])
+      expect(html).not.toContain(control);
+    expect(html).not.toContain('id="store-settings"');
   });
 
-  it("keeps the account creation command available in the empty state", () => {
-    const html = renderToStaticMarkup(
-      <MarketplaceAccountsWorkspace accounts={[]} publications={[]} />,
-    );
-    expect(html).toContain("新增店铺连接");
-    expect(html).toContain("暂无店铺连接");
+  it("does not endorse an SSR account array with another actor or an older membership stamp", () => {
+    const reader = session([Permission.StoreRead]);
+    const otherActor = { ...reader, userId: "019f0000-0000-7000-8000-000000000003" };
+    for (const stale of [stamp(otherActor), stamp(session())]) {
+      expect(stale).not.toBe(stamp(reader));
+      const html = renderToStaticMarkup(person(reader, list(stale)));
+      expect(html).toContain("当前店铺资料不可读取"); hidesPriorFacts(html);
+      expect(html).not.toContain("店铺巡检台账"); expect(html).not.toContain(`/stores/${account().id}`);
+    }
   });
 
-  it("renders reset-only quota windows without an undefined value", () => {
-    const resetOnlyAccount = account();
-    resetOnlyAccount.quota = {
-      platform: "amazon",
-      windows: [{ scope: "operation", resetAt: "2026-07-25T08:00:00.000Z" }],
-      observedAt: "2026-07-24T08:00:00.000Z",
-    };
-    const html = renderToStaticMarkup(
-      <MarketplaceAccountDetail account={resetOnlyAccount} listingCount={0} orderCount={0} publicationCount={0} />,
-    );
-    expect(html).toContain("重置于");
-    expect(html).not.toContain("undefined");
+  it("does not infer authorization or management from StoreRead in an unverified personal list", () => {
+    const reader = session([Permission.StoreRead]);
+    const html = renderToStaticMarkup(person(reader, <><AccessProbe />{list(stamp(reader))}</>));
+    expect(html).toContain('data-store-read="true"'); expect(html).toContain('data-store-manage="false"');
+    expect(html).toContain('data-store-authorize="false"'); expect(html).toContain("当前店铺资料不可读取");
+    for (const control of ["新增店铺", "编辑店铺资料", "验证并保存", "同步能力", "撤销授权"])
+      expect(html).not.toContain(control);
+  });
+
+  it("withholds nullable unknown statistics and genuine zero statistics alike until the detail read is verified", () => {
+    const identity = session(), authority = stamp(identity);
+    const unknown = renderToStaticMarkup(person(identity, detail(authority, [null, null, null])));
+    const actualEmpty = renderToStaticMarkup(person(identity, detail(authority, [0, 0, 0])));
+    expect(unknown).toBe(actualEmpty); expect(unknown).toContain("重新读取授权状态");
+    for (const value of ["0 个", "0 次", "没有发布请求", "没有可见订单", "暂无店铺档案", "undefined", "null"])
+      expect(unknown).not.toContain(value);
+    hidesPriorFacts(unknown);
+  });
+});
+
+describe("explicit public OAuth reauthorization", () => {
+  it("offers the original OAuth action for a credentialed public application without revoking or starting it during render", () => {
+    const onSubmit = vi.fn();
+    const active = { ...account(), platform: "amazon" as const, authorizationMode: "amazon_public" as const };
+    const html = renderToStaticMarkup(<MarketplaceOAuthAction account={active} canAuthorize onSubmit={onSubmit} />);
+    expect(html).toContain("重新授权公开应用");
+    expect(html).toContain('type="submit"');
+    expect(html).not.toContain("撤销授权");
+    expect(html).not.toContain('disabled=""');
+    expect(onSubmit).not.toHaveBeenCalled();
+    const initial = renderToStaticMarkup(<MarketplaceOAuthAction account={{ ...active, hasCredential: false }} canAuthorize onSubmit={onSubmit} />);
+    expect(initial).toContain("前往平台授权");
+    expect(initial).not.toContain("重新授权公开应用");
+  });
+
+  it("keeps missing authorization and disabled accounts closed and preserves each pending or unverified gate", () => {
+    const onSubmit = vi.fn(), active = { ...account(), authorizationMode: "amazon_public" as const };
+    expect(renderToStaticMarkup(<MarketplaceOAuthAction account={active} canAuthorize={false} onSubmit={onSubmit} />)).toBe("");
+    expect(renderToStaticMarkup(<MarketplaceOAuthAction account={{ ...active, status: "disabled" }} canAuthorize onSubmit={onSubmit} />)).toBe("");
+    for (const gate of ["locked", "busy", "lifecycleBusy", "pending"] as const) {
+      const html = renderToStaticMarkup(<MarketplaceOAuthAction account={active} canAuthorize {...{ [gate]: true }} onSubmit={onSubmit} />);
+      expect(html).toContain("重新授权公开应用");
+      expect(html).toContain('disabled=""');
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("leaves Amazon private outside OAuth and preserves Etsy initial and explicitly required renewal paths", () => {
+    const onSubmit = vi.fn();
+    expect(renderToStaticMarkup(<MarketplaceOAuthAction account={{ ...account(), authorizationMode: "amazon_private" }} canAuthorize reauthorize onSubmit={onSubmit} />)).toBe("");
+    expect(renderToStaticMarkup(<MarketplaceOAuthAction account={account()} canAuthorize onSubmit={onSubmit} />)).toBe("");
+    for (const shop of [{ ...account(), hasCredential: false }, account()]) {
+      const html = renderToStaticMarkup(<MarketplaceOAuthAction account={shop} canAuthorize reauthorize={shop.hasCredential} onSubmit={onSubmit} />);
+      expect(html).toContain("前往平台授权");
+      expect(html).not.toContain("重新授权公开应用");
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
 
@@ -59,8 +145,8 @@ function account(): MarketplaceAccountView {
     },
     createdAt: "2026-07-19T00:00:00.000Z",
     credentialStatus: "valid",
-    displayName: "Etsy Main",
-    externalAccountId: "9001",
+    displayName: "Synthetic private store",
+    externalAccountId: "synthetic-private-external-account",
     grantedScopes: ["listings_r", "listings_w", "shops_r"],
     hasCredential: true,
     healthStatus: "healthy",

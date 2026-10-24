@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { authorize, ForbiddenError, Permission, permissionScope } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   AdvertisingMetricLineViewSchema, AdvertisingReportViewSchema, CalculateVocAnalysisInputSchema,
@@ -7,6 +8,7 @@ import {
   RecordAdvertisingReportInputSchema, RecordCustomerSignalInputSchema, ReviewCustomerRecommendationInputSchema,
   UpsertVocDefinitionInputSchema, VocAnalysisRunViewSchema, VocDefinitionViewSchema, VocDefinitionVersionViewSchema,
   VocThemeMetricViewSchema, type AdvertisingMetricLineView, type AdvertisingReportView, type CalculateVocAnalysisInput,
+  sumAdvertisingMetrics,
   type CustomerIntelligenceWorkspaceView, type CustomerRecommendationView, type CustomerSignalView, type RecordAdvertisingReportInput,
   type RecordCustomerSignalInput, type ReviewCustomerRecommendationInput, type UpsertVocDefinitionInput,
 } from "@yummyai/contracts/customer-intelligence";
@@ -18,6 +20,7 @@ import {
 import { and, asc, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
+import { currentAdvertisingAuthority } from "./advertising-authority.js";
 
 @Injectable()
 export class CustomerIntelligenceService {
@@ -27,22 +30,26 @@ export class CustomerIntelligenceService {
     const input = RecordAdvertisingReportInputSchema.parse(raw);
     const lines = [...input.lines].sort((a, b) => a.lineKey.localeCompare(b.lineKey));
     const checksum = hash({ ...input, lines, idempotencyKey: undefined });
-    const report = await withTenant(this.database.db, context, async (tx) => {
+    return withTenant(this.database.db, context, async (tx) => {
+      const current = await currentAdvertisingAuthority(tx, context);
+      authorize(current, Permission.CustomerIntelligenceWrite);
       if (input.accountId) {
-        const [account] = await tx.select({ platform: marketplaceAccounts.platform }).from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
+        const [account] = await tx.select({ platform: marketplaceAccounts.platform, createdBy: marketplaceAccounts.createdBy }).from(marketplaceAccounts).where(and(eq(marketplaceAccounts.id, input.accountId), sql`${marketplaceAccounts.deletedAt} is null`)).for("share").limit(1);
         if (!account) throw new UnprocessableEntityException("Advertising account was not found");
+        authorize(current, Permission.CustomerIntelligenceWrite, { ownerId: account.createdBy, teamId: null });
         if ((input.provider === "amazon_ads" && account.platform !== "amazon") || (input.provider === "etsy_ads" && account.platform !== "etsy")) throw new UnprocessableEntityException("Advertising provider does not match the marketplace account");
+      } else if (permissionScope(current, Permission.CustomerIntelligenceWrite) !== "tenant") {
+        throw new ForbiddenError(Permission.CustomerIntelligenceWrite, "outside_data_scope");
       }
-      await lock(tx, `advertising-report:${context.tenantId}:${input.idempotencyKey}`);
+      await lock(tx, `advertising-report:${current.tenantId}:${input.idempotencyKey}`);
       const [replayed] = await tx.select().from(advertisingReports).where(eq(advertisingReports.idempotencyKey, input.idempotencyKey)).limit(1);
-      if (replayed) { if (replayed.checksum !== checksum) throw new ConflictException("Advertising report idempotency key was reused"); return replayed; }
-      const [created] = await tx.insert(advertisingReports).values({ id: createEntityId(), tenantId: context.tenantId, provider: input.provider, accountId: input.accountId, externalReportId: input.externalReportId, scopeKey: input.scopeKey, periodStart: new Date(input.periodStart), periodEnd: new Date(input.periodEnd), attributionWindowDays: input.attributionWindowDays, sourceCurrency: input.sourceCurrency, observedAt: new Date(input.observedAt), checksum, idempotencyKey: input.idempotencyKey, recordedBy: context.userId }).returning();
-      await tx.insert(advertisingMetricLines).values(lines.map((line) => ({ id: createEntityId(), tenantId: context.tenantId, reportId: created.id, ...line })));
-      return created;
+      if (replayed) { if (replayed.checksum !== checksum) throw new ConflictException("Advertising report idempotency key was reused"); return advertisingReportView(tx, replayed); }
+      const [created] = await tx.insert(advertisingReports).values({ id: createEntityId(), tenantId: current.tenantId, provider: input.provider, accountId: input.accountId, externalReportId: input.externalReportId, scopeKey: input.scopeKey, periodStart: new Date(input.periodStart), periodEnd: new Date(input.periodEnd), attributionWindowDays: input.attributionWindowDays, sourceCurrency: input.sourceCurrency, observedAt: new Date(input.observedAt), checksum, idempotencyKey: input.idempotencyKey, recordedBy: current.userId }).returning();
+      await tx.insert(advertisingMetricLines).values(lines.map((line) => ({ id: createEntityId(), tenantId: current.tenantId, reportId: created.id, ...line })));
+      const view = await advertisingReportView(tx, created);
+      await this.audit.recordInTransaction(tx, current, { action: "customer_intelligence.advertising.record", resourceType: "advertising_report", resourceId: view.id, result: "success", metadata: { provider: view.provider, lineCount: view.lines.length } });
+      return view;
     });
-    const view = await withTenant(this.database.db, context, (tx) => advertisingReportView(tx, report));
-    await this.audit.record(context, { action: "customer_intelligence.advertising.record", resourceType: "advertising_report", resourceId: view.id, result: "success", metadata: { provider: view.provider, lineCount: view.lines.length } });
-    return view;
   }
 
   async recordCustomerSignal(context: TenantContext, raw: RecordCustomerSignalInput): Promise<CustomerSignalView> {
@@ -137,9 +144,15 @@ export class CustomerIntelligenceService {
 
   async workspace(context: TenantContext): Promise<CustomerIntelligenceWorkspaceView> {
     return withTenant(this.database.db, context, async (tx) => {
+      const current = await currentAdvertisingAuthority(tx, context);
+      authorize(current, Permission.CustomerIntelligenceRead);
+      // The combined historical VOC/advertising projection has no trusted
+      // per-object owner/team binding. A separate operation cannot widen Read.
+      if (permissionScope(current, Permission.CustomerIntelligenceRead) !== "tenant")
+        throw new ForbiddenError(Permission.CustomerIntelligenceRead, "outside_data_scope");
       const [reports, signals, definitions, analyses] = await Promise.all([tx.select().from(advertisingReports).orderBy(desc(advertisingReports.recordedAt)).limit(100), tx.select().from(customerSignalFacts).orderBy(desc(customerSignalFacts.occurredAt)).limit(250), tx.select().from(vocDefinitions).orderBy(asc(vocDefinitions.name)).limit(100), tx.select().from(vocAnalysisRuns).orderBy(desc(vocAnalysisRuns.calculatedAt)).limit(100)]);
       return CustomerIntelligenceWorkspaceViewSchema.parse({ advertisingReports: await Promise.all(reports.map((row) => advertisingReportView(tx, row))), signals: signals.map(signalView), definitions: await Promise.all(definitions.map((row) => vocDefinitionView(tx, row))), analyses: await Promise.all(analyses.map((row) => analysisView(tx, row))) });
-    });
+    }, { isolationLevel: "repeatable read", accessMode: "read write" });
   }
 }
 
@@ -169,7 +182,7 @@ function signalView(row: typeof customerSignalFacts.$inferSelect): CustomerSigna
 async function advertisingReportView(tx: TenantTransaction, row: typeof advertisingReports.$inferSelect): Promise<AdvertisingReportView> {
   const lines = await tx.select().from(advertisingMetricLines).where(eq(advertisingMetricLines.reportId, row.id));
   const views: AdvertisingMetricLineView[] = lines.map((line) => AdvertisingMetricLineViewSchema.parse({ id: line.id, lineKey: line.lineKey, entityLevel: line.entityLevel, externalCampaignId: line.externalCampaignId, externalAdGroupId: line.externalAdGroupId, normalizedTerm: line.normalizedTerm, listingId: line.listingId, skuId: line.skuId, impressions: line.impressions, clicks: line.clicks, orders: line.orders, spendMinor: line.spendMinor, salesMinor: line.salesMinor, ctrBps: line.impressions ? Math.round((line.clicks * 10000) / line.impressions) : null, conversionBps: line.clicks ? Math.round((line.orders * 10000) / line.clicks) : null, roasBps: line.spendMinor ? Math.round((line.salesMinor * 10000) / line.spendMinor) : null }));
-  const totals = views.reduce((sum, line) => ({ impressions: sum.impressions + line.impressions, clicks: sum.clicks + line.clicks, orders: sum.orders + line.orders, spendMinor: sum.spendMinor + line.spendMinor, salesMinor: sum.salesMinor + line.salesMinor }), { impressions: 0, clicks: 0, orders: 0, spendMinor: 0, salesMinor: 0 });
+  const totals = new Set(views.map((line) => line.entityLevel)).size === 1 ? sumAdvertisingMetrics(views) : null;
   return AdvertisingReportViewSchema.parse({ id: row.id, provider: row.provider, accountId: row.accountId, externalReportId: row.externalReportId, scopeKey: row.scopeKey, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(), attributionWindowDays: row.attributionWindowDays, sourceCurrency: row.sourceCurrency, observedAt: row.observedAt.toISOString(), checksum: row.checksum, recordedAt: row.recordedAt.toISOString(), totals, lines: views });
 }
 async function vocDefinitionView(tx: TenantTransaction, row: typeof vocDefinitions.$inferSelect) { const [version] = await tx.select().from(vocDefinitionVersions).where(and(eq(vocDefinitionVersions.definitionId, row.id), eq(vocDefinitionVersions.versionNumber, row.currentVersion))).limit(1); if (!version) throw new NotFoundException("VOC definition version not found"); return VocDefinitionViewSchema.parse({ id: row.id, name: row.name, currentVersion: row.currentVersion, status: row.status, version: VocDefinitionVersionViewSchema.parse({ id: version.id, definitionId: version.definitionId, versionNumber: version.versionNumber, sourceWeights: version.sourceWeights, minimumOccurrences: version.minimumOccurrences, reasonCode: version.reasonCode, checksum: version.checksum, createdAt: version.createdAt.toISOString() }), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }); }

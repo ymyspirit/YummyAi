@@ -1,0 +1,39 @@
+{
+  "clientId": "yummyai-agent-mcp",
+  "name": "YummyAI ERP local Agent",
+  "protocol": "openid-connect",
+  "enabled": true,
+  "publicClient": true,
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": false,
+  "implicitFlowEnabled": false,
+  "serviceAccountsEnabled": false,
+  "fullScopeAllowed": false,
+  "redirectUris": ["http://127.0.0.1:12766/callback"],
+  "webOrigins": [],
+  "attributes": { "pkce.code.challenge.method": "S256" },
+  "protocolMappers": [
+    {
+      "name": "ERP tenant membership attribute",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-usermodel-attribute-mapper",
+      "config": {
+        "user.attribute": "tenant_id",
+        "claim.name": "tenant_id",
+        "jsonType.label": "String",
+        "access.token.claim": "true",
+        "id.token.claim": "true"
+      }
+    },
+    {
+      "name": "ERP API audience",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "config": {
+        "included.custom.audience": "yummyai-api",
+        "access.token.claim": "true",
+        "id.token.claim": "false"
+      }
+    }
+  ]
+}

@@ -217,7 +217,7 @@ describe("catalog database", () => {
 });
 
 function tenant(tenantId: string, userId: string): TenantContext {
-  return { tenantId, userId, permissions: [Permission.AssetRead], dataScope: "tenant" };
+  return { tenantId, userId, permissions: [Permission.AssetRead, Permission.ProductRead, Permission.ProductWrite, Permission.ResearchRead], dataScope: "tenant" };
 }
 
 function customProfile(): CustomProductProfileV1 {

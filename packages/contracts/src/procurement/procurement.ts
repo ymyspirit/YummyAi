@@ -1,14 +1,17 @@
 import { z } from "zod";
+import { NonnegativeStockQuantitySchema, PositiveStockQuantitySchema, StockQuantityViewSchema } from "@yummyai/contracts/inventory/quantity-schema";
+import { addStockQuantity, compareStockQuantity, stockQuantityMatchesUnit, stockQuantityWithinCommandLimit } from "@yummyai/contracts/inventory/quantity";
+import { ProcurementUnitSchema, ProcurementStockBasisSchema } from "@yummyai/contracts/procurement/measurement";
+export { ProcurementUnitSchema } from "@yummyai/contracts/procurement/measurement";
 
-const EntityIdSchema = z.uuidv7();
+const EntityIdSchema = z.uuidv7().transform(value => value.toLowerCase());
 const IdempotencyKeySchema = z.string().trim().min(8).max(200);
 const CodeSchema = z.string().trim().min(1).max(64).regex(/^[A-Z0-9][A-Z0-9._-]*$/);
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
-const QuantitySchema = z.number().int().positive().max(2_147_483_647);
-const NonNegativeQuantitySchema = z.number().int().nonnegative().max(2_147_483_647);
+const QuantitySchema = PositiveStockQuantitySchema;
+const NonNegativeQuantitySchema = NonnegativeStockQuantitySchema.refine(stockQuantityWithinCommandLimit);
 const MoneyMinorSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
-export const ProcurementUnitSchema = z.enum(["each", "pair", "set", "meter", "gram", "kilogram"]);
 export const ProcurementRequisitionStatusSchema = z.enum(["draft", "rfq_open", "ordered", "cancelled"]);
 export const ProcurementRfqStatusSchema = z.enum(["open", "closed", "cancelled"]);
 export const InventoryPurchaseOrderStatusSchema = z.enum([
@@ -33,7 +36,11 @@ export const ProcurementRequestLineSchema = z.object({
 
 export const ProcurementPurchaseLineSchema = ProcurementRequestLineSchema.extend({
   unitCostMinor: MoneyMinorSchema,
+  priceBasisQuantity: QuantitySchema.optional(),
 }).strict();
+
+export const ProcurementPurchaseLineSnapshotSchema = ProcurementPurchaseLineSchema.extend({ stockBasis: ProcurementStockBasisSchema.optional() }).strict();
+export type ProcurementPurchaseLineSnapshot = z.infer<typeof ProcurementPurchaseLineSnapshotSchema>;
 
 export const CreateProcurementRequisitionInputSchema = z.object({
   code: CodeSchema,
@@ -57,6 +64,7 @@ export const SupplierQuoteLineSchema = z.object({
   lineKey: CodeSchema,
   unitCostMinor: MoneyMinorSchema,
   minimumOrderQuantity: QuantitySchema,
+  priceBasisQuantity: QuantitySchema.optional(),
   leadTimeDays: z.number().int().nonnegative().max(3650),
 }).strict();
 
@@ -96,19 +104,19 @@ export const ReviewInventoryPurchaseOrderInputSchema = z.object({
 
 export const ProcurementReceiptLineInputSchema = z.object({
   lineKey: CodeSchema,
-  receivedQuantity: NonNegativeQuantitySchema,
-  rejectedQuantity: NonNegativeQuantitySchema,
+  receivedQuantity: NonnegativeStockQuantitySchema.refine(stockQuantityWithinCommandLimit),
+  rejectedQuantity: NonnegativeStockQuantitySchema.refine(stockQuantityWithinCommandLimit),
   rejectionReasonCode: CodeSchema.nullable(),
   lotCode: CodeSchema.nullable(),
   expiresAt: z.iso.datetime().nullable(),
 }).strict().superRefine((value, context) => {
-  if (value.receivedQuantity + value.rejectedQuantity <= 0) {
+  if (compareStockQuantity(addStockQuantity(value.receivedQuantity, value.rejectedQuantity), 0) <= 0) {
     context.addIssue({ code: "custom", message: "Receipt line must receive or reject stock" });
   }
-  if (value.receivedQuantity > 0 && !value.lotCode) {
+  if (compareStockQuantity(value.receivedQuantity, 0) > 0 && !value.lotCode) {
     context.addIssue({ code: "custom", message: "Received stock requires a lot code", path: ["lotCode"] });
   }
-  if ((value.rejectedQuantity > 0) !== (value.rejectionReasonCode !== null)) {
+  if ((compareStockQuantity(value.rejectedQuantity, 0) > 0) !== (value.rejectionReasonCode !== null)) {
     context.addIssue({
       code: "custom",
       message: "Rejected quantity and reason code must both be present or absent",
@@ -120,7 +128,7 @@ export const ProcurementReceiptLineInputSchema = z.object({
 export const RecordProcurementReceiptInputSchema = z.object({
   expectedVersion: z.number().int().positive(),
   receivedAt: z.iso.datetime(),
-  externalReference: z.string().trim().min(1).max(200).nullable(),
+  externalReference: z.string().trim().min(1).max(2000).nullable(),
   lines: z.array(ProcurementReceiptLineInputSchema).min(1).max(200),
   idempotencyKey: IdempotencyKeySchema,
 }).strict().superRefine((value, context) => uniqueLineKeys(value.lines, context));
@@ -129,9 +137,11 @@ export const ProcurementInvoiceLineInputSchema = z.object({
   lineKey: CodeSchema,
   invoicedQuantity: QuantitySchema,
   unitCostMinor: MoneyMinorSchema,
+  priceBasisQuantity: QuantitySchema.optional(),
 }).strict();
 
 export const RecordProcurementInvoiceInputSchema = z.object({
+  expectedVersion: z.number().int().positive().optional(),
   invoiceNumber: z.string().trim().min(1).max(100),
   currency: CurrencySchema,
   issuedAt: z.iso.datetime(),
@@ -169,12 +179,14 @@ export const ProcurementStockItemViewSchema = z.object({
   code: CodeSchema,
   name: z.string(),
   baseUnit: ProcurementUnitSchema,
+  status: z.enum(["active", "inactive"]).optional(),
 });
 
 export const ProcurementLocationViewSchema = z.object({
   id: EntityIdSchema,
   code: CodeSchema,
   name: z.string(),
+  status: z.enum(["active", "inactive"]).optional(),
 });
 
 export const ProcurementRequisitionViewSchema = z.object({
@@ -205,7 +217,7 @@ export const ProcurementSupplierQuoteViewSchema = z.object({
   version: z.number().int().positive(),
   currency: CurrencySchema,
   validUntil: z.iso.datetime(),
-  lines: z.array(SupplierQuoteLineSchema),
+  lines: z.array(SupplierQuoteLineSchema.extend({ unit: ProcurementUnitSchema.optional() })),
   totalMinor: MoneyMinorSchema,
   createdAt: z.iso.datetime(),
 });
@@ -216,12 +228,15 @@ export const InventoryPurchaseOrderViewSchema = z.object({
   supplierId: EntityIdSchema,
   requisitionId: EntityIdSchema.nullable(),
   quoteId: EntityIdSchema.nullable(),
+  sourceSupplyVersionId: EntityIdSchema.nullable().optional(),
+  purpose: z.enum(["general", "custom_order", "fba_replenishment"]).optional(),
   status: InventoryPurchaseOrderStatusSchema,
+  receivingPolicy: z.literal("inspection_required").nullable().optional(),
   currentVersion: z.number().int().positive(),
   currency: CurrencySchema,
   expectedAt: z.iso.datetime(),
   totalMinor: MoneyMinorSchema,
-  lines: z.array(ProcurementPurchaseLineSchema),
+  lines: z.array(ProcurementPurchaseLineSnapshotSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -230,12 +245,16 @@ export const ProcurementReceiptLineViewSchema = z.object({
   lineKey: CodeSchema,
   stockItemId: EntityIdSchema,
   destinationLocationId: EntityIdSchema,
-  receivedQuantity: NonNegativeQuantitySchema,
-  rejectedQuantity: NonNegativeQuantitySchema,
+  receivedQuantity: NonnegativeStockQuantitySchema,
+  rejectedQuantity: NonnegativeStockQuantitySchema,
   rejectionReasonCode: CodeSchema.nullable(),
   lotId: EntityIdSchema.nullable(),
   movementId: EntityIdSchema.nullable(),
   unit: ProcurementUnitSchema,
+  stockUnit: ProcurementUnitSchema.nullable().optional(),
+  stockReceivedQuantity: NonnegativeStockQuantitySchema.nullable().optional(),
+  stockRejectedQuantity: NonnegativeStockQuantitySchema.nullable().optional(),
+  priceBasisQuantity: QuantitySchema.nullable().optional(),
 });
 
 export const ProcurementReceiptViewSchema = z.object({
@@ -255,11 +274,17 @@ export const ProcurementInvoiceViewSchema = z.object({
   invoiceNumber: z.string(),
   currency: CurrencySchema,
   totalMinor: MoneyMinorSchema,
-  varianceMinor: z.number().int(),
+  varianceMinor: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable(),
+  comparisonCurrency: CurrencySchema.nullable().optional(),
   status: ProcurementInvoiceStatusSchema,
   issuedAt: z.iso.datetime(),
   createdAt: z.iso.datetime(),
+  allocationStatus: z.enum(["complete", "reconciliation_required", "legacy_unknown"]).optional(),
+  lines: z.array(z.object({ lineKey: CodeSchema, invoicedQuantity: QuantitySchema, unit: ProcurementUnitSchema.nullable(),
+    unitCostMinor: MoneyMinorSchema, priceBasisQuantity: QuantitySchema.nullable(), allocatedQuantity: NonnegativeStockQuantitySchema.nullable(),
+    varianceMinor: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable() })).optional(),
 });
+export type ProcurementInvoiceView = z.infer<typeof ProcurementInvoiceViewSchema>;
 
 export const ReplenishmentPolicyViewSchema = z.object({
   id: EntityIdSchema,
@@ -281,8 +306,8 @@ export const ReplenishmentSuggestionViewSchema = z.object({
   policyVersion: z.number().int().positive(),
   stockItemId: EntityIdSchema,
   locationId: EntityIdSchema,
-  availableQuantity: z.number().int(),
-  inTransitQuantity: NonNegativeQuantitySchema,
+  availableQuantity: StockQuantityViewSchema,
+  inTransitQuantity: NonnegativeStockQuantitySchema,
   suggestedQuantity: NonNegativeQuantitySchema,
   status: ReplenishmentSuggestionStatusSchema,
   createdAt: z.iso.datetime(),
@@ -319,10 +344,16 @@ export type ProcurementWorkspaceView = z.infer<typeof ProcurementWorkspaceViewSc
 export type InventoryPurchaseOrderView = z.infer<typeof InventoryPurchaseOrderViewSchema>;
 
 function uniqueLineKeys(
-  lines: Array<{ lineKey: string }>,
+  lines: Array<{ lineKey: string; quantity?: number | string; unit?: z.infer<typeof ProcurementUnitSchema>; priceBasisQuantity?: number | string }>,
   context: z.RefinementCtx,
 ) {
   if (new Set(lines.map((line) => line.lineKey)).size !== lines.length) {
     context.addIssue({ code: "custom", message: "Line keys must be unique", path: ["lines"] });
+  }
+  for (const [index, line] of lines.entries()) {
+    if (line.unit && line.quantity !== undefined && !stockQuantityMatchesUnit(line.quantity, line.unit))
+      context.addIssue({ code: "custom", path: ["lines", index, "quantity"], message: "Each, pair and set quantities must be whole numbers" });
+    if (line.unit && line.priceBasisQuantity !== undefined && !stockQuantityMatchesUnit(line.priceBasisQuantity, line.unit))
+      context.addIssue({ code: "custom", path: ["lines", index, "priceBasisQuantity"], message: "Discrete pricing quantities must be whole numbers" });
   }
 }

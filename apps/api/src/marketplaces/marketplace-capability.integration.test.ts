@@ -14,6 +14,9 @@ import {
   marketplaceAccounts,
   marketplaceCapabilitySnapshots,
   marketplaceCredentials,
+  memberships,
+  membershipRoles,
+  roles,
   migrateDatabase,
   withTenant,
 } from "@yummyai/database";
@@ -63,10 +66,16 @@ class FakeCapabilityGateway implements MarketplaceCapabilityGateway {
   error: Error | null = null;
   next: MarketplaceCapabilitySyncResult = capabilityResult();
 
-  sync(): Promise<MarketplaceCapabilitySyncResult> {
+  async sync(...args: Parameters<MarketplaceCapabilityGateway["sync"]>): Promise<MarketplaceCapabilitySyncResult> {
     this.calls += 1;
-    if (this.error) return Promise.reject(this.error);
-    return Promise.resolve(this.next);
+    if (this.error) throw this.error;
+    const hooks = args[3];
+    if (this.next.refreshedCredential) {
+      await hooks?.beforeCredentialRefresh();
+      await hooks?.checkpointCredential(this.next.refreshedCredential, this.next.refreshedCredentialExpiresAt!);
+    }
+    await hooks?.beforeRead();
+    return this.next;
   }
 }
 
@@ -100,6 +109,13 @@ describe("marketplace capability snapshots", () => {
       `insert into app_users (id, oidc_subject, email, display_name) values ($1, $2, $3, 'Capability Admin')`,
       [userId, `capability-${userId}`, `${userId}@example.test`],
     );
+    for (const actor of [context, otherContext]) await withTenant(database.db, actor, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId: actor.tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: actor.tenantId, name: "Capability fixture " + roleId,
+        permissions: [...actor.permissions], dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: actor.tenantId, membershipId, roleId });
+    });
     accountId = (await accountService.create(context, CreateMarketplaceAccountInputSchema.parse({
       platform: "amazon",
       displayName: "Amazon capability fixture",

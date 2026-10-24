@@ -54,6 +54,8 @@ export class ModelRouter {
       if (!provider) continue;
       const resolvedRequest = { ...request, providerModel: target.providerModel };
       const estimate = await provider.estimate(resolvedRequest);
+      if (estimate.costUsd === null || request.maxCostUsd === null)
+        throw new Error("Budgeted model routing requires configured pricing and a cost cap");
       const reservation = await this.budgets.reserve({
         tenantId: context.tenantId,
         taskType: request.taskType,
@@ -63,7 +65,8 @@ export class ModelRouter {
 
       try {
         const result = await executeWithTimeout(provider, resolvedRequest, target.timeoutMs, signal);
-        await reservation.commit(result.costUsd);
+        // Unknown billed usage must retain the reservation, never become a free call.
+        if (result.costUsd !== null) await reservation.commit(result.costUsd);
         return result;
       } catch (error) {
         await reservation.release();

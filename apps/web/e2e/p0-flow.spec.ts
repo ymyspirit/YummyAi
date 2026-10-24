@@ -13,11 +13,8 @@ import {
 } from "@yummyai/database";
 import JSZip from "jszip";
 
-const PRIMARY_NAVIGATION_LABELS = [
-  "运营总览", "研究资料库", "竞争店铺", "画图设计", "POD 作图中心", "设计校样", "批量套图",
-  "产品目录", "工作流中心", "刊登控制台", "店铺运营", "订单履约", "库存台账", "采购补货",
-  "供应商绩效", "渠道库存", "财务利润", "广告与 VOC", "数据与集成",
-] as const;
+import { NAVIGATION_GROUPS, PRIMARY_NAVIGATION_LABELS } from "../src/features/navigation/navigation-registry";
+import { apiFetch } from "../src/server-api";
 
 test("capture to reviewed export", async ({ page }) => {
   await page.goto("/");
@@ -34,7 +31,7 @@ test("capture to reviewed export", async ({ page }) => {
 
   const reportId = createEntityId();
   await page.goto(`/analysis/${reportId}`);
-  await expect(page.getByText(/分析报告|POSITIONING|证据/i).first()).toBeVisible();
+  await expect(page.getByRole("main").getByText(/分析报告|POSITIONING|证据/i).first()).toBeVisible();
 
   await page.goto("/products");
   await expect(page.getByText("轻定制旅行礼品杯", { exact: true })).toBeVisible();
@@ -184,7 +181,7 @@ test("research library keeps unified product-type filters through paging and bul
         scrollWidth: element.scrollWidth,
         tableWidth: element.querySelector("table")?.getBoundingClientRect().width ?? 0,
       }));
-    expect(tableScrollMetrics.scrollWidth).toBeGreaterThan(tableScrollMetrics.clientWidth);
+    expect(tableScrollMetrics.scrollWidth).toBeLessThanOrEqual(tableScrollMetrics.clientWidth);
     expect(
       await page
         .locator(".item-title:visible")
@@ -218,9 +215,15 @@ test("primary navigation stays complete across ERP pages", async ({ page }) => {
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
   for (const label of PRIMARY_NAVIGATION_LABELS.slice(1)) {
-    await expect(navigation.getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+    await expect(navigation.getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+    const group = NAVIGATION_GROUPS.find((entry) => entry.items.some((item) => item.label === label))!;
+    const toggle = page.getByRole("group", { name: "业务模块", exact: true }).getByRole("button", { name: group.label, exact: true });
+    if (group.id !== "overview" && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
     await navigation.getByRole("link", { name: label }).click();
-    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(
+    const destination = group.items.find((item) => item.label === label)!;
+    await expect(page).toHaveURL((url) => url.pathname === destination.href);
+    await expect(navigation.locator('[aria-current="page"]')).toHaveText(label);
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(
       PRIMARY_NAVIGATION_LABELS.length,
     );
   }
@@ -228,8 +231,8 @@ test("primary navigation stays complete across ERP pages", async ({ page }) => {
 
 test("P2 order inbox uses the real public projection", async ({ page }) => {
   await page.goto("/orders");
-  await expect(page.getByRole("heading", { name: "订单履约" })).toBeVisible();
-  await expect(page.getByText("订单流水线")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "订单中心", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "各环节状态" })).toBeVisible();
   await expect(page.getByText(/买家姓名|详细地址|电子邮箱/)).toHaveCount(0);
 });
 
@@ -282,20 +285,16 @@ test(
   "Store ledger drills into layered real-data operations without page overflow",
   async ({ page }) => {
     const storeName = `E2E Store ${createEntityId().slice(-8)}`;
-    const tenantId = "019f7600-0000-7000-8000-000000000001";
-    const database = connectDatabase();
+    let storeId: string | undefined;
     try {
       await page.goto("/stores");
       await expect(page.getByRole("heading", { name: "店铺运营" })).toBeVisible();
-      const createPanel = page.locator("details.store-create-panel");
-      if (!(await createPanel.evaluate((element) => (element as HTMLDetailsElement).open))) {
-        await page.getByText("新增店铺连接", { exact: true }).click();
-      }
-      await page.getByLabel("连接名称").fill(storeName);
-      await page.getByRole("button", { name: "创建连接" }).click();
-      await expect(page.getByText(storeName, { exact: true })).toBeVisible();
-      await page.getByRole("link", { name: `打开 ${storeName} 店铺详情` }).click();
+      await page.getByRole("button", { name: "新增店铺", exact: true }).click();
+      await page.getByLabel("店铺名称", { exact: true }).fill(storeName);
+      await page.getByLabel("平台", { exact: true }).selectOption("etsy");
+      await page.getByRole("button", { name: "创建店铺档案" }).click();
       await expect(page.getByRole("heading", { name: storeName })).toBeVisible();
+      storeId = page.url().split("/").at(-1);
       for (const label of ["概览", "Listings", "订单", "健康与能力", "设置"]) {
         await expect(page.getByRole("heading", { name: label })).toBeVisible();
       }
@@ -316,22 +315,12 @@ test(
           .evaluate((element) => element.scrollWidth >= element.clientWidth),
       ).toBe(true);
     } finally {
-      await database.client.begin(async (tx) => {
-        await tx.unsafe(
-          `delete from audit_events
-            where tenant_id = $1
-              and entity_id in (
-                select id from marketplace_accounts
-                where tenant_id = $1 and display_name = $2
-              )`,
-          [tenantId, storeName],
-        );
-        await tx.unsafe(
-          `delete from marketplace_accounts where tenant_id = $1 and display_name = $2`,
-          [tenantId, storeName],
-        );
-      });
-      await database.client.end();
+      if (storeId) {
+        const response = await apiFetch(`${process.env.API_BASE_URL!.replace(/\/$/, "")}/v1/marketplace-accounts/${storeId}`, {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }),
+        });
+        expect(response.ok).toBe(true);
+      }
     }
   },
 );
@@ -355,7 +344,7 @@ test("Listing editor keeps one live draft and a local-only preview", async ({ pa
 test("P3 inventory workspace uses the real projection", async ({ page }) => {
   await page.goto("/inventory");
   await expect(page.getByRole("heading", { name: "库存台账" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(
     page.getByLabel("库存桶汇总").or(page.getByText("还没有库存事实", { exact: true })),
@@ -365,7 +354,7 @@ test("P3 inventory workspace uses the real projection", async ({ page }) => {
 test("P3 procurement workspace uses the real projection", async ({ page }) => {
   await page.goto("/procurement");
   await expect(page.getByRole("heading", { name: "采购与补货" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(
     page.getByLabel("采购运营摘要").or(page.getByText("还没有采购证据", { exact: true })),
@@ -375,7 +364,7 @@ test("P3 procurement workspace uses the real projection", async ({ page }) => {
 test("P3 supplier performance workspace keeps score gaps explicit", async ({ page }) => {
   await page.goto("/supplier-performance");
   await expect(page.getByRole("heading", { name: "供应商绩效" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(
     page.getByLabel("供应商绩效摘要").or(page.getByText("还没有供应商", { exact: true })),
@@ -393,7 +382,7 @@ test("P3 supplier performance workspace keeps score gaps explicit", async ({ pag
 test("P3 channel inventory workspace uses traceable real projections", async ({ page }) => {
   await page.goto("/channel-inventory");
   await expect(page.getByRole("heading", { name: "渠道库存" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(
     page.getByLabel("渠道库存运营摘要").or(page.getByText("还没有渠道库存证据", { exact: true })),
@@ -402,7 +391,9 @@ test("P3 channel inventory workspace uses traceable real projections", async ({ 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.getByRole("heading", { name: "渠道库存" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await page.getByRole("button", { name: "打开全部导航" }).click();
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await page.getByRole("button", { name: "关闭导航" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   expect(await page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -412,7 +403,7 @@ test("P3 channel inventory workspace uses traceable real projections", async ({ 
 test("P3 finance workspace keeps incomplete evidence explicit", async ({ page }) => {
   await page.goto("/finance");
   await expect(page.getByRole("heading", { name: "财务与利润" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(
     page.getByLabel("财务证据摘要").or(page.getByText("还没有财务证据", { exact: true })),
@@ -430,7 +421,7 @@ test("P3 finance workspace keeps incomplete evidence explicit", async ({ page })
 test("P3 customer intelligence keeps consent and mutation boundaries explicit", async ({ page }) => {
   await page.goto("/customer-intelligence");
   await expect(page.getByRole("heading", { name: "广告与 VOC" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
   await expect(page.getByLabel("广告与 VOC 摘要").or(page.getByText("还没有广告或客户信号证据", { exact: true }))).toBeVisible();
 
@@ -444,7 +435,7 @@ test("P3 customer intelligence keeps consent and mutation boundaries explicit", 
 test("P3 operating cockpit keeps gaps and delivery evidence explicit", async ({ page }) => {
   await page.goto("/operating-cockpit");
   await expect(page.getByRole("heading", { name: "运营驾驶舱" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link")).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_NAVIGATION_LABELS.length);
   await expect(page.getByLabel("运营驾驶舱摘要").or(page.getByText("运营信号暂不可用", { exact: true }))).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });

@@ -1,0 +1,1520 @@
+{
+  "scope": "documentation-and-standalone-design-prototype-only",
+  "version": "1.1.127",
+  "date": "2026-10-22",
+  "prototypeVersion": "1.0",
+  "checks": [
+    {
+      "name": "register version matches metadata",
+      "status": "pass",
+      "detail": {
+        "version": "1.1.127",
+        "date": "2026-10-22"
+      }
+    },
+    {
+      "name": "requirements count and unique sequence",
+      "status": "pass",
+      "detail": {
+        "count": 48,
+        "expected": 48
+      }
+    },
+    {
+      "name": "backlog count and unique sequence",
+      "status": "pass",
+      "detail": {
+        "count": 54,
+        "expected": 54
+      }
+    },
+    {
+      "name": "tests count and unique sequence",
+      "status": "pass",
+      "detail": {
+        "count": 24,
+        "expected": 24
+      }
+    },
+    {
+      "name": "detailed acceptance version and unique IDs",
+      "status": "pass",
+      "detail": {
+        "count": 32
+      }
+    },
+    {
+      "name": "H01 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B09"
+        ],
+        "tests": [
+          "T06"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H02 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B09"
+        ],
+        "tests": [
+          "T06"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H03 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28"
+        ],
+        "tests": [
+          "T06"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H04 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28",
+          "B32"
+        ],
+        "tests": [
+          "T06"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H05 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B09",
+          "B28"
+        ],
+        "tests": [
+          "T01",
+          "T03",
+          "T05"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H06 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28"
+        ],
+        "tests": [
+          "T06",
+          "T21"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H07 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14",
+          "B28"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H08 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B26",
+          "B32"
+        ],
+        "tests": [
+          "T19",
+          "T20"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H09 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B31"
+        ],
+        "tests": [
+          "T05",
+          "T10"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H10 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14",
+          "B27"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H11 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28",
+          "B32"
+        ],
+        "tests": [
+          "T05",
+          "T10"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "H12 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B27"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "15-agent-harness-specification.md"
+      }
+    },
+    {
+      "name": "K01 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T07"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K02 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T04",
+          "T05"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K03 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T05"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K04 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T01",
+          "T03"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K05 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T05",
+          "T21"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K06 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T05"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K07 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14",
+          "B27"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K08 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T19",
+          "T21"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K09 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T01",
+          "T03"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K10 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14"
+        ],
+        "tests": [
+          "T03"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K11 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14",
+          "B28"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "K12 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B14",
+          "B27"
+        ],
+        "tests": [
+          "T21"
+        ],
+        "source": "16-knowledge-governance-specification.md"
+      }
+    },
+    {
+      "name": "C01 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B29"
+        ],
+        "tests": [
+          "T03",
+          "T05",
+          "T20"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C02 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B18",
+          "B32"
+        ],
+        "tests": [
+          "T06",
+          "T20"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C03 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B18",
+          "B31"
+        ],
+        "tests": [
+          "T05",
+          "T10"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C04 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B32"
+        ],
+        "tests": [
+          "T06",
+          "T10"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C05 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28",
+          "B30"
+        ],
+        "tests": [
+          "T05",
+          "T10"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C06 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B28",
+          "B32"
+        ],
+        "tests": [
+          "T06",
+          "T10"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C07 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B29"
+        ],
+        "tests": [
+          "T03",
+          "T20",
+          "T24"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "C08 detailed acceptance links",
+      "status": "pass",
+      "detail": {
+        "workPackages": [
+          "B31"
+        ],
+        "tests": [
+          "T10",
+          "T22"
+        ],
+        "source": "17-creative-capability-migration.md"
+      }
+    },
+    {
+      "name": "B01 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R43"
+        ],
+        "tests": [
+          "T24"
+        ]
+      }
+    },
+    {
+      "name": "B02 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R06",
+          "R46",
+          "R48"
+        ],
+        "tests": [
+          "T21"
+        ]
+      }
+    },
+    {
+      "name": "B03 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R07",
+          "R09",
+          "R23",
+          "R45"
+        ],
+        "tests": [
+          "T04",
+          "T11"
+        ]
+      }
+    },
+    {
+      "name": "B04 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R11",
+          "R15",
+          "R46"
+        ],
+        "tests": [
+          "T22"
+        ]
+      }
+    },
+    {
+      "name": "B05 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R43"
+        ],
+        "tests": [
+          "T24"
+        ]
+      }
+    },
+    {
+      "name": "B06 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R01"
+        ],
+        "tests": [
+          "T01"
+        ]
+      }
+    },
+    {
+      "name": "B07 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R03",
+          "R37"
+        ],
+        "tests": [
+          "T04"
+        ]
+      }
+    },
+    {
+      "name": "B08 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R18",
+          "R40"
+        ],
+        "tests": [
+          "T03",
+          "T07"
+        ]
+      }
+    },
+    {
+      "name": "B09 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R39"
+        ],
+        "tests": [
+          "T01",
+          "T03",
+          "T05",
+          "T06"
+        ]
+      }
+    },
+    {
+      "name": "B10 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R07",
+          "R37",
+          "R45"
+        ],
+        "tests": [
+          "T04",
+          "T09"
+        ]
+      }
+    },
+    {
+      "name": "B11 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R11",
+          "R45"
+        ],
+        "tests": [
+          "T09",
+          "T22"
+        ]
+      }
+    },
+    {
+      "name": "B12 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R42"
+        ],
+        "tests": [
+          "T20"
+        ]
+      }
+    },
+    {
+      "name": "B13 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R05"
+        ],
+        "tests": [
+          "T03",
+          "T08"
+        ]
+      }
+    },
+    {
+      "name": "B14 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R04"
+        ],
+        "tests": [
+          "T01",
+          "T03",
+          "T04",
+          "T05",
+          "T07",
+          "T19",
+          "T21"
+        ]
+      }
+    },
+    {
+      "name": "B15 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R08",
+          "R10"
+        ],
+        "tests": [
+          "T03",
+          "T05"
+        ]
+      }
+    },
+    {
+      "name": "B16 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R09",
+          "R10"
+        ],
+        "tests": [
+          "T05"
+        ]
+      }
+    },
+    {
+      "name": "B17 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R06"
+        ],
+        "tests": [
+          "T17"
+        ]
+      }
+    },
+    {
+      "name": "B18 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R13"
+        ],
+        "tests": [
+          "T03",
+          "T05",
+          "T06",
+          "T10",
+          "T20"
+        ]
+      }
+    },
+    {
+      "name": "B19 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R01",
+          "R03",
+          "R10",
+          "R13",
+          "R14",
+          "R37"
+        ],
+        "tests": [
+          "T01",
+          "T04",
+          "T05",
+          "T20",
+          "T22"
+        ]
+      }
+    },
+    {
+      "name": "B20 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R14"
+        ],
+        "tests": [
+          "T05",
+          "T08"
+        ]
+      }
+    },
+    {
+      "name": "B21 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R15"
+        ],
+        "tests": [
+          "T01",
+          "T06",
+          "T22"
+        ]
+      }
+    },
+    {
+      "name": "B22 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R16"
+        ],
+        "tests": [
+          "T07",
+          "T08"
+        ]
+      }
+    },
+    {
+      "name": "B23 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R16",
+          "R18"
+        ],
+        "tests": [
+          "T07",
+          "T08"
+        ]
+      }
+    },
+    {
+      "name": "B24 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R17"
+        ],
+        "tests": [
+          "T05",
+          "T08"
+        ]
+      }
+    },
+    {
+      "name": "B25 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R19",
+          "R37"
+        ],
+        "tests": [
+          "T08",
+          "T20"
+        ]
+      }
+    },
+    {
+      "name": "B26 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R36"
+        ],
+        "tests": [
+          "T19"
+        ]
+      }
+    },
+    {
+      "name": "B27 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R20"
+        ],
+        "tests": [
+          "T21"
+        ]
+      }
+    },
+    {
+      "name": "B28 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R20",
+          "R39"
+        ],
+        "tests": [
+          "T01",
+          "T03",
+          "T05",
+          "T06",
+          "T10",
+          "T21"
+        ]
+      }
+    },
+    {
+      "name": "B29 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R21",
+          "R37"
+        ],
+        "tests": [
+          "T03",
+          "T05",
+          "T10",
+          "T20",
+          "T24"
+        ]
+      }
+    },
+    {
+      "name": "B30 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R21"
+        ],
+        "tests": [
+          "T10"
+        ]
+      }
+    },
+    {
+      "name": "B31 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R22"
+        ],
+        "tests": [
+          "T05",
+          "T10",
+          "T22"
+        ]
+      }
+    },
+    {
+      "name": "B32 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R20",
+          "R21",
+          "R22"
+        ],
+        "tests": [
+          "T03",
+          "T05",
+          "T06",
+          "T10",
+          "T19",
+          "T20"
+        ]
+      }
+    },
+    {
+      "name": "B33 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R12"
+        ],
+        "tests": [
+          "T09",
+          "T14"
+        ]
+      }
+    },
+    {
+      "name": "B34 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R24",
+          "R45"
+        ],
+        "tests": [
+          "T09",
+          "T11"
+        ]
+      }
+    },
+    {
+      "name": "B35 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R23"
+        ],
+        "tests": [
+          "T11"
+        ]
+      }
+    },
+    {
+      "name": "B36 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R02"
+        ],
+        "tests": [
+          "T02",
+          "T03"
+        ]
+      }
+    },
+    {
+      "name": "B37 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R25"
+        ],
+        "tests": [
+          "T05",
+          "T11"
+        ]
+      }
+    },
+    {
+      "name": "B38 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R26"
+        ],
+        "tests": [
+          "T11",
+          "T16"
+        ]
+      }
+    },
+    {
+      "name": "B39 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R27"
+        ],
+        "tests": [
+          "T13"
+        ]
+      }
+    },
+    {
+      "name": "B40 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R28"
+        ],
+        "tests": [
+          "T04",
+          "T13",
+          "T14"
+        ]
+      }
+    },
+    {
+      "name": "B41 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R29"
+        ],
+        "tests": [
+          "T12"
+        ]
+      }
+    },
+    {
+      "name": "B42 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R30"
+        ],
+        "tests": [
+          "T15"
+        ]
+      }
+    },
+    {
+      "name": "B43 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R31"
+        ],
+        "tests": [
+          "T16"
+        ]
+      }
+    },
+    {
+      "name": "B44 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R32"
+        ],
+        "tests": [
+          "T17"
+        ]
+      }
+    },
+    {
+      "name": "B45 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R27",
+          "R32",
+          "R44"
+        ],
+        "tests": [
+          "T13",
+          "T17"
+        ]
+      }
+    },
+    {
+      "name": "B46 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R33"
+        ],
+        "tests": [
+          "T17"
+        ]
+      }
+    },
+    {
+      "name": "B47 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R34"
+        ],
+        "tests": [
+          "T18"
+        ]
+      }
+    },
+    {
+      "name": "B48 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R34"
+        ],
+        "tests": [
+          "T18",
+          "T21"
+        ]
+      }
+    },
+    {
+      "name": "B49 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R35"
+        ],
+        "tests": [
+          "T19"
+        ]
+      }
+    },
+    {
+      "name": "B50 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R38"
+        ],
+        "tests": [
+          "T01",
+          "T23"
+        ]
+      }
+    },
+    {
+      "name": "B51 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R41"
+        ],
+        "tests": [
+          "T01",
+          "T03",
+          "T24"
+        ]
+      }
+    },
+    {
+      "name": "B52 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R46",
+          "R41"
+        ],
+        "tests": [
+          "T22",
+          "T24"
+        ]
+      }
+    },
+    {
+      "name": "B53 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R47"
+        ],
+        "tests": [
+          "T09",
+          "T10",
+          "T11"
+        ]
+      }
+    },
+    {
+      "name": "B54 valid references",
+      "status": "pass",
+      "detail": {
+        "requirements": [
+          "R48"
+        ],
+        "tests": [
+          "T01",
+          "T17",
+          "T23"
+        ]
+      }
+    },
+    {
+      "name": "backlog dependency graph",
+      "status": "pass",
+      "detail": "Acyclic and no dependency on later stage"
+    },
+    {
+      "name": "all requirements linked to work and tests",
+      "status": "pass",
+      "detail": {
+        "covered": 48
+      }
+    },
+    {
+      "name": "all scenarios referenced",
+      "status": "pass",
+      "detail": {
+        "covered": 24
+      }
+    },
+    {
+      "name": "artifact exists: README.md",
+      "status": "pass",
+      "detail": "README.md"
+    },
+    {
+      "name": "artifact exists: overview.html",
+      "status": "pass",
+      "detail": "overview.html"
+    },
+    {
+      "name": "artifact exists: prototype.html",
+      "status": "pass",
+      "detail": "prototype.html"
+    },
+    {
+      "name": "artifact exists: THIRD_PARTY_NOTICES.md",
+      "status": "pass",
+      "detail": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "name": "artifact exists: requirements.csv",
+      "status": "pass",
+      "detail": "requirements.csv"
+    },
+    {
+      "name": "artifact exists: backlog.csv",
+      "status": "pass",
+      "detail": "backlog.csv"
+    },
+    {
+      "name": "artifact exists: 12-requirements-traceability.md",
+      "status": "pass",
+      "detail": "12-requirements-traceability.md"
+    },
+    {
+      "name": "artifact exists: 14-critical-reading-agent-decisions.md",
+      "status": "pass",
+      "detail": "14-critical-reading-agent-decisions.md"
+    },
+    {
+      "name": "balanced fences: 01-product-requirements.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 02-business-workflows.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 03-system-architecture.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 04-data-and-contracts.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 05-experience-design.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 06-delivery-roadmap.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 07-engineering-backlog.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 08-quality-security-operations.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 09-integrations-and-open-source.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 10-operating-model.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 11-current-state-and-migration.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 12-requirements-traceability.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 13-decisions-and-risks.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 14-critical-reading-agent-decisions.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 15-agent-harness-specification.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 16-knowledge-governance-specification.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 17-creative-capability-migration.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: 18-erp-agent-integration-specification.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: CHANGELOG.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: overview-source.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: README.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: THIRD_PARTY_NOTICES.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "balanced fences: VERIFICATION.md",
+      "status": "pass",
+      "detail": "Markdown fenced blocks"
+    },
+    {
+      "name": "local Markdown links",
+      "status": "pass",
+      "detail": {
+        "checked": 1893,
+        "broken": []
+      }
+    },
+    {
+      "name": "rendered HTML entry links",
+      "status": "pass",
+      "detail": {
+        "checked": 16,
+        "broken": []
+      }
+    },
+    {
+      "name": "traceability covers 48 requirements",
+      "status": "pass",
+      "detail": "48 rows with stable IDs"
+    },
+    {
+      "name": "requirements.csv valid UTF-8 CSV roundtrip",
+      "status": "pass",
+      "detail": {
+        "rows": 48
+      }
+    },
+    {
+      "name": "backlog.csv valid UTF-8 CSV roundtrip",
+      "status": "pass",
+      "detail": {
+        "rows": 54
+      }
+    },
+    {
+      "name": "bundled prototype JavaScript parses",
+      "status": "pass",
+      "detail": "All inline application scripts parsed"
+    },
+    {
+      "name": "prototype bundled without unresolved slots",
+      "status": "pass",
+      "detail": "CSS, JavaScript and 19 Lucide icons embedded"
+    },
+    {
+      "name": "prototype has no network execution",
+      "status": "pass",
+      "detail": "Only local fictional UI state is changed"
+    },
+    {
+      "name": "prototype contains explicit demo boundary",
+      "status": "pass",
+      "detail": "Visible fictional-data notice"
+    },
+    {
+      "name": "browser verification recorded",
+      "status": "pass",
+      "detail": {
+        "assertions": 36,
+        "widths": [
+          1440,
+          1024,
+          390
+        ]
+      }
+    },
+    {
+      "name": "browser evidence matches delivered HTML",
+      "status": "pass",
+      "detail": "SHA-256 binds browser evidence to both delivered HTML files"
+    },
+    {
+      "name": "screenshot exists: evidence/prototype-desktop-1440.png",
+      "status": "pass",
+      "detail": "evidence/prototype-desktop-1440.png"
+    },
+    {
+      "name": "screenshot exists: evidence/prototype-mobile-390.png",
+      "status": "pass",
+      "detail": "evidence/prototype-mobile-390.png"
+    },
+    {
+      "name": "screenshot exists: evidence/overview-desktop-1280.png",
+      "status": "pass",
+      "detail": "evidence/overview-desktop-1280.png"
+    },
+    {
+      "name": "screenshot exists: evidence/overview-mobile-390.png",
+      "status": "pass",
+      "detail": "evidence/overview-mobile-390.png"
+    },
+    {
+      "name": "no credential-shaped values in delivery",
+      "status": "pass",
+      "detail": {
+        "files": []
+      }
+    }
+  ],
+  "errors": [],
+  "status": "pass",
+  "summary": {
+    "requirements": 48,
+    "workPackages": 54,
+    "testScenarios": 24,
+    "localLinks": 1893,
+    "checks": 141,
+    "failed": 0
+  }
+}

@@ -20,6 +20,9 @@ the same change; `pnpm check:rules` enforces equality.
   lockfile with another package manager.
 - Start local infrastructure and applications with the commands in
   `docs/operations/local-development.md`.
+- For the adopted daily ERP, use `pnpm daily:status` and `pnpm daily:start`.
+  Keep the pinned runtime separate from the development tree; preserve healthy
+  processes and never broaden execution policy to repair a rejected command.
 - Core checks are `pnpm lint`, `pnpm typecheck`, `pnpm test`,
   `pnpm test:integration`, `pnpm test:e2e`, and `pnpm build`.
 - Stop an active Next.js dev server before running the E2E suite in the same
@@ -92,8 +95,22 @@ the same change; `pnpm check:rules` enforces equality.
 
 - Preserve unrelated user changes in a dirty worktree. Do not reset, checkout,
   or rewrite files outside the requested scope.
+- Run integration suites through the disposable acceptance runner. Every
+  integration config must reject a missing isolation flag or non-disposable
+  database before connection; ordinary unit runs must exclude integration files.
+- Clean up test-created data and associated resources after testing in every
+  module, including manual, API, and browser tests, unless the user asks to keep
+  them. Track exact fixture IDs and use failure-safe teardown; resume cleanup
+  after an interruption. Use supported deletion or archival flows, preserve real
+  business data and required immutable history, and verify related lists, search,
+  and counts are clear. Report any retained test history or incomplete cleanup.
 - Parser changes require parser tests, extension typecheck/build, extension
   reload, and a smoke test on the affected marketplace.
+- After inspecting acceptance results, remove agent-generated temporary logs,
+  screenshots, traces, test downloads and identified test caches. Retain source
+  tests, product documents, concise validation conclusions and cleanup records.
+  Verify absolute owned paths and active processes; never follow junctions into
+  shared sources or dependencies. See `docs/project-control/DELIVERY_PROTOCOL.md`.
 - Tenant, auth, storage, capture, review, and export changes require integration
   coverage. Cross-route UI changes require E2E coverage where practical.
 - A P0 release candidate requires lint, typecheck, unit, integration, E2E, build,
@@ -102,10 +119,37 @@ the same change; `pnpm check:rules` enforces equality.
 - Do not create a release tag or claim a phase complete while required checks are
   missing, the worktree is dirty, or CI has not validated the candidate commit.
 
+## Production Artwork Discipline
+
+- Before making, changing, testing, or reviewing shaped-pillow artwork, read
+  `docs/operations/custom-pillow-workflow.md` and verify the order's pinned
+  manufacturing version against the user's latest confirmed requirements.
+  Other products require their own supplier specification.
+- Read the order's pinned Rule Center snapshot as well as its template version.
+  Legacy tasks without a snapshot must be identified explicitly; never backfill
+  them with today's rules. Maintain business-rule sources and execution status
+  through `docs/integration/rule-center.md`; new prose is manual review guidance,
+  not executable automation or authority to override production checks.
+- Follow the documented make/check/correct/server-verify/review workflow. Keep
+  working on recoverable defects within the authorized scope; a failed first
+  check is not a completed production-file task. Never relax a quality gate,
+  relabel DPI, or manufacture approval to obtain a passing result.
+- Pin the recipe, model route, processing parameters, source provenance, and
+  output assets. Reuse valid checkpoints; preserve immutable originals and
+  versions. Geometry-only corrections must not regenerate or alter the artwork.
+- Distinguish an agent's technical checks, operator approval, factory acceptance,
+  and actual production release. Record any manual intervention and automation
+  gaps; a successful assisted order does not prove unattended operation.
+
 ## Documentation Map
 
 - User guide: `docs/user-guide.md`
-- Product requirements: `docs/superpowers/specs/2026-07-17-yummyai-erp-design.md`
+- Current full-platform PRD: `docs/erp-blueprint/01-product-requirements.md`
+- Execution/knowledge/creative specifications: `docs/erp-blueprint/15-agent-harness-specification.md`,
+  `16-knowledge-governance-specification.md`, and `17-creative-capability-migration.md`
+  in the same directory.
+- Live project progress/recovery: `PROJECT_STATUS.md`, `PROJECT_HANDOFF.md`
+- Historical P0 product baseline: `docs/superpowers/specs/2026-07-17-yummyai-erp-design.md`
 - P0 implementation baseline: `docs/superpowers/plans/2026-07-17-yummyai-erp-p0.md`
 - P1 implementation plan: `docs/superpowers/plans/2026-07-19-yummyai-erp-p1.md`
 - P2 implementation plan: `docs/superpowers/plans/2026-07-20-yummyai-erp-p2.md`

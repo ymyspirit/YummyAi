@@ -33,12 +33,15 @@ test("Web development always loads and validates the root environment", async ()
   assert.match(rootPackage.scripts["check:local-runtime"], /check-local-runtime\.mjs/);
 });
 
-test("Web environment preflight fails closed without an API identity", () => {
+test("explicit local-service development requires an API identity", () => {
   const script = fileURLToPath(new URL("../scripts/check-web-env.mjs", import.meta.url));
   const missing = spawnSync(process.execPath, [script], {
     encoding: "utf8",
     env: {
       ...process.env,
+      WEB_AUTH_MODE: "local-service",
+      FACTORY_PORTAL_ONLY: "0",
+      NODE_ENV: "development",
       API_ACCESS_TOKEN: "",
       API_BASE_URL: "",
       LOCAL_OIDC_CLIENT_ID: "",
@@ -53,6 +56,9 @@ test("Web environment preflight fails closed without an API identity", () => {
     encoding: "utf8",
     env: {
       ...process.env,
+      WEB_AUTH_MODE: "local-service",
+      FACTORY_PORTAL_ONLY: "0",
+      NODE_ENV: "development",
       API_ACCESS_TOKEN: "test-token",
       API_BASE_URL: "http://api.test",
     },
@@ -72,5 +78,14 @@ test("low-memory development is opt-in and full development stays compatible", a
   assert.match(pkg.scripts["infra:lite"], /docker-compose\.low-memory\.yml/);
   for (const name of ["dev:worker", "dev:extension", "dev:full", "infra:full"]) {
     assert.equal(typeof pkg.scripts[name], "string", `missing opt-in script ${name}`);
+  }
+});
+
+test("personal runtime entry points start only the existing API or Web launcher", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url)));
+  assert.equal(pkg.scripts["start:personal:api"], "pnpm --filter @yummyai/api start");
+  assert.equal(pkg.scripts["start:personal:web"], "pnpm --filter @yummyai/web start --hostname 127.0.0.1 --port 3000");
+  for (const name of ["start:personal:api", "start:personal:web", "identity:setup:local", "worker:inspect"]) {
+    assert.doesNotMatch(pkg.scripts[name], /local-service|start-local|@yummyai\/worker|@yummyai\/extension/);
   }
 });

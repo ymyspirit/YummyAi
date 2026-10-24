@@ -1,4 +1,9 @@
+"use client";
+import { useCallback, useState } from "react";
 import type { IntegrationWorkspaceView } from "@yummyai/contracts/integration";
+import { Permission } from "@yummyai/authz/permissions";
+import { useErpAccess } from "../identity/erp-access";
+import { IntegrationClientsPanel } from "./integration-clients-panel";
 import type {
   ForecastRunView,
   PlanningWorkspaceView,
@@ -9,7 +14,6 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
-  KeyRound,
   Link2,
   RefreshCcw,
   Route,
@@ -24,7 +28,11 @@ interface OperatingCockpitProps {
   planning: PlanningWorkspaceView | null;
 }
 
-export function OperatingCockpit({ integration, planning }: OperatingCockpitProps) {
+export function OperatingCockpit({ integration: suppliedIntegration, planning }: OperatingCockpitProps) {
+  const access = useErpAccess(), [integrationDenied, setIntegrationDenied] = useState(false);
+  const clearIntegration = useCallback(() => setIntegrationDenied(true), []);
+  const integration = suppliedIntegration && !integrationDenied && access.can(Permission.IntegrationRead) && access.authority === suppliedIntegration.contextAuthority
+    && suppliedIntegration.agentCatalog.contextAuthority === access.authority ? suppliedIntegration : null;
   if (!planning && !integration) {
     return (
       <section className="operating-cockpit-empty" aria-labelledby="operating-cockpit-empty-title">
@@ -90,7 +98,7 @@ export function OperatingCockpit({ integration, planning }: OperatingCockpitProp
 
       <div className="operating-cockpit-columns">
         <ReconciliationSection planning={planning} />
-        <IntegrationRegistry integration={integration} />
+        <IntegrationRegistry integration={integration} onDenied={clearIntegration} />
       </div>
 
       <DeliverySection integration={integration} />
@@ -190,16 +198,12 @@ function ReconciliationSection({ planning }: { planning: PlanningWorkspaceView |
   );
 }
 
-function IntegrationRegistry({ integration }: { integration: IntegrationWorkspaceView | null }) {
+function IntegrationRegistry({ integration, onDenied }: { integration: IntegrationWorkspaceView | null; onDenied(): void }) {
+  if (integration) return <IntegrationClientsPanel initialWorkspace={integration} onDenied={onDenied} />;
   return (
     <section className="operating-cockpit-panel" aria-labelledby="operating-integrations-title">
-      <PanelHeader code="LEAST PRIVILEGE / SIGNED EVENTS" detail={integration ? `${integration.apiClients.length} 个客户端 · ${integration.webhookEndpoints.length} 个端点` : "集成工作区不可用"} id="operating-integrations-title" title="开放集成" />
-      {!integration ? <InlineState message="无法读取 API 客户端和 Webhook 端点。" unavailable /> : !integration.apiClients.length && !integration.webhookEndpoints.length ? <InlineState message="还没有 API 客户端或 Webhook 端点。" /> : (
-        <div className="operating-cockpit-registry">
-          <div><header><KeyRound size={14} /><strong>API 客户端</strong></header><ol>{integration.apiClients.map((client) => <li key={client.id}><div><strong>{client.label}</strong><code>{client.keyPrefix}…</code></div><span className={`registry-status status-${client.status}`}>{client.status === "active" ? "有效" : "已撤销"}</span><small>{client.scopes.length} 个只读范围</small></li>)}</ol>{!integration.apiClients.length ? <InlineState message="尚无 API 客户端。" /> : null}</div>
-          <div><header><Webhook size={14} /><strong>Webhook 端点</strong></header><ol>{integration.webhookEndpoints.map((endpoint) => <li key={endpoint.id}><div><strong>{endpoint.label}</strong><code>{endpoint.url}</code></div><span className={`registry-status status-${endpoint.status}`}>{endpoint.status === "active" ? "启用" : "停用"}</span><small>V{endpoint.version} · 最多 {endpoint.maxAttempts} 次</small></li>)}</ol>{!integration.webhookEndpoints.length ? <InlineState message="尚无 Webhook 端点。" /> : null}</div>
-        </div>
-      )}
+      <PanelHeader code="LEAST PRIVILEGE / SIGNED EVENTS" detail="集成工作区不可用" id="operating-integrations-title" title="开放集成" />
+      <InlineState message="无法读取 API 客户端和 Webhook 端点 请核对当前个人读取权限后刷新页面" unavailable />
     </section>
   );
 }

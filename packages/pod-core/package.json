@@ -1,0 +1,27 @@
+{
+  "name": "@yummyai/pod-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@yummyai/catalog-core": "workspace:*",
+    "@yummyai/ai-core": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "@yummyai/jobs": "workspace:*",
+    "@yummyai/knowledge-core": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

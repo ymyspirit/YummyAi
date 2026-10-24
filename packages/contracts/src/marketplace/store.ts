@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
-export { MarketplacePlatformSchema, type MarketplacePlatform } from "./platform.js";
-import { MarketplacePlatformSchema } from "./platform.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+export { MarketplacePlatformSchema, type MarketplacePlatform } from "@yummyai/contracts/marketplace/platform";
+import { MarketplacePlatformSchema } from "@yummyai/contracts/marketplace/platform";
 
 export const MarketplaceAuthorizationModeSchema = z.enum([
   "amazon_private",
@@ -126,11 +126,18 @@ export const CreateMarketplaceAccountInputSchema = accountCore.superRefine((valu
 });
 
 export const UpdateMarketplaceAccountInputSchema = z.object({
+  authorizationMode: MarketplaceAuthorizationModeSchema.optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
   marketplaceIds: z.array(z.string().trim().min(1).max(80)).min(1).max(64).optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(120)).max(64).optional(),
   enabled: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
+
+export const MarketplaceAccountRemovalViewSchema = z.object({
+  id: EntityIdSchema,
+  deletedAt: z.iso.datetime(),
+}).strict();
+export type MarketplaceAccountRemovalView = z.infer<typeof MarketplaceAccountRemovalViewSchema>;
 
 export const MarketplaceAccountViewSchema = z.object({
   id: EntityIdSchema,

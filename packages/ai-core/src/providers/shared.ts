@@ -1,4 +1,17 @@
 import { ProviderError } from "../provider.js";
+import type { z } from "zod";
+
+/** Safe failure codes only; never expose provider text or customer content. */
+export function parseStructuredOutput<T>(payload: unknown, schema: z.ZodType<T>): T {
+  const meta = payload as {status?: string; choices?: Array<{finish_reason?: string}>};
+  if (meta?.status === "incomplete" || meta?.choices?.[0]?.finish_reason === "length") throw new Error("model_output_truncated");
+  let text: string;
+  try { text = extractJsonText(payload); } catch { throw new Error("model_output_missing"); }
+  if (!text.trim()) throw new Error("model_output_missing");
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { throw new Error("model_output_invalid_json"); }
+  return schema.parse(parsed);
+}
 
 export interface ProviderPricing {
   inputUsdPerMillion: number;
@@ -6,7 +19,8 @@ export interface ProviderPricing {
 }
 
 export function normalizeEndpoint(endpoint: string, path: string): string {
-  return `${endpoint.replace(/\/$/, "")}${path}`;
+  const base = endpoint.replace(/\/$/, "");
+  return `${base}${base.endsWith("/v1") && path.startsWith("/v1/") ? path.slice(3) : path}`;
 }
 
 export async function throwProviderResponseError(response: Response, providerId: string): Promise<never> {

@@ -1,7 +1,7 @@
 import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException } from "@nestjs/common";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, integrationApiClients, migrateDatabase, webhookDeliveries, withTenant } from "@yummyai/database";
+import { connectDatabase, loadCurrentMembershipContext, memberships, membershipRoles, roles, migrateDatabase, webhookDeliveries, withTenant } from "@yummyai/database";
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,12 +9,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
 import { DatabaseApiClientContextLoader } from "../auth/tenant-context.guard.js";
 import { IntegrationService } from "./integration.service.js";
+import { requireDisposableIntegrationEnvironment } from "../../../../tools/testing/require-disposable-integration.mjs";
+
+requireDisposableIntegrationEnvironment();
 
 describe.sequential("P3 open integration", () => {
   const database = connectDatabase();
   const tenantA = createEntityId(); const tenantB = createEntityId();
   const userA = createEntityId(); const userB = createEntityId();
-  const contextA = context(tenantA, userA); const contextB = context(tenantB, userB);
+  let contextA = context(tenantA, userA); let contextB = context(tenantB, userB);
   const enqueue = vi.fn(async () => undefined);
   const service = new IntegrationService(database, new SecretVault(Buffer.alloc(32, 7)), { enqueue }, new AuditService(database));
   let token = ""; let clientId = ""; let deliveryId = ""; let eventId = "";
@@ -23,30 +26,49 @@ describe.sequential("P3 open integration", () => {
     await migrateDatabase(database);
     await database.client.unsafe("insert into organizations (id,name,slug) values ($1,$2,$3),($4,$5,$6)", [tenantA, "Integration A", `integration-a-${tenantA}`, tenantB, "Integration B", `integration-b-${tenantB}`]);
     await database.client.unsafe("insert into app_users (id,oidc_subject,email,display_name) values ($1,$2,$3,$4),($5,$6,$7,$8)", [userA, `integration-a-${userA}`, `integration-a-${userA}@example.test`, "Integration A", userB, `integration-b-${userB}`, `integration-b-${userB}@example.test`, "Integration B"]);
+    for (const actor of [contextA, contextB]) await withTenant(database.db, actor, async tx => {
+      const memberId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: memberId, tenantId: actor.tenantId, userId: actor.userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: actor.tenantId, name: "Synthetic original integration member", permissions: actor.permissions, dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: actor.tenantId, membershipId: memberId, roleId });
+    });
+    contextA = await withTenant(database.db, contextA, tx => loadCurrentMembershipContext(tx, contextA));
+    contextB = await withTenant(database.db, contextB, tx => loadCurrentMembershipContext(tx, contextB));
   });
   afterAll(async () => database.client.end());
 
   it("creates a least-privilege API token and authenticates it without caller-selected tenancy", async () => {
     const created = await service.createApiClient(contextA, { label: "Read forecasts", scopes: ["forecast:read", "operations:read"], expiresAt: null, idempotencyKey: `integration-client-${tenantA}` });
     token = created.bearerToken!; clientId = created.client.id;
-    expect(token).toMatch(/^yai_/);
-    expect((await service.createApiClient(contextA, { label: "Read forecasts", scopes: ["forecast:read", "operations:read"], expiresAt: null, idempotencyKey: `integration-client-${tenantA}` })).bearerToken).toBeNull();
+    expect(/^yai_/.test(token)).toBe(true);
+    expect((await service.createApiClient(contextA, { label: "Read forecasts", scopes: ["forecast:read", "operations:read"], expiresAt: null, idempotencyKey: `integration-client-${tenantA}` })).bearerToken === null).toBe(true);
     await expect(service.createApiClient({ ...contextA, permissions: ["forecast:read", "integration:manage"] }, { label: "Escalated", scopes: ["finance:read"], expiresAt: null, idempotencyKey: `integration-escalation-${tenantA}` })).rejects.toBeInstanceOf(ConflictException);
     const [stored] = await database.client.unsafe<{ scopes: unknown; secret_digest: string; status: string }[]>("select scopes, secret_digest, status from integration_api_clients where id = $1", [clientId]);
     expect(stored).toMatchObject({ scopes: ["forecast:read", "operations:read"], secret_digest: createHash("sha256").update(token).digest("hex"), status: "active" });
     const loaded = await new DatabaseApiClientContextLoader(database).load(token);
-    expect(loaded).toEqual({ tenantId: tenantA, userId: userA, permissions: ["forecast:read", "operations:read"], dataScope: "tenant" });
+    expect(loaded).toMatchObject({ tenantId: tenantA, userId: userA, permissions: ["forecast:read", "operations:read"], dataScope: "tenant",
+      permissionScopes: { "forecast:read": "tenant", "operations:read": "tenant" }, teamIds: [] });
+    expect(Object.keys(loaded!.permissionScopes!).sort()).toEqual(["forecast:read", "operations:read"]);
     const wrongSecret = `${token.slice(0, -1)}${token.endsWith("a") ? "b" : "a"}`;
     expect(await new DatabaseApiClientContextLoader(database).load(wrongSecret)).toBeNull();
-    const expiring = await service.createApiClient(contextA, { label: "Expiring", scopes: ["forecast:read"], expiresAt: "2027-07-23T00:00:00.000Z", idempotencyKey: `integration-expiring-${tenantA}` });
-    await withTenant(database.db, contextA, (tx) => tx.update(integrationApiClients).set({ expiresAt: new Date("2020-01-01T00:00:00.000Z") }).where(eq(integrationApiClients.id, expiring.client.id)));
+    const [clock] = await database.client.unsafe<{ now: string }[]>("select clock_timestamp()::text as now");
+    const expiresAt = new Date(new Date(clock!.now).getTime() + 1500).toISOString();
+    const expiring = await service.createApiClient(contextA, { label: "Expiring", scopes: ["forecast:read"], expiresAt, idempotencyKey: `integration-expiring-${tenantA}` });
+    expect(await new DatabaseApiClientContextLoader(database).load(expiring.bearerToken!)).not.toBeNull();
+    const deadline = Date.now() + 10_000; let expired = false;
+    while (Date.now() < deadline) {
+      const [value] = await database.client.unsafe<{ expired: boolean }[]>("select clock_timestamp()>$1::timestamptz as expired", [expiresAt]);
+      if (value?.expired) { expired = true; break; }
+      await new Promise<void>(resolve => setTimeout(resolve, 15));
+    }
+    expect(expired).toBe(true);
     expect(await new DatabaseApiClientContextLoader(database).load(expiring.bearerToken!)).toBeNull();
   });
 
   it("fans out signed-delivery work, isolates tenants, and manually replays dead letters", async () => {
     const endpoint = await service.createWebhookEndpoint(contextA, { label: "Local sink", url: "http://127.0.0.1:9999/hooks", eventTypes: ["webhook.test"], maxAttempts: 3, idempotencyKey: `integration-endpoint-${tenantA}` });
-    expect(endpoint.signingSecret).toMatch(/^whsec_/);
-    expect((await service.createWebhookEndpoint(contextA, { label: "Local sink", url: "http://127.0.0.1:9999/hooks", eventTypes: ["webhook.test"], maxAttempts: 3, idempotencyKey: `integration-endpoint-${tenantA}` })).signingSecret).toBeNull();
+    expect(/^whsec_/.test(endpoint.signingSecret ?? "")).toBe(true);
+    expect((await service.createWebhookEndpoint(contextA, { label: "Local sink", url: "http://127.0.0.1:9999/hooks", eventTypes: ["webhook.test"], maxAttempts: 3, idempotencyKey: `integration-endpoint-${tenantA}` })).signingSecret === null).toBe(true);
     await expect(service.createWebhookEndpoint(contextA, { label: "Changed sink", url: "http://127.0.0.1:9999/hooks", eventTypes: ["webhook.test"], maxAttempts: 3, idempotencyKey: `integration-endpoint-${tenantA}` })).rejects.toBeInstanceOf(ConflictException);
     const eventInput = { eventType: "webhook.test" as const, resourceType: "integration_test", resourceId: createEntityId(), payload: { safe: true }, occurredAt: "2026-07-23T00:00:00.000Z", idempotencyKey: `integration-event-${tenantA}` };
     const event = await service.publishEvent(contextA, eventInput);

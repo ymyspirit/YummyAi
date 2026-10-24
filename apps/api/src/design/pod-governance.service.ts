@@ -1,5 +1,8 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
+import { assertCatalogListingAccess, currentCreativeAuthority, requireMockupBatchAccess, requireMockupPackAccess,
+  requireMockupPackSources, requireMockupDesignSource, requireMockupInspectionSources } from "@yummyai/catalog-core";
+import { requireMockupOutputEvidence, requireMockupCompletionEvidence } from "@yummyai/pod-core";
 import {
   ArtifactRelationSchema,
   CreateDesignRecipeVersionInputSchema,
@@ -25,8 +28,6 @@ import {
 import {
   artifactRelations,
   assetFiles,
-  creativeDesignSkuBindings,
-  designTasks,
   designRecipeVersions,
   designVersionFiles,
   designVersions,
@@ -36,12 +37,12 @@ import {
   mockupBatchItems,
   mockupBatchOutputs,
   mockupBatches,
-  mockupTemplatePackVersions,
   mockupTemplateSlots,
   rightsAssessments,
   skus,
   visualFingerprints,
   type DatabaseConnection,
+  type TenantTransaction,
   withTenant,
 } from "@yummyai/database";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -317,6 +318,9 @@ export class PodGovernanceService {
       if (asset.assetDomain !== "authorized" || asset.rightsStatus !== "approved") {
         throw new ConflictException("Listing candidates require rights-approved authorized assets");
       }
+      const [mockupOrigin] = await tx.select({ id: mockupBatchOutputs.id }).from(mockupBatchOutputs).where(eq(mockupBatchOutputs.assetId, asset.id)).limit(1);
+      if (mockupOrigin || asset.rightsMetadata.mockupBatchItemId || (asset.rightsMetadata.derivative as { kind?: string } | undefined)?.kind === "controlled_mockup_render")
+        throw new ConflictException("套图产物请通过整款审核与槽位映射入口绑定");
       if (input.contentKind === "title" && asset.mediaType !== "text/plain") {
         throw new BadRequestException("Title slots require a text/plain artifact");
       }
@@ -332,35 +336,8 @@ export class PodGovernanceService {
           eq(designVersions.status, "approved"),
         ))
         .limit(1);
-      let approvedMockupResult = false;
-      if (!approvedDesignResult && input.contentKind === "image") {
-        const [output] = await tx.select().from(mockupBatchOutputs).where(and(
-          eq(mockupBatchOutputs.assetId, asset.id),
-          eq(mockupBatchOutputs.assetVersion, asset.version),
-          eq(mockupBatchOutputs.status, "approved"),
-        )).limit(1);
-        if (output) {
-          const [lineage] = await tx.select({ id: creativeDesignSkuBindings.id }).from(mockupBatchItems)
-            .innerJoin(mockupBatches, eq(mockupBatchItems.batchId, mockupBatches.id))
-            .innerJoin(mockupTemplatePackVersions, eq(mockupBatches.templatePackVersionId, mockupTemplatePackVersions.id))
-            .innerJoin(creativeDesignSkuBindings, and(
-              eq(mockupBatchItems.designVersionId, creativeDesignSkuBindings.designVersionId),
-              eq(mockupBatchItems.skuId, creativeDesignSkuBindings.skuId),
-            ))
-            .innerJoin(designVersions, eq(mockupBatchItems.designVersionId, designVersions.id))
-            .innerJoin(designTasks, eq(designVersions.taskId, designTasks.id))
-            .where(and(
-              eq(mockupBatchItems.id, output.itemId),
-              eq(mockupBatchItems.status, "completed"),
-              eq(mockupTemplatePackVersions.status, "approved"),
-              eq(designVersions.status, "approved"),
-              eq(designTasks.status, "approved"),
-            )).limit(1);
-          approvedMockupResult = Boolean(lineage);
-        }
-      }
-      if (!approvedDesignResult && !approvedMockupResult) {
-        throw new ConflictException("Listing candidates require an approved design result or an approved mockup derived from one");
+      if (!approvedDesignResult) {
+        throw new ConflictException("Listing candidates require an approved design result");
       }
       return tx.insert(listingArtifactBindings).values({
         id: createEntityId(),
@@ -378,6 +355,21 @@ export class PodGovernanceService {
     return mapListingBinding(row!);
   }
 
+  async approveMockupOutputsInTransaction(tx: TenantTransaction, authority: TenantContext,
+    outputs: Array<typeof mockupBatchOutputs.$inferSelect>, checkedAt: number) {
+    for (const permission of [Permission.DesignRead, Permission.DesignReview, Permission.AssetRead]) authorize(authority, permission);
+    for (const output of [...outputs].sort((a, b) => a.id.localeCompare(b.id))) {
+      const [actual] = await tx.select().from(mockupBatchOutputs).where(eq(mockupBatchOutputs.id, output.id)).for("update");
+      if (!actual || !["succeeded", "approved"].includes(actual.status)) throw new ConflictException("套图产物当前不可审核");
+      const [item] = await tx.select().from(mockupBatchItems).where(eq(mockupBatchItems.id, actual.itemId));
+      if (!item) throw new NotFoundException("原套图款式不存在");
+      await requireMockupBatchAccess(tx, authority, item.batchId, [Permission.DesignRead, Permission.DesignReview]);
+      const asset = await requireMockupOutputEvidence(tx, authority, actual, checkedAt, true);
+      if (asset.rightsStatus !== "approved") await tx.update(assetFiles).set({ rightsStatus: "approved",
+        rightsMetadata: { ...asset.rightsMetadata, approvedBy: authority.userId, approvedAt: new Date(checkedAt).toISOString() } }).where(eq(assetFiles.id, asset.id));
+    }
+  }
+
   async createApprovedMockupListingBindings(context: TenantContext, input: {
     batchId: string;
     itemId: string;
@@ -385,33 +377,40 @@ export class PodGovernanceService {
     slots: Array<{ outputId: string; slotKey: string }>;
   }) {
     const bindingIds = await withTenant(this.database.db, context, async (tx) => {
+      const { authority, checkedAt } = await currentCreativeAuthority(tx, context,
+        [Permission.DesignRead, Permission.DesignWrite, Permission.AssetRead, Permission.ProductRead, Permission.ListingRead, Permission.ListingWrite]);
+      const batch = await requireMockupBatchAccess(tx, authority, input.batchId, [Permission.DesignRead, Permission.DesignWrite], "update");
+      if (batch.status === "cancelled") throw new ConflictException("已取消的套图批次不能创建 Listing 候选");
       const [item] = await tx.select({ item: mockupBatchItems, batch: mockupBatches, sku: skus }).from(mockupBatchItems)
         .innerJoin(mockupBatches, eq(mockupBatchItems.batchId, mockupBatches.id))
         .innerJoin(skus, eq(mockupBatchItems.skuId, skus.id))
         .where(and(eq(mockupBatchItems.id, input.itemId), eq(mockupBatchItems.batchId, input.batchId))).limit(1);
       if (!item) throw new NotFoundException("Mockup batch item not found");
       if (item.item.status !== "completed") throw new ConflictException("Only approved, complete mockup items can be bound to a Listing");
-      const [pack] = await tx.select().from(mockupTemplatePackVersions)
-        .where(eq(mockupTemplatePackVersions.id, item.batch.templatePackVersionId)).limit(1);
+      const pack = await requireMockupPackAccess(tx, authority, batch.templatePackVersionId, [Permission.DesignRead]);
       if (!pack || pack.status !== "approved") throw new ConflictException("Mockup Listing candidates require an approved template pack");
-      const [formal] = await tx.select({ bindingId: creativeDesignSkuBindings.id }).from(creativeDesignSkuBindings)
-        .innerJoin(designVersions, eq(creativeDesignSkuBindings.designVersionId, designVersions.id))
-        .innerJoin(designTasks, eq(creativeDesignSkuBindings.designTaskId, designTasks.id))
-        .where(and(
-          eq(creativeDesignSkuBindings.designVersionId, item.item.designVersionId),
-          eq(creativeDesignSkuBindings.skuId, item.item.skuId),
-          eq(designVersions.status, "approved"),
-          eq(designTasks.status, "approved"),
-        )).limit(1);
-      if (!formal) throw new ConflictException("Mockup output is not derived from an approved formal design binding");
+      const sources = await requireMockupPackSources(tx, authority, pack, checkedAt);
+      for (const inspection of sources.inspections) {
+        const { assets } = await requireMockupInspectionSources(tx, authority, inspection, checkedAt, true);
+        await requireMockupCompletionEvidence(tx, authority, { kind: "template_compile", ownerId: inspection.id, stepKey: "compile" }, assets, true);
+      }
+      const formal = await requireMockupDesignSource(tx, authority, item.item.designVersionId, item.item.skuId, checkedAt);
+      if (sources.slots.some(slot => !slot.acceptedPrintSpecVersionIds.includes(formal.printSpecVersionId)))
+        throw new ConflictException("原正式设计与模板规格不兼容");
       const [listing] = await tx.select({ version: listingVersions, listing: listings }).from(listingVersions)
         .innerJoin(listings, eq(listingVersions.listingId, listings.id))
         .where(eq(listingVersions.id, input.listingVersionId)).limit(1);
       if (!listing) throw new NotFoundException("Listing version not found");
+      await assertCatalogListingAccess(tx, authority, listing.listing.id, [Permission.ListingRead, Permission.ListingWrite], true);
+      const [latestListing] = await tx.select({ id: listingVersions.id }).from(listingVersions)
+        .where(eq(listingVersions.listingId, listing.listing.id)).orderBy(desc(listingVersions.versionNumber)).limit(1);
+      if (listing.version.status !== "draft" || latestListing?.id !== listing.version.id)
+        throw new ConflictException("只可向当前 Listing 草稿添加候选素材");
       if (listing.listing.spuId !== item.sku.spuId || listing.listing.platform !== item.batch.platform || listing.listing.locale !== item.batch.locale) {
         throw new ConflictException("Listing product, platform, and locale must match the mockup batch item");
       }
       const outputIds = input.slots.map((slot) => slot.outputId);
+      if (!outputIds.length || new Set(outputIds).size !== outputIds.length) throw new BadRequestException("套图产物选择必须非空且唯一");
       const outputs = await tx.select({ output: mockupBatchOutputs, asset: assetFiles }).from(mockupBatchOutputs)
         .innerJoin(assetFiles, eq(mockupBatchOutputs.assetId, assetFiles.id))
         .where(and(
@@ -424,7 +423,7 @@ export class PodGovernanceService {
         ));
       if (outputs.length !== outputIds.length) throw new ConflictException("Every selected mockup output must be approved, authorized, and belong to the item");
       const outputById = new Map(outputs.map((row) => [row.output.id, row]));
-      if (outputs.some(({ output, asset }) => output.assetVersion !== asset.version || !asset.mediaType.startsWith("image/"))) {
+      if (outputs.some(({ output, asset }) => output.assetVersion !== asset.version || output.checksumSha256 !== asset.checksumSha256 || !asset.mediaType.startsWith("image/"))) {
         throw new ConflictException("Mockup Listing candidates require pinned image asset versions");
       }
       const requiredSlots = await tx.select().from(mockupTemplateSlots).where(and(
@@ -432,6 +431,13 @@ export class PodGovernanceService {
       ));
       const mappedTemplateKeys = new Set(outputs.map(({ output }) => output.slotKey));
       if (requiredSlots.some((slot) => !mappedTemplateKeys.has(slot.slotKey))) throw new ConflictException("All required mockup slots must be included in the Listing binding");
+      for (const { output } of outputs) {
+        const [latest] = await tx.select({ id: mockupBatchOutputs.id }).from(mockupBatchOutputs)
+          .where(and(eq(mockupBatchOutputs.itemId, output.itemId), eq(mockupBatchOutputs.templateSlotId, output.templateSlotId)))
+          .orderBy(desc(mockupBatchOutputs.attempt)).limit(1);
+        if (latest?.id !== output.id) throw new ConflictException("所选套图已被新尝试替代 请刷新");
+        await requireMockupOutputEvidence(tx, authority, output, checkedAt);
+      }
       const targetSlotKeys = input.slots.map((slot) => slot.slotKey);
       if (new Set(targetSlotKeys).size !== targetSlotKeys.length) throw new BadRequestException("Listing slot mappings must be unique");
       const existing = await tx.select({ slotKey: listingArtifactBindings.slotKey }).from(listingArtifactBindings).where(and(

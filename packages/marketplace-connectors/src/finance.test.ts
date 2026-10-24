@@ -5,6 +5,14 @@ import { normalizeProviderFinanceStatement } from "./finance.js";
 const accountId = "019b0000-0000-7000-8000-000000000001";
 
 describe("provider finance normalization", () => {
+  it("retains a full 300-character provider component identity independently of the order reference", () => {
+    const component = "SYNTHETIC".padEnd(300, "X");
+    const result = normalizeProviderFinanceStatement({ accountId, idempotencyKey: "synthetic-long-component",
+      statement: { provider: "etsy", externalStatementId: "SYNTHETIC-LONG", periodStart: "2026-07-01T00:00:00.000Z",
+        periodEnd: "2026-07-31T23:59:59.000Z", observedAt: "2026-08-01T00:00:00.000Z", currency: "USD",
+        transactions: [transaction(component, "sale", 8000)] } });
+    expect(result.lines[0]).toMatchObject({ lineKey: component, sourceEntryId: component, externalReference: "ORDER-001" });
+  });
   it("normalizes Amazon settlement revenue, fulfillment, storage, and refunds", () => {
     const result = normalizeProviderFinanceStatement({
       accountId,
@@ -25,6 +33,9 @@ describe("provider finance normalization", () => {
       },
     });
     expect(result.provider).toBe("amazon");
+    expect(result.sourceIdentity).toEqual({ schemaVersion: 2, kind: "marketplace_account" });
+    expect(result.lines.map(line => line.sourceEntryId)).toEqual(["sale", "fba", "storage", "refund"]);
+    expect(result.lines.every(line => line.externalReference === "ORDER-001")).toBe(true);
     expect(result.lines).toEqual(expect.arrayContaining([
       expect.objectContaining({ factType: "sale_revenue", direction: "credit", amountMinor: 10_000 }),
       expect.objectContaining({ factType: "fulfillment_fee", direction: "debit", amountMinor: 1_500 }),
@@ -52,6 +63,9 @@ describe("provider finance normalization", () => {
       },
     };
     const result = normalizeProviderFinanceStatement(base);
+    expect(() => normalizeProviderFinanceStatement({ ...base, statement: { ...base.statement,
+      transactions: [transaction("same-component", "sale", 8000), transaction("same-component", "other_fee", 8000)],
+    } })).toThrow(/unique/);
     expect(result.lines).toEqual(expect.arrayContaining([
       expect.objectContaining({ factType: "marketplace_commission", amountMinor: 500 }),
       expect.objectContaining({ factType: "advertising_spend", amountMinor: 700 }),

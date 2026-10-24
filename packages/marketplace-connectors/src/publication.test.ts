@@ -196,8 +196,9 @@ describe("marketplace draft gateway", () => {
       if (url.includes("/oauth/token")) {
         return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
       }
+      if (url.endsWith("/personalization") && !init?.method) return json({ personalization_questions: [] });
       requests.push({ body: JSON.parse(String(init?.body)), url });
-      return json({});
+      return json(url.endsWith("/personalization") ? { personalization_questions: [] } : {});
     });
     const gateway = new HttpMarketplaceDraftGateway(request as typeof fetch, {
       ETSY_APP_KEYSTRING: "etsy-key",
@@ -247,7 +248,7 @@ describe("marketplace draft gateway", () => {
         sku_on_property: [200],
       },
     });
-    expect(requests[1]?.url).toContain("/shops/9001/listings/456/personalization?supports_multiple_personalization_questions=true");
+    expect(requests[1]?.url).toBe("https://openapi.etsy.com/v3/application/shops/9001/listings/456/personalization");
     expect(requests[1]?.body).toMatchObject({
       personalization_questions: [{ instructions: "Enter a name", max_allowed_characters: 24, required: true }],
     });
@@ -257,6 +258,7 @@ describe("marketplace draft gateway", () => {
     const request = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/oauth/token")) return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
+      if (url.endsWith("/personalization")) return json({ personalization_questions: [{ question_id: 123, question_type: "text_input", question_text: "Your name", instructions: "Enter a name", required: true, max_allowed_characters: 24 }] });
       if (url.includes("/inventory?legacy=true")) return json({
         products: [{
           product_id: 991,
@@ -279,9 +281,6 @@ describe("marketplace draft gateway", () => {
         who_made: "i_did",
         when_made: "2020_2026",
         is_personalizable: true,
-        personalization_is_required: true,
-        personalization_char_count_max: 24,
-        personalization_instructions: "Enter a name",
         price: { amount: 2450, divisor: 100, currency_code: "USD" },
         quantity: 4,
       });
@@ -458,8 +457,9 @@ describe("marketplace draft gateway", () => {
       const url = String(input);
       if (url.includes("/oauth/token")) return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
       if (url.includes("/personalization")) {
+        if (!init?.method) return json({ personalization_questions: [] });
         requests.push({ body: JSON.parse(String(init?.body)), url });
-        return json({});
+        return json({ personalization_questions: [] });
       }
       if (url.includes("/inventory?legacy=true")) {
         requests.push({ body: JSON.parse(String(init?.body)), url });
@@ -489,7 +489,9 @@ describe("marketplace draft gateway", () => {
       snapshot: { externalState: "UPDATE_ACCEPTED", content: { title: "Named pillow", personalization: payload.personalization } },
     });
     expect(requests).toHaveLength(3);
-    expect(requests[0]?.body).toMatchObject({ title: "Named pillow", description: "Line one\nLine two", tags: "pillow,gift", is_personalizable: "true" });
+    expect(requests[0]?.body).toMatchObject({ title: "Named pillow", description: "Line one\nLine two", tags: "pillow,gift" });
+    expect(requests[0]?.body).not.toHaveProperty("is_personalizable");
+    expect(requests[0]?.body).not.toHaveProperty("production_partner_ids");
     expect(requests[1]?.body).toMatchObject({ products: [{ sku: "PILLOW-PINK" }] });
     expect(requests[2]?.body).toMatchObject({ personalization_questions: [{ instructions: "Enter a name", required: true, max_allowed_characters: 24 }] });
   });
@@ -499,6 +501,7 @@ describe("marketplace draft gateway", () => {
     const request = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/oauth/token")) return json({ access_token: "12345.access", refresh_token: "12345.refresh", expires_in: 3600 });
+      if (url.endsWith("/personalization")) return json({ personalization_questions: [] });
       if (url.includes("/inventory?legacy=true")) return json({ error: "inventory rejected" }, 400);
       listingUpdated = true;
       return json({ listing_id: 456, state: "active" });

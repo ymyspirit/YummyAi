@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+import { SupplierProfileSchema } from "@yummyai/contracts/suppliers/supplier-profile";
 
 export const SupplierKindSchema = z.enum(["manual", "printify", "printful"]);
 export const SupplierStatusSchema = z.enum(["active", "suspended", "archived"]);
@@ -8,10 +9,22 @@ export const SupplierStatusSchema = z.enum(["active", "suspended", "archived"]);
 export const CreateFulfillmentSupplierInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
   kind: SupplierKindSchema,
-  regionCode: z.string().trim().min(1).max(40),
+  regionCode: z.string().trim().max(40).default(""),
   settlementCurrency: z.string().regex(/^[A-Z]{3}$/),
+  profile: SupplierProfileSchema.default(SupplierProfileSchema.parse({})),
   externalConnectionRef: z.string().trim().min(1).max(300).nullable().default(null),
 }).strict();
+
+export const UpdateFulfillmentSupplierInputSchema = CreateFulfillmentSupplierInputSchema
+  .pick({ name: true, regionCode: true, settlementCurrency: true }).extend({ profile: SupplierProfileSchema.optional(), status: SupplierStatusSchema.optional() }).strict();
+export type UpdateFulfillmentSupplierInput = z.infer<typeof UpdateFulfillmentSupplierInputSchema>;
+
+export const FulfillmentSupplierViewSchema = z.object({
+  id: EntityIdSchema, name: z.string(), kind: SupplierKindSchema,
+  profile: SupplierProfileSchema.default(SupplierProfileSchema.parse({})),
+  regionCode: z.string(), settlementCurrency: z.string(), status: SupplierStatusSchema,
+});
+export type FulfillmentSupplierView = z.infer<typeof FulfillmentSupplierViewSchema>;
 
 export const CreateSupplierCapabilitySnapshotInputSchema = z.object({
   supplierId: EntityIdSchema,

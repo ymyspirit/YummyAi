@@ -32,12 +32,15 @@ export const notifications = pgTable("notifications", {
   body: text("body").notNull(),
   resourceType: text("resource_type"),
   resourceId: uuid("resource_id"),
+  deduplicationKey: text("deduplication_key"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
   readAt: timestamp("read_at", { mode: "date", withTimezone: true }),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   check("notifications_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("notifications_kind_check", sql`${table.kind} in ('job_completed','job_failed','review_requested','review_decided','design_overdue','system')`),
+  check("notifications_deduplication_length_check", sql`${table.deduplicationKey} is null or length(${table.deduplicationKey}) between 1 and 300`),
   uniqueIndex("notifications_tenant_id_unique").on(table.tenantId, table.id),
+  uniqueIndex("notifications_deduplication_unique").on(table.tenantId, table.userId, table.deduplicationKey).where(sql`${table.deduplicationKey} is not null`),
   index("notifications_inbox_idx").on(table.tenantId, table.userId, table.readAt, table.createdAt),
 ]);

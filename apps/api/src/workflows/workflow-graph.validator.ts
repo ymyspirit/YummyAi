@@ -5,6 +5,7 @@ import {
   type WorkflowValidationIssue,
   type WorkflowValidationResult,
 } from "@yummyai/contracts/workflow";
+import type { HarnessExecutionContract } from "@yummyai/contracts/harness";
 
 export interface WorkflowCapabilityDescriptor {
   key: string;
@@ -14,6 +15,7 @@ export interface WorkflowCapabilityDescriptor {
   outputTypes: readonly WorkflowPortDataType[];
   requiredPermission?: string;
   rightsPolicy?: "none" | "authorized_only" | "reference_analysis_only";
+  executionContract?: HarnessExecutionContract;
 }
 
 export interface WorkflowValidationRegistry {

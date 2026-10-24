@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ModelResponseCheckpoint } from "./response-checkpoint.js";
 
 export interface ModelRequest<T> {
   modelKey: string;
@@ -7,8 +8,10 @@ export interface ModelRequest<T> {
   untrustedSourceData: unknown;
   outputSchema: z.ZodType<T>;
   outputSchemaName?: string;
-  maxCostUsd: number;
+  maxCostUsd: number | null;
   maxOutputTokens?: number;
+  images?: Array<{ sourceId: string; dataUrl: string }>;
+  onResponseCheckpoint?: (response: ModelResponseCheckpoint) => Promise<void>;
 }
 
 export interface ResolvedModelRequest<T> extends ModelRequest<T> {
@@ -19,15 +22,16 @@ export interface ModelResult<T> {
   providerId: string;
   modelKey: string;
   value: T;
-  costUsd: number;
+  costUsd: number | null;
   inputTokens: number;
   outputTokens: number;
+  usageReported?: boolean;
   providerRequestId?: string;
   completedAt: Date;
 }
 
 export interface CostEstimate {
-  costUsd: number;
+  costUsd: number | null;
   estimatedInputTokens: number;
   maxOutputTokens: number;
 }

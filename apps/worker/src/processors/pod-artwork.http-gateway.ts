@@ -1,72 +1,13 @@
-import { z } from "zod";
+import { createHash } from "node:crypto";
+import type { PodInvocationReceipt } from "@yummyai/contracts/harness";
+import { podInvocationReceipt } from "./pod-invocation-receipt.js";
+import { decodePodResponse, readBoundedPodResponse, type PodArtworkResponseCheckpoint } from "./pod-artwork-response.js";
 
 import type {
   PodArtworkExecutionRecord,
   PodArtworkExecutionResult,
   PodArtworkGateway,
 } from "./pod-artwork.processor.js";
-
-const ProcessorResponseSchema = z.object({
-  outputs: z.array(z.object({
-    dataBase64: z.string().min(1),
-    mediaType: z.enum([
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/tiff",
-      "image/svg+xml",
-      "video/mp4",
-      "application/zip",
-      "application/postscript",
-      "text/plain",
-    ]),
-    role: z.enum(["effect", "production"]),
-    fileName: z.string().min(1).max(180),
-    metadata: z.object({
-      width: z.number().positive().finite().optional(),
-      height: z.number().positive().finite().optional(),
-      unit: z.enum(["px", "mm", "in"]).optional(),
-      dpi: z.number().positive().finite().max(2_400).optional(),
-      colorMode: z.enum(["rgb", "cmyk", "grayscale", "spot"]).optional(),
-      transparent: z.boolean().optional(),
-      durationSeconds: z.number().positive().max(60).optional(),
-      fps: z.union([z.literal(24), z.literal(25), z.literal(30)]).optional(),
-      videoCodec: z.literal("h264").optional(),
-      audioCodec: z.enum(["none", "aac"]).optional(),
-      aiInference: z.enum(["none", "partial", "full"]),
-      inferenceRegions: z.array(z.object({
-        x: z.number().finite(),
-        y: z.number().finite(),
-        width: z.number().positive().finite(),
-        height: z.number().positive().finite(),
-      }).strict()).max(1_000).optional(),
-    }).strict().superRefine((metadata, context) => {
-      if (metadata.aiInference === "partial" && !metadata.inferenceRegions?.length) {
-        context.addIssue({ code: "custom", path: ["inferenceRegions"], message: "Partial AI inference requires machine-readable regions" });
-      }
-      if ([metadata.width, metadata.height, metadata.unit].filter((value) => value !== undefined).length % 3 !== 0) {
-        context.addIssue({ code: "custom", path: ["width"], message: "Output dimensions require width, height, and unit together" });
-      }
-    }),
-  }).strict().superRefine((output, context) => {
-    const packaged = output.mediaType === "text/plain" || output.mediaType === "application/zip";
-    if (!packaged && !output.metadata.width) {
-      context.addIssue({ code: "custom", path: ["metadata", "width"], message: "Visual outputs require dimensions" });
-    }
-    if (!packaged && output.metadata.colorMode === undefined) {
-      context.addIssue({ code: "custom", path: ["metadata", "colorMode"], message: "Visual outputs require a color mode" });
-    }
-    if (!packaged && output.metadata.transparent === undefined) {
-      context.addIssue({ code: "custom", path: ["metadata", "transparent"], message: "Visual outputs require transparency metadata" });
-    }
-  })).min(1).max(100),
-  modelKey: z.string().min(1).max(160),
-  modelVersion: z.string().min(1).max(160),
-  seed: z.string().min(1).max(160).optional(),
-  costUsd: z.number().nonnegative().finite().optional(),
-  qualityCheckSnapshot: z.record(z.string(), z.unknown()),
-  partial: z.boolean().default(false),
-}).strict();
 
 export class HttpPodArtworkGateway implements PodArtworkGateway {
   private readonly endpoint: URL;
@@ -80,6 +21,8 @@ export class HttpPodArtworkGateway implements PodArtworkGateway {
   ) {
     this.endpoint = secureProcessorUrl(endpoint);
     if (!apiKey.trim()) throw new Error("POD_PROCESSOR_API_KEY is required");
+    if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 50 * 1024 * 1024) throw new Error("POD output limit must be between 1 byte and 50 MiB");
+    if (!deploymentId.trim() || deploymentId.length > 160) throw new Error("POD processor deployment identity is invalid");
   }
 
   static fromEnvironment() {
@@ -96,10 +39,11 @@ export class HttpPodArtworkGateway implements PodArtworkGateway {
     _context: { tenantId: string; userId: string },
     input: PodArtworkExecutionRecord,
     signal: AbortSignal,
+    onReceipt?: (receipt: PodInvocationReceipt, checkpoint?: PodArtworkResponseCheckpoint) => Promise<void>,
   ): Promise<PodArtworkExecutionResult> {
     const response = await this.request(this.endpoint, {
       method: "POST",
-      signal,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(240_000)]),
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         "content-type": "application/json",
@@ -120,33 +64,16 @@ export class HttpPodArtworkGateway implements PodArtworkGateway {
         })),
       }),
     });
-    if (!response.ok) throw new Error(`POD processor request failed (${response.status})`);
-    const payload = ProcessorResponseSchema.parse(await response.json());
-    const outputs = payload.outputs.map((output) => {
-      const estimatedBytes = Math.floor(output.dataBase64.length * 0.75);
-      if (estimatedBytes > this.maxOutputBytes) throw new Error("POD processor output exceeds the configured byte limit");
-      const bytes = Uint8Array.from(Buffer.from(output.dataBase64, "base64"));
-      if (!bytes.byteLength || bytes.byteLength > this.maxOutputBytes) throw new Error("POD processor output has an invalid byte size");
-      return { ...output, bytes };
-    });
-    return {
-      outputs: outputs.map((output) => ({
-        bytes: output.bytes,
-        mediaType: output.mediaType,
-        role: output.role,
-        fileName: output.fileName,
-        metadata: output.metadata,
-      })),
-      modelKey: payload.modelKey,
-      modelVersion: payload.modelVersion,
-      seed: payload.seed,
-      costUsd: payload.costUsd,
-      qualityCheckSnapshot: {
-        ...payload.qualityCheckSnapshot,
-        processorDeploymentId: this.deploymentId,
-      },
-      partial: payload.partial,
+    const raw = await readBoundedPodResponse(response);
+    let data: unknown;
+    try { data = JSON.parse(raw); } catch { data = null; }
+    const receipt = podInvocationReceipt(data, createHash("sha256").update(raw).digest("hex"), response.headers.get("x-request-id"));
+    const checkpoint: PodArtworkResponseCheckpoint = {
+      version: "pod-response-checkpoint-v1", kind: "http", rawBody: raw,
+      status: response.status, deploymentId: this.deploymentId, maxOutputBytes: this.maxOutputBytes, receipt,
     };
+    if (onReceipt) await onReceipt(receipt, checkpoint);
+    return decodePodResponse(checkpoint);
   }
 }
 

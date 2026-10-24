@@ -11,6 +11,7 @@ export interface WebOidcConfiguration {
 export interface AuthorizationRequest {
   codeVerifier: string;
   state: string;
+  nonce:string;
   url: URL;
 }
 
@@ -32,6 +33,7 @@ export async function createAuthorizationRequest(
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
   const codeChallenge = Buffer.from(digest).toString("base64url");
   const state = randomBytes(24).toString("base64url");
+  const nonce=randomBytes(24).toString("base64url");
   const url = new URL(configuration.authorizationEndpoint);
   url.search = new URLSearchParams({
     client_id: configuration.clientId,
@@ -41,8 +43,9 @@ export async function createAuthorizationRequest(
     response_type: "code",
     scope: configuration.scope,
     state,
+    nonce,
   }).toString();
-  return { codeVerifier, state, url };
+  return { codeVerifier, state,nonce, url };
 }
 
 function required(name: string): string {

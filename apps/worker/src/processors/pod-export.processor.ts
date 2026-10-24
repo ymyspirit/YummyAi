@@ -212,6 +212,7 @@ export class DrizzlePodExportRepository implements PodExportRepository {
 export async function buildPodExportPackage(snapshot: PodExportSnapshot, tenantId: string) {
   const fixedDate = snapshot.createdAt;
   const zip = new JSZip();
+  zip.file("artwork/", "", { dir: true, date: fixedDate });
   const files = snapshot.files.map((file) => {
     const path = `artwork/${file.assetId}-v${file.assetVersion}-${safeName(file.fileName)}`;
     zip.file(path, file.bytes, { date: fixedDate, binary: true });

@@ -54,6 +54,12 @@ export class PodWorkbenchController {
     authorize(context, Permission.DesignWrite);
     return this.tasks.create(context, CreatePodArtworkTaskInputSchema.parse(body));
   }
+
+  @Get("tasks/:id/completion")
+  @RequiresPermission(Permission.DesignRead, Permission.AssetRead)
+  completion(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
+    return this.tasks.completion(requireContext(request), z.uuidv7().parse(id));
+  }
 }
 
 function requireContext(request: AuthenticatedRequest) {

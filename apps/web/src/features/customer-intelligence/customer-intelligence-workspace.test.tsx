@@ -9,6 +9,23 @@ describe("CustomerIntelligenceWorkspace", () => {
     expect(html).toContain("还没有广告或客户信号证据");
   });
 
+  it("shows distinct currencies and levels and withholds overlapping totals", () => {
+    const line = { id: id(10), lineKey: "campaign", entityLevel: "campaign" as const, externalCampaignId: "campaign", externalAdGroupId: null, normalizedTerm: null,
+      listingId: null, skuId: null, impressions: 100, clicks: 10, orders: 2, spendMinor: 1000, salesMinor: 4000, ctrBps: 1000, conversionBps: 2000, roasBps: 40000 };
+    const report = { id: id(11), provider: "manual" as const, accountId: null, externalReportId: "report-a", scopeKey: "shop-a",
+      periodStart: "2026-07-01T00:00:00.000Z", periodEnd: "2026-07-31T00:00:00.000Z", attributionWindowDays: 7, sourceCurrency: "USD",
+      observedAt: "2026-08-01T00:00:00.000Z", recordedAt: "2026-08-01T00:00:00.000Z", checksum: "a".repeat(64), totals: null,
+      lines: [line, { ...line, id: id(12), lineKey: "term", entityLevel: "search_term" as const, normalizedTerm: "pillow" }] };
+    const html = renderToStaticMarkup(<CustomerIntelligenceWorkspace data={{ advertisingReports: [report,
+      { ...report, id: id(13), sourceCurrency: "EUR" }, { ...report, id: id(14), externalReportId: "report-overlap" }], signals: [], definitions: [], analyses: [] }} />);
+    expect(html).toContain("期间重叠，已停止合计");
+    expect(html).toContain("USD"); expect(html).toContain("EUR");
+    expect(html).toContain("搜索词"); expect(html).toContain("4.00×");
+    expect(html).not.toContain("同口径非重叠期间合计");
+    expect(html).not.toContain("记录广告花费");
+    expect(html).not.toContain("400.0%");
+  });
+
   it("shows source currency, attribution, redaction, and review-only boundaries", () => {
     const data: CustomerIntelligenceWorkspaceView = {
       advertisingReports: [{ id: id(1), provider: "manual", accountId: null, externalReportId: "report-1", scopeKey: "scope", periodStart: "2026-07-01T00:00:00.000Z", periodEnd: "2026-07-31T00:00:00.000Z", attributionWindowDays: 7, sourceCurrency: "USD", observedAt: "2026-08-01T00:00:00.000Z", checksum: "a".repeat(64), recordedAt: "2026-08-01T00:00:00.000Z", totals: { impressions: 100, clicks: 10, orders: 2, spendMinor: 1000, salesMinor: 4000 }, lines: [] }],

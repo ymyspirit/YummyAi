@@ -421,6 +421,902 @@
       "when": 1789401600000,
       "tag": "0060_template_inspection_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789488000000,
+      "tag": "0061_amazon_order_reports",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1789574400000,
+      "tag": "0062_amazon_order_report_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1789660800000,
+      "tag": "0063_amazon_order_report_preview",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1789747200000,
+      "tag": "0064_production_editor",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1789833600000,
+      "tag": "0065_infinite_canvas_bridge",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1789920000000,
+      "tag": "0066_canvas_workflow_workbench",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1790006400000,
+      "tag": "0067_canvas_snapshot_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790006400001,
+      "tag": "0068_creative_studio_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1790006400002,
+      "tag": "0069_product_supplier_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1790006400003,
+      "tag": "0070_order_centers",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1790006400004,
+      "tag": "0071_artwork_product_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1790006400005,
+      "tag": "0072_artwork_materials",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790006400006,
+      "tag": "0073_research_studies",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1790006400007,
+      "tag": "0074_research_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1790006400008,
+      "tag": "0075_ai_assists",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1790006400009,
+      "tag": "0076_ai_assist_batch2",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1790006400010,
+      "tag": "0077_ai_assist_batch3",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1790006400011,
+      "tag": "0078_model_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1790006400012,
+      "tag": "0079_specification_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1790006400013,
+      "tag": "0080_artwork_optional_master_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1790006400014,
+      "tag": "0081_model_channel_removal",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1790006400015,
+      "tag": "0082_customer_plan_readiness",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1790006400016,
+      "tag": "0083_order_workbench",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1790006400017,
+      "tag": "0084_order_report_read_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1790006400018,
+      "tag": "0085_order_daily_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1790006400019,
+      "tag": "0086_amazon_report_processing",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1790006400020,
+      "tag": "0087_ai_budget_settlement_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1790006400021,
+      "tag": "0088_order_design_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1790006400022,
+      "tag": "0089_business_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1790006400023,
+      "tag": "0090_working_record_archival",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1790006400024,
+      "tag": "0091_order_unknown_money",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1790006400025,
+      "tag": "0092_order_design_response_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1790006400026,
+      "tag": "0093_production_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1791259351436,
+      "tag": "0094_supplier_factories",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1791259351437,
+      "tag": "0095_shipos_readonly",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1791259351438,
+      "tag": "0096_knowledge_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1791259351439,
+      "tag": "0097_knowledge_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1791259351440,
+      "tag": "0098_knowledge_provenance_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1791259351441,
+      "tag": "0099_production_request_checksum_compat",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1791259351442,
+      "tag": "0100_shipos_shipment_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1791259351443,
+      "tag": "0101_spu_sales_plans",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1791446400000,
+      "tag": "0102_advertising_workbench",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1791453600000,
+      "tag": "0103_advertising_upgrade",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1791454843199,
+      "tag": "0104_marketplace_account_removal",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1791799202341,
+      "tag": "0105_sales_compositions",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1791799766093,
+      "tag": "0106_logistics",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1791800687550,
+      "tag": "0107_factory_submission",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1792090571900,
+      "tag": "0108_capture_media_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1792092534619,
+      "tag": "0109_catalog_operation_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1792093043659,
+      "tag": "0110_workflow_node_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792102500242,
+      "tag": "0111_capture_media_source_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792105197633,
+      "tag": "0112_workflow_responsibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1792109776930,
+      "tag": "0113_workflow_task_inbox_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1792113442737,
+      "tag": "0114_order_line_responsibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1792120990596,
+      "tag": "0115_business_followups",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1792129054447,
+      "tag": "0116_ai_assist_execution_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1792136972168,
+      "tag": "0117_pod_invocation_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1792139554786,
+      "tag": "0118_model_billing_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1792144786265,
+      "tag": "0119_pod_response_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1792150823912,
+      "tag": "0120_agent_method_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1792259400000,
+      "tag": "0121_pod_method_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792262000000,
+      "tag": "0122_pod_completion_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792263000000,
+      "tag": "0123_order_design_methods_completion",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1792264000000,
+      "tag": "0124_order_design_model_cost_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1792265000000,
+      "tag": "0125_factory_collaboration",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1792266000000,
+      "tag": "0126_team_catalog_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1792342800000,
+      "tag": "0127_production_render_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1792347600000,
+      "tag": "0128_legacy_runtime_alignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1792357993143,
+      "tag": "0129_creative_execution_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1792379264676,
+      "tag": "0130_quality_assessment",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1792385000000,
+      "tag": "0131_shipment_production_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1792390000000,
+      "tag": "0132_quality_physical_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1792395961721,
+      "tag": "0133_manufacturing_recipes",
+      "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1792407794930,
+      "tag": "0134_production_manufacturing_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1792410251215,
+      "tag": "0135_manufacturing_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1792438855000,
+      "tag": "0136_production_command_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1792450072823,
+      "tag": "0137_shipos_observation_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1792453114867,
+      "tag": "0138_inventory_exact_quantities",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1792454886479,
+      "tag": "0139_production_material_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1792456409564,
+      "tag": "0140_production_material_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1792464358378,
+      "tag": "0141_inventory_stock_classifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1792465029535,
+      "tag": "0142_procurement_receipt_request_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1792469003683,
+      "tag": "0143_procurement_receipt_exact_quantities",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1792469286152,
+      "tag": "0144_incoming_inspection_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1792471161854,
+      "tag": "0145_incoming_original_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1792478122131,
+      "tag": "0146_procurement_original_request_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1792482385903,
+      "tag": "0147_procurement_original_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1792492690255,
+      "tag": "0148_procurement_rfq_creation_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1792498000000,
+      "tag": "0149_procurement_measurement_invoices",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1792500000000,
+      "tag": "0150_procurement_invoice_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1792500000001,
+      "tag": "0151_invoice_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1792500000002,
+      "tag": "0152_finance_monetary_basis",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1792500000003,
+      "tag": "0153_finance_payables",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1792500000004,
+      "tag": "0154_finance_source_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1792500000005,
+      "tag": "0155_finance_payable_adjustments",
+      "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "7",
+      "when": 1792500000006,
+      "tag": "0156_finance_cost_allocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1792500000007,
+      "tag": "0157_finance_original_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1792500000008,
+      "tag": "0158_advertising_original_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1792549870837,
+      "tag": "0159_factory_capacity_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "7",
+      "when": 1792555490000,
+      "tag": "0160_production_physical_quantities",
+      "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1792558700000,
+      "tag": "0161_quality_scrap_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1792558900000,
+      "tag": "0162_factory_quantity_reports",
+      "breakpoints": true
+    },
+    {
+      "idx": 163,
+      "version": "7",
+      "when": 1792562700000,
+      "tag": "0163_factory_erp_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "7",
+      "when": 1792566300000,
+      "tag": "0164_factory_erp_source_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1792570800000,
+      "tag": "0165_factory_erp_binding_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1792573200000,
+      "tag": "0166_factory_erp_void_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1792576800000,
+      "tag": "0167_knowledge_evaluation_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1792580400000,
+      "tag": "0168_knowledge_benchmarks",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1792584000000,
+      "tag": "0169_business_benchmarks",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1792587600000,
+      "tag": "0170_role_benchmarks",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "7",
+      "when": 1792591200000,
+      "tag": "0171_agent_delegation",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1792594800000,
+      "tag": "0172_agent_loop",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1792598400000,
+      "tag": "0173_agent_command",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1792602000000,
+      "tag": "0174_agent_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1792605600000,
+      "tag": "0175_agent_native",
+      "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1792609200000,
+      "tag": "0176_agent_native_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1792612800000,
+      "tag": "0177_agent_native_v3",
+      "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1792616400000,
+      "tag": "0178_marketplace_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
+      "when": 1792620000000,
+      "tag": "0179_store_node_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1792620001000,
+      "tag": "0180_store_node_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "7",
+      "when": 1792620002000,
+      "tag": "0181_listing_sync_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1792620003000,
+      "tag": "0182_publication_node_preview",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1792620004000,
+      "tag": "0183_publication_node_submit",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1792620005000,
+      "tag": "0184_agent_dependency_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1792713600000,
+      "tag": "0185_order_fulfillment_command",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1792713601000,
+      "tag": "0186_agent_fulfillment_command",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1792720800000,
+      "tag": "0187_agent_native_v4",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0188_studio_document_transfer",
+      "breakpoints": true
     }
   ]
 }

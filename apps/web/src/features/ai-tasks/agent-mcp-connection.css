@@ -1,0 +1,75 @@
+.agent-mcp-connection { min-width:0; max-width:100%; margin:20px 0; color:var(--ink); font-size:12px; line-height:1.7; overflow-wrap:anywhere; animation:mcp-enter 180ms ease-out both; }
+.agent-mcp-connection *, .agent-mcp-connection *::before, .agent-mcp-connection *::after { box-sizing:border-box; min-width:0; }
+.agent-mcp-connection details { border-block:1px solid var(--line); interpolate-size:allow-keywords; }
+.agent-mcp-connection summary { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:10px; min-height:48px; padding:12px 0; cursor:pointer; list-style:none; transition:color 140ms,background 140ms; }
+.agent-mcp-connection summary::-webkit-details-marker { display:none; }
+.agent-mcp-connection summary:hover { color:var(--blue); }
+.agent-mcp-connection .mcp-heading, .agent-mcp-connection .mcp-state, .agent-mcp-connection :is(h3,button,dt) { display:flex; align-items:center; gap:7px; }
+.agent-mcp-connection .mcp-heading { font-size:15px; font-weight:600; }
+.agent-mcp-connection .mcp-state { font-size:11px; color:var(--muted-ink); font-weight:400; }
+.agent-mcp-connection svg { flex:none; }
+.agent-mcp-connection .mcp-chevron { color:var(--muted-ink); transform:rotate(-90deg); transition:transform 180ms ease; }
+.agent-mcp-connection details[open] > summary .mcp-chevron { transform:rotate(0); }
+.agent-mcp-connection details::details-content { block-size:0; opacity:0; overflow:hidden; transition:block-size 180ms ease,opacity 150ms ease,content-visibility 180ms allow-discrete; }
+.agent-mcp-connection details[open]::details-content { block-size:auto; opacity:1; }
+.agent-mcp-connection .mcp-content { padding:0 0 16px; }
+.agent-mcp-connection .mcp-content > * { margin:0; }
+.agent-mcp-connection .mcp-content > * + * { margin-top:14px; }
+.agent-mcp-connection details[open] .mcp-content > * { animation:mcp-enter 160ms ease-out both; }
+.agent-mcp-connection .mcp-notice { padding:9px 11px; border-left:2px solid var(--blue); background:var(--erp-accent-bg); }
+.agent-mcp-connection h3 { margin:0; font-size:12px; font-weight:600; }
+.agent-mcp-connection .mcp-command-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:9px; }
+.agent-mcp-connection button { min-height:36px; max-width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink); font:inherit; cursor:pointer; transition:background 140ms,border-color 140ms,transform 140ms,opacity 140ms; }
+.agent-mcp-connection button:hover:not(:disabled) { border-color:var(--blue); background:var(--surface-muted); transform:translateY(-1px); }
+.agent-mcp-connection button:active:not(:disabled) { transform:scale(.98); }
+.agent-mcp-connection :is(button,summary,input,select,pre):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.agent-mcp-connection code { max-width:100%; font-family:var(--font-mono,ui-monospace,monospace); font-size:11px; white-space:normal; overflow-wrap:anywhere; word-break:break-word; }
+.agent-mcp-connection .mcp-command { display:block; padding:10px 12px; border:1px solid var(--line); border-radius:5px; background:var(--surface-muted); user-select:all; }
+.agent-mcp-connection .mcp-copy-result { min-height:1.7em; margin:6px 0 0; font-size:11px; color:var(--muted-ink); }
+.agent-mcp-connection .mcp-copy-result[data-state=failed] { color:var(--danger); }
+.agent-mcp-connection .mcp-boundaries { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.agent-mcp-connection .mcp-boundaries dt { font-weight:500; }
+.agent-mcp-connection dd { margin:4px 0 0; color:var(--muted-ink); }
+.agent-mcp-connection .mcp-methods { margin:9px 0 0; }
+.agent-mcp-connection .mcp-methods > div { display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,2fr); gap:18px; padding:9px 0; border-top:1px solid var(--line); }
+.agent-mcp-connection details[open] .mcp-methods > div { animation:mcp-enter 160ms ease-out both; }
+.agent-mcp-connection .mcp-methods dt { display:grid; align-content:start; gap:3px; }
+.agent-mcp-connection .mcp-methods strong { font-size:11px; font-weight:500; }
+.agent-mcp-connection .mcp-methods dd { margin:0; }
+.agent-mcp-connection .mcp-muted { color:var(--muted-ink); font-size:11px; }
+.agent-mcp-connection .mcp-version-choice { display:flex; flex-wrap:wrap; gap:9px 18px; margin:0; padding:0; border:0; }
+.agent-mcp-connection .mcp-version-choice legend { margin-bottom:7px; font-weight:500; }
+.agent-mcp-connection .mcp-version-choice label { display:flex; align-items:flex-start; gap:7px; max-width:100%; padding:7px 0; cursor:pointer; transition:color 140ms,opacity 140ms; }
+.agent-mcp-connection .mcp-version-choice label:hover { color:var(--blue); }
+.agent-mcp-connection .mcp-version-choice input { flex:none; width:15px; height:15px; margin:2px 0 0; accent-color:var(--blue); }
+.agent-mcp-connection .mcp-version-choice strong { display:block; font-size:12px; font-weight:500; }
+.agent-mcp-connection .mcp-version-choice small { display:block; margin-top:2px; color:var(--muted-ink); font-size:11px; }
+.agent-mcp-connection .mcp-choice-content { view-transition-name:erp-mcp-configuration; }
+.agent-mcp-connection .mcp-choice-content > * { margin:0; }
+.agent-mcp-connection .mcp-choice-content > * + * { margin-top:14px; }
+.agent-mcp-connection .mcp-version-note { color:var(--blue); font-size:11px; }
+.agent-mcp-connection .mcp-auth > p, .agent-mcp-connection .mcp-host > p { margin:7px 0 0; }
+.agent-mcp-connection .mcp-readiness { padding-block:12px; border-block:1px solid var(--line); }
+.agent-mcp-connection .mcp-readiness > p { margin:7px 0 0; }
+.agent-mcp-connection .mcp-readiness > .mcp-command { margin-top:9px; }
+.agent-mcp-connection details[open] .mcp-readiness > * { animation:mcp-enter 160ms ease-out both; }
+.agent-mcp-connection .mcp-auth-commands { margin:9px 0 0; }
+.agent-mcp-connection .mcp-auth-commands > div { display:grid; grid-template-columns:minmax(90px,.35fr) minmax(0,2fr); align-items:start; gap:12px; padding:8px 0; border-top:1px solid var(--line); }
+.agent-mcp-connection .mcp-auth-commands dt { padding-top:8px; font-weight:500; }
+.agent-mcp-connection .mcp-auth-commands dd { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0; }
+.agent-mcp-connection .mcp-auth-commands code { flex:1 1 270px; }
+.agent-mcp-connection .mcp-auth-commands button { flex:0 1 auto; }
+.agent-mcp-connection .mcp-host-format { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:8px 0; color:var(--muted-ink); }
+.agent-mcp-connection .mcp-host-format select { min-height:36px; max-width:100%; padding:6px 28px 6px 9px; border:1px solid var(--line); border-radius:5px; color:var(--ink); background:var(--surface); font:inherit; transition:border-color 140ms,background 140ms; }
+.agent-mcp-connection .mcp-template { max-height:28rem; max-width:100%; margin:0; padding:11px 12px; overflow:auto; border:1px solid var(--line); border-radius:5px; background:var(--surface-muted); white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+.agent-mcp-connection .mcp-template code { white-space:inherit; }
+.agent-mcp-connection .mcp-adoption { display:flex; flex-wrap:wrap; gap:9px 24px; padding-top:11px; border-top:1px solid var(--line); }
+.agent-mcp-connection .mcp-adoption > div { flex:1 1 180px; }
+.agent-mcp-connection .mcp-adoption dt { font-weight:500; }
+::view-transition-old(erp-mcp-configuration) { animation:mcp-exit 100ms ease-in both; }
+::view-transition-new(erp-mcp-configuration) { animation:mcp-enter 150ms ease-out both; }
+@keyframes mcp-enter { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
+@keyframes mcp-exit { from { opacity:1; transform:none; } to { opacity:0; transform:translateY(-2px); } }
+@media(max-width:720px) { .agent-mcp-connection .mcp-boundaries { grid-template-columns:minmax(0,1fr); gap:10px; }.agent-mcp-connection .mcp-methods > div { grid-template-columns:minmax(0,1fr); gap:5px; } }
+@media(max-width:560px) { .agent-mcp-connection summary { grid-template-columns:minmax(0,1fr) auto; gap:5px 10px; }.agent-mcp-connection .mcp-state { grid-column:1; grid-row:2; }.agent-mcp-connection .mcp-chevron { grid-column:2; grid-row:1/3; }.agent-mcp-connection button { min-height:40px; }.agent-mcp-connection .mcp-command-heading { align-items:flex-start; }.agent-mcp-connection .mcp-version-choice { display:grid; grid-template-columns:minmax(0,1fr); gap:1px; }.agent-mcp-connection .mcp-auth-commands > div { grid-template-columns:minmax(0,1fr); gap:5px; }.agent-mcp-connection .mcp-auth-commands dt { padding-top:0; }.agent-mcp-connection .mcp-host-format select { min-height:40px; }.agent-mcp-connection .mcp-template { padding:9px; } }
+@media(prefers-reduced-motion:reduce) { .agent-mcp-connection, .agent-mcp-connection *, .agent-mcp-connection *::before, .agent-mcp-connection *::after, .agent-mcp-connection details::details-content, ::view-transition-old(erp-mcp-configuration), ::view-transition-new(erp-mcp-configuration) { animation:none !important; transition:none !important; scroll-behavior:auto !important; }.agent-mcp-connection button:hover:not(:disabled), .agent-mcp-connection button:active:not(:disabled) { transform:none; } }

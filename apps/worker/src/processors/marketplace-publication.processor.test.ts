@@ -1,11 +1,13 @@
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { createTraceId, type JobEnvelope } from "@yummyai/jobs";
 import {
+  EtsyPersonalizationSafetyError,
   MarketplaceConnectorError,
   type MarketplaceDraftGateway,
   type MarketplaceDraftResult,
 } from "@yummyai/marketplace-connectors";
 import { describe, expect, it, vi } from "vitest";
+import {PublicationAuthorityError} from "@yummyai/catalog-core";
 
 import {
   interruptedMutationIsUncertain,
@@ -51,6 +53,39 @@ class FakeRepository implements PublicationExecutionRepository {
 }
 
 describe("marketplace publication processor", () => {
+  it("fails closed when a guarded repository has no gateway request guard",async()=>{
+    const repository=Object.assign(new FakeRepository(),{beforeProviderRequest:vi.fn(async()=>undefined)});
+    const create=vi.fn(async()=>result("validation_passed","ACCEPTED"));
+    await expect(new MarketplacePublicationProcessor(repository,fakeGateway({create})).process(envelope())).resolves.toMatchObject({status:"reconciliation_required"});
+    expect(create).not.toHaveBeenCalled();expect(repository.complete).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(expect.anything(),repository.snapshot!.requestId,expect.objectContaining({code:"PUBLICATION_AUTHORITY_CHANGED",retryable:false}));
+  });
+  it("retains born authority and stops before a second HTTP even when the adapter wraps a revoked grant",async()=>{
+    let physical=0;const before=vi.fn(async()=>{if(physical===1)throw new PublicationAuthorityError();});
+    const repository=Object.assign(new FakeRepository(),{beforeProviderRequest:before}),original=envelope();
+    repository.snapshot!.authority={tenantId:original.tenantId,userId:original.requestedBy,permissions:["listing:publish","listing:read","store:read"],dataScope:"self"};
+    const gateway=fakeGateway({withRequestGuard:check=>fakeGateway({create:async()=>{
+      await check();physical++;
+      try{await check();physical++;}catch{throw new MarketplaceConnectorError("amazon","upstream_retryable","Synthetic adapter wrapper");}
+      return result("validation_passed","ACCEPTED");
+    }})});
+    await expect(new MarketplacePublicationProcessor(repository,gateway).process(original)).resolves.toMatchObject({status:"reconciliation_required"});
+    expect(physical).toBe(1);expect(before).toHaveBeenCalledTimes(2);expect(before).toHaveBeenCalledWith(repository.snapshot!.authority,repository.snapshot);
+    expect(repository.complete).not.toHaveBeenCalled();expect(repository.fail).toHaveBeenCalledWith(repository.snapshot!.authority,repository.snapshot!.requestId,expect.objectContaining({retryable:false,code:"PUBLICATION_AUTHORITY_CHANGED"}));
+  });
+  it("keeps fixed Etsy safety instructions visible without exposing arbitrary connector errors", async () => {
+    for (const error of [new EtsyPersonalizationSafetyError("unsupported"), new MarketplaceConnectorError("etsy", "validation", "raw provider data must stay private")]) {
+      const repository = new FakeRepository();
+      repository.snapshot = etsySnapshot(repository.snapshot!);
+      const gateway = fakeGateway({ create: vi.fn(async () => Promise.reject(error)) });
+      await expect(new MarketplacePublicationProcessor(repository, gateway).process(envelope())).resolves.toMatchObject({ status: "failed" });
+      expect(repository.fail).toHaveBeenCalledWith(expect.anything(), repository.snapshot.requestId, expect.objectContaining({
+        retryable: false,
+        message: error instanceof EtsyPersonalizationSafetyError ? error.message : "Marketplace rejected the publication payload",
+      }));
+    }
+  });
+
   it("records an Amazon validation result returned by the connector", async () => {
     const repository = new FakeRepository();
     const result: MarketplaceDraftResult = {

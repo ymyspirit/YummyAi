@@ -1,0 +1,553 @@
+{
+  "version": "1.1.127",
+  "date": "2026-10-22",
+  "scope": "Detailed acceptance requirements; not test results",
+  "details": [
+    {
+      "id": "H01",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "同键同内容复用；同键不同内容冲突；重复派发不重复业务动作",
+      "workPackages": [
+        "B09"
+      ],
+      "tests": [
+        "T06"
+      ],
+      "requirements": [
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H02",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "提交后派发前崩溃可恢复；旧 token 不能提交新租约结果",
+      "workPackages": [
+        "B09"
+      ],
+      "tests": [
+        "T06"
+      ],
+      "requirements": [
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H03",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "模型请求状态不明及仅有回执时阻止重发；缺少标记按未知处理",
+      "workPackages": [
+        "B28"
+      ],
+      "tests": [
+        "T06"
+      ],
+      "requirements": [
+        "R20",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H04",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "有响应检查点时只重跑本地处理；已完成步骤不倒退",
+      "workPackages": [
+        "B28",
+        "B32"
+      ],
+      "tests": [
+        "T06"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R22",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H05",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "运行前撤权、到期、源版本变化被阻断；旧快照不扩大权限",
+      "workPackages": [
+        "B09",
+        "B28"
+      ],
+      "tests": [
+        "T01",
+        "T03",
+        "T05"
+      ],
+      "requirements": [
+        "R20",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H06",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "预留、所有尝试、已知费用与未知费用一致；重复恢复不重复结算；隐私到期保留最小原费用，不保留私有结果；费用精度与预算占用分别可核验",
+      "workPackages": [
+        "B28"
+      ],
+      "tests": [
+        "T06",
+        "T21"
+      ],
+      "requirements": [
+        "R20",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H07",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "外部资料注入付款、改工具或放宽检查的指令无效",
+      "workPackages": [
+        "B14",
+        "B28"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R04",
+        "R20",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H08",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "断开后任务页能定位原运行、步骤、产物、阻断与安全下一步",
+      "workPackages": [
+        "B26",
+        "B32"
+      ],
+      "tests": [
+        "T19",
+        "T20"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R22",
+        "R36"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H09",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "技术完成、人工批准、工厂接受、生产放行分别可查",
+      "workPackages": [
+        "B31"
+      ],
+      "tests": [
+        "T05",
+        "T10"
+      ],
+      "requirements": [
+        "R22"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H10",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "缺事实、无依据或关键上下文被截断时停止并说明缺口",
+      "workPackages": [
+        "B14",
+        "B27"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R04",
+        "R20"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H11",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "原路径与可选裁线图使用固定配方；旧任务不会套用当前规则",
+      "workPackages": [
+        "B28",
+        "B32"
+      ],
+      "tests": [
+        "T05",
+        "T10"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R22",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "H12",
+      "source": "15-agent-harness-specification.md",
+      "acceptance": "同一固定样本比较规则基线和候选模型，记录单位合格成本与硬失败",
+      "workPackages": [
+        "B27"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R20"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K01",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "支持格式成功解析；扫描 PDF/超限/恶意文件明确拒绝；无假 OCR 成功",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T07"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K02",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "原件、候选、知识版本和来源可追溯；重复接受不重复创建",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T04",
+        "T05"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K03",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "草稿不可检索；提交/复核不等于发布；旧发布版在新草稿期间仍有效",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T05"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K04",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "跨租户、无权限、错平台/市场/SPU 的内容不进入结果或模型输入",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T01",
+        "T03"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K05",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "过期、停用、来源失效和阻断冲突的内容从新检索中排除",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T05",
+        "T21"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K06",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "已固定引用可追溯；新任务采用新有效版本，旧任务不静默替换",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T05"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K07",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "无支持依据时报告缺口；引用与实际断言对应；不伪造准确率",
+      "workPackages": [
+        "B14",
+        "B27"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R04",
+        "R20"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K08",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "来源变化只形成复核；检查失败不刷新成功核验日",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T19",
+        "T21"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K09",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "账户证据明确店铺、脱敏、当前授权和范围；普通搜索不泄露",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T01",
+        "T03"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K10",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "资料清理后原件和下载失效；不可变非敏感关系保留",
+      "workPackages": [
+        "B14"
+      ],
+      "tests": [
+        "T03"
+      ],
+      "requirements": [
+        "R04"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K11",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "知识或 PDF 中的注入不能触发工具、付款、发布或生产批准",
+      "workPackages": [
+        "B14",
+        "B28"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R04",
+        "R20",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "K12",
+      "source": "16-knowledge-governance-specification.md",
+      "acceptance": "固定问题集记录引用、预期/禁用断言、拒答和人工复核，覆盖不足可见",
+      "workPackages": [
+        "B14",
+        "B27"
+      ],
+      "tests": [
+        "T21"
+      ],
+      "requirements": [
+        "R04",
+        "R20"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C01",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "原画布重新打开后节点/连接/媒体及历史引用一致；私有资源仍受权；个人五工具保持同本人同项目会话，退出或撤权同步清理并拒绝迟到正文",
+      "workPackages": [
+        "B29"
+      ],
+      "tests": [
+        "T03",
+        "T05",
+        "T20"
+      ],
+      "requirements": [
+        "R21",
+        "R37"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C02",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "独立桥接与内嵌入口分别完成保存、失败恢复、候选送审；未知保存先按原key/revision只读核对，仅明确未提交后允许本人再次保存",
+      "workPackages": [
+        "B18",
+        "B32"
+      ],
+      "tests": [
+        "T06",
+        "T20"
+      ],
+      "requirements": [
+        "R13",
+        "R20",
+        "R21",
+        "R22"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C03",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "创意设计、套图、生产文件用途明确；候选不能冒充批准稿",
+      "workPackages": [
+        "B18",
+        "B31"
+      ],
+      "tests": [
+        "T05",
+        "T10"
+      ],
+      "requirements": [
+        "R13",
+        "R22"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C04",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "批量任务部分成功、取消和失败可定位；只恢复符合条件的未完成步骤",
+      "workPackages": [
+        "B32"
+      ],
+      "tests": [
+        "T06",
+        "T10"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R22"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C05",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "原制图与可选裁线图使用固定配方和规则；几何修正不改原图",
+      "workPackages": [
+        "B28",
+        "B30"
+      ],
+      "tests": [
+        "T05",
+        "T10"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C06",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "模型超时、响应存储失败、原响应导入和接管不会重复扣费或制造批准",
+      "workPackages": [
+        "B28",
+        "B32"
+      ],
+      "tests": [
+        "T06",
+        "T10"
+      ],
+      "requirements": [
+        "R20",
+        "R21",
+        "R22",
+        "R39"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C07",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "旧地址继续定位原项目，当前权限和保留期在打开及下载时复查；生产runtime固定bundle与ERP配对，升级失败恢复旧版本，不从开发目录动态重建；视频先读取本人完整原生日志并固定版本预检，损坏/未知和失败不当空目录，明确打开仅查看，暂停期间零旧任务恢复及轮询，原草稿和冻结历史保留",
+      "workPackages": [
+        "B29"
+      ],
+      "tests": [
+        "T03",
+        "T20",
+        "T24"
+      ],
+      "requirements": [
+        "R21",
+        "R37"
+      ],
+      "evidenceStatus": "not_verified"
+    },
+    {
+      "id": "C08",
+      "source": "17-creative-capability-migration.md",
+      "acceptance": "按供应规范核对真实生产输出，业务审核及工厂接受有独立证据",
+      "workPackages": [
+        "B31"
+      ],
+      "tests": [
+        "T10",
+        "T22"
+      ],
+      "requirements": [
+        "R22"
+      ],
+      "evidenceStatus": "not_verified"
+    }
+  ]
+}

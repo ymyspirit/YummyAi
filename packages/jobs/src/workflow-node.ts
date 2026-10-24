@@ -4,6 +4,7 @@ export const WorkflowNodeJobPayloadSchema = z
   .object({
     runId: z.uuidv7(),
     nodeRunId: z.uuidv7(),
+  attemptId: z.uuidv7(),
   })
   .strict();
 

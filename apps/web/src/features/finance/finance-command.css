@@ -1,0 +1,65 @@
+.finance-command-workbench,.finance-command-review,.finance-command-form { min-width:0; color:var(--foreground,#192230); font-size:12px; }
+.finance-command-workbench { border:1px solid var(--border,#dce2ea); background:var(--surface,#fff); padding:18px; border-radius:10px; }
+.finance-command-heading,.finance-command-heading>div,.finance-command-review>header,.finance-command-line>header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.finance-command-heading>div { justify-content:flex-start; }
+.finance-command-heading h2 { margin:0; font-size:15px; font-weight:650; }
+.finance-command-review h3 { margin:0; font-size:15px; outline-offset:5px; }
+.finance-command-review h4,.finance-command-original h4 { margin:16px 0 10px; font-size:13px; }
+.finance-command-workbench button,.finance-command-review button,.finance-command-form button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:32px; padding:6px 10px; border:1px solid var(--border,#dce2ea); border-radius:6px; background:var(--surface,#fff); color:inherit; font:inherit; cursor:pointer; transition:transform .14s ease,background .14s ease,border-color .14s ease,opacity .14s ease; }
+.finance-command-workbench button:hover:not(:disabled),.finance-command-review button:hover:not(:disabled),.finance-command-form button:hover:not(:disabled) { transform:translateY(-1px); border-color:#9bb9ea; background:#f3f7fd; }
+.finance-command-workbench button:active:not(:disabled),.finance-command-review button:active:not(:disabled),.finance-command-form button:active:not(:disabled) { transform:scale(.98); }
+.finance-command-workbench button:disabled,.finance-command-review button:disabled,.finance-command-form button:disabled { opacity:.5; cursor:default; }
+.finance-command-workbench .primary,.finance-command-review .primary,.finance-command-form .primary { background:#215bba; color:#fff; border-color:#215bba; }
+.finance-command-workbench .primary:hover:not(:disabled),.finance-command-review .primary:hover:not(:disabled),.finance-command-form .primary:hover:not(:disabled) { background:#174eaa; color:#fff; }
+.finance-command-note { margin:10px 0; line-height:1.75; color:var(--muted,#657184); }
+.finance-command-new,.finance-command-original-rows>footer,.finance-command-line-editor>footer,.finance-command-actions>div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.finance-command-new { margin:16px 0; padding-bottom:14px; border-bottom:1px solid var(--border,#e3e7ee); }
+.finance-command-filters { display:grid; grid-template-columns:minmax(150px,1fr) minmax(180px,2fr) auto; align-items:end; gap:10px; margin:14px 0; }
+.finance-command-list { margin:12px 0; padding:0; list-style:none; }
+.finance-command-list>li { display:flex; justify-content:space-between; align-items:center; gap:12px; border-top:1px solid var(--border,#e3e7ee); padding:12px 0; }
+.finance-command-list li>div { display:grid; min-width:0; gap:5px; }
+.finance-command-list span,.finance-command-list small { color:var(--muted,#657184); }
+.finance-command-list button { flex-shrink:0; }
+.finance-command-pairs { display:grid; gap:9px; margin:12px 0; }
+.finance-command-pairs>div { display:grid; grid-template-columns:minmax(95px,130px) minmax(0,1fr); align-items:start; gap:12px; }
+.finance-command-pairs dt { color:var(--muted,#657184); }
+.finance-command-pairs dd { margin:0; white-space:pre-wrap; }
+.finance-command-workbench :is(code,p,span,small,strong,dd,dt,h2,h3,h4,h5),.finance-command-review :is(code,p,span,small,strong,dd,dt,h2,h3,h4,h5),.finance-command-form :is(code,p,span,small,strong,dd,dt,h2,h3,h4,h5) { overflow-wrap:anywhere; min-width:0; }
+.finance-command-workbench code,.finance-command-review code,.finance-command-form code { font-family:var(--font-mono,ui-monospace,monospace); font-size:11px; }
+.finance-command-notice { margin:12px 0; padding:10px 12px; border-left:3px solid #4777bc; background:#f3f7fd; line-height:1.7; }
+.finance-command-notice.is-error { border-color:#b74b4b; background:#fcf3f3; color:#853b3b; }
+.finance-command-notice p { margin:6px 0; }
+.finance-command-result { margin:16px 0; border-block:1px solid var(--border,#dce2ea); padding:4px 0 12px; }
+.finance-command-result h4 { display:flex; gap:8px; align-items:center; }
+.finance-command-original { border-top:1px solid var(--border,#dce2ea); margin-top:16px; }
+.finance-command-original-rows { padding:8px 0; min-width:0; }
+.finance-command-original-rows h5 { font-size:12px; margin:8px 0; }
+.finance-command-original-rows>ol { margin:0 0 12px; padding-left:22px; }
+.finance-command-original-rows>ol>li { padding:10px 0; border-top:1px solid #e8ecf2; }
+.finance-command-original-rows .finance-command-original-rows>ol { padding-left:16px; }
+.finance-command-key { margin:12px 0; color:var(--muted,#657184); }
+.finance-command-key code { display:block; margin-top:8px; }
+.finance-command-actions { border:0; margin:16px 0 0; padding:0; }
+.finance-command-confirm { display:flex; align-items:flex-start; gap:8px; margin-bottom:16px; line-height:1.7; }
+.finance-command-confirm input { flex-shrink:0; margin-top:4px; }
+.finance-command-line-editor { margin-top:16px; }
+.finance-command-line { border-top:1px solid var(--border,#e3e7ee); padding:12px 0; }
+.finance-command-line h5 { font-size:12px; margin:4px 0 10px; }
+.finance-command-line details { margin:8px 0; }
+.finance-command-fact-selection { display:flex; flex-wrap:wrap; gap:8px 18px; margin:16px 0; }
+.finance-command-fact-selection h4 { width:100%; margin:0; }
+.finance-command-fact-selection label { display:flex; gap:6px; align-items:center; min-width:135px; }
+.finance-command-import { margin:14px 0; line-height:1.75; }
+.finance-command-import summary { display:flex; gap:8px; align-items:center; cursor:pointer; }
+.finance-command-import code { display:block; padding:10px; background:#f7f9fc; white-space:pre-wrap; }
+.finance-command-form :is(input,select,textarea) { box-sizing:border-box; min-width:0; max-width:100%; }
+.finance-command-form input[type=file] { width:100%; }
+.finance-command-workbench :is(a,button,input,select,textarea):focus-visible,.finance-command-review :is(a,button,input,select,textarea):focus-visible,.finance-command-form :is(a,button,input,select,textarea):focus-visible { outline:2px solid #427bd1; outline-offset:3px; }
+.finance-command-view,.finance-command-form,.finance-command-result,.finance-command-original,.finance-command-list>li,.finance-command-line,.finance-command-notice { animation:finance-command-enter .18s ease both; }
+.finance-command-exit { pointer-events:none; animation:finance-command-exit .16s ease both; }
+.finance-command-review details::details-content,.finance-command-form details::details-content { transition:content-visibility .16s allow-discrete,opacity .16s; opacity:0; }
+.finance-command-review details[open]::details-content,.finance-command-form details[open]::details-content { opacity:1; }
+@keyframes finance-command-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@keyframes finance-command-exit { to { opacity:0; transform:translateY(3px); } }
+@media(max-width:640px) { .finance-command-workbench { padding:12px; }.finance-command-heading,.finance-command-review>header { align-items:flex-start; flex-wrap:wrap; }.finance-command-filters { grid-template-columns:minmax(0,1fr); }.finance-command-pairs>div { grid-template-columns:minmax(85px,100px) minmax(0,1fr); gap:8px; }.finance-command-list>li { align-items:flex-start; flex-wrap:wrap; }.finance-command-list li>div { width:100%; }.finance-command-actions>div>button { flex:1 1 140px; }.finance-command-form .record-grid { grid-template-columns:minmax(0,1fr); }.finance-command-line>header { flex-wrap:wrap; } }
+@media(prefers-reduced-motion:reduce) { .finance-command-workbench *,.finance-command-review *,.finance-command-form *,.finance-command-view,.finance-command-exit { animation:none!important; transition:none!important; scroll-behavior:auto!important; }.finance-command-review details::details-content,.finance-command-form details::details-content { transition:none; }.finance-command-workbench button:hover:not(:disabled),.finance-command-review button:hover:not(:disabled),.finance-command-form button:hover:not(:disabled),.finance-command-workbench button:active:not(:disabled),.finance-command-review button:active:not(:disabled),.finance-command-form button:active:not(:disabled) { transform:none; } }

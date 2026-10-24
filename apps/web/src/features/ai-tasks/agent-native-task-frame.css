@@ -1,0 +1,43 @@
+.agent-native-task-frame :is(.native-fulfillment-binding,.native-fulfillment-result) { min-width:0; max-width:100%; margin-block:12px; padding:0; border:0; overflow-wrap:anywhere; }
+.agent-native-task-frame .native-fulfillment-binding > * + * { margin-top:12px; }
+.agent-native-task-frame .native-fulfillment-binding .af-context { padding:0; }
+.agent-native-task-frame .native-fulfillment-result .af-evidence { margin-top:0; }
+.agent-native-task-frame .agent-fulfillment :is(code,dd,a,summary,li) { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.agent-native-task-frame .agent-fulfillment pre { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; }
+.agent-native-task-frame .native-fulfillment-binding select { width:100%; min-width:0; max-width:100%; }
+@media(max-width:720px) {
+  .agent-native-task-frame .native-fulfillment-binding .af-fields { grid-template-columns:minmax(0,1fr); }
+  .agent-native-task-frame .native-fulfillment-binding button { max-width:100%; white-space:normal; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .agent-native-task-frame .agent-fulfillment, .agent-native-task-frame .agent-fulfillment *, .agent-native-task-frame .agent-fulfillment details::details-content { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
+
+/* Version navigation reuses the original workbenches without changing their data or protocol. */
+.an-task-versions { min-width:0; max-width:100%; margin-top:18px; padding-top:16px; border-top:1px solid var(--line); overflow-wrap:anywhere; animation:an-version-enter 160ms ease-out both; }
+.an-task-versions > header { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 16px; }
+.an-task-versions > header h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:16px; }
+.an-task-versions > header p,.an-task-version-note { margin:6px 0; color:var(--muted-ink); font-size:12px; line-height:1.6; }
+.an-task-version-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-block:12px 8px; }
+.an-task-version-tabs > button { display:inline-flex; align-items:center; justify-content:center; min-width:0; max-width:100%; min-height:36px; padding:7px 12px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--ink); font:inherit; font-size:12px; cursor:pointer; transition:color 140ms,background 140ms,border-color 140ms,transform 140ms; }
+.an-task-version-tabs > button[aria-selected=true] { color:var(--blue); border-color:var(--blue); background:var(--info-soft); }
+.an-task-version-tabs > button:hover:not(:disabled) { transform:translateY(-1px); }
+.an-task-version-tabs > button:active:not(:disabled) { transform:scale(.98); }
+.an-task-version-tabs > button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.an-task-version-tabs > button:disabled { cursor:default; opacity:.55; }
+.an-task-version-panel { min-width:0; max-width:100%; view-transition-name:agent-native-task-version; animation:an-version-enter 160ms ease-out both; }
+.an-task-version-panel > :is(.agent-plan,.agent-native) { margin-top:10px; }
+::view-transition-old(agent-native-task-version) { animation:an-version-exit 120ms ease-in both; }
+::view-transition-new(agent-native-task-version) { animation:an-version-enter 160ms ease-out both; }
+::view-transition-group(agent-native-task-version) { animation-duration:160ms; animation-timing-function:ease-out; }
+@keyframes an-version-enter { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
+@keyframes an-version-exit { to { opacity:0; transform:translateY(-2px); } }
+@media(max-width:480px) {
+  .an-task-versions > header { display:block; }
+  .an-task-version-tabs > button { flex:1 1 88px; padding-inline:8px; white-space:normal; overflow-wrap:anywhere; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .an-task-versions,.an-task-version-panel,.an-task-version-tabs > button { animation:none !important; transition:none !important; }
+  .an-task-version-tabs > button:is(:hover,:active) { transform:none; }
+  ::view-transition-old(agent-native-task-version),::view-transition-new(agent-native-task-version),::view-transition-group(agent-native-task-version) { animation:none !important; }
+}

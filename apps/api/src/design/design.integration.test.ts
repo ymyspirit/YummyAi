@@ -67,7 +67,7 @@ describe("design assets database", () => {
       brief: "Review an order-scoped composite without exposing customer content",
     });
     const assetId = await createOrderAsset(first, "c");
-    const piiContext: TenantContext = { ...first, permissions: [Permission.OrderPiiRead] };
+    const piiContext: TenantContext = { ...first, permissions: [...first.permissions, Permission.OrderRead, Permission.OrderPiiRead] };
 
     await expect(service.approveAssetRights(piiContext, assetId, {
       kind: "customer_provided",
@@ -81,13 +81,15 @@ describe("design assets database", () => {
     await expect(service.reviewVersion(piiContext, version.id, { decision: "approve" })).resolves.toMatchObject({ status: "approved" });
 
     await expect(repository.setPrimaryVersion(first, task.id, version.id)).rejects.toThrow();
-    await expect(repository.getTask(first, task.id)).resolves.toMatchObject({ primaryVersionId: undefined });
+    await expect(repository.getTask(piiContext, task.id)).resolves.toMatchObject({ primaryVersionId: undefined });
     await expect(repository.setPrimaryVersion(piiContext, task.id, version.id)).resolves.toMatchObject({ primaryVersionId: version.id });
     await expect(service.signVersionFile(first, version.id, version.files[0]!.id)).rejects.toThrow();
     await expect(service.signVersionFile(piiContext, version.id, version.files[0]!.id)).resolves.toMatchObject({ url: expect.stringContaining("signed.example") });
   });
 
   async function createSku(context: TenantContext, planName: string, skuCode: string) {
+    // Catalog setup has its own actor; the design subject keeps its original rights.
+    context = { ...context, permissions: [...context.permissions, Permission.ProductWrite] };
     const plan = await catalog.createPlan(context, { name: planName, sourceReportIds: [createEntityId()], customization: { version: 1, fields: [] } });
     await catalog.transition(context, plan.id, "pending_approval");
     await catalog.transition(context, plan.id, "approved");
@@ -124,5 +126,5 @@ describe("design assets database", () => {
 });
 
 function tenant(tenantId: string, userId: string): TenantContext {
-  return { tenantId, userId, permissions: [], dataScope: "tenant" };
+  return { tenantId, userId, permissions: [Permission.DesignRead, Permission.DesignWrite, Permission.DesignReview, Permission.AssetRead, Permission.AssetPromote, Permission.ProductRead], dataScope: "tenant" };
 }

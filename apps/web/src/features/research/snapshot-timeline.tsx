@@ -1,4 +1,9 @@
+"use client";
 import type { CaptureDraft } from "@yummyai/contracts/capture";
+import { useState } from "react";
+import { ResearchMediaGallery } from "./research-media-gallery";
+import { ResearchStudyPanel } from "./research-study-panel";
+import "./research-workflow.css";
 import {
   CalendarDays,
   ChartNoAxesCombined,
@@ -36,20 +41,34 @@ export function ResearchProductDossier({
   item,
   loading,
   snapshots,
+  researchItemId,
+  initialSnapshotId,
+  studyRevisionId,
+  onDirtyChange,
 }: {
   error: string | null;
   item: ResearchProductIdentity;
   loading: boolean;
   snapshots: ResearchSnapshotView[];
+  researchItemId?: string;
+  initialSnapshotId?: string;
+  studyRevisionId?: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
+  const [snapshotId, setSnapshotId] = useState(initialSnapshotId);
+  const [section, setSection] = useState<"evidence" | "study">(
+    studyRevisionId ? "study" : "evidence",
+  );
+  const [dirty, setDirty] = useState(false);
   const orderedSnapshots = [...snapshots].sort(
     (left, right) => timestamp(right.capturedAt) - timestamp(left.capturedAt),
   );
-  const latestSnapshot = orderedSnapshots[0];
+  const latestSnapshot = snapshotId
+    ? orderedSnapshots.find((snapshot) => snapshot.id === snapshotId)
+    : orderedSnapshots[0];
   const draft = latestSnapshot?.draft;
   const includedImages =
     draft?.media?.filter((media) => media.kind === "image" && media.included) ?? [];
-  const mainImage = includedImages[0] ?? draft?.media?.find((media) => media.kind === "image");
   const description = draft?.contentBlocks?.find(
     (block) => block.kind === "description" || block.kind === "aplus",
   )?.text;
@@ -60,10 +79,7 @@ export function ResearchProductDossier({
     draft?.reviewCollection?.reportedTotal ?? draft?.reviewCount ?? draft?.shop?.reviewCount;
   const descriptionBlocks = splitProductDetails(description);
   const productInformationCount =
-    draft?.productInformation?.reduce(
-      (total, section) => total + section.items.length,
-      0,
-    ) ?? 0;
+    draft?.productInformation?.reduce((total, section) => total + section.items.length, 0) ?? 0;
 
   if (loading) {
     return (
@@ -91,7 +107,11 @@ export function ResearchProductDossier({
     return (
       <div className="research-dossier dossier-message">
         <p className="section-code">NO SNAPSHOT</p>
-        <strong>这个研究条目暂时没有可展示的商品快照。</strong>
+        <strong>
+          {snapshotId
+            ? "所引用的采集快照不存在或无权查看。"
+            : "这个研究条目暂时没有可展示的商品快照。"}
+        </strong>
       </div>
     );
   }
@@ -101,34 +121,53 @@ export function ResearchProductDossier({
       <header className="dossier-heading">
         <div>
           <p className="section-code">PRODUCT EVIDENCE DOSSIER</p>
-          <span>最新快照 · {formatDateTime(latestSnapshot.capturedAt)}</span>
+          <label>
+            采集快照{" "}
+            <select
+              aria-label="采集快照版本"
+              value={latestSnapshot.id}
+              onChange={(e) => {
+                if (dirty && !confirm("研究结论尚未保存，确定切换快照？")) return;
+                setSnapshotId(e.target.value);
+                setDirty(false);
+                onDirtyChange?.(false);
+              }}
+            >
+              {orderedSnapshots.map((snapshot, index) => (
+                <option key={snapshot.id} value={snapshot.id}>
+                  {index === 0 ? "最新 · " : "历史 · "}
+                  {formatDateTime(snapshot.capturedAt)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <a href={sourceUrl} target="_blank" rel="noreferrer">
           查看原始商品页
           <ExternalLink size={13} aria-hidden="true" />
         </a>
       </header>
+      {researchItemId && (
+        <nav className="research-detail-tabs" aria-label="竞品详情内容">
+          <button
+            type="button"
+            aria-pressed={section === "evidence"}
+            onClick={() => setSection("evidence")}
+          >
+            商品证据
+          </button>
+          <button
+            type="button"
+            aria-pressed={section === "study"}
+            onClick={() => setSection("study")}
+          >
+            研究结论{dirty ? " · 未保存" : ""}
+          </button>
+        </nav>
+      )}
 
       <div className="dossier-hero">
-        <figure className="dossier-media">
-          {mainImage ? (
-            <img
-              src={mainImage.sourceUrl}
-              alt={mainImage.alt || title}
-              loading="lazy"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="dossier-media-empty">
-              <ImageIcon size={28} aria-hidden="true" />
-              <span>暂无主图证据</span>
-            </div>
-          )}
-          <figcaption>
-            <span>{includedImages.length || (mainImage ? 1 : 0)} 张图片</span>
-            <span>{draft?.media?.filter((media) => media.kind === "video").length ?? 0} 个视频</span>
-          </figcaption>
-        </figure>
+        <ResearchMediaGallery key={latestSnapshot.id} snapshotId={latestSnapshot.id} title={title} />
 
         <div className="dossier-product-copy">
           <div className="dossier-platform-line">
@@ -136,9 +175,16 @@ export function ResearchProductDossier({
             <span className="mono">{item.marketplace}</span>
           </div>
           <h3>{title}</h3>
-          <p className="dossier-price">{draft?.price?.raw ?? formatSnapshotPrice(latestSnapshot)}</p>
+          <p className="dossier-price">
+            {draft?.price?.raw ?? formatSnapshotPrice(latestSnapshot)}
+          </p>
           {draft?.shop ? (
-            <a className="dossier-shop" href={draft.shop.sourceUrl} target="_blank" rel="noreferrer">
+            <a
+              className="dossier-shop"
+              href={draft.shop.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
               <Store size={14} aria-hidden="true" />
               <span>
                 <strong>{draft.shop.name}</strong>
@@ -148,8 +194,13 @@ export function ResearchProductDossier({
             </a>
           ) : null}
           {draft?.bullets?.length ? (
-            <section className="dossier-selling-points" aria-labelledby={`selling-points-${latestSnapshot.id}`}>
-              <p className="section-code" id={`selling-points-${latestSnapshot.id}`}>SELLING POINTS</p>
+            <section
+              className="dossier-selling-points"
+              aria-labelledby={`selling-points-${latestSnapshot.id}`}
+            >
+              <p className="section-code" id={`selling-points-${latestSnapshot.id}`}>
+                SELLING POINTS
+              </p>
               <ul>
                 {draft.bullets.slice(0, 5).map((bullet, index) => (
                   <li key={`${index}-${bullet}`}>{bullet}</li>
@@ -167,21 +218,31 @@ export function ResearchProductDossier({
             <EvidenceLine
               icon={<Truck size={15} />}
               label="预计送达"
-              value={formatEstimatedDelivery(draft?.shipping?.estimatedDelivery, latestSnapshot.capturedAt)}
+              value={formatEstimatedDelivery(
+                draft?.shipping?.estimatedDelivery,
+                latestSnapshot.capturedAt,
+              )}
             />
-            <EvidenceLine icon={<PackageOpen size={15} />} label="运费" value={draft?.shipping?.cost?.raw} />
+            <EvidenceLine
+              icon={<PackageOpen size={15} />}
+              label="运费"
+              value={draft?.shipping?.cost?.raw}
+            />
             <EvidenceLine
               icon={<Store size={15} />}
               label={item.platform === "amazon" ? "发货方" : "发货地"}
               value={draft?.shipping?.shipsFrom}
             />
-            <EvidenceLine icon={<Truck size={15} />} label="配送至" value={draft?.shipping?.destination} />
+            <EvidenceLine
+              icon={<Truck size={15} />}
+              label="配送至"
+              value={draft?.shipping?.destination}
+            />
             <EvidenceLine
               icon={<CalendarDays size={15} />}
               label={item.platform === "amazon" ? "首次上架" : "发布日期"}
               value={
-                draft?.listingPublishedAt ??
-                (item.platform === "amazon" ? "Amazon 未公开" : null)
+                draft?.listingPublishedAt ?? (item.platform === "amazon" ? "Amazon 未公开" : null)
               }
             />
           </dl>
@@ -198,237 +259,274 @@ export function ResearchProductDossier({
         </aside>
       </div>
 
-      <dl className="dossier-signal-rail">
-        <Signal
-          icon={<Heart size={14} />}
-          label="收藏"
-          value={
-            item.platform === "amazon" ? "Amazon 未公开" : formatCount(draft?.favoriteCount)
-          }
-        />
-        <Signal icon={<Star size={14} />} label="评分" value={formatRating(productRating)} />
-        <Signal icon={<MessageSquareText size={14} />} label="评论" value={formatCount(reviewCount)} />
-        <Signal icon={<ImageIcon size={14} />} label="媒体" value={`${includedImages.length || (mainImage ? 1 : 0)} 张`} />
-        <Signal
-          icon={<PackageOpen size={14} />}
-          label="规格"
-          value={
-            productInformationCount > 0
-              ? `${productInformationCount} 项`
-              : `${draft?.variants?.length ?? 0} 组`
-          }
-        />
-      </dl>
+      {researchItemId && (
+        <div hidden={section !== "study"}>
+          <ResearchStudyPanel
+            key={`${latestSnapshot.id}:${studyRevisionId ?? "latest"}`}
+            itemId={researchItemId}
+            snapshotId={latestSnapshot.id}
+            media={draft?.media ?? []}
+            revisionId={latestSnapshot.id === initialSnapshotId ? studyRevisionId : undefined}
+            historical={latestSnapshot.id !== orderedSnapshots[0]?.id}
+            onDirtyChange={(value) => {
+              setDirty(value);
+              onDirtyChange?.(value);
+            }}
+          />
+        </div>
+      )}
+      <div hidden={section !== "evidence"}>
+        <dl className="dossier-signal-rail">
+          <Signal
+            icon={<Heart size={14} />}
+            label="收藏"
+            value={item.platform === "amazon" ? "Amazon 未公开" : formatCount(draft?.favoriteCount)}
+          />
+          <Signal icon={<Star size={14} />} label="评分" value={formatRating(productRating)} />
+          <Signal
+            icon={<MessageSquareText size={14} />}
+            label="评论"
+            value={formatCount(reviewCount)}
+          />
+          <Signal
+            icon={<ImageIcon size={14} />}
+            label="媒体"
+            value={`${includedImages.length} 张`}
+          />
+          <Signal
+            icon={<PackageOpen size={14} />}
+            label="规格"
+            value={
+              productInformationCount > 0
+                ? `${productInformationCount} 项`
+                : `${draft?.variants?.length ?? 0} 组`
+            }
+          />
+        </dl>
 
-      {draft?.ehuntAnalysis ? (
-        <section
-          className="dossier-ehunt"
-          aria-labelledby={`ehunt-analysis-${latestSnapshot.id}`}
-        >
-          <div className="dossier-ehunt-heading">
-            <div>
-              <p className="section-code">THIRD-PARTY MARKET SIGNALS</p>
-              <h4 id={`ehunt-analysis-${latestSnapshot.id}`}>EHunt 商品分析</h4>
-            </div>
-            <span>EHunt evidence</span>
-          </div>
-          <p className="dossier-ehunt-note">
-            以下数值与标签来自采集时页面中可见的 EHunt 面板，不是 Etsy 原生字段。
-          </p>
-          <dl className="dossier-ehunt-metrics">
-            <ExternalMetric
-              icon={<ChartNoAxesCombined size={13} />}
-              label="总销量"
-              value={formatCount(draft.ehuntAnalysis.totalSales)}
-              delta={draft.ehuntAnalysis.salesDelta}
-            />
-            <ExternalMetric
-              label="总销售额"
-              value={draft.ehuntAnalysis.totalRevenue?.raw ?? "—"}
-              delta={draft.ehuntAnalysis.revenueDelta?.raw}
-            />
-            <ExternalMetric
-              label="总浏览量"
-              value={formatCount(draft.ehuntAnalysis.viewCount)}
-            />
-            <ExternalMetric
-              label="总评论"
-              value={formatCount(draft.ehuntAnalysis.reviewCount)}
-              delta={draft.ehuntAnalysis.reviewDelta}
-            />
-            <ExternalMetric
-              label="总收藏"
-              value={formatCount(draft.ehuntAnalysis.favoriteCount)}
-              delta={draft.ehuntAnalysis.favoriteDelta}
-            />
-            <ExternalMetric
-              label="平均转化率"
-              value={formatPercent(draft.ehuntAnalysis.conversionRatePercent)}
-            />
-          </dl>
-          <div className="dossier-ehunt-detail-grid">
-            <dl>
-              <EvidenceFact label="EHunt 上架时间" value={draft.ehuntAnalysis.listingPublishedAt} />
-              <EvidenceFact label="EHunt 价格" value={draft.ehuntAnalysis.price?.raw} />
-              <EvidenceFact label="发货地" value={draft.ehuntAnalysis.shipsFrom} />
-              <EvidenceFact
-                label="库存"
-                value={formatCount(draft.ehuntAnalysis.inventoryCount)}
-              />
-              <EvidenceFact label="店铺" value={draft.ehuntAnalysis.shopName} />
-              <EvidenceFact
-                label="店铺销量"
-                value={formatCount(draft.ehuntAnalysis.shopSalesCount)}
-              />
-            </dl>
-            <div className="dossier-ehunt-tags">
+        {draft?.ehuntAnalysis ? (
+          <section
+            className="dossier-ehunt"
+            aria-labelledby={`ehunt-analysis-${latestSnapshot.id}`}
+          >
+            <div className="dossier-ehunt-heading">
               <div>
-                <strong>商品标签</strong>
-                <span>{draft.ehuntAnalysis.tags.length} TAGS</span>
+                <p className="section-code">THIRD-PARTY MARKET SIGNALS</p>
+                <h4 id={`ehunt-analysis-${latestSnapshot.id}`}>EHunt 商品分析</h4>
               </div>
-              {draft.ehuntAnalysis.tags.length > 0 ? (
-                <ul>
-                  {draft.ehuntAnalysis.tags.map((tag) => (
-                    <li key={tag.label}>
-                      <span>{tag.label}</span>
-                      {tag.metricRaw ? <small>{tag.metricRaw}</small> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="dossier-muted-note">EHunt 面板没有显示商品标签。</p>
-              )}
-              {draft.ehuntAnalysis.categoryPath.length > 0 ? (
-                <ol aria-label="EHunt 类目路径">
-                  {draft.ehuntAnalysis.categoryPath.map((node) => (
-                    <li key={node}>{node}</li>
-                  ))}
-                </ol>
-              ) : null}
-              {draft.ehuntAnalysis.annualTrendUrl ? (
-                <a
-                  href={draft.ehuntAnalysis.annualTrendUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  查看 EHunt 年度历史趋势
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              ) : null}
+              <span>EHunt evidence</span>
             </div>
-          </div>
-        </section>
-      ) : null}
-
-      <div className="dossier-lower-grid">
-        <section className="dossier-description">
-          <p className="section-code">PRODUCT DETAILS</p>
-          <h4>商品详情</h4>
-          {descriptionBlocks.length ? (
-            <div className="dossier-description-copy">
-              {descriptionBlocks.map((block, index) => <p key={`${index}-${block}`}>{block}</p>)}
-            </div>
-          ) : <p className="dossier-muted-note">本次采集未识别到商品描述。</p>}
-          {draft?.variants?.length ? (
-            <dl className="dossier-variants">
-              {draft.variants.map((variant) => {
-                const options = variant.options.filter((option) => !isVariantPlaceholder(option.label));
-                return (
-                  <div key={variant.label}>
-                    <dt>
-                      <span>{variant.label}</span>
-                      <small>{options.length} OPTIONS</small>
-                    </dt>
-                    <dd>
-                      <ul className="dossier-variant-options" aria-label={`${variant.label}选项`}>
-                        {options.map((option, index) => (
-                          <li key={option.externalId ?? `${index}-${option.label}`}>{option.label}</li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </div>
-                );
-              })}
+            <p className="dossier-ehunt-note">
+              以下数值与标签来自采集时页面中可见的 EHunt 面板，不是 Etsy 原生字段。
+            </p>
+            <dl className="dossier-ehunt-metrics">
+              <ExternalMetric
+                icon={<ChartNoAxesCombined size={13} />}
+                label="总销量"
+                value={formatCount(draft.ehuntAnalysis.totalSales)}
+                delta={draft.ehuntAnalysis.salesDelta}
+              />
+              <ExternalMetric
+                label="总销售额"
+                value={draft.ehuntAnalysis.totalRevenue?.raw ?? "—"}
+                delta={draft.ehuntAnalysis.revenueDelta?.raw}
+              />
+              <ExternalMetric label="总浏览量" value={formatCount(draft.ehuntAnalysis.viewCount)} />
+              <ExternalMetric
+                label="总评论"
+                value={formatCount(draft.ehuntAnalysis.reviewCount)}
+                delta={draft.ehuntAnalysis.reviewDelta}
+              />
+              <ExternalMetric
+                label="总收藏"
+                value={formatCount(draft.ehuntAnalysis.favoriteCount)}
+                delta={draft.ehuntAnalysis.favoriteDelta}
+              />
+              <ExternalMetric
+                label="平均转化率"
+                value={formatPercent(draft.ehuntAnalysis.conversionRatePercent)}
+              />
             </dl>
-          ) : null}
-          {item.platform === "amazon" ? (
-            <section
-              className="dossier-product-information"
-              aria-labelledby={`product-information-${latestSnapshot.id}`}
-            >
-              <div className="dossier-parameter-heading">
-                <h5 id={`product-information-${latestSnapshot.id}`}>产品参数</h5>
-                <span>{productInformationCount} 项</span>
+            <div className="dossier-ehunt-detail-grid">
+              <dl>
+                <EvidenceFact
+                  label="EHunt 上架时间"
+                  value={draft.ehuntAnalysis.listingPublishedAt}
+                />
+                <EvidenceFact label="EHunt 价格" value={draft.ehuntAnalysis.price?.raw} />
+                <EvidenceFact label="发货地" value={draft.ehuntAnalysis.shipsFrom} />
+                <EvidenceFact
+                  label="库存"
+                  value={formatCount(draft.ehuntAnalysis.inventoryCount)}
+                />
+                <EvidenceFact label="店铺" value={draft.ehuntAnalysis.shopName} />
+                <EvidenceFact
+                  label="店铺销量"
+                  value={formatCount(draft.ehuntAnalysis.shopSalesCount)}
+                />
+              </dl>
+              <div className="dossier-ehunt-tags">
+                <div>
+                  <strong>商品标签</strong>
+                  <span>{draft.ehuntAnalysis.tags.length} TAGS</span>
+                </div>
+                {draft.ehuntAnalysis.tags.length > 0 ? (
+                  <ul>
+                    {draft.ehuntAnalysis.tags.map((tag) => (
+                      <li key={tag.label}>
+                        <span>{tag.label}</span>
+                        {tag.metricRaw ? <small>{tag.metricRaw}</small> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="dossier-muted-note">EHunt 面板没有显示商品标签。</p>
+                )}
+                {draft.ehuntAnalysis.categoryPath.length > 0 ? (
+                  <ol aria-label="EHunt 类目路径">
+                    {draft.ehuntAnalysis.categoryPath.map((node) => (
+                      <li key={node}>{node}</li>
+                    ))}
+                  </ol>
+                ) : null}
+                {draft.ehuntAnalysis.annualTrendUrl ? (
+                  <a href={draft.ehuntAnalysis.annualTrendUrl} target="_blank" rel="noreferrer">
+                    查看 EHunt 年度历史趋势
+                    <ExternalLink size={11} aria-hidden="true" />
+                  </a>
+                ) : null}
               </div>
-              {draft?.productInformation?.length ? (
-                <div className="dossier-parameter-groups">
-                  {draft.productInformation.map((section, sectionIndex) => (
-                    <details key={`${sectionIndex}-${section.name}`} open={sectionIndex === 0}>
-                      <summary>
-                        <span>{section.name}</span>
-                        <small>{section.items.length}</small>
-                      </summary>
-                      <dl>
-                        {section.items.map((item, itemIndex) => (
-                          <div key={`${itemIndex}-${item.label}-${item.value}`}>
-                            <dt>{item.label}</dt>
-                            <dd>
-                              <span>{item.value}</span>
-                              {item.links.length > 0 ? (
-                                <span className="dossier-parameter-links">
-                                  {item.links.map((link) => (
-                                    <a
-                                      key={link.url}
-                                      href={link.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      {link.label}
-                                      <ExternalLink size={10} aria-hidden="true" />
-                                    </a>
-                                  ))}
-                                </span>
-                              ) : null}
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </details>
-                  ))}
-                </div>
-              ) : (
-                <p className="dossier-muted-note">
-                  当前快照没有公开 Product information 参数。
-                </p>
-              )}
-            </section>
-          ) : null}
-        </section>
-
-        <section className="dossier-history" aria-labelledby={`snapshot-history-${latestSnapshot.id}`}>
-          <div className="dossier-section-heading">
-            <div>
-              <p className="section-code">SNAPSHOT HISTORY</p>
-              <h4 id={`snapshot-history-${latestSnapshot.id}`}>版本记录</h4>
             </div>
-            <span>{orderedSnapshots.length} VERSIONS</span>
-          </div>
-          <ol className="snapshot-list">
-            {orderedSnapshots.map((snapshot, index) => (
-              <li key={snapshot.id}>
-                <span className="snapshot-dot" aria-hidden="true" />
-                <div className="snapshot-copy">
-                  <time className="mono" dateTime={snapshot.capturedAt}>
-                    {formatDateTime(snapshot.capturedAt)}
-                  </time>
-                  <strong>{snapshot.title ?? "未识别标题"}</strong>
+          </section>
+        ) : null}
+
+        <div className="dossier-lower-grid">
+          <section className="dossier-description">
+            <p className="section-code">PRODUCT DETAILS</p>
+            <h4>商品详情</h4>
+            {draft?.contentBlocks
+              ?.filter((block) => block.kind === "personalization")
+              .map((block, index) => (
+                <section key={index} className="research-note">
+                  <h5>竞品定制信息</h5>
+                  <p style={{ whiteSpace: "pre-wrap" }}>{block.text}</p>
+                </section>
+              ))}
+            {descriptionBlocks.length ? (
+              <div className="dossier-description-copy">
+                {descriptionBlocks.map((block, index) => (
+                  <p key={`${index}-${block}`}>{block}</p>
+                ))}
+              </div>
+            ) : (
+              <p className="dossier-muted-note">本次采集未识别到商品描述。</p>
+            )}
+            {draft?.variants?.length ? (
+              <dl className="dossier-variants">
+                {draft.variants.map((variant) => {
+                  const options = variant.options.filter(
+                    (option) => !isVariantPlaceholder(option.label),
+                  );
+                  return (
+                    <div key={variant.label}>
+                      <dt>
+                        <span>{variant.label}</span>
+                        <small>{options.length} OPTIONS</small>
+                      </dt>
+                      <dd>
+                        <ul className="dossier-variant-options" aria-label={`${variant.label}选项`}>
+                          {options.map((option, index) => (
+                            <li key={option.externalId ?? `${index}-${option.label}`}>
+                              {option.label}
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : null}
+            {item.platform === "amazon" ? (
+              <section
+                className="dossier-product-information"
+                aria-labelledby={`product-information-${latestSnapshot.id}`}
+              >
+                <div className="dossier-parameter-heading">
+                  <h5 id={`product-information-${latestSnapshot.id}`}>产品参数</h5>
+                  <span>{productInformationCount} 项</span>
                 </div>
-                {index === 0 ? <span className="snapshot-latest">LATEST</span> : null}
-                <span className={`status-chip status-${snapshot.status}`}>{snapshot.status}</span>
-              </li>
-            ))}
-          </ol>
-        </section>
+                {draft?.productInformation?.length ? (
+                  <div className="dossier-parameter-groups">
+                    {draft.productInformation.map((section, sectionIndex) => (
+                      <details key={`${sectionIndex}-${section.name}`} open={sectionIndex === 0}>
+                        <summary>
+                          <span>{section.name}</span>
+                          <small>{section.items.length}</small>
+                        </summary>
+                        <dl>
+                          {section.items.map((item, itemIndex) => (
+                            <div key={`${itemIndex}-${item.label}-${item.value}`}>
+                              <dt>{item.label}</dt>
+                              <dd>
+                                <span>{item.value}</span>
+                                {item.links.length > 0 ? (
+                                  <span className="dossier-parameter-links">
+                                    {item.links.map((link) => (
+                                      <a
+                                        key={link.url}
+                                        href={link.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        {link.label}
+                                        <ExternalLink size={10} aria-hidden="true" />
+                                      </a>
+                                    ))}
+                                  </span>
+                                ) : null}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </details>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="dossier-muted-note">当前快照没有公开 Product information 参数。</p>
+                )}
+              </section>
+            ) : null}
+          </section>
+
+          <section
+            className="dossier-history"
+            aria-labelledby={`snapshot-history-${latestSnapshot.id}`}
+          >
+            <div className="dossier-section-heading">
+              <div>
+                <p className="section-code">SNAPSHOT HISTORY</p>
+                <h4 id={`snapshot-history-${latestSnapshot.id}`}>版本记录</h4>
+              </div>
+              <span>{orderedSnapshots.length} VERSIONS</span>
+            </div>
+            <ol className="snapshot-list">
+              {orderedSnapshots.map((snapshot, index) => (
+                <li key={snapshot.id}>
+                  <span className="snapshot-dot" aria-hidden="true" />
+                  <div className="snapshot-copy">
+                    <time className="mono" dateTime={snapshot.capturedAt}>
+                      {formatDateTime(snapshot.capturedAt)}
+                    </time>
+                    <strong>{snapshot.title ?? "未识别标题"}</strong>
+                  </div>
+                  {index === 0 ? <span className="snapshot-latest">LATEST</span> : null}
+                  <span className={`status-chip status-${snapshot.status}`}>{snapshot.status}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
       </div>
     </article>
   );
@@ -445,7 +543,10 @@ function EvidenceLine({
 }) {
   return (
     <div>
-      <dt>{icon}<span>{label}</span></dt>
+      <dt>
+        {icon}
+        <span>{label}</span>
+      </dt>
       <dd>{value || "—"}</dd>
     </div>
   );
@@ -454,7 +555,10 @@ function EvidenceLine({
 function Signal({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div>
-      <dt>{icon}{label}</dt>
+      <dt>
+        {icon}
+        {label}
+      </dt>
       <dd>{value}</dd>
     </div>
   );
@@ -473,7 +577,10 @@ function ExternalMetric({
 }) {
   return (
     <div>
-      <dt>{icon}{label}</dt>
+      <dt>
+        {icon}
+        {label}
+      </dt>
       <dd>
         <span>{value}</span>
         {delta !== null && delta !== undefined ? <small>+{delta}</small> : null}
@@ -482,13 +589,7 @@ function ExternalMetric({
   );
 }
 
-function EvidenceFact({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | null | undefined;
-}) {
+function EvidenceFact({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
       <dt>{label}</dt>
@@ -526,12 +627,18 @@ function formatSnapshotPrice(snapshot: ResearchSnapshotView) {
 function splitProductDetails(value: string | undefined): string[] {
   if (!value) return [];
   const normalized = value
-    .replace(/(?=(?:Details of Listed Design|Fabric Frontside|FabricBackside|Size-|Font-|Yarn Colors-|EMBROIDERY|D E T A I L S|CARE INSTRUCTIONS|DESIGN PROOF(?:\s*&\s*CUSTOMIZATIONS)?|NOTE:|IMPORTANT))/gi, "\n")
+    .replace(
+      /(?=(?:Details of Listed Design|Fabric Frontside|FabricBackside|Size-|Font-|Yarn Colors-|EMBROIDERY|D E T A I L S|CARE INSTRUCTIONS|DESIGN PROOF(?:\s*&\s*CUSTOMIZATIONS)?|NOTE:|IMPORTANT))/gi,
+      "\n",
+    )
     .replace(/(?=(?:Please Select|Please note|Please mention|Please read))/gi, "\n")
     .replace(/\s*[—–]\s*/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
-  const blocks = normalized.split(/\n+/).map((block) => block.trim()).filter(Boolean);
+  const blocks = normalized
+    .split(/\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
   return blocks.length ? blocks : [value.trim()];
 }
 
@@ -543,14 +650,14 @@ function formatEstimatedDelivery(value: string | null | undefined, capturedAt: s
   if (!value) return null;
   const range = deliveryDayRange(value, capturedAt);
   if (!range) return value;
-  const days = range.minimum === range.maximum
-    ? `${range.minimum}`
-    : `${range.minimum}–${range.maximum}`;
+  const days =
+    range.minimum === range.maximum ? `${range.minimum}` : `${range.minimum}–${range.maximum}`;
   return `${value} · 约 ${days} 天`;
 }
 
 function deliveryDayRange(value: string, capturedAt: string) {
-  const months = "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
+  const months =
+    "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
   const match = value.match(
     new RegExp(
       `\\b(${months})\\s+(\\d{1,2})(?:,\\s*(\\d{4}))?\\s*[-–—]\\s*(?:(${months})\\s+)?(\\d{1,2})(?:,\\s*(\\d{4}))?`,
@@ -588,8 +695,20 @@ function deliveryDayRange(value: string, capturedAt: string) {
 }
 
 function monthIndex(value: string) {
-  const index = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-    .indexOf(value.slice(0, 3).toLowerCase());
+  const index = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+  ].indexOf(value.slice(0, 3).toLowerCase());
   return index < 0 ? null : index;
 }
 

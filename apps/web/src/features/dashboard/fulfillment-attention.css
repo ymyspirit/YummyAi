@@ -1,0 +1,47 @@
+.fulfillment-attention { border-bottom: 1px solid var(--line); padding: 16px 20px 8px; view-transition-name: fulfillment-attention; animation: fa-enter .22s ease both; }
+.fa-heading, .fa-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fa-heading h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.fa-heading p, .fa-scope { margin: 5px 0 0; color: var(--muted-ink); font-size: 12px; line-height: 1.6; }
+.fulfillment-attention button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; background: var(--surface, #fff); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; cursor: pointer; font-size: 12px; transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease, opacity .18s ease; }
+.fulfillment-attention button:disabled { cursor: default; opacity: .5; }
+.fulfillment-attention :is(button, a):focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
+.fulfillment-attention button:not(:disabled):hover, .fulfillment-attention a:hover { background: #f0f6ff; border-color: #93b4ea; transform: scale(1.015); }
+.fulfillment-attention button:not(:disabled):active, .fulfillment-attention a:active { transform: scale(.98); }
+.fa-filters { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0; }
+.fa-filters button[aria-pressed=true] { color: #174c92; border-color: #a8c4e8; background: #edf4ff; }
+.fa-filters span { font-variant-numeric: tabular-nums; color: var(--muted-ink); }
+.ops-action-center .fa-list .fa-item { display: grid; grid-template-columns: minmax(0, 1fr) 100px 136px; gap: 14px; padding: 13px 0; min-height: 78px; animation: fa-enter .22s ease both; }
+.fa-item-main { display: grid; gap: 5px; }
+.ops-action-center .fa-list .fa-item strong { font-size: 13px; line-height: 1.6; }
+.ops-action-center .fa-list .fa-item small { font-size: 11px; font-weight: 500; line-height: 1.6; }
+.fa-item[data-priority=blocked] small, .fa-item[data-priority=overdue] small { color: #a33338; }
+.ops-action-center .fa-list .fa-item .fa-item-date { color: var(--muted-ink); font-size: 11px; line-height: 1.8; display: block; }
+.fa-item time { display: block; font-variant-numeric: tabular-nums; }
+.ops-action-center .fa-list .fa-item > a { display: inline-flex; gap: 5px; align-items: center; justify-content: center; padding: 7px; color: #174c92; background: #fff; border: 1px solid var(--line); font-size: 12px; grid-column: auto; grid-row: auto; transition: background .18s ease, transform .18s ease, border-color .18s ease; }
+.fa-state { display: flex; align-items: center; gap: 10px; padding: 20px 0; color: var(--muted-ink); font-size: 13px; animation: fa-enter .2s ease both; }
+.fa-state p { flex: 1; margin: 0; overflow-wrap: anywhere; }
+.fa-error { color: #a33338; }
+.fa-footer { padding: 10px 0; font-size: 11px; color: var(--muted-ink); }
+.fa-footer > div { display: flex; gap: 5px; }
+.fa-loading { min-height: 160px; display: grid; gap: 12px; align-content: start; padding: 12px 0; color: var(--muted-ink); font-size: 12px; }
+.fa-loading i { display: block; height: 38px; background: #f2f4f7; border-radius: 4px; animation: fa-pulse 1.2s ease-in-out infinite alternate; }
+::view-transition-old(fulfillment-attention) { animation: fa-leave .16s ease both; }
+::view-transition-new(fulfillment-attention) { animation: fa-enter .2s ease both; }
+@keyframes fa-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fa-leave { to { opacity: 0; transform: translateY(-3px); } }
+@keyframes fa-pulse { to { opacity: .5; } }
+@media (max-width: 640px) {
+  .fulfillment-attention { padding: 14px; }
+  .fa-heading { align-items: flex-start; }
+  .fa-heading > button { flex-shrink: 0; }
+  .ops-action-center .fa-list .fa-item { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .fa-item-main { grid-column: 1 / -1; }
+  .ops-action-center .fa-list .fa-item .fa-item-date { grid-column: 1; }
+  .ops-action-center .fa-list .fa-item > a { grid-column: 2; grid-row: 2; min-height: 44px; }
+  .fa-state { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fulfillment-attention, .fulfillment-attention * { animation: none !important; transition: none !important; }
+  .fulfillment-attention :is(button, a):is(:hover, :active) { transform: none; }
+  ::view-transition-old(fulfillment-attention), ::view-transition-new(fulfillment-attention) { animation: none; }
+}

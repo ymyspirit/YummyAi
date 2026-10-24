@@ -5,6 +5,7 @@ import { RightsRiskQualityCheckSnapshotSchema } from "@yummyai/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  PodArtworkDeferredError,
   PodArtworkInputPolicyError,
   PodArtworkProcessor,
   type PodArtworkExecutionRecord,
@@ -22,6 +23,39 @@ const ids = {
 };
 
 describe("PodArtworkProcessor", () => {
+  it("records submission and billing before rejecting invalid output without purchasing again",async()=>{
+    const repository=memoryRepository(task()),events:string[]=[];
+    repository.markSubmitted=async()=>{events.push("submitted");};
+    repository.recordResponse=async(_context,_taskId,_attempt,receipt)=>{events.push("received");expect(receipt.costUsd).toBe("0.01900000");};
+    const result=successResult();result.costUsd=0.019;result.outputs=[];
+    const gateway={execute:async()=>{events.push("gateway");return result;}};
+    await expect(new PodArtworkProcessor(repository,gateway).process(envelope())).rejects.toThrow();
+    expect(events).toEqual(["submitted","gateway","received"]);expect(repository.completed).toBe(false);expect(repository.failure?.terminal).toBe(true);
+  });
+  it("does not enter the gateway when the durable submission marker fails",async()=>{
+    const repository=memoryRepository(task()),gateway=memoryGateway();repository.markSubmitted=async()=>{throw new Error("synthetic-db-unavailable");};
+    await expect(new PodArtworkProcessor(repository,gateway).process(envelope())).rejects.toThrow();expect(gateway.called).toBe(false);
+  });
+  it("retains payment uncertainty when authorization changes after the provider call", async () => {
+    const repository = memoryRepository(task({})), gateway = memoryGateway();
+    repository.complete = async () => { throw new PodArtworkInputPolicyError("Current POD execution permission is unavailable"); };
+    await expect(new PodArtworkProcessor(repository, gateway).process(envelope())).rejects.toThrow("POD_RESULT_UNCERTAIN");
+    expect(gateway.called).toBe(true);
+    expect(repository.failure).toMatchObject({ terminal: true, code: "POD_RESULT_UNCERTAIN" });
+    expect(repository.completed).toBe(false);
+  });
+
+  it.each(["load", "claim"] as const)("defers a paused workflow at %s without failing the task or calling the provider", async (phase) => {
+    const repository = memoryRepository(task({})), gateway = memoryGateway();
+    if (phase === "load") repository.load = async () => { throw new PodArtworkDeferredError(); };
+    else repository.claim = async () => { throw new PodArtworkDeferredError(); };
+    await expect(new PodArtworkProcessor(repository, gateway).process(envelope())).resolves.toMatchObject({ disposition: "deferred" });
+    if (phase === "load") expect(repository.failure).toMatchObject({ terminal: false, code: "POD_WORKFLOW_PAUSED" });
+    else expect(repository.failure).toBeUndefined();
+    expect(repository.completed).toBe(false);
+    expect(gateway.called).toBe(false);
+  });
+
   it("blocks research assets from every creative and production transform", async () => {
     const repository = memoryRepository(task({ domain: "research", rightsStatus: "unverified" }));
     const gateway = memoryGateway();
@@ -364,15 +398,15 @@ describe("PodArtworkProcessor", () => {
     expect(repository.failure).toMatchObject({ terminal: true, code: "PRODUCT_VIDEO_EVIDENCE_MISMATCH" });
   });
 
-  it("stores model and quality provenance and records retryable failure", async () => {
+  it("preserves an uncertain external request for reconciliation without automatic paid retries", async () => {
     const repository = memoryRepository(task());
     const gateway: PodArtworkGateway = { execute: async () => { throw new Error("provider unavailable"); } };
-    await expect(new PodArtworkProcessor(repository, gateway).process(envelope())).rejects.toThrow("provider unavailable");
+    await expect(new PodArtworkProcessor(repository, gateway).process(envelope())).rejects.toThrow("POD_RESULT_UNCERTAIN");
     expect(repository.failure).toEqual({
       attempt: 0,
-      terminal: false,
-      code: "ERROR",
-      message: "provider unavailable",
+      terminal: true,
+      code: "POD_RESULT_UNCERTAIN",
+      message: "POD result is uncertain; reconcile the original task before any new request",
     });
   });
 });
@@ -1157,8 +1191,11 @@ function memoryRepository(record: PodArtworkExecutionRecord): PodArtworkExecutio
   } = {
     claimed: false,
     completed: false,
+    markSubmitted: async () => {},
+    recordResponse: async () => {},
+    readResponse: async () => { throw new Error("Legacy fixture has no checkpoint"); },
     load: async () => record,
-    claim: async () => { repository.claimed = true; return true; },
+    claim: async (_context, _taskId, attempt) => { repository.claimed = true; return { token: null, attempt, hasResponse: false }; },
     complete: async (_context, _task, result) => {
       repository.completed = true;
       if (record.toolKey === "piece_compose") {

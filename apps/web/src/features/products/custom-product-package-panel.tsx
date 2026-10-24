@@ -42,12 +42,14 @@ export function CustomProductPackagePanel({
   researchItemIds,
   customizationFieldKeys,
   editable,
+  readOnlyReason,
 }: {
   planId: string;
   profile?: CustomProductProfileV1;
   researchItemIds: string[];
   customizationFieldKeys: string[];
   editable: boolean;
+  readOnlyReason?: string;
 }) {
   const [generateState, generateAction, generating] = useActionState(
     generateProvisionalCustomProductProfile.bind(null, planId),
@@ -57,6 +59,17 @@ export function CustomProductPackagePanel({
     saveCustomProductProfile.bind(null, planId),
     initialState,
   );
+
+  if (!profile && !editable) {
+    return (
+      <section className="custom-package-frame" aria-labelledby="custom-package-title">
+        <PanelHeader planId={planId} />
+        <p className="custom-package-empty">
+          尚无已保存的产品事实资料 {readOnlyReason ?? "当前产品阶段仅供查看"}
+        </p>
+      </section>
+    );
+  }
 
   if (!profile) {
     return (
@@ -259,7 +272,7 @@ export function CustomProductPackagePanel({
           </span>
           <button disabled={!editable || saving} type="submit">
             <Save aria-hidden="true" size={15} />
-            {saving ? "保存中…" : editable ? "保存产品事实" : "产品计划已锁定"}
+            {saving ? "保存中…" : editable ? "保存产品事实" : (readOnlyReason ?? "产品计划已锁定")}
           </button>
         </div>
       </form>

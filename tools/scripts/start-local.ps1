@@ -1,10 +1,13 @@
 [CmdletBinding()]
-param()
+param([switch]$RestartApi)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+if (Test-Path -LiteralPath (Join-Path $RepoRoot ".artifacts\yummyai-compose\adopted.json")) {
+  throw "This checkout uses the managed yummyai Docker project. Run pnpm docker:up, then pnpm daily:start. The legacy launcher also starts Workers and is not the daily entry point."
+}
 $RuntimeRoot = Join-Path $env:LOCALAPPDATA "YummyAI"
 $LogRoot = Join-Path $RuntimeRoot "logs"
 $StatePath = Join-Path $RuntimeRoot "startup-state.json"
@@ -332,7 +335,7 @@ function Test-ApiRunning([int]$Port) {
 function Get-ApiLauncherRoots {
   return @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -eq "cmd.exe" -and
-      [string]$_.CommandLine -like "*pnpm.CMD*--filter @yummyai/api dev*"
+      [string]$_.CommandLine -match 'pnpm\.CMD.*--filter @yummyai/api (dev|start)(?:\s|"|$)'
   })
 }
 
@@ -444,6 +447,14 @@ try {
 
   $apiCandidates = @(8000, 8200, 8201, 8202, 8203)
   $apiPort = $apiCandidates | Where-Object { Test-ApiRunning $_ } | Select-Object -First 1
+  if ($RestartApi -and $null -ne $apiPort) {
+    $apiRoot = Get-RootForPortMarker -Port ([int]$apiPort) -Marker "@yummyai/api"
+    if (-not $apiRoot) { throw "The active API is not a recognized YummyAI launcher; it was left untouched." }
+    Write-Step "Restarting the YummyAI API in stable local mode..."
+    Stop-ProcessTree -RootProcessId $apiRoot.ProcessId
+    if (-not (Wait-PortAvailable ([int]$apiPort))) { throw "The YummyAI API did not release its port." }
+    $apiPort = $null
+  }
   $existingApiLaunchers = @(Get-ApiLauncherRoots)
   if ($null -eq $apiPort -and $existingApiLaunchers.Count -gt 0) {
     Write-Step "Waiting for the existing API process to recover..."
@@ -485,16 +496,27 @@ try {
   $apiBase = "http://127.0.0.1:$apiPort"
 
   if (-not $apiWasRunning) {
-    Write-Step "Applying database migrations and refreshing the local extension account..."
-    Invoke-Checked -FilePath "pnpm" -Arguments @("--filter", "@yummyai/database", "db:migrate")
+    Write-Step "Checking database readiness and refreshing the local extension account..."
+    Invoke-Checked -FilePath "pnpm" -Arguments @("--filter", "@yummyai/database", "db:check")
     Invoke-Checked -FilePath "pnpm" -Arguments @("--filter", "@yummyai/api", "bootstrap:local")
-    Write-Step "Starting API on port $apiPort..."
+    Write-Step "Starting stable API on port $apiPort (automatic source restarts disabled)..."
     Start-LoggedProcess -Name "api" -FilePath "pnpm.cmd" `
-      -Arguments @("--filter", "@yummyai/api", "dev") -WorkingDirectory $RepoRoot `
+      -Arguments @("--filter", "@yummyai/api", "start") -WorkingDirectory $RepoRoot `
       -Environment @{ PORT = [string]$apiPort } | Out-Null
     if (-not (Wait-HttpOk "$apiBase/health" 90)) { throw "API did not become healthy. Check $LogRoot." }
   } else {
     Write-Step "Reusing the running API on port $apiPort."
+  }
+
+  Write-Step "Building the integrated canvas runtime..."
+  Invoke-Checked -FilePath "node" -Arguments @("tools/scripts/build-canvas-runtime.mjs")
+  $studioOutput = & node --env-file=.env -e 'const u=new URL(process.env.CANVAS_STUDIO_URL || "http://127.0.0.1:4176"); if(u.protocol!=="http:" || !["127.0.0.1","localhost"].includes(u.hostname) || u.username || u.password || u.search || u.hash) process.exit(1); console.log(u.origin);'
+  if ($LASTEXITCODE -ne 0 -or -not $studioOutput) { throw "CANVAS_STUDIO_URL must be a loopback HTTP origin." }
+  $studioBase = ([string]$studioOutput).Trim()
+  if (-not (Test-HttpOk "$studioBase/health")) {
+    Start-LoggedProcess -Name "creative-studio" -FilePath "node.exe" `
+      -Arguments @("--env-file-if-exists=.env", "tools/scripts/serve-canvas-runtime.mjs") -WorkingDirectory $RepoRoot | Out-Null
+    if (-not (Wait-HttpOk "$studioBase/health" 45)) { throw "Integrated canvas runtime did not start. Check $LogRoot." }
   }
 
   $webPort = 3000
@@ -515,7 +537,7 @@ try {
     Write-Step "Starting Web on port 3000..."
     Start-LoggedProcess -Name "web" -FilePath "pnpm.cmd" `
       -Arguments @("--filter", "@yummyai/web", "dev") -WorkingDirectory $RepoRoot `
-      -Environment @{ API_BASE_URL = $apiBase; PORT = "3000" } | Out-Null
+      -Environment @{ API_BASE_URL = $apiBase; PORT = "3000"; WEB_AUTH_MODE = "local-service" } | Out-Null
     $standardWebUsable = (Wait-HttpOk "$webBase/" 90) -and `
       (Wait-LocalRuntime -ApiBase $apiBase -WebBase $webBase -TimeoutSeconds 45)
   }
@@ -540,8 +562,8 @@ try {
       Write-Step "Port 3000 is busy; starting an isolated Web on port 3002..."
       $webRuntime = Sync-IsolatedWebRuntime
       Start-LoggedProcess -Name "web-3002" -FilePath "pnpm.cmd" `
-        -Arguments @("exec", "next", "dev", "-p", "3002") -WorkingDirectory $webRuntime `
-        -Environment @{ API_BASE_URL = $apiBase; PORT = "3002" } | Out-Null
+        -Arguments @("exec", "next", "dev", "--hostname", "127.0.0.1", "-p", "3002") -WorkingDirectory $webRuntime `
+        -Environment @{ API_BASE_URL = $apiBase; PORT = "3002"; WEB_AUTH_MODE = "local-service" } | Out-Null
       if (-not ((Wait-HttpOk "$webBase/" 90) -and `
         (Wait-LocalRuntime -ApiBase $apiBase -WebBase $webBase -TimeoutSeconds 45))) {
         throw "Isolated Web did not start with the active API. Check $LogRoot."

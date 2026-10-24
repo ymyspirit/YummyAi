@@ -80,6 +80,7 @@ export function normalizeProviderFinanceStatement(
     ? input.statement.transactions.map((transaction) => {
       const classification = amazonClassification(transaction.type);
       return {
+        sourceEntryId: transaction.transactionId,
         lineKey: transaction.transactionId,
         factType: classification.factType,
         direction: classification.direction,
@@ -99,6 +100,7 @@ export function normalizeProviderFinanceStatement(
     : input.statement.transactions.map((transaction) => {
       const classification = etsyClassification(transaction.type);
       return {
+      sourceEntryId: transaction.transactionId,
       lineKey: transaction.transactionId,
       factType: classification.factType,
       direction: classification.direction,
@@ -116,6 +118,7 @@ export function normalizeProviderFinanceStatement(
       };
     });
   return RecordFinanceStatementInputSchema.parse({
+    sourceIdentity: { schemaVersion: 2, kind: "marketplace_account" },
     accountId: input.accountId,
     provider: input.statement.provider,
     statementKind: "marketplace_settlement",

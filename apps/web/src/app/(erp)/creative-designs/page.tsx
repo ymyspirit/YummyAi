@@ -1,7 +1,7 @@
-import { ErpSidebar } from "../../../features/navigation/erp-sidebar";
 import { BatchDesignWorkbench } from "../../../features/pod/batch-design-workbench";
 import type { BatchCapabilities, CreativeBatch, DesignOptions } from "../../../features/pod/pod-batch-types";
 import { apiFetch } from "../../../server-api";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -9,9 +9,9 @@ export default async function CreativeDesignPage({ searchParams }: { searchParam
   const params = await searchParams;
   const requestedBatchId = typeof params.batch === "string" ? params.batch : undefined;
   const loaded = await loadConsole(requestedBatchId);
+  if (loaded.batch?.executionMode === "infinite_canvas") redirect(`/creative-designs/canvas?brief=${loaded.batch.id}`);
   return (
     <div className="research-shell pod-batch-shell creative-design-shell">
-      <ErpSidebar active="creative-designs" contextLabel="DESIGN STUDIO" note="创意可先于商品和 SKU 建立；审核通过后再交接到正式设计与套图生产。" />
       <main className="research-main pod-batch-main creative-design-main">
         <BatchDesignWorkbench {...loaded} />
       </main>
@@ -37,7 +37,7 @@ async function loadConsole(requestedBatchId?: string): Promise<{
     }
     const capabilities = await capabilityResponse.json() as BatchCapabilities;
     const options = await optionsResponse.json() as DesignOptions;
-    const batches = await batchesResponse.json() as CreativeBatch[];
+    const batches = (await batchesResponse.json() as CreativeBatch[]).filter((batch) => batch.executionMode !== "infinite_canvas");
     const batchId = requestedBatchId ?? batches[0]?.id;
     if (!batchId) return { capabilities, options, batches, assetUrls: {} };
     const detailResponse = await apiFetch(`${base}/v1/pod/design-batches/${batchId}`, { cache: "no-store" });

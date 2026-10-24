@@ -9,7 +9,7 @@ Base path: `/v1/marketplace-accounts`
 | Operation | Permission |
 | --- | --- |
 | List/get accounts | `store:read` |
-| Create/update accounts | `store:manage` |
+| Create/update/remove accounts | `store:manage` |
 | Authorization, rotation, and revocation | `store:authorize` |
 | Future publication | `listing:publish` |
 
@@ -63,6 +63,27 @@ Responses include account identity, requested/granted scopes, capabilities, acco
 `PATCH /v1/marketplace-accounts/{id}`
 
 Supported fields are `displayName`, `marketplaceIds`, `requestedScopes`, and `enabled`. Disabling an account preserves history. Re-enabling an account returns it to `pending_authorization`; callers cannot set `active` directly.
+
+## Remove account
+
+`DELETE /v1/marketplace-accounts/{id}` requires `store:manage`. It locks the
+tenant-owned account, records an audit event in the same transaction, sets
+`deleted_at` and disables the connection. Repeating removal returns the original
+`{ id, deletedAt }` receipt without another removal event. A different tenant
+receives 404. Migration 0104 adds the deletion marker and prevents changes to a
+removed account.
+
+Removed accounts disappear from account lists and working selectors, including
+advertising and channel inventory. Account get/update, authorization and new
+report or order ingestion reject removed identities. Already disabled accounts
+remain ordinary recoverable accounts until explicitly removed. Removal has no
+restore operation.
+
+Orders, immutable report facts, pinned versions, accounting and audit history
+retain their original foreign keys; removal does not cascade through business
+history. This is a logical deletion of the local ERP identity, not closure of a
+marketplace seller account. Revoke a confirmed disposable local authorization
+through its dedicated route before removing that test account.
 
 ## States
 

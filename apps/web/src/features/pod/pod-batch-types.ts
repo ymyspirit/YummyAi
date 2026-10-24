@@ -30,6 +30,7 @@ export interface CreativeCandidate {
 }
 
 export interface CreativeBatch {
+  executionMode?: "processor" | "infinite_canvas";
   id: string; name: string; status: string; itemCount: number; generatedCount: number; approvedCount: number; failedCount: number;
   createdAt: string;
   items?: Array<{
@@ -43,14 +44,15 @@ export interface MockupOptions {
   formalDesigns: Array<{ designVersionId: string; designTaskId: string; title: string; skuId: string; skuCode: string; spuId: string; printSpecVersionId: string; creativeDesignVersionId: string }>;
   listingVersions: Array<{ listingVersionId: string; versionNumber: number; status: string; listingId: string; platform: string; locale: string; spuId: string }>;
   templateSourceAssets: Array<{ id: string; fileName: string; mediaType: string; version: number; checksumSha256: string; byteSize: number }>;
-  inspections: Array<{ id: string; sourceAssetId: string; sourceAssetVersion: number; checksumSha256: string; slotKey: string; status: string; compilation?: { ssimPermille: number }; confirmedAt?: string }>;
+  inspections: Array<{ id: string; sourceAssetId: string; sourceAssetVersion: number; checksumSha256: string; slotKey: string; status: string; compilation?: { ssimPermille: number; previewAssetId?: string }; confirmedAt?: string; reviewFingerprint?: string; executionEvidence?: "original_execution" | "legacy_compilation" }>;
   printSpecs: PrintSpecOption[];
 }
 
 export interface MockupBatch {
   id: string; name: string; status: string; platform: string; locale: string; templatePackVersionId: string;
   itemCount: number; completedCount: number; failedCount: number; createdAt: string;
-  items?: Array<{ id: string; designVersionId: string; skuId: string; status: string; rejectionReason?: string; outputs: Array<{
+  templatePack?: MockupOptions["templatePacks"][number];
+  items?: Array<{ id: string; designVersionId: string; skuId: string; status: string; rejectionReason?: string; reviewFingerprint?: string; outputs: Array<{
     id: string; slotKey: string; attempt: number; status: string; assetId?: string; errorMessage?: string;
   }> }>;
 }

@@ -1,4 +1,5 @@
 import { createEntityId, type PodExecutableToolKey, type TenantContext } from "@yummyai/contracts";
+import { Permission } from "@yummyai/authz";
 import { assetFiles, connectDatabase, migrateDatabase, withTenant } from "@yummyai/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -243,6 +244,8 @@ describe("POD artwork task database", () => {
   });
 
   async function createSku(context: TenantContext) {
+    // Grant only the fixture's catalog setup, never the artwork test subject.
+    context = { ...context, permissions: [...context.permissions, Permission.ProductWrite] };
     const plan = await catalog.createPlan(context, {
       name: "POD integration",
       sourceReportIds: [createEntityId()],
@@ -314,5 +317,5 @@ function listingParameters(toolKey: "product_suite" | "title_draft") {
 }
 
 function tenant(tenantId: string, userId: string): TenantContext {
-  return { tenantId, userId, permissions: [], dataScope: "tenant" };
+  return { tenantId, userId, permissions: [Permission.DesignRead, Permission.DesignWrite, Permission.AssetRead], dataScope: "tenant" };
 }

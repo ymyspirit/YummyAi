@@ -6,6 +6,8 @@ import type {
   FinanceStatementKind,
   FinanceStatementProvider,
 } from "@yummyai/contracts/finance";
+import type { FinanceFxMonetaryBasis, FinanceCalculationMonetaryBasis } from "@yummyai/contracts/finance/monetary";
+import type { FinanceSourceIdentity } from "@yummyai/contracts/finance/source-identity";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -30,6 +32,8 @@ import { fulfillmentSuppliers } from "./order-routing.js";
 import { orderLines, orders } from "./order.js";
 
 export const financeStatements = pgTable("finance_statements", {
+  sourceInput: jsonb("source_input").$type<Record<string, unknown>>(),
+  sourceIdentity: jsonb("source_identity").$type<FinanceSourceIdentity>(),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   accountId: uuid("account_id"),
@@ -69,6 +73,9 @@ export const financeStatements = pgTable("finance_statements", {
 ]);
 
 export const financeFacts = pgTable("finance_facts", {
+  sourceEntryId: text("source_entry_id"),
+  sourceScopeKey: text("source_scope_key"),
+  sourceProvider: text("source_provider").$type<FinanceStatementProvider>(),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   statementId: uuid("statement_id").notNull(),
@@ -138,6 +145,7 @@ export const financeFacts = pgTable("finance_facts", {
   }).onDelete("restrict"),
   unique("finance_facts_tenant_id_unique").on(table.tenantId, table.id),
   uniqueIndex("finance_facts_statement_line_unique").on(table.tenantId, table.statementId, table.lineKey),
+  uniqueIndex("finance_facts_source_entry_unique").on(table.tenantId, table.sourceProvider, table.sourceScopeKey, table.sourceEntryId),
   uniqueIndex("finance_facts_correction_unique").on(
     table.tenantId,
     table.correctionKind,
@@ -149,6 +157,7 @@ export const financeFacts = pgTable("finance_facts", {
 ]);
 
 export const financeFxRates = pgTable("finance_fx_rates", {
+  monetaryBasis: jsonb("monetary_basis").$type<FinanceFxMonetaryBasis>(),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
@@ -205,6 +214,7 @@ export const financeProfitMetrics = pgTable("finance_profit_metrics", {
 ]);
 
 export const financeProfitMetricVersions = pgTable("finance_profit_metric_versions", {
+  requestIdentity: jsonb("request_identity").$type<{ metricId: string | null; expectedVersion?: number; name: string }>(),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   metricId: uuid("metric_id").notNull(),
@@ -238,6 +248,8 @@ export const financeProfitMetricVersions = pgTable("finance_profit_metric_versio
 ]);
 
 export const financeProfitRuns = pgTable("finance_profit_runs", {
+  sourceIdentityVersion: integer("source_identity_version").$type<1>(),
+  monetaryBasis: jsonb("monetary_basis").$type<FinanceCalculationMonetaryBasis>(),
   id: uuid("id").primaryKey(),
   tenantId: uuid("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   metricId: uuid("metric_id").notNull(),

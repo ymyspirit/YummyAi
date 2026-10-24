@@ -7,6 +7,7 @@ export interface WorkflowNodeExecutionInput {
   context: TenantContext;
   runId: string;
   nodeRunId: string;
+  attemptId: string;
   node: WorkflowNode;
 }
 
@@ -24,6 +25,7 @@ export interface WorkflowNodeEnqueuer {
     tenantId: string;
     runId: string;
     nodeRunId: string;
+    attemptId: string;
     requestedBy: string;
   }): Promise<void>;
 }
@@ -46,6 +48,7 @@ export class InternalCapabilityExecutor implements WorkflowNodeExecutor {
       tenantId: input.context.tenantId,
       runId: input.runId,
       nodeRunId: input.nodeRunId,
+      attemptId: input.attemptId,
       requestedBy: input.context.userId,
     });
     return { state: "queued" };

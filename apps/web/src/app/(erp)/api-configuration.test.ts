@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 
-import { loadCompetitorShops } from "./competitors/page";
-import { loadResearch } from "./research/page";
+import { loadCompetitorShops } from "../../features/competitors/competitor-shop-data";
+import { loadResearch } from "../../features/research/research-page-data";
 
 const originalApiBaseUrl = process.env.API_BASE_URL;
 

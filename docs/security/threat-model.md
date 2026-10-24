@@ -1,6 +1,51 @@
 # YummyAI threat model
 
+Ordinary Web now defaults to per-operator OIDC/PKCE and an independently encrypted
+ERP session. RSC/BFF requests use the actual request identity, not the process
+service token; current membership, ordinary role/scope and server-session liveness
+are rechecked before and after exposing business responses. API clients cannot
+read the personal-session endpoint. Writes require the configured same-origin
+Origin and are not automatically replayed. Authority loss clears private UI and
+history snapshots; temporary verification failure hides drafts pending recheck.
+Production rejects local-service mode, while the explicit developer launcher is
+loopback-only. See [personal ERP identity](../integration/erp-identity.md) for the
+configuration, committed-write/409 limitation and remaining real deployment gates.
+
+The public factory Web deployment uses FACTORY_PORTAL_ONLY=1 and a default-deny
+server proxy; it must never expose the internal service-identity ERP routes.
+Personal authorization-code/S256 PKCE sessions validate state, nonce, configured
+issuer/JWKS, audience, authorized client and current database membership. Redis
+stores AES-GCM ciphertext under an independent FACTORY_SESSION_ENCRYPTION_KEY;
+the browser holds only an opaque HttpOnly SameSite cookie (Secure/__Host on HTTPS).
+Rotating refresh uses a durable encrypted pending marker, lock and CAS/KEEPTTL;
+ambiguous responses require login and logout cannot be undone by a refresh.
+Factory grants do not add ordinary order, PII, design or asset permissions. Each
+read/write/download checks the current member, grant, assignment, factory, source
+version and expiry under tenant RLS. Original-file storage permits are opaque,
+bounded and revalidated after reading. Private DTOs omit buyer/order/finance
+details; revocation clears client drafts and cancels old view snapshots/responses.
+See [factory collaboration](../integration/factory-portal.md). Broader internal
+Web module controls, real IdP setup and network deployment remain gates.
+
+Native method publication pins code-owned body/tool contracts and general knowledge provenance. Notes do not grant permissions. Tenant RLS, immutable history, strict writes, withdrawal generations and current read/execute checks protect adoption and replay. See [method governance](../integration/agent-methods.md) for API, legacy boundaries and result-adoption locks.
+
+Invocation evidence uses bounded, strict metadata views behind the original owner
+read permissions and tenant RLS. It does not contain prompts, source bodies, output
+bytes, object paths, signed URLs or credentials. POD submission/response receipts
+are immutable after recording; membership changes in flight must not erase a bill
+or authorize result adoption. Calculated and processor-reported amounts are not
+provider invoices. See [the data and recovery boundary](../integration/harness-invocations.md).
+
 ## Assets and trust boundaries
+
+New POD execution checkpoints use a dedicated POD_EXECUTION_ENCRYPTION_KEY,
+AES-GCM, an unregistered private quarantine object, tenant/task/input identity
+binding and encrypted-byte checksums. Queues and invocation views carry no raw
+response. Exact upload intents permit recovery without a second paid call; current
+membership/source/workflow gates and live lease tokens still control adoption.
+Seven-day cleanup deletes only reserved original-task objects and uncommitted
+outputs; committed assets and immutable receipt/tombstone metadata remain. See
+[POD response recovery](../integration/pod-response-recovery.md).
 
 Protected assets are tenant records, private files, provider credentials, user sessions, AI prompts/results, export packages, and audit history. Trust boundaries exist at the browser extension, web/API edge, OIDC issuer, worker queue, PostgreSQL RLS role, Redis, S3/MinIO, external AI providers, and OTLP pipeline.
 
@@ -127,5 +172,25 @@ Protected assets are tenant records, private files, provider credentials, user s
   event checksums, attempt status, normalized failure codes, and replay lineage.
 
 ## Residual risks
+
+Manual model-fee reconciliation requires a current tenant-wide role with the
+separate `model:billing_reconcile` permission and an explicit tenant rollout flag.
+Only bounded invoice/request identifiers and a browser-computed file checksum are
+accepted; the source document is not uploaded. Operator attestation does not
+authenticate a provider invoice. An immutable correction event, original-request
+and period checks, forced RLS and the existing budget lock protect the canonical
+budget projection; direct terminal updates remain rejected. Original model costs,
+POD receipts, business results and approvals remain with their owners. See the
+[model billing contract](../integration/model-billing.md).
+
+Creative configuration uses a separate source/origin/channel-validated iframe
+surface with an operation allowlist. Saved model keys never return to the browser;
+newly typed keys pass only through the authenticated ERP configuration boundary
+to the dedicated model encryption domain. Catalogue retrieval runs server-side
+with bounded responses, timeout and redirects disabled. Provider response bodies
+are not exposed in diagnostics. Model defaults are protected by forced RLS on
+both tenant and member. Upstream vendor checksums and checked adapters prevent
+unreviewed source drift; source and behavioral review remain necessary for each
+candidate update. See [creative studio integration](../integration/creative-studio.md).
 
 Public page layout changes may create partial captures; diagnostics and human review are the mitigation. P2 introduces encrypted customer PII, so application-host or database-migration administrator compromise remains a higher-impact operational risk addressed by dedicated keys, least privilege, access audit, backups, rotation, and retention drills. Marketplace protected-data approval and regional field availability remain external constraints; missing fields must block the relevant fulfillment step rather than be fabricated. P3-C has no authorized Amazon/Etsy/3PL inventory-report acceptance evidence; provider quantities must remain absent until that live gate is run. P3-D has no authorized Amazon/Etsy settlement acceptance evidence; statement facts must remain absent until that gate is run. P3-E can only evaluate the production, quality, procurement, invoice, and capacity evidence currently available; sparse or delayed evidence can make a scorecard incomplete and must not be interpreted as supplier performance. P3-F has no authorized Amazon Ads/Etsy Ads retrieval acceptance evidence; advertising facts must remain absent until supplied by an authorized connector or explicit manual import. P3-B supplier-order and supplier-invoice provider acceptance also remains pending. P3-G Webhook delivery can prove what YummyAI signed and attempted, but cannot prove that a third-party consumer processed the event correctly; consumer-side signature, replay, and business-idempotency acceptance remains external evidence. Exact-candidate CI and backup/restore evidence are recorded in the P3 implementation plan; they do not close these authorized-provider risks.

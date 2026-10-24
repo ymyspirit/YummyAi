@@ -1,0 +1,22 @@
+{
+  "name": "@yummyai/order-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "@yummyai/authz": "workspace:*",
+    "@yummyai/contracts": "workspace:*",
+    "@yummyai/database": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "@yummyai/production-editor": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

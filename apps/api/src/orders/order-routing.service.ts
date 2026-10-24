@@ -3,10 +3,11 @@ import { createHash } from "node:crypto";
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import {
   CreateFulfillmentSupplierInputSchema, CreateRoutingPolicyInputSchema,
+  UpdateFulfillmentSupplierInputSchema, FulfillmentSupplierViewSchema, type UpdateFulfillmentSupplierInput,
   CreateSupplierCapacityWindowInputSchema, CreateSupplierCapabilitySnapshotInputSchema,
   CreateSupplierQuoteInputSchema, ManualRoutingOverrideInputSchema, ReviewRoutingDecisionInputSchema,
   RouteOrderLineInputSchema, createEntityId,
-  type CreateFulfillmentSupplierInput, type CreateRoutingPolicyInput,
+  type CreateRoutingPolicyInput,
   type CreateSupplierCapacityWindowInput, type CreateSupplierCapabilitySnapshotInput,
   type CreateSupplierQuoteInput, type ManualRoutingOverrideInput, type ReviewRoutingDecisionInput,
   type RouteOrderLineInput, type TenantContext,
@@ -32,7 +33,7 @@ export class OrderRoutingService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
-  async createSupplier(context: TenantContext, rawInput: CreateFulfillmentSupplierInput) {
+  async createSupplier(context: TenantContext, rawInput: unknown) {
     const input = CreateFulfillmentSupplierInputSchema.parse(rawInput);
     const [supplier] = await withTenant(this.database.db, context, (tx) => tx.insert(fulfillmentSuppliers).values({
       id: createEntityId(), tenantId: context.tenantId, ...input, priority: 3, createdBy: context.userId,
@@ -44,6 +45,15 @@ export class OrderRoutingService {
   listSuppliers(context: TenantContext) {
     return withTenant(this.database.db, context, (tx) => tx.select().from(fulfillmentSuppliers)
       .orderBy(asc(fulfillmentSuppliers.priority), asc(fulfillmentSuppliers.name)));
+  }
+
+  async updateSupplier(context: TenantContext, id: string, rawInput: UpdateFulfillmentSupplierInput) {
+    const input = UpdateFulfillmentSupplierInputSchema.parse(rawInput);
+    const [updated] = await withTenant(this.database.db, context, (tx) => tx.update(fulfillmentSuppliers)
+      .set({ ...input, updatedAt: new Date() }).where(eq(fulfillmentSuppliers.id, id)).returning());
+    if (!updated) throw new NotFoundException("Supplier not found");
+    await this.audit.record(context, { action: "supplier.update", resourceType: "fulfillment_supplier", resourceId: id, result: "success" });
+    return FulfillmentSupplierViewSchema.parse(updated);
   }
 
   async addCapability(context: TenantContext, rawInput: CreateSupplierCapabilitySnapshotInput) {
@@ -127,6 +137,7 @@ export class OrderRoutingService {
       if (!line) throw new NotFoundException("Order line not found");
       if (line.order.workflowState !== "awaiting_routing") throw new ConflictException("Order must be awaiting routing");
       if (!line.skuId) throw new ConflictException("Order line requires a pinned SKU before routing");
+      if (line.line.unitPriceCurrency === null) throw new ConflictException("订单行币种尚未提供，请补齐后再进行供应商报价比较。");
       const [policy] = await tx.select().from(routingPolicyVersions).where(eq(routingPolicyVersions.id, input.routingPolicyId)).limit(1);
       if (!policy) throw new NotFoundException("Routing policy version not found");
       const suppliers = await tx.select().from(fulfillmentSuppliers);
@@ -273,6 +284,7 @@ export class OrderRoutingService {
       const candidates = await tx.select().from(productionOrderCandidates).where(inArray(productionOrderCandidates.routingDecisionId, approved.map((entry) => entry.id)));
       const lines = await tx.select().from(orderLines).where(eq(orderLines.orderId, orderId));
       const order = (await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1))[0]!;
+      if (order.orderCurrency === null) throw new ConflictException("订单币种尚未提供，无法生成采购金额。");
       const bySupplier = new Map<string, typeof approved>();
       for (const decision of approved) bySupplier.set(decision.selectedSupplierId!, [...(bySupplier.get(decision.selectedSupplierId!) ?? []), decision]);
       for (const [supplierId, decisions] of bySupplier) {

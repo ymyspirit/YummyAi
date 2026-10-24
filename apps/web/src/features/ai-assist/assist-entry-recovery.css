@@ -1,0 +1,52 @@
+.assist-entry-recovery {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  animation: assist-entry-appear 160ms ease-out both;
+}
+.assist-entry-recovery > .ai-request-recovery {
+  margin-block: 12px;
+}
+.assist-entry-recovery fieldset {
+  min-width: 0;
+}
+.assist-entry-recovery > fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.assist-entry-recovery button {
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, transform 140ms ease, opacity 140ms ease;
+}
+.assist-entry-recovery button:not(:disabled):active {
+  transform: scale(.98);
+}
+.assist-entry-recovery .assist-entry-note {
+  color: var(--muted, #525d6c);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.assist-entry-recovery .assist-entry-note code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.assist-entry-recovery .kb-chat-history > *,
+.assist-entry-recovery .oc-bulk-results > *,
+.assist-entry-recovery [role="alert"],
+.assist-entry-recovery [role="status"] {
+  animation: assist-entry-appear 160ms ease-out both;
+}
+@keyframes assist-entry-appear {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assist-entry-recovery,
+  .assist-entry-recovery *,
+  .assist-entry-recovery *::before,
+  .assist-entry-recovery *::after {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

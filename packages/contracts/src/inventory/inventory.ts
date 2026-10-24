@@ -1,17 +1,31 @@
 import { z } from "zod";
+import { NonnegativeStockQuantitySchema, PositiveStockQuantitySchema, SignedStockQuantitySchema, StockQuantityViewSchema } from "@yummyai/contracts/inventory/quantity-schema";
+import { stockQuantityMatchesUnit } from "@yummyai/contracts/inventory/quantity";
 
 const EntityIdSchema = z.uuidv7();
 const IdempotencyKeySchema = z.string().trim().min(8).max(200);
 const CodeSchema = z.string().trim().min(1).max(64).regex(/^[A-Z0-9][A-Z0-9._-]*$/);
-const PositiveQuantitySchema = z.number().int().positive().max(2_147_483_647);
-const SignedQuantitySchema = z.number().int().min(-2_147_483_647).max(2_147_483_647).refine((value) => value !== 0, {
-  message: "Quantity delta cannot be zero",
-});
+const PositiveQuantitySchema = PositiveStockQuantitySchema;
+const SignedQuantitySchema = SignedStockQuantitySchema;
 
 export const WarehouseTypeSchema = z.enum(["owned", "third_party", "fba", "supplier", "virtual"]);
 export const InventoryUnitSchema = z.enum(["each", "pair", "set", "meter", "gram", "kilogram"]);
+export const InventoryMaterialKindSchema = z.enum(["blank", "material", "packaging", "work_in_progress", "finished_good"]);
+export const InventoryStockClassificationViewSchema = z.object({
+  id: EntityIdSchema,
+  versionNumber: z.number().int().positive(),
+  kind: InventoryMaterialKindSchema,
+  recordedAt: z.iso.datetime(),
+}).strict();
+export const ClassifyInventoryStockItemInputSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  kind: InventoryMaterialKindSchema,
+  reason: z.string().trim().min(1).max(1000),
+  idempotencyKey: IdempotencyKeySchema,
+}).strict();
 export const InventoryBucketSchema = z.enum(["physical", "in_transit", "provider", "virtual"]);
 export const InventoryMovementTypeSchema = z.enum([
+  "consumption",
   "opening",
   "receipt",
   "allocation",
@@ -58,6 +72,7 @@ export const CreateStockItemInputSchema = z.object({
   code: CodeSchema,
   name: z.string().trim().min(1).max(240),
   baseUnit: InventoryUnitSchema,
+  materialKind: InventoryMaterialKindSchema.nullable().optional(),
 }).strict();
 
 export const CreateInventoryLotInputSchema = z.object({
@@ -67,9 +82,12 @@ export const CreateInventoryLotInputSchema = z.object({
   sourceId: z.string().trim().min(1).max(200),
   unitCostMinor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   unitCostCurrency: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  unitCostQuantity: PositiveStockQuantitySchema.nullable().optional(),
   receivedAt: z.iso.datetime().nullable(),
   expiresAt: z.iso.datetime().nullable(),
 }).strict().superRefine((value, context) => {
+  if (value.unitCostQuantity != null && value.unitCostMinor === null)
+    context.addIssue({ code: "custom", path: ["unitCostQuantity"], message: "A pricing quantity requires an actual cost and currency" });
   if ((value.unitCostMinor === null) !== (value.unitCostCurrency === null)) {
     context.addIssue({
       code: "custom",
@@ -86,6 +104,15 @@ export const CreateInventoryLotInputSchema = z.object({
   }
 });
 
+// Stable identifiers and stock units are not editable metadata.
+const ActivityStatusSchema = z.enum(["active", "inactive"]).optional();
+export const UpdateWarehouseInputSchema = CreateWarehouseInputSchema.pick({ name: true, countryCode: true, timeZone: true }).extend({ status: ActivityStatusSchema }).strict();
+export const UpdateInventoryLocationInputSchema = CreateInventoryLocationInputSchema.pick({ name: true }).extend({ status: ActivityStatusSchema }).strict();
+export const UpdateStockItemInputSchema = CreateStockItemInputSchema.pick({ name: true }).extend({ status: ActivityStatusSchema }).strict();
+export type UpdateWarehouseInput = z.infer<typeof UpdateWarehouseInputSchema>;
+export type UpdateInventoryLocationInput = z.infer<typeof UpdateInventoryLocationInputSchema>;
+export type UpdateStockItemInput = z.infer<typeof UpdateStockItemInputSchema>;
+
 export const RecordInventoryMovementInputSchema = z.object({
   stockItemId: EntityIdSchema,
   locationId: EntityIdSchema,
@@ -99,7 +126,9 @@ export const RecordInventoryMovementInputSchema = z.object({
   reasonCode: CodeSchema,
   occurredAt: z.iso.datetime(),
   idempotencyKey: IdempotencyKeySchema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (!stockQuantityMatchesUnit(value.quantityDelta, value.unit)) context.addIssue({ code: "custom", path: ["quantityDelta"], message: "Each, pair and set quantities must be whole numbers" });
+});
 
 export const CreateInventoryReservationInputSchema = z.object({
   stockItemId: EntityIdSchema,
@@ -111,7 +140,9 @@ export const CreateInventoryReservationInputSchema = z.object({
   sourceId: z.string().trim().min(1).max(200),
   expiresAt: z.iso.datetime().nullable(),
   idempotencyKey: IdempotencyKeySchema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (!stockQuantityMatchesUnit(value.quantity, value.unit)) context.addIssue({ code: "custom", path: ["quantity"], message: "Each, pair and set quantities must be whole numbers" });
+});
 
 export const ReleaseInventoryReservationInputSchema = z.object({
   expectedVersion: z.number().int().positive(),
@@ -129,6 +160,7 @@ export const CreateInventoryTransferInputSchema = z.object({
   unit: InventoryUnitSchema,
   idempotencyKey: IdempotencyKeySchema,
 }).strict().superRefine((value, context) => {
+  if (!stockQuantityMatchesUnit(value.quantity, value.unit)) context.addIssue({ code: "custom", path: ["quantity"], message: "Each, pair and set quantities must be whole numbers" });
   if (value.sourceLocationId === value.destinationLocationId) {
     context.addIssue({
       code: "custom",
@@ -166,12 +198,12 @@ export const InventoryBalanceViewSchema = z.object({
   locationId: EntityIdSchema,
   lotId: EntityIdSchema.nullable(),
   unit: InventoryUnitSchema,
-  physicalQuantity: z.number().int().nonnegative(),
-  reservedQuantity: z.number().int().nonnegative(),
-  availableQuantity: z.number().int(),
-  inTransitQuantity: z.number().int().nonnegative(),
-  providerQuantity: z.number().int().nonnegative(),
-  virtualQuantity: z.number().int().nonnegative(),
+  physicalQuantity: NonnegativeStockQuantitySchema,
+  reservedQuantity: NonnegativeStockQuantitySchema,
+  availableQuantity: StockQuantityViewSchema,
+  inTransitQuantity: NonnegativeStockQuantitySchema,
+  providerQuantity: NonnegativeStockQuantitySchema,
+  virtualQuantity: NonnegativeStockQuantitySchema,
   projectionVersion: z.number().int().positive(),
   updatedAt: z.iso.datetime(),
 });
@@ -201,7 +233,23 @@ export const InventoryStockItemViewSchema = z.object({
   name: z.string(),
   baseUnit: InventoryUnitSchema,
   status: z.enum(["active", "inactive"]),
+  classification: InventoryStockClassificationViewSchema.nullable().optional(),
 });
+
+export const InventoryStockClassificationResultSchema = z.object({
+  stockItem: InventoryStockItemViewSchema,
+  classification: InventoryStockClassificationViewSchema,
+  replayed: z.boolean(),
+}).strict();
+export const InventoryStockClassificationHistorySchema = z.object({
+  stockItem: InventoryStockItemViewSchema,
+  canClassify: z.boolean(),
+  items: z.array(InventoryStockClassificationViewSchema.extend({ reason: z.string() })),
+  nextVersion: z.number().int().positive().nullable(),
+}).strict();
+export type InventoryMaterialKind = z.infer<typeof InventoryMaterialKindSchema>;
+export type ClassifyInventoryStockItemInput = z.infer<typeof ClassifyInventoryStockItemInputSchema>;
+export type InventoryStockClassificationHistory = z.infer<typeof InventoryStockClassificationHistorySchema>;
 
 export const InventoryLotViewSchema = z.object({
   id: EntityIdSchema,
@@ -211,6 +259,7 @@ export const InventoryLotViewSchema = z.object({
   sourceId: z.string(),
   unitCostMinor: z.number().int().nonnegative().nullable(),
   unitCostCurrency: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  unitCostQuantity: PositiveStockQuantitySchema.nullable().optional(),
   receivedAt: z.iso.datetime().nullable(),
   expiresAt: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),
@@ -238,6 +287,7 @@ export const InventoryReservationViewSchema = z.object({
   locationId: EntityIdSchema,
   lotId: EntityIdSchema.nullable(),
   quantity: PositiveQuantitySchema,
+  remainingQuantity: NonnegativeStockQuantitySchema.optional(),
   unit: InventoryUnitSchema,
   sourceType: z.enum(["order", "order_line", "transfer", "manual"]),
   sourceId: z.string(),

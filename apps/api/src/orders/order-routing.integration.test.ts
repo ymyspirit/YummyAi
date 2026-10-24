@@ -55,6 +55,25 @@ describe("supplier sourcing and routing", () => {
 
   afterAll(async () => { await database.client.end(); });
 
+  it("does not guess a quote currency or create a routing decision for an unpriced order", async () => {
+    const input = orderFixture(accountA, "unknown-currency");
+    input.orderTotal = null; input.lines[0]!.unitPrice = null;
+    const normalized = await orderService.materializeNormalized(contextA, input);
+    await withTenant(database.db, contextA, tx => tx.update(orderRows).set({ workflowState: "awaiting_routing" }).where(eq(orderRows.id, normalized.order.id)));
+    await expect(routing.route(contextA, normalized.order.id, routeInput(normalized.order.lines[0]!.id, policyId, "route-unknown-currency"))).rejects.toThrow("订单行币种尚未提供");
+    expect(await routing.list(contextA, normalized.order.id)).toEqual([]);
+  });
+
+  it("edits supplier metadata without changing its connector or crossing tenants", async () => {
+    const supplier = await routing.createSupplier(contextA, { name: "Edit supplier", kind: "manual", regionCode: "CN", settlementCurrency: "CNY", externalConnectionRef: null });
+    const input = { name: "Updated supplier", regionCode: "US", settlementCurrency: "USD" };
+    await expect(routing.updateSupplier(contextB, supplier.id, input)).rejects.toBeInstanceOf(NotFoundException);
+    const result = await routing.updateSupplier(contextA, supplier.id, input);
+    expect(result).toMatchObject({ ...input, id: supplier.id, kind: "manual", status: "active" });
+    expect(result).not.toHaveProperty("tenantId");
+    expect(result).not.toHaveProperty("externalConnectionRef");
+  });
+
   it("routes deterministically, replays idempotently, creates a pinned purchase order, and opens production", async () => {
     const order = await readyOrder("auto");
     const input = routeInput(order.lines[0]!.id, policyId, "route-auto-0001");

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 
 import { connectDatabase, migrateDatabase } from "@yummyai/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -38,10 +38,11 @@ describe("database membership context", () => {
   beforeAll(async () => {
     await migrateDatabase(database);
     await database.client.begin(async (sql) => {
-      await sql.unsafe(
-        "insert into organizations (id, name, slug) values ($1, $2, $3)",
-        [tenantId, "Auth tenant", `auth-${tenantId}`],
-      );
+      await sql.unsafe("insert into organizations (id, name, slug) values ($1, $2, $3)", [
+        tenantId,
+        "Auth tenant",
+        `auth-${tenantId}`,
+      ]);
       await sql.unsafe(
         `insert into app_users (id, oidc_subject, email, display_name)
          values ($1, $2, $3, $4), ($5, $6, $7, $8)`,
@@ -83,6 +84,9 @@ describe("database membership context", () => {
       userId: activeUserId,
       permissions: ["capture:read", "capture:write"],
       dataScope: "tenant",
+      permissionScopes: { "capture:read": "tenant", "capture:write": "tenant" },
+      teamIds: [],
+      teamAuthority: createHash("sha256").update("[]").digest("hex"),
     });
   });
 

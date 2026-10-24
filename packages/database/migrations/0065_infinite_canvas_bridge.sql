@@ -1,0 +1,2 @@
+ALTER TABLE "creative_design_batches" ADD COLUMN "execution_mode" text DEFAULT 'processor' NOT NULL;--> statement-breakpoint
+ALTER TABLE "creative_design_batches" ADD CONSTRAINT "creative_design_batches_execution_mode_check" CHECK ("creative_design_batches"."execution_mode" in ('processor','infinite_canvas'));

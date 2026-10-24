@@ -14,6 +14,7 @@ import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
 import { MarketplaceAuthorizationService } from "./marketplace-authorization.service.js";
 import { MarketplaceCapabilityService } from "./marketplace-capability.service.js";
 import { MarketplaceAccountService } from "./marketplace-account.service.js";
+import { MarketplaceAuthorityWorkspaceService } from "./marketplace-authority-workspace.service.js";
 
 @Controller("v1/marketplace-accounts")
 export class MarketplaceAccountController {
@@ -21,6 +22,7 @@ export class MarketplaceAccountController {
     @Inject(MarketplaceAccountService) private readonly accounts: MarketplaceAccountService,
     @Inject(MarketplaceAuthorizationService) private readonly authorization: MarketplaceAuthorizationService,
     @Inject(MarketplaceCapabilityService) private readonly capability: MarketplaceCapabilityService,
+    @Inject(MarketplaceAuthorityWorkspaceService) private readonly authority: MarketplaceAuthorityWorkspaceService,
   ) {}
 
   @Get()
@@ -45,6 +47,20 @@ export class MarketplaceAccountController {
     const context = requireContext(request);
     authorize(context, Permission.StoreManage);
     return this.accounts.create(context, CreateMarketplaceAccountInputSchema.parse(body));
+  }
+
+  @Get(":id/authority")
+  @RequiresPermission(Permission.StoreRead)
+  currentAuthority(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
+    return this.authority.get(requireContext(request), z.uuidv7().parse(id));
+  }
+
+  @Delete(":id")
+  @RequiresPermission(Permission.StoreManage)
+  remove(@Req() request: AuthenticatedRequest, @Param("id") id: string) {
+    const context = requireContext(request);
+    authorize(context, Permission.StoreManage);
+    return this.accounts.remove(context, z.uuidv7().parse(id));
   }
 
   @Patch(":id")

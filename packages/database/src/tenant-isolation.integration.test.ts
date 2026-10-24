@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { TenantContext } from "@yummyai/contracts";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { isolatedDatabaseForTests } from "./testing/disposable-database.js";
 
 import {
   assetFiles,
@@ -37,7 +38,7 @@ function tenantContext(tenantId: string): TenantContext {
 }
 
 describe("tenant isolation", () => {
-  const database = connectDatabase();
+  const database = connectDatabase(isolatedDatabaseForTests());
   const tenantA = tenantContext(uuidV7());
   const tenantB = tenantContext(uuidV7());
   const assetAId = uuidV7();

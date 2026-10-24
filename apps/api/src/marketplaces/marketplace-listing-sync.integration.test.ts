@@ -5,6 +5,9 @@ import {
   marketplaceListingSyncEvents,
   marketplaceListingSyncRequests,
   migrateDatabase,
+  memberships,
+  membershipRoles,
+  roles,
   withTenant,
 } from "@yummyai/database";
 import { eq } from "drizzle-orm";
@@ -41,7 +44,7 @@ describe.sequential("marketplace online Listing sync requests", () => {
   const context: TenantContext = {
     tenantId,
     userId,
-    permissions: [Permission.ListingPublish, Permission.ListingRead],
+    permissions: [Permission.ListingPublish, Permission.ListingRead, Permission.StoreRead],
     dataScope: "tenant",
   };
   const otherContext: TenantContext = { ...context, tenantId: otherTenantId };
@@ -67,6 +70,13 @@ describe.sequential("marketplace online Listing sync requests", () => {
       `insert into app_users (id, oidc_subject, email, display_name) values ($1,$2,$3,$4)`,
       [userId, `listing-sync-${userId}`, `${userId}@example.test`, "Listing Sync Admin"],
     );
+    for (const actor of [context, otherContext]) await withTenant(database.db, actor, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId: actor.tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: actor.tenantId, name: "Synthetic legacy sync " + roleId,
+        permissions: [...actor.permissions], dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: actor.tenantId, membershipId, roleId });
+    });
     await database.client.unsafe(
       `insert into product_plans (id, tenant_id, name, status, source_report_ids, customization, created_by)
        values ($1,$2,$3,'approved','[]'::jsonb,'{"version":1,"fields":[]}'::jsonb,$4)`,
@@ -219,10 +229,10 @@ describe.sequential("marketplace online Listing sync requests", () => {
       listingId,
       listingVersionId: firstVersionId,
       sourcePublicationRequestId: publicationRequestId,
-      requestKey: "stable-sync-request",
+      requestKey: createEntityId(),
     };
     const priceOnly = await service.create(context, { ...base, action: "read" });
-    const full = await service.create(context, { ...base, action: "read_full_content" });
+    const full = await service.create(context, { ...base, requestKey: createEntityId(), action: "read_full_content" });
     expect(full.id).not.toBe(priceOnly.id);
     expect(full.desiredChecksum).not.toBe(priceOnly.desiredChecksum);
 
@@ -241,17 +251,18 @@ describe.sequential("marketplace online Listing sync requests", () => {
     const feedSource = await service.create(context, {
       ...base,
       sourcePublicationRequestId: feedPublicationRequestId,
-      requestKey: "batch-feed-source",
+      requestKey: createEntityId(),
       action: "read",
     });
     expect(feedSource.sourcePublicationRequestId).toBe(feedPublicationRequestId);
     expect(feedSource.externalListingId).toBe("SKU-FEED-1");
 
     await insertApprovedVersion(secondVersionId, 2, "Updated pillow");
-    const updatedBase = { ...base, listingVersionId: secondVersionId };
+    const updatedBase = { ...base, listingVersionId: secondVersionId, requestKey: createEntityId() };
     const repeatedPriceOnly = await service.create(context, { ...updatedBase, action: "read" });
-    const updatedFull = await service.create(context, { ...updatedBase, action: "read_full_content" });
-    expect(repeatedPriceOnly.id).toBe(priceOnly.id);
+    const updatedFull = await service.create(context, { ...updatedBase, requestKey: createEntityId(), action: "read_full_content" });
+    expect(repeatedPriceOnly.id).not.toBe(priceOnly.id);
+    expect(repeatedPriceOnly.desiredChecksum).toBe(priceOnly.desiredChecksum);
     expect(updatedFull.id).not.toBe(full.id);
     expect(updatedFull.desiredChecksum).not.toBe(full.desiredChecksum);
     expect(updatedFull.idempotencyKey).not.toBe(full.idempotencyKey);
@@ -264,8 +275,8 @@ describe.sequential("marketplace online Listing sync requests", () => {
       listingVersionId: secondVersionId,
       sourcePublicationRequestId: publicationRequestId,
     };
-    const pricePush = await service.create(context, { ...input, action: "push_price_inventory", requestKey: "push-price" });
-    const fullPush = await service.create(context, { ...input, action: "push_full_content", requestKey: "push-full" });
+    const pricePush = await service.create(context, { ...input, action: "push_price_inventory", requestKey: createEntityId() });
+    const fullPush = await service.create(context, { ...input, action: "push_full_content", requestKey: createEntityId() });
     expect(assertMarketplaceAllocations).toHaveBeenCalledTimes(2);
     expect(assertMarketplaceAllocations).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       accountId,
@@ -277,7 +288,7 @@ describe.sequential("marketplace online Listing sync requests", () => {
       tx.update(marketplaceListingSyncEvents).set({ status: "failed" }).where(eq(marketplaceListingSyncEvents.requestId, pricePush.id)),
     )).rejects.toThrow();
     await expect(service.get(otherContext, fullPush.id)).rejects.toMatchObject({ status: 404 });
-    expect(await service.list(otherContext, { listingId, limit: 50 })).toEqual([]);
+    await expect(service.list(otherContext, { listingId, limit: 50 })).rejects.toMatchObject({ status: 404 });
   });
 
   it("rebuilds full Etsy content from the current approved version", async () => {
@@ -287,7 +298,7 @@ describe.sequential("marketplace online Listing sync requests", () => {
       listingVersionId: etsyVersionId,
       sourcePublicationRequestId: etsyActivationRequestId,
       action: "read_full_content",
-      requestKey: "etsy-current-approved-content",
+      requestKey: createEntityId(),
     });
     const stored = await withTenant(database.db, context, (tx) =>
       tx.select().from(marketplaceListingSyncRequests).where(eq(marketplaceListingSyncRequests.id, request.id)),

@@ -2,6 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { SecretVault } from "@yummyai/ai-core";
 import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { permissionScope, Permission } from "@yummyai/authz";
+import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
+import { RevokedIntegrationApiClientViewSchema } from "@yummyai/contracts/integration";
 import {
   CreateIntegrationApiClientInputSchema, CreatedIntegrationApiClientViewSchema, CreatedWebhookEndpointViewSchema,
   CreateWebhookEndpointInputSchema, IntegrationApiClientViewSchema, IntegrationRetentionRunViewSchema,
@@ -23,6 +26,11 @@ import { and, asc, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION, INTEGRATION_SECRET_VAULT, WEBHOOK_DELIVERY_ENQUEUER } from "../platform.tokens.js";
+import { integrationAgentCatalog } from "./agent-capability.catalog.js";
+import {
+  currentIntegrationClientAuthority, integrationClientAccessible, integrationClientAdmission,
+  integrationClientContextAuthority, integrationClientNow, integrationClientRequestChecksum, pinIntegrationApiDelegation,
+} from "./integration-client-authority.js";
 
 @Injectable()
 export class IntegrationService {
@@ -35,42 +43,54 @@ export class IntegrationService {
 
   async createApiClient(context: TenantContext, rawInput: CreateIntegrationApiClientInput) {
     const input = CreateIntegrationApiClientInputSchema.parse(rawInput);
-    const disallowed = input.scopes.filter((scope) => !context.permissions.includes(scope));
-    if (disallowed.length) throw new ConflictException("API client scopes cannot exceed the creating member permissions");
-    const secret = randomBytes(32).toString("base64url");
-    const id = createEntityId();
-    const bearerToken = `yai_${id}.${secret}`;
-    const result = await withTenant(this.database.db, context, async (tx) => {
+    const requestChecksum = integrationClientRequestChecksum(input);
+    return withTenant(this.database.db, context, async (tx) => {
+      const { current, membershipId } = await currentIntegrationClientAuthority(tx, context, Permission.IntegrationManage);
       await lock(tx, `integration-api-client:${input.idempotencyKey}`);
       const [replayed] = await tx.select().from(integrationApiClients).where(eq(integrationApiClients.idempotencyKey, input.idempotencyKey)).limit(1);
+      const now = await integrationClientNow(tx);
       if (replayed) {
-        if (replayed.label !== input.label || stableStringify(replayed.scopes) !== stableStringify(input.scopes) || (replayed.expiresAt?.toISOString() ?? null) !== input.expiresAt) throw new ConflictException("API client idempotency key was reused with changed input");
-        return { row: replayed, token: null };
+        if (replayed.createdBy !== current.userId || !integrationClientAccessible(current, Permission.IntegrationManage, replayed.createdBy)
+          || !sameClientRequest(replayed, input, requestChecksum)) throw new ConflictException("integration_client_request_conflict");
+        return CreatedIntegrationApiClientViewSchema.parse({ contextAuthority: integrationClientContextAuthority(current), client: apiClientView(replayed, now), bearerToken: null });
       }
-      const [row] = await tx.insert(integrationApiClients).values({ id, tenantId: context.tenantId, label: input.label, keyPrefix: `yai_${id}`, secretDigest: hashSecret(bearerToken), scopes: input.scopes, expiresAt: input.expiresAt ? new Date(input.expiresAt) : null, idempotencyKey: input.idempotencyKey, createdBy: context.userId }).returning();
-      await tx.insert(integrationApiClientEvents).values({ id: createEntityId(), tenantId: context.tenantId, clientId: id, action: "created", reasonCode: "CLIENT_CREATED", idempotencyKey: input.idempotencyKey, actorUserId: context.userId });
-      return { row: row!, token: bearerToken };
+      if (input.expiresAt && Date.parse(input.expiresAt) <= now.getTime()) throw new ConflictException("integration_client_expiry_invalid");
+      const delegation = pinIntegrationApiDelegation(current, membershipId, input, now);
+      const id = createEntityId(), bearerToken = `yai_${id}.${randomBytes(32).toString("base64url")}`;
+      const [row] = await tx.insert(integrationApiClients).values({ id, tenantId: current.tenantId, label: input.label,
+        keyPrefix: `yai_${id}`, secretDigest: hashSecret(bearerToken), scopes: input.scopes,
+        expiresAt: input.expiresAt ? sql`${input.expiresAt}::timestamptz` : null,
+        idempotencyKey: input.idempotencyKey, createdBy: current.userId, delegation, delegationRequest: input }).returning();
+      await tx.insert(integrationApiClientEvents).values({ id: createEntityId(), tenantId: current.tenantId, clientId: id,
+        action: "created", reasonCode: "CLIENT_CREATED", idempotencyKey: input.idempotencyKey, actorUserId: current.userId });
+      await this.audit.recordInTransaction(tx, current, { action: "integration.api_client.create", resourceType: "integration_api_client",
+        resourceId: id, result: "success", metadata: { requestChecksum, scopes: input.scopes } });
+      return CreatedIntegrationApiClientViewSchema.parse({ contextAuthority: integrationClientContextAuthority(current), client: apiClientView(row!, now), bearerToken });
     });
-    const view = CreatedIntegrationApiClientViewSchema.parse({ client: apiClientView(result.row), bearerToken: result.token });
-    await this.audit.record(context, { action: "integration.api_client.create", resourceType: "integration_api_client", resourceId: view.client.id, result: "success", metadata: { scopes: view.client.scopes } });
-    return view;
   }
 
   async revokeApiClient(context: TenantContext, clientId: string, rawInput: RevokeIntegrationApiClientInput) {
     const input = RevokeIntegrationApiClientInputSchema.parse(rawInput);
-    const row = await withTenant(this.database.db, context, async (tx) => {
+    return withTenant(this.database.db, context, async (tx) => {
+      const { current } = await currentIntegrationClientAuthority(tx, context, Permission.IntegrationManage);
       await lock(tx, `integration-api-client:${clientId}`);
+      const [client] = await tx.select().from(integrationApiClients).where(eq(integrationApiClients.id, clientId)).limit(1).for("update");
+      if (!client || !integrationClientAccessible(current, Permission.IntegrationManage, client.createdBy)) throw new NotFoundException("integration_client_not_found");
       const [existingEvent] = await tx.select().from(integrationApiClientEvents).where(and(eq(integrationApiClientEvents.clientId, clientId), eq(integrationApiClientEvents.idempotencyKey, input.idempotencyKey))).limit(1);
-      const [client] = await tx.select().from(integrationApiClients).where(eq(integrationApiClients.id, clientId)).limit(1);
-      if (!client) throw new NotFoundException("Integration API client not found");
-      if (existingEvent) return client;
-      if (client.status !== input.expectedStatus) throw new ConflictException("Integration API client is not active");
-      await tx.insert(integrationApiClientEvents).values({ id: createEntityId(), tenantId: context.tenantId, clientId, action: "revoked", reasonCode: input.reasonCode, idempotencyKey: input.idempotencyKey, actorUserId: context.userId });
-      const [updated] = await tx.update(integrationApiClients).set({ status: "revoked", revokedAt: new Date() }).where(eq(integrationApiClients.id, clientId)).returning();
-      return updated!;
+      const now = await integrationClientNow(tx);
+      if (existingEvent) {
+        if (existingEvent.action !== "revoked" || existingEvent.actorUserId !== current.userId || existingEvent.reasonCode !== input.reasonCode || client.status !== "revoked")
+          throw new ConflictException("integration_client_request_conflict");
+        return RevokedIntegrationApiClientViewSchema.parse({ contextAuthority: integrationClientContextAuthority(current), client: apiClientView(client, now) });
+      }
+      if (client.status !== input.expectedStatus) throw new ConflictException("integration_client_not_active");
+      await tx.insert(integrationApiClientEvents).values({ id: createEntityId(), tenantId: current.tenantId, clientId, action: "revoked", reasonCode: input.reasonCode, idempotencyKey: input.idempotencyKey, actorUserId: current.userId });
+      const [updated] = await tx.update(integrationApiClients).set({ status: "revoked", revokedAt: sql`clock_timestamp()` }).where(eq(integrationApiClients.id, clientId)).returning();
+      const requestChecksum = createHash("sha256").update(canonicalJson({ version: 1, operation: "integration-api-client-revoke", clientId, input })).digest("hex");
+      await this.audit.recordInTransaction(tx, current, { action: "integration.api_client.revoke", resourceType: "integration_api_client",
+        resourceId: clientId, result: "success", metadata: { requestChecksum, reasonCode: input.reasonCode } });
+      return RevokedIntegrationApiClientViewSchema.parse({ contextAuthority: integrationClientContextAuthority(current), client: apiClientView(updated!, now) });
     });
-    await this.audit.record(context, { action: "integration.api_client.revoke", resourceType: "integration_api_client", resourceId: clientId, result: "success", metadata: { reasonCode: input.reasonCode } });
-    return apiClientView(row);
   }
 
   async createWebhookEndpoint(context: TenantContext, rawInput: CreateWebhookEndpointInput) {
@@ -197,16 +217,19 @@ export class IntegrationService {
 
   async workspace(context: TenantContext): Promise<IntegrationWorkspaceView> {
     return withTenant(this.database.db, context, async (tx) => {
+      const { current } = await currentIntegrationClientAuthority(tx, context, Permission.IntegrationRead), now = await integrationClientNow(tx);
       const [clients, endpoints, events, deliveries, retentionRuns] = await Promise.all([
-        tx.select().from(integrationApiClients).orderBy(desc(integrationApiClients.createdAt)).limit(100),
+        tx.select().from(integrationApiClients).where(permissionScope(current, Permission.IntegrationRead) === "tenant" ? undefined : eq(integrationApiClients.createdBy, current.userId)).orderBy(desc(integrationApiClients.createdAt)).limit(100),
         tx.select().from(webhookEndpoints).orderBy(desc(webhookEndpoints.updatedAt)).limit(100),
         tx.select().from(webhookEvents).orderBy(desc(webhookEvents.recordedAt)).limit(100),
         tx.select().from(webhookDeliveries).orderBy(desc(webhookDeliveries.createdAt)).limit(200),
         tx.select().from(integrationRetentionRuns).orderBy(desc(integrationRetentionRuns.completedAt)).limit(20),
       ]);
       const deliveryViews = await Promise.all(deliveries.map(async (delivery) => deliveryView(delivery, await tx.select().from(webhookDeliveryAttempts).where(eq(webhookDeliveryAttempts.deliveryId, delivery.id)).orderBy(asc(webhookDeliveryAttempts.attemptNumber)))));
-      return IntegrationWorkspaceViewSchema.parse({ apiClients: clients.map(apiClientView), webhookEndpoints: endpoints.map(webhookEndpointView), webhookEvents: events.map(webhookEventView), webhookDeliveries: deliveryViews, retentionRuns: retentionRuns.map(retentionView) });
-    });
+      return IntegrationWorkspaceViewSchema.parse({ contextAuthority: integrationClientContextAuthority(current),
+        clientAdmission: integrationClientAdmission(current), agentCatalog: integrationAgentCatalog(current),
+        apiClients: clients.map(row => apiClientView(row, now)), webhookEndpoints: endpoints.map(webhookEndpointView), webhookEvents: events.map(webhookEventView), webhookDeliveries: deliveryViews, retentionRuns: retentionRuns.map(retentionView) });
+    }, { isolationLevel: "repeatable read", accessMode: "read write" });
   }
 
   private async markQueueFailure(context: TenantContext, deliveryId: string) {
@@ -217,7 +240,20 @@ export class IntegrationService {
 async function appendEndpointEvent(tx: TenantTransaction, context: TenantContext, endpoint: typeof webhookEndpoints.$inferSelect, action: "created" | "updated" | "secret_rotated", reasonCode: string, idempotencyKey: string) {
   await tx.insert(webhookEndpointEvents).values({ id: createEntityId(), tenantId: context.tenantId, endpointId: endpoint.id, version: endpoint.version, action, reasonCode, configurationChecksum: hash({ url: endpoint.url, eventTypes: endpoint.eventTypes, maxAttempts: endpoint.maxAttempts, status: endpoint.status, signingKeyPrefix: endpoint.signingKeyPrefix }), idempotencyKey, actorUserId: context.userId });
 }
-function apiClientView(row: typeof integrationApiClients.$inferSelect): IntegrationApiClientView { return IntegrationApiClientViewSchema.parse({ id: row.id, label: row.label, keyPrefix: row.keyPrefix, scopes: row.scopes, status: row.status, expiresAt: row.expiresAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(), revokedAt: row.revokedAt?.toISOString() ?? null }); }
+function sameClientRequest(row: typeof integrationApiClients.$inferSelect, input: CreateIntegrationApiClientInput, requestChecksum: string) {
+  if (row.delegation && row.delegationRequest) return row.delegation.requestChecksum === requestChecksum
+    && integrationClientRequestChecksum(row.delegationRequest) === requestChecksum;
+  if (row.delegation || row.delegationRequest || input.scopeLimits !== undefined || input.teamIds !== undefined) return false;
+  // Legacy rows retain only their original fields; recovery never creates a pin.
+  return row.label === input.label && stableStringify(row.scopes) === stableStringify(input.scopes)
+    && (row.expiresAt?.toISOString() ?? null) === (input.expiresAt ? new Date(input.expiresAt).toISOString() : null);
+}
+function apiClientView(row: typeof integrationApiClients.$inferSelect, now: Date): IntegrationApiClientView {
+  return IntegrationApiClientViewSchema.parse({ id: row.id, label: row.label, keyPrefix: row.keyPrefix, scopes: row.scopes,
+    status: row.status, expiresAt: row.expiresAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(), revokedAt: row.revokedAt?.toISOString() ?? null,
+    delegation: row.delegation ?? null, credentialState: row.status === "revoked" ? "revoked"
+      : row.expiresAt && row.expiresAt <= now ? "expired" : row.delegation ? "pinned" : "requires_reissue" });
+}
 function webhookEndpointView(row: typeof webhookEndpoints.$inferSelect): WebhookEndpointView { return WebhookEndpointViewSchema.parse({ id: row.id, label: row.label, url: row.url, eventTypes: row.eventTypes, maxAttempts: row.maxAttempts, status: row.status, version: row.version, signingKeyPrefix: row.signingKeyPrefix, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }); }
 function webhookEventView(row: typeof webhookEvents.$inferSelect) { return { id: row.id, eventType: row.eventType, resourceType: row.resourceType, resourceId: row.resourceId, payloadChecksum: row.payloadChecksum, payloadAvailable: row.payload !== null, occurredAt: row.occurredAt.toISOString(), recordedAt: row.recordedAt.toISOString() }; }
 function retentionView(row: typeof integrationRetentionRuns.$inferSelect) { return IntegrationRetentionRunViewSchema.parse({ id: row.id, payloadsBefore: row.payloadsBefore.toISOString(), redactedEventCount: row.redactedEventCount, checksum: row.checksum, completedAt: row.completedAt.toISOString() }); }

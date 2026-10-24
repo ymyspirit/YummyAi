@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { EntityIdSchema } from "../common/ids.js";
-import { MarketplacePlatformSchema } from "../marketplace/store.js";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+import { MarketplacePlatformSchema } from "@yummyai/contracts/marketplace/platform";
 
 export const OrderWorkflowStateSchema = z.enum([
   "pending", "awaiting_customization", "awaiting_design", "awaiting_customer_approval", "awaiting_routing",
@@ -33,24 +33,24 @@ export const OrderProtectedDetailsSchema = z.object({
 export const OrderLineInputSchema = z.object({
   externalLineId: z.string().trim().min(1).max(300), externalListingId: z.string().trim().min(1).max(300).nullable().default(null),
   skuCode: z.string().trim().min(1).max(200).nullable().default(null), title: z.string().trim().min(1).max(1_000),
-  quantity: z.number().int().positive().max(100_000), unitPrice: OrderMoneySchema,
+  quantity: z.number().int().positive().max(100_000), unitPrice: OrderMoneySchema.nullable(),
   customizationCount: z.number().int().nonnegative().max(100).default(0),
 }).strict();
 export const NormalizeOrderInputSchema = z.object({
   accountId: EntityIdSchema, platform: MarketplacePlatformSchema, externalEventId: z.string().trim().min(1).max(500),
   externalOrderId: z.string().trim().min(1).max(500), providerStatus: z.string().trim().min(1).max(200),
-  placedAt: z.iso.datetime(), orderTotal: OrderMoneySchema, lines: z.array(OrderLineInputSchema).min(1).max(5_000),
+  placedAt: z.iso.datetime(), orderTotal: OrderMoneySchema.nullable(), lines: z.array(OrderLineInputSchema).min(1).max(5_000),
   redactedSource: z.record(z.string(), z.unknown()), protectedDetails: OrderProtectedDetailsSchema.nullable().default(null),
 }).strict();
 
 export const OrderLineViewSchema = z.object({
   id: EntityIdSchema, externalLineId: z.string(), externalListingId: z.string().nullable(), skuCode: z.string().nullable(),
-  title: z.string(), quantity: z.number().int().positive(), unitPrice: OrderMoneySchema, customizationCount: z.number().int().nonnegative(),
+  title: z.string(), quantity: z.number().int().positive(), unitPrice: OrderMoneySchema.nullable(), customizationCount: z.number().int().nonnegative(),
 }).strict();
 export const OrderViewSchema = z.object({
   id: EntityIdSchema, accountId: EntityIdSchema, platform: MarketplacePlatformSchema, externalOrderId: z.string(),
   providerStatus: z.string(), workflowState: OrderWorkflowStateSchema, sideState: OrderSideStateSchema.nullable(),
-  orderTotal: OrderMoneySchema, lineCount: z.number().int().positive(), address: OrderAddressReferenceSchema,
+  orderTotal: OrderMoneySchema.nullable(), lineCount: z.number().int().positive(), address: OrderAddressReferenceSchema,
   latestEventSequence: z.number().int().positive(), placedAt: z.iso.datetime(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
   lines: z.array(OrderLineViewSchema),
 }).strict();

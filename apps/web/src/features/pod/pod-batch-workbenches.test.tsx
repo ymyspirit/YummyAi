@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), useSearchParams: () => new URLSearchParams(), usePathname: () => "/pod-workbench/mockup-batches" }));
 
 import { BatchDesignWorkbench } from "./batch-design-workbench";
 import { MockupBatchWorkbench } from "./mockup-batch-workbench";
@@ -54,7 +56,7 @@ describe("canvas batch workbenches", () => {
     />);
 
     expect(html).toContain("CREATIVE DESIGN STUDIO");
-    expect(html).toContain("画图设计");
+    expect(html).toContain("批量生图");
     expect(html).toContain('href="/pod-workbench/mockup-batches"');
     expect(html).toContain("将所选候选创建为独立创意族");
     expect(html).toContain("只重试失败候选");
@@ -103,8 +105,8 @@ describe("canvas batch workbenches", () => {
       }}
     />);
 
-    expect(html).toContain('href="/creative-designs"');
-    expect(html).toContain("画图设计来源");
+    expect(html).toContain('href="/product-development"');
+    expect(html).toContain("产品开发");
     expect(html).toContain("ROW × SLOT REVIEW");
     expect(html).toContain('data-slot="主图"');
     expect(html).toContain('data-slot="客厅场景"');

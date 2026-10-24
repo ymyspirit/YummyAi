@@ -4,7 +4,6 @@ import {
   OperationsDashboard,
   type OperationsDashboardView,
 } from "../../features/dashboard/operations-dashboard";
-import { ErpSidebar } from "../../features/navigation/erp-sidebar";
 import { apiFetch } from "../../server-api";
 
 export const dynamic = "force-dynamic";
@@ -13,14 +12,9 @@ export default async function DashboardPage() {
   const result = await loadDashboard();
   return (
     <div className="research-shell ops-shell">
-      <ErpSidebar
-        active="dashboard"
-        contextLabel="OPERATIONS"
-        note="当前阶段仅跟踪抓取、AI、产品、设计、刊登与审核。订单和销售将在交易能力上线后启用。"
-      />
       <main className="research-main ops-main">
         {result.data ? (
-          <OperationsDashboard data={result.data} />
+          <OperationsDashboard data={result.data} liveNotifications={process.env.DASHBOARD_DEMO_MODE !== "1"} />
         ) : (
           <section className="analysis-error" role="alert">
             <Gauge size={28} />

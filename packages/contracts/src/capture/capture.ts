@@ -316,6 +316,21 @@ export const CaptureDraftSchema = z.object({
 });
 
 export type CaptureDraft = z.infer<typeof CaptureDraftSchema>;
+export const CaptureMediaArchiveViewSchema = z.object({
+  id: z.uuidv7(),
+  snapshotId: z.uuidv7(),
+  sourceUrl: z.url(),
+  kind: z.enum(["image", "video"]),
+  status: z.enum(["queued", "processing", "archived", "excluded", "failed"]),
+  failureReason: z.string().nullable(),
+  checksumSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+  mediaType: z.string().nullable(),
+  byteSize: z.number().int().positive().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  archivedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type CaptureMediaArchiveView = z.infer<typeof CaptureMediaArchiveViewSchema>;
 export type AmazonCaptureDraft = CaptureDraft & { platform: "amazon" };
 export type EtsyCaptureDraft = CaptureDraft & { platform: "etsy" };
 export type CaptureDomain = z.infer<typeof CaptureDomainSchema>;

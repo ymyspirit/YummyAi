@@ -1,3 +1,5 @@
+import { readMarketplaceCredentialFailureFence, revokeMarketplaceCredentialIfCurrent, withWorkerMarketplaceCredential,
+  type MarketplaceCredentialFailureFence } from "./marketplace-credential-failure.js";
 import { createHash } from "node:crypto";
 
 import type { SecretVault } from "@yummyai/ai-core";
@@ -34,7 +36,6 @@ import {
   type PublicationAccountContext,
 } from "@yummyai/marketplace-connectors";
 import { desc, eq, sql } from "drizzle-orm";
-import { z } from "zod";
 
 import type { ChannelMutationReconciliationWriter } from "./channel-inventory-reconciliation.repository.js";
 
@@ -61,6 +62,7 @@ export interface SyncFailureEvent {
   message: string;
   retryable: boolean;
   revokeAccount?: boolean;
+  credentialFence?: MarketplaceCredentialFailureFence;
 }
 
 export class MarketplaceListingSyncProcessor {
@@ -158,9 +160,10 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
   }
 
   async withCredential<T>(context: TenantContext, accountId: string, callback: (credential: Readonly<Record<string, string>>) => Promise<T>): Promise<T> {
-    const [credential] = await withTenant(this.database.db, context, (tx) => tx.select({ encryptedEnvelope: marketplaceCredentials.encryptedEnvelope, accountStatus: marketplaceAccounts.status, platform: marketplaceAccounts.platform }).from(marketplaceCredentials).innerJoin(marketplaceAccounts, eq(marketplaceAccounts.id, marketplaceCredentials.accountId)).where(eq(marketplaceCredentials.accountId, accountId)).limit(1));
-    if (!credential || credential.accountStatus !== "active") throw new MarketplaceConnectorError(credential?.platform === "etsy" ? "etsy" : "amazon", "authorization", "Marketplace credential is unavailable");
-    return this.secrets.withSecret(credential.encryptedEnvelope, (raw) => callback(z.record(z.string(), z.string()).parse(JSON.parse(raw))));
+    const [credential] = await withTenant(this.database.db, context, (tx) => tx.select({ encryptedEnvelope: marketplaceCredentials.encryptedEnvelope,
+      authorizationGeneration: marketplaceAccounts.authorizationGeneration, credentialId: marketplaceCredentials.id, credentialVersion: marketplaceCredentials.version,
+      accountStatus: marketplaceAccounts.status, refreshState: marketplaceAccounts.credentialRefreshState, useId: marketplaceAccounts.credentialUseId, deletedAt: marketplaceAccounts.deletedAt, platform: marketplaceAccounts.platform }).from(marketplaceCredentials).innerJoin(marketplaceAccounts, eq(marketplaceAccounts.id, marketplaceCredentials.accountId)).where(eq(marketplaceCredentials.accountId, accountId)).limit(1));
+    return withWorkerMarketplaceCredential(credential, this.secrets, callback);
   }
 
   async complete(context: TenantContext, snapshot: ListingSyncExecutionSnapshot, result: MarketplaceOnlineListingResult): Promise<MarketplaceListingSyncStatus> {
@@ -211,7 +214,7 @@ export class DrizzleListingSyncExecutionRepository implements ListingSyncExecuti
           message: event.message,
         });
       }
-      if (event.revokeAccount) await tx.update(marketplaceAccounts).set({ status: "revoked", credentialStatus: "revoked", healthStatus: "unauthorized", lastHealthAt: new Date(), lastErrorCode: event.code, updatedAt: new Date() }).where(eq(marketplaceAccounts.id, request.accountId));
+      if (event.revokeAccount) await revokeMarketplaceCredentialIfCurrent(tx, context, request.accountId, event.credentialFence, event.code);
     });
   }
 }
@@ -221,7 +224,11 @@ const terminalStatuses = new Set<MarketplaceListingSyncStatus>(["completed", "dr
 function classifyFailure(error: unknown, envelope: JobEnvelope): SyncFailureEvent {
   if (!(error instanceof MarketplaceConnectorError)) return { status: "failed", code: "LISTING_SYNC_UNEXPECTED", message: "Listing sync failed before a marketplace result was recorded", retryable: false };
   if (error.outcomeUncertain) return { status: "reconciliation_required", code: `LISTING_SYNC_${error.code.toUpperCase()}`, message: error.message, retryable: false };
-  if (error.code === "authorization") return { status: "failed", code: "LISTING_SYNC_AUTHORIZATION", message: error.message, retryable: false, revokeAccount: true };
+  if (error.code === "authorization") {
+    const credentialFence = readMarketplaceCredentialFailureFence(error);
+    return { status: "failed", code: "LISTING_SYNC_AUTHORIZATION", message: error.message, retryable: false,
+      revokeAccount: true, ...(credentialFence ? { credentialFence } : {}) };
+  }
   const retryable = error.retryable && envelope.attempt + 1 < envelope.maxAttempts;
   return { status: retryable ? "retry_pending" : "failed", code: `LISTING_SYNC_${error.code.toUpperCase()}`, message: error.message, retryable };
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Head, Header, Headers, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
 import { CreateListingReplicationInputSchema } from "@yummyai/contracts";
 import type { ListingDraft, ListingPlatform } from "@yummyai/platform-rules";
@@ -23,6 +23,11 @@ export class ListingController {
     return this.service.catalog(context, ListingCatalogQuerySchema.parse(query));
   }
 
+  @Head(":id")
+  @Header("cache-control","private, no-store")
+  @RequiresPermission(Permission.ListingRead)
+  async checkRead(@Req() request:AuthenticatedRequest,@Param("id") id:string){const context=requireContext(request);authorize(context,Permission.ListingRead);await this.service.getWorkspace(context,z.uuidv7().parse(id));}
+
   @Get(":id")
   @RequiresPermission(Permission.ListingRead)
   get(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.ListingRead); return this.service.getWorkspace(context, z.uuidv7().parse(id)); }
@@ -41,7 +46,10 @@ export class ListingController {
 
   @Post(":id/versions")
   @RequiresPermission(Permission.ListingWrite)
-  save(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.saveVersion(context, z.uuidv7().parse(id), ListingDraftSchema.parse(body) as ListingDraft); }
+  save(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown, @Headers("if-match") expectedVersionId?: string) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.saveVersion(context, z.uuidv7().parse(id), ListingDraftSchema.parse(body) as ListingDraft, "human", z.uuidv7().optional().parse(expectedVersionId)); }
+  @Post(":id/archive")
+  @RequiresPermission(Permission.ListingWrite)
+  archive(@Req() request: AuthenticatedRequest, @Param("id") id: string) { const context = requireContext(request); authorize(context, Permission.ListingWrite); return this.service.archive(context, z.uuidv7().parse(id)); }
 
   @Post(":id/ai-versions")
   @RequiresPermission(Permission.ListingWrite)

@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission, authorize } from "@yummyai/authz";
-import { CaptureDraftSchema } from "@yummyai/contracts";
+import { CaptureDraftSchema, EntityIdSchema } from "@yummyai/contracts";
 
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
@@ -24,6 +24,34 @@ export class CaptureController {
     const context = requireContext(request);
     authorize(context, Permission.CaptureRead);
     return this.captures.getSnapshot(context, id);
+  }
+
+  @Post(":id/media/:mediaId/read-url")
+  @RequiresPermission(Permission.CaptureRead)
+  readMedia(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("mediaId") mediaId: string,
+  ) {
+    return this.captures.signMediaRead(
+      requireContext(request),
+      EntityIdSchema.parse(id),
+      EntityIdSchema.parse(mediaId),
+    );
+  }
+
+  @Get(":id/media")
+  @RequiresPermission(Permission.CaptureRead)
+  media(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Query("after") after?: string,
+  ) {
+    return this.captures.mediaPreview(
+      requireContext(request),
+      EntityIdSchema.parse(id),
+      after === undefined ? undefined : EntityIdSchema.parse(after),
+    );
   }
 }
 

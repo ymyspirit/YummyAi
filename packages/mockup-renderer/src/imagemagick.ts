@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { MockupTemplatePolicyError } from "./policy.js";
 
@@ -11,7 +14,7 @@ export interface ImageMagickRunner {
 
 export class NativeImageMagickRunner implements ImageMagickRunner {
   constructor(
-    private readonly executable = process.env.POD_MOCKUP_MAGICK_PATH?.trim() || "magick",
+    private readonly executable = imageMagickExecutable(),
     private readonly defaultTimeoutMs = positiveInteger(process.env.POD_MOCKUP_RENDER_TIMEOUT_MS, 120_000),
   ) {}
 
@@ -38,6 +41,25 @@ export class NativeImageMagickRunner implements ImageMagickRunner {
       },
     });
   }
+}
+
+/** Explicit server configuration wins; Windows may use the pinned project-local portable runtime. */
+export function imageMagickExecutable() {
+  const configured = process.env.POD_MOCKUP_MAGICK_PATH?.trim();
+  if (configured) return configured;
+  if (process.platform !== "win32" || process.arch !== "x64") return "magick";
+  const root = new URL("../../../.artifacts/runtime-tools/imagemagick-7.1.2-34-q16-hdri-x64/", import.meta.url);
+  const executable = fileURLToPath(new URL("magick.exe", root));
+  if (!existsSync(executable)) return "magick";
+  const lock = JSON.parse(readFileSync(new URL("../runtime-lock.json", import.meta.url), "utf8")) as { files?: Record<string, string> };
+  if (!lock.files?.["magick.exe"]) throw new MockupTemplatePolicyError("MAGICK_RUNTIME_INTEGRITY", "Pinned ImageMagick runtime manifest is unavailable");
+  for (const [name, checksum] of Object.entries(lock.files)) {
+    if (name !== "magick.exe" && !name.endsWith(".xml") && !name.endsWith(".icc")) continue;
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name) || !/^[a-f0-9]{64}$/.test(checksum)
+      || createHash("sha256").update(readFileSync(new URL(name, root))).digest("hex") !== checksum)
+      throw new MockupTemplatePolicyError("MAGICK_RUNTIME_INTEGRITY", "Pinned ImageMagick runtime does not match its recorded files");
+  }
+  return executable;
 }
 
 function positiveInteger(value: string | undefined, fallback: number) {

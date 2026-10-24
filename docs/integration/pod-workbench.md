@@ -2,6 +2,15 @@
 
 ## 范围
 
+新 POD 原任务使用迁移 0119 的持久派发、加密原响应与产物检查点；队列发送或本地
+保存中断后复用原任务，当前授权与质量检查继续执行。独立密钥、七天保留和旧任务
+边界见[恢复运行说明](pod-response-recovery.md)。
+
+原任务读取增加 `invocations`：迁移 0117 按实际领取/提交/响应记录费用元数据，产物
+校验失败仍保留已知服务报告。旧调用明确缺失，不反向补造。处理服务金额不等于
+最终渠道账单，也不直接写原辅助预算；字段、权限和恢复限制见
+[调用与费用证据](harness-invocations.md)。
+
 POD 作图中心当前固定服务 `amazon` 与 `etsy`。左侧模块顺序由公共契约锁定为：
 
 1. 印花提取
@@ -36,6 +45,10 @@ POD 作图中心当前固定服务 `amazon` 与 `etsy`。左侧模块顺序由�
 | `POST /v1/pod/tasks` | `design:write` | 创建 `DesignTask`、POD 任务快照并进入异步队列 |
 
 创建请求必须包含 UUIDv7 幂等键、真实 SKU、已接入的通用工具键和参数快照。该边界覆盖 POD-1、POD-2，以及不读取订单私有素材的 `product_video`、`piece_extract`、`piece_compose`、`uv_layers`。除 `text_to_image` 外，当前工具至少需要一份素材。队列负载只携带任务 ID，不能携带提示词、素材对象路径、图片内容或订单 PII。`image_composite`、`group_photo`、`pet_outfit`、`fulfillment_composite` 与 `vector_fulfillment` 必须走订单上下文接口，不能加入通用处理器白名单。
+
+API 与 Worker 共用 `@yummyai/pod-core` 的任务拥有者、部署启用规则与派发器。创建时要求 design:read、design:write、asset:read 和当前 SKU/产品对象范围；任务读取沿用 design:read 及对象范围。同幂等键但 SKU、输入、工具、参数或操作者不同会冲突，不能静默复用。
+
+Worker 在读取输入、提交外部处理及保存结果前重新加载原操作者的当前成员权限、SKU/产品范围和固定素材版本/权利。工作流委托的子任务还验证原流程仍处于当前有效步骤；取消、暂停或撤权后不能继续提交排队请求。外部请求可能已提交时的未知错误记录为 `POD_RESULT_UNCERTAIN`，终态任务不会因队列重复投递再次调用；外部响应检查点、费用对账和人工恢复仍需补齐，不能据此宣称完整 Harness 已完成。具体父子任务与恢复边界见 [工作流执行](workflow-node-execution.md)。
 
 迁移 `0047_pod_artwork_tasks` 创建 `pod_artwork_tasks` 与 `pod_artwork_task_inputs`。工具、参数、输入版本、校验和、资产域、权利状态和权利来源均不可覆盖。处理输出会创建新的 `DesignVersion`，AI 输出登记为待权利确认资产并进入人工审核，不能直接成为批准版本。普通作图任务拒绝 `customer_provided` 素材；顾客文件只能在订单行上下文中进入来图定制和生产流程。
 

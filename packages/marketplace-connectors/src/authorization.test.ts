@@ -6,7 +6,7 @@ import {
 } from "./authorization.js";
 
 describe("marketplace authorization gateway", () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
   it("builds the Etsy PKCE request with the exact configured redirect URI", () => {
     vi.stubEnv("ETSY_APP_KEYSTRING", "etsy-key");
@@ -57,5 +57,24 @@ describe("marketplace authorization gateway", () => {
       requestedScopes: ["listings_w"],
     }, "state-value-that-is-longer-than-32-characters", "challenge"))
       .toThrow(MarketplaceAuthorizationError);
+  });
+
+  it("pins the exact public application client sent during code exchange without storing its secret", async () => {
+    vi.stubEnv("AMAZON_SPAPI_LWA_CLIENT_ID", "synthetic-original-public-client");
+    vi.stubEnv("AMAZON_SPAPI_LWA_CLIENT_SECRET", "synthetic-central-application-secret");
+    const request = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("https://api.amazon.com/auth/o2/token");
+      expect(Object.fromEntries(new URLSearchParams(String(init.body)))).toEqual({ grant_type: "authorization_code", code: "synthetic-single-use-code",
+        redirect_uri: "https://erp.example.test/callback", client_id: "synthetic-original-public-client", client_secret: "synthetic-central-application-secret" });
+      vi.stubEnv("AMAZON_SPAPI_LWA_CLIENT_ID", "synthetic-config-changed-during-response");
+      return Response.json({ access_token: "synthetic-access", refresh_token: "synthetic-refresh", expires_in: 3600, token_type: "bearer" });
+    });
+    vi.stubGlobal("fetch", request);
+    const result = await new HttpMarketplaceAuthorizationGateway().exchangeAuthorizationCode({ platform: "amazon", authorizationMode: "amazon_public",
+      region: "NA", requestedScopes: ["product-listing"] }, { code: "synthetic-single-use-code", pkceVerifier: null,
+      redirectUri: "https://erp.example.test/callback", sellingPartnerId: "synthetic-seller" });
+    expect(result.credential).toEqual({ kind: "amazon_public", clientId: "synthetic-original-public-client", refreshToken: "synthetic-refresh", sellingPartnerId: "synthetic-seller" });
+    expect(JSON.stringify(result)).not.toContain("synthetic-central-application-secret");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

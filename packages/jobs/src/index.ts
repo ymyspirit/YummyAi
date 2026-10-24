@@ -15,6 +15,8 @@ export {
 } from "./mockup-render.js";
 export { ExportJobPayloadSchema, type ExportJobPayload } from "./export.js";
 export { OrderIngestionJobPayloadSchema, type OrderIngestionJobPayload } from "./order-ingestion.js";
+export { AmazonOrderReportRetentionJobPayloadSchema, type AmazonOrderReportRetentionJobPayload } from "./amazon-order-report-retention.js";
+export { AmazonOrderReportProcessingJobPayloadSchema, type AmazonOrderReportProcessingJobPayload } from "./amazon-order-report-processing.js";
 export { CustomizationFileScanJobPayloadSchema, type CustomizationFileScanJobPayload } from "./customization-file-scan.js";
 export {
   MarketplacePublicationJobPayloadSchema,
@@ -33,6 +35,7 @@ export {
   type MarketplaceListingSyncJobPayload,
 } from "./listing-sync.js";
 export { ShipmentWritebackJobPayloadSchema, type ShipmentWritebackJobPayload } from "./shipment-writeback.js";
+export { LogisticsJobPayloadSchema, type LogisticsJobPayload } from "./logistics.js";
 export { FulfillmentAutomationJobPayloadSchema, type FulfillmentAutomationJobPayload } from "./fulfillment-automation.js";
 export { WebhookDeliveryJobPayloadSchema, type WebhookDeliveryJobPayload } from "./webhook-delivery.js";
 export { PodArtworkJobPayloadSchema, type PodArtworkJobPayload } from "./pod-artwork.js";
@@ -50,3 +53,7 @@ export {
   type OrderPersonalizationRenderJobPayload,
 } from "./order-personalization-render.js";
 export { WorkflowNodeJobPayloadSchema, type WorkflowNodeJobPayload } from "./workflow-node.js";
+export { CaptureMediaJobPayloadSchema, type CaptureMediaJobPayload } from "./capture-media.js";
+export { ProductionEditorRenderJobPayloadSchema, type ProductionEditorRenderJobPayload } from "./production-editor.js";
+export { OrderDesignJobPayloadSchema, type OrderDesignJobPayload } from "./order-design.js";
+export { RedisAgentRuntimePresence } from "./agent-runtime-presence.js";

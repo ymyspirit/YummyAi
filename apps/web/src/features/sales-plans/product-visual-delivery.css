@@ -1,0 +1,138 @@
+.pv-workspace {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  margin: 20px 0;
+  padding-top: 8px;
+  scroll-margin-top: 90px;
+}
+.pv-workspace h3,
+.pv-workspace h4 {
+  margin: 8px 0;
+}
+.pv-workspace p,
+.pv-workspace li {
+  overflow-wrap: anywhere;
+}
+.pv-workspace fieldset {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-width: 0;
+}
+.pv-workspace label:not(.pv-check) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.pv-workspace input:not([type="checkbox"]):not([type="radio"]),
+.pv-workspace select,
+.pv-workspace textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+}
+.pv-workspace textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.pv-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.pv-full {
+  grid-column: 1 / -1;
+}
+.pv-check {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+  margin: 9px 0;
+  font-size: 13px;
+}
+.pv-check input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+.pv-prepare,
+.pv-basis {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pv-history {
+  margin: 14px 0;
+}
+.pv-budget {
+  padding: 10px 0;
+  border-block: 1px solid var(--line);
+}
+.pv-model-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.pv-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+.pv-slot {
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pv-slot > button {
+  margin-top: 10px;
+}
+.pv-result {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 8px;
+}
+.pv-result img {
+  object-fit: contain;
+  max-width: 100%;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+}
+.pv-result > p {
+  font-size: 12px;
+}
+.pv-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.pv-adopt {
+  padding-block: 12px !important;
+}
+.pv-workspace .oc-button {
+  white-space: nowrap;
+}
+.pv-workspace .oc-notice {
+  color: var(--ink);
+  background: var(--surface-muted);
+  border-color: var(--line);
+}
+.pv-workspace .oc-notice .oc-button {
+  color: var(--ink);
+}
+@media (max-width: 700px) {
+  .pv-fields,
+  .pv-model-controls,
+  .pv-slots {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pv-workspace .sl-heading {
+    align-items: start;
+    flex-wrap: wrap;
+  }
+}

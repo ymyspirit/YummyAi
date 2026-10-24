@@ -1,6 +1,5 @@
 import { WorkflowDefinitionDetailSchema, type WorkflowDefinitionDetail } from "@yummyai/contracts/workflow";
 
-import { ErpSidebar } from "../../../../../../features/navigation/erp-sidebar";
 import { WorkflowDesigner } from "../../../../../../features/workflows/workflow-designer";
 import { apiFetch } from "../../../../../../server-api";
 
@@ -11,11 +10,6 @@ export default async function WorkflowTemplateEditPage({ params }: { params: Pro
   const result = await loadDefinition(id);
   return (
     <div className="research-shell workflow-shell workflow-designer-shell">
-      <ErpSidebar
-        active="workflows"
-        contextLabel="WORKFLOW DESIGN"
-        note="发布版本不可变；修改模板会创建新草稿版本，不会改变正在执行的产品。"
-      />
       <main className="research-main workflow-main workflow-canvas-main">
         {result.definition ? <WorkflowDesigner definition={result.definition} /> : <div className="workflow-alert error">{result.error}</div>}
       </main>

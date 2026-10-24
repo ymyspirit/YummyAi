@@ -1,0 +1,205 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`V1 production pixel compatibility > retains 'pillow double side with fixed font' 1`] = `
+{
+  "channels": 4,
+  "density": 150,
+  "hasAlpha": true,
+  "height": 549,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 93.016,
+    "heightMm": 93.016,
+    "heightPx": 549,
+    "marginMm": 1.508,
+    "panelHeightMm": 93.016,
+    "panelWidthMm": 83.016,
+    "widthMm": 176.032,
+    "widthPx": 1040,
+  },
+  "pixelSha256": "96fa323b4c9f2b6263030bc6c573c159602936de43274236a17d154b95c964af",
+  "preflight": {
+    "heightPx": 549,
+    "issues": [
+      {
+        "code": "manual_factory_preflight",
+        "message": "白边适用规则、成品尺寸、细窄部位和缝制结果依据人工确认；自动检查不能代替工厂工艺确认。",
+        "severity": "warning",
+      },
+    ],
+    "productionReady": true,
+    "widthPx": 1040,
+  },
+  "space": "srgb",
+  "width": 1040,
+}
+`;
+
+exports[`V1 production pixel compatibility > retains 'pillow explicit clear margins' 1`] = `
+{
+  "channels": 3,
+  "density": 150,
+  "hasAlpha": false,
+  "height": 638,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 98.04400000000001,
+    "heightMm": 108.03466666666667,
+    "heightPx": 638,
+    "marginMm": 8.974666666666668,
+    "panelHeightMm": 91.10133333333333,
+    "panelWidthMm": 81.11066666666667,
+    "widthMm": 196.08800000000002,
+    "widthPx": 1158,
+  },
+  "pixelSha256": "5053a2089ef6ec7c944a4c129e2999524106fe93819bd20f1b57876f6139a549",
+  "preflight": {
+    "heightPx": 638,
+    "issues": [
+      {
+        "code": "manual_factory_preflight",
+        "message": "白边适用规则、成品尺寸、细窄部位和缝制结果依据人工确认；自动检查不能代替工厂工艺确认。",
+        "severity": "warning",
+      },
+    ],
+    "productionReady": true,
+    "widthPx": 1158,
+  },
+  "space": "srgb",
+  "width": 1158,
+}
+`;
+
+exports[`V1 production pixel compatibility > retains 'pillow intact artwork' 1`] = `
+{
+  "channels": 4,
+  "density": 150,
+  "hasAlpha": true,
+  "height": 549,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 93.016,
+    "heightMm": 93.016,
+    "heightPx": 549,
+    "marginMm": 1.508,
+    "panelHeightMm": 93.016,
+    "panelWidthMm": 83.016,
+    "widthMm": 176.032,
+    "widthPx": 1040,
+  },
+  "pixelSha256": "49e424aa479b936d924825412655bad3e30fc7890a03d1bb6aefdd4060201ffe",
+  "preflight": {
+    "heightPx": 549,
+    "issues": [
+      {
+        "code": "manual_factory_preflight",
+        "message": "白边适用规则、成品尺寸、细窄部位和缝制结果依据人工确认；自动检查不能代替工厂工艺确认。",
+        "severity": "warning",
+      },
+    ],
+    "productionReady": true,
+    "widthPx": 1040,
+  },
+  "space": "srgb",
+  "width": 1040,
+}
+`;
+
+exports[`V1 production pixel compatibility > retains 'pillow omitted clip and margin' 1`] = `
+{
+  "channels": 4,
+  "density": 150,
+  "hasAlpha": true,
+  "height": 549,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 93.016,
+    "heightMm": 93.016,
+    "heightPx": 549,
+    "marginMm": 1.508,
+    "panelHeightMm": 93.016,
+    "panelWidthMm": 83.016,
+    "widthMm": 176.032,
+    "widthPx": 1040,
+  },
+  "pixelSha256": "fe95eb2e5421c93a01a84e9554c30daa7eae3ac8973a267806d08cc7f9311321",
+  "preflight": {
+    "heightPx": 549,
+    "issues": [
+      {
+        "code": "manual_factory_preflight",
+        "message": "白边适用规则、成品尺寸、细窄部位和缝制结果依据人工确认；自动检查不能代替工厂工艺确认。",
+        "severity": "warning",
+      },
+    ],
+    "productionReady": true,
+    "widthPx": 1040,
+  },
+  "space": "srgb",
+  "width": 1040,
+}
+`;
+
+exports[`V1 production pixel compatibility > retains 'tire alpha circle' 1`] = `
+{
+  "channels": 4,
+  "density": 150,
+  "hasAlpha": true,
+  "height": 472,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 0,
+    "heightMm": 80,
+    "heightPx": 472,
+    "marginMm": 0,
+    "panelHeightMm": 80,
+    "panelWidthMm": 80,
+    "widthMm": 80,
+    "widthPx": 472,
+  },
+  "pixelSha256": "c4f3def29435b115884eb27a9d75b9cc1ca01da4bc7079fc7ad7e31d88779750",
+  "preflight": {
+    "heightPx": 472,
+    "issues": [],
+    "productionReady": true,
+    "widthPx": 472,
+  },
+  "space": "srgb",
+  "width": 472,
+}
+`;
+
+exports[`V1 production pixel compatibility > retains 'tire circular opening' 1`] = `
+{
+  "channels": 4,
+  "density": 150,
+  "hasAlpha": true,
+  "height": 472,
+  "iccSha256": "c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353",
+  "layout": {
+    "backOffsetMm": 0,
+    "heightMm": 80,
+    "heightPx": 472,
+    "marginMm": 0,
+    "panelHeightMm": 80,
+    "panelWidthMm": 80,
+    "widthMm": 80,
+    "widthPx": 472,
+  },
+  "pixelSha256": "f8e71e276a6c0c23a0e3215caaa5125b9d0838cc420cf0285ce4ebd696859153",
+  "preflight": {
+    "heightPx": 472,
+    "issues": [
+      {
+        "code": "opening_manual_review",
+        "message": "开孔尺寸与位置需在服务端预览及工厂规格中核对。",
+        "severity": "warning",
+      },
+    ],
+    "productionReady": true,
+    "widthPx": 472,
+  },
+  "space": "srgb",
+  "width": 472,
+}
+`;

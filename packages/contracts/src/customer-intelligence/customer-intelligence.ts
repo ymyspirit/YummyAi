@@ -170,6 +170,14 @@ export const AdvertisingMetricLineViewSchema = z.object({
   roasBps: z.number().int().nonnegative().nullable(),
 }).strict();
 
+export const AdvertisingTotalsSchema = z.object({
+  impressions: z.number().int().nonnegative().safe(),
+  clicks: z.number().int().nonnegative().safe(),
+  orders: z.number().int().nonnegative().safe(),
+  spendMinor: z.number().int().nonnegative().safe(),
+  salesMinor: z.number().int().nonnegative().safe(),
+}).strict();
+
 export const AdvertisingReportViewSchema = z.object({
   id: EntityIdSchema,
   provider: AdvertisingProviderSchema,
@@ -183,13 +191,8 @@ export const AdvertisingReportViewSchema = z.object({
   observedAt: z.iso.datetime(),
   checksum: ChecksumSchema,
   recordedAt: z.iso.datetime(),
-  totals: z.object({
-    impressions: z.number().int().nonnegative(),
-    clicks: z.number().int().nonnegative(),
-    orders: z.number().int().nonnegative(),
-    spendMinor: z.number().int().nonnegative(),
-    salesMinor: z.number().int().nonnegative(),
-  }).strict(),
+  // Mixed entity levels describe the same spend more than once; no report total is valid.
+  totals: AdvertisingTotalsSchema.nullable(),
   lines: z.array(AdvertisingMetricLineViewSchema),
 }).strict();
 
@@ -292,3 +295,44 @@ export type VocDefinitionView = z.infer<typeof VocDefinitionViewSchema>;
 export type VocAnalysisRunView = z.infer<typeof VocAnalysisRunViewSchema>;
 export type CustomerRecommendationView = z.infer<typeof CustomerRecommendationViewSchema>;
 export type CustomerIntelligenceWorkspaceView = z.infer<typeof CustomerIntelligenceWorkspaceViewSchema>;
+
+export type AdvertisingTotals = z.infer<typeof AdvertisingTotalsSchema>;
+export function sumAdvertisingMetrics(lines: Array<Pick<AdvertisingMetricLineView, keyof AdvertisingTotals>>): AdvertisingTotals | null {
+  const totals: AdvertisingTotals = { impressions: 0, clicks: 0, orders: 0, spendMinor: 0, salesMinor: 0 };
+  for (const line of lines) for (const key of Object.keys(totals) as Array<keyof AdvertisingTotals>) {
+    totals[key] += line[key];
+    if (!Number.isSafeInteger(totals[key])) return null;
+  }
+  return totals;
+}
+
+export function summarizeAdvertisingReports(reports: AdvertisingReportView[]) {
+  type Group = {
+    key: string; provider: AdvertisingProvider; accountId: string | null; scopeKey: string;
+    sourceCurrency: string; attributionWindowDays: number; entityLevel: AdvertisingEntityLevel;
+    entries: Array<{ reportId: string; externalReportId: string; periodStart: string; periodEnd: string; totals: AdvertisingTotals | null }>;
+    totals: AdvertisingTotals | null; overlappingPeriods: boolean;
+  };
+  const groups = new Map<string, Group>();
+  for (const report of reports) {
+    for (const entityLevel of AdvertisingEntityLevelSchema.options) {
+      const lines = report.lines.filter((line) => line.entityLevel === entityLevel);
+      if (!lines.length) continue;
+      const key = JSON.stringify([report.provider, report.accountId, report.scopeKey, report.sourceCurrency, report.attributionWindowDays, entityLevel]);
+      const group = groups.get(key) ?? { key, provider: report.provider, accountId: report.accountId, scopeKey: report.scopeKey, sourceCurrency: report.sourceCurrency, attributionWindowDays: report.attributionWindowDays, entityLevel, entries: [], totals: null, overlappingPeriods: false };
+      group.entries.push({ reportId: report.id, externalReportId: report.externalReportId, periodStart: report.periodStart, periodEnd: report.periodEnd, totals: sumAdvertisingMetrics(lines) });
+      groups.set(key, group);
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)).map((group) => {
+    group.entries.sort((a, b) => a.periodStart.localeCompare(b.periodStart) || a.reportId.localeCompare(b.reportId));
+    let lastEnd = -Infinity;
+    for (const entry of group.entries) {
+      if (Date.parse(entry.periodStart) <= lastEnd) group.overlappingPeriods = true;
+      lastEnd = Math.max(lastEnd, Date.parse(entry.periodEnd));
+    }
+    group.totals = group.overlappingPeriods || group.entries.some((entry) => !entry.totals)
+      ? null : sumAdvertisingMetrics(group.entries.map((entry) => entry.totals!));
+    return group;
+  });
+}

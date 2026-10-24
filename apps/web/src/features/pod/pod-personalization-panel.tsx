@@ -6,8 +6,9 @@ import type {
   PodPersonalizationOptionsView,
 } from "@yummyai/contracts/pod/personalization";
 import { BadgeCheck, CircleAlert, CopyPlus, FileScan, Layers3, Link2, LoaderCircle, Plus, ShieldCheck } from "lucide-react";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { AssistPanel } from "../ai-assist/assist-panel";
 
 import {
   createBlankPersonalizationTemplate,
@@ -54,6 +55,7 @@ export function PodPersonalizationPanel({
           </div>
           <div className="pod-template-ledger">
             <header><strong>导入检查与槽位确认</strong><span>PNG / PSD · 异步解析 · 人工确认</span></header>
+            <p className="pod-governance-empty">解析完成后可使用 PSD 模板配置助手，逐项核对文字、图片、背景用途和定制字段，再确认模板版本。</p>
             {!inspections.length ? <p className="pod-governance-empty">尚无导入检查。选择已授权的 PNG 或 PSD 源文件开始解析。</p> : null}
             {inspections.slice(0, 8).map((inspection) => (
               <InspectionRecord
@@ -127,27 +129,36 @@ function InspectionRecord({ confirmed, inspection }: { confirmed: boolean; inspe
 
 function ConfirmInspectionForm({ inspection }: { inspection: PersonalizationTemplateSourceInspection }) {
   const [state, action] = useActionState(confirmTemplateSourceInspection, idle);
+  const [slots, setSlots] = useState(() => inspection.slots.map((slot) => ({ ...slot, suggestedFieldKey: "" })));
+  const changeSlot = (index: number, patch: Partial<typeof slots[number]>) => setSlots((current) => current.map((slot, i) => i === index ? { ...slot, ...patch } : slot));
   return (
+    <>
+    <AssistPanel kind="template_config" scope={`template:${inspection.id}`} input={{ kind: "template_config", inspectionId: inspection.id }} onTemplateSlot={(suggestion) => {
+      const index = slots.findIndex((slot) => slot.stableKey === suggestion.stableKey);
+      if (index < 0) return false;
+      changeSlot(index, { name: suggestion.name, kind: suggestion.kind, fillMode: suggestion.fillMode, replaceable: suggestion.replaceable, reuseLabel: suggestion.reuseLabel ?? undefined, suggestedFieldKey: suggestion.fieldKey ?? "" });
+    }} />
     <form action={action} className="pod-inspection-confirm-form">
       <input name="inspectionId" type="hidden" value={inspection.id} />
       <input name="slotCount" type="hidden" value={inspection.slots.length} />
       <div className="pod-form-heading compact"><Layers3 size={14} /><div><strong>确认四类槽位</strong><span>可修正分类、填充方式、是否由顾客替换及同名复用标识。</span></div></div>
       <label><span>模板名称 *</span><input defaultValue={`导入模板 ${inspection.sourceAssetId.slice(0, 8)}`} maxLength={200} name="name" required /></label>
       <div className="pod-inspection-slot-table" role="table" aria-label="检测到的模板槽位">
-        {inspection.slots.map((slot, index) => (
+        {slots.map((slot, index) => (
           <fieldset key={slot.stableKey}>
             <legend>{slot.stableKey} · {slot.confidencePermille / 10}%</legend>
             <input name={`slot.${index}.stableKey`} type="hidden" value={slot.stableKey} />
             <p title={slot.sourceLayerPath.join(" / ")}>{slot.sourceLayerPath.join(" / ")}</p>
             <div className="pod-inline-fields two">
-              <label><span>槽位名称</span><input defaultValue={slot.name} maxLength={200} name={`slot.${index}.name`} required /></label>
-              <label><span>分类</span><select defaultValue={slot.kind} name={`slot.${index}.kind`}><option value="image">图片</option><option value="text">文字</option><option value="decoration">装饰</option><option value="background">背景</option></select></label>
+              <label><span>槽位名称</span><input value={slot.name} onChange={(e) => changeSlot(index, { name: e.target.value })} maxLength={200} name={`slot.${index}.name`} required /></label>
+              <label><span>分类</span><select value={slot.kind} onChange={(e) => changeSlot(index, { kind: e.target.value as typeof slot.kind })} name={`slot.${index}.kind`}><option value="image">图片</option><option value="text">文字</option><option value="decoration">装饰</option><option value="background">背景</option></select></label>
             </div>
             <div className="pod-inline-fields two">
-              <label><span>填充方式</span><select defaultValue={slot.fillMode} name={`slot.${index}.fillMode`}><option value="cover">裁切填充</option><option value="contain">完整适配</option><option value="stretch">拉伸</option><option value="tile">平铺</option><option value="none">不适用</option></select></label>
-              <label><span>复用标识</span><input defaultValue={slot.reuseLabel} maxLength={120} name={`slot.${index}.reuseLabel`} placeholder="可选" /></label>
+              <label><span>填充方式</span><select value={slot.fillMode} onChange={(e) => changeSlot(index, { fillMode: e.target.value as typeof slot.fillMode })} name={`slot.${index}.fillMode`}><option value="cover">裁切填充</option><option value="contain">完整适配</option><option value="stretch">拉伸</option><option value="tile">平铺</option><option value="none">不适用</option></select></label>
+              <label><span>复用标识</span><input value={slot.reuseLabel ?? ""} onChange={(e) => changeSlot(index, { reuseLabel: e.target.value })} maxLength={120} name={`slot.${index}.reuseLabel`} placeholder="可选" /></label>
             </div>
-            <label className="pod-inspection-checkbox"><input defaultChecked={slot.replaceable} name={`slot.${index}.replaceable`} type="checkbox" /><span>允许顾客素材替换</span></label>
+            <label className="pod-inspection-checkbox"><input checked={slot.replaceable} onChange={(e) => changeSlot(index, { replaceable: e.target.checked, ...(!e.target.checked ? { suggestedFieldKey: "" } : {}) })} name={`slot.${index}.replaceable`} type="checkbox" /><span>允许顾客素材替换</span></label>
+            {slot.replaceable && <label><span>定制字段键（绑定 SKU 时核对）</span><input value={slot.suggestedFieldKey} onChange={(e) => changeSlot(index, { suggestedFieldKey: e.target.value })} name={`slot.${index}.suggestedFieldKey`} pattern="[a-z][a-z0-9_]{0,79}" placeholder="例如 customer_name" /></label>}
             <small>位置 {slot.geometry.x}, {slot.geometry.y} · {slot.geometry.width}×{slot.geometry.height}</small>
           </fieldset>
         ))}
@@ -155,6 +166,7 @@ function ConfirmInspectionForm({ inspection }: { inspection: PersonalizationTemp
       {inspection.warnings.length ? <label className="pod-inspection-checkbox pod-warning-ack"><input name="acknowledgeWarnings" required type="checkbox" /><span>我已逐项审阅解析警告，并确认当前槽位分类可用于模板草稿。</span></label> : <input name="acknowledgeWarnings" type="hidden" value="on" />}
       <footer><Notice state={state} /><PendingButton icon="approve" label="确认并创建模板版本" /></footer>
     </form>
+    </>
   );
 }
 
@@ -306,7 +318,8 @@ function defaultMappings(template: PersonalizationTemplateVersion) {
     const group = `${slot.kind}:${slot.reuseLabel ?? slot.stableKey}`;
     let field = groups.get(group);
     if (!field) {
-      field = slot.kind === "image" ? `customer_image_${++image}` : `customer_text_${++text}`;
+      const suggested = slot.validationSnapshot.suggestedFieldKey;
+      field = typeof suggested === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(suggested) ? suggested : slot.kind === "image" ? `customer_image_${++image}` : `customer_text_${++text}`;
       groups.set(group, field);
     }
     result.set(slot.stableKey, field);

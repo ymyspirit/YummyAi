@@ -22,6 +22,10 @@ import {
   WorkflowExecutorRouter,
 } from "./workflow-node.executor.js";
 import { WorkflowRunService } from "./workflow-run.service.js";
+import { AMAZON_CUSTOM_OFFICIAL_GRAPH } from "./amazon-custom-workflow.blueprint.js";
+
+if (process.env.E2E_ISOLATED_DAILY !== "1" || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname))
+  throw new Error("Run workflow acceptance through the disposable --suite=workflow-integration runner");
 
 describe("generic workflow center", () => {
   const database = connectDatabase();
@@ -156,6 +160,47 @@ describe("generic workflow center", () => {
       revision: detail.revision,
     });
     expect(migrated.nodes.find((node) => node.nodeId === "design_proof")?.note).toBe("完成 完成设计校样");
+  });
+
+  it("requires an explicit authorized approval and preserves the gate after rejected commands", async () => {
+    const plan = await products.createPlan(first, { name: "Approval guard fixture", sourceReportIds: [], customization: { version: 1, fields: [] } });
+    const ids = ["start", "research_capture", "content_review", "end"];
+    const graph = structuredClone(AMAZON_CUSTOM_OFFICIAL_GRAPH);
+    graph.nodes = graph.nodes.filter((node) => ids.includes(node.id));
+    graph.nodes.find((node) => node.id === "content_review")!.reworkTargetNodeId = "research_capture";
+    graph.edges = [
+      { id: "first", source: "start", target: "research_capture", kind: "success" },
+      { id: "review", source: "research_capture", target: "content_review", kind: "success" },
+      { id: "finish", source: "content_review", target: "end", kind: "success" },
+      { id: "rework", source: "content_review", target: "research_capture", kind: "rework" },
+    ];
+    const draft = await definitions.create(first, { name: "Approval guard", description: "Synthetic acceptance", category: "Acceptance", scope: "team", graph });
+    const published = await definitions.publish(first, draft.id, draft.revision);
+    const started = await runs.start(first, { definitionId: published.id, productPlanId: plan.id });
+    const review = await runs.command(first, started.id, "research_capture", { type: "complete", expectedRevision: started.revision, parameters: {} });
+    const operator = { ...first, permissions: first.permissions.filter((permission) => permission !== Permission.WorkflowApprove) };
+    await expect(runs.command(operator, review.id, "content_review", { type: "complete", expectedRevision: review.revision, parameters: {} })).rejects.toMatchObject({ status: 400 });
+    await expect(runs.command(operator, review.id, "content_review", { type: "approve", expectedRevision: review.revision })).rejects.toMatchObject({ status: 403 });
+    expect(await runs.get(first, review.id)).toMatchObject({ revision: review.revision, currentNodeId: "content_review", status: "active" });
+    const approved = await runs.command(first, review.id, "content_review", { type: "approve", expectedRevision: review.revision });
+    expect(approved.status).toBe("completed");
+    expect(approved.events.filter((event) => event.type === "node_approved")).toHaveLength(1);
+  });
+
+  it("commits only one of two commands with the same expected revision", async () => {
+    const plan = await products.createPlan(first, { name: "Concurrent command fixture", sourceReportIds: [], customization: { version: 1, fields: [] } });
+    const official = (await definitions.list(first)).items.find((item) => item.scope === "official")!;
+    const started = await runs.start(first, { definitionId: official.id, productPlanId: plan.id });
+    const results = await Promise.allSettled([
+      runs.command(first, started.id, "research_capture", { type: "update_note", expectedRevision: started.revision, note: "First concurrent note" }),
+      runs.command(first, started.id, "research_capture", { type: "update_note", expectedRevision: started.revision, note: "Second concurrent note" }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ status: 409 });
+    const final = await runs.get(first, started.id);
+    expect(final.revision).toBe(started.revision + 1);
+    expect(final.events.filter((event) => event.type === "node_note_updated")).toHaveLength(1);
   });
 });
 

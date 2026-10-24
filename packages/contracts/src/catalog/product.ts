@@ -17,6 +17,13 @@ export const MoneySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
 });
 
+export const LegacySpuCandidateSchema = z.object({
+  id: EntityIdSchema,
+  code: z.string().min(1),
+  name: z.string().min(1),
+}).strict();
+export type LegacySpuCandidate = z.infer<typeof LegacySpuCandidateSchema>;
+
 export const ConditionalVisibilitySchema = z.object({
   fieldKey: z.string().min(1).max(80),
   operator: z.enum(["equals", "not_equals", "contains", "not_empty"]),
@@ -132,6 +139,7 @@ export const CustomizationSchema = z
   });
 
 export const ProductPlanInputSchema = z.object({
+  teamId: EntityIdSchema.optional(),
   name: z.string().min(1).max(200),
   description: z.string().max(4_000).optional(),
   sourceReportIds: z.array(EntityIdSchema).max(50).default([]),

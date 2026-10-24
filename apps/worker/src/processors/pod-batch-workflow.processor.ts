@@ -1,23 +1,18 @@
-import { Permission } from "@yummyai/authz";
-import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { createEntityId } from "@yummyai/contracts";
 import {
   artifactRelations,
   assetFiles,
-  canvasPrintSpecVersions,
-  creativeDesignBatchItems,
-  creativeDesignBatches,
+  type canvasPrintSpecVersions,
   creativeDesignCandidates,
   creativeDesignVersionAssets,
   creativeDesignVersions,
+  creativeExecutions,
   designVersionFiles,
   mockupBatchItems,
   mockupBatchOutputs,
-  mockupBatches,
-  mockupTemplatePackVersions,
   mockupTemplateSlots,
   mockupTemplateSourceInspections,
   type DatabaseConnection,
-  type TenantTransaction,
   withTenant,
 } from "@yummyai/database";
 import {
@@ -34,406 +29,345 @@ import {
   NativeImageMagickRunner,
   compileControlledPsd,
   renderCompiledMockup,
+  type ImageMagickRunner,
 } from "@yummyai/mockup-renderer";
 import type { Storage } from "@yummyai/storage";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
+import { z } from "zod";
+import { MockupTemplateInspectionSchema } from "@yummyai/contracts";
+import { creativeMockupStep, stageCreativeOutpaint, type CreativeOperation } from "@yummyai/pod-core";
+import { CreativeExecutionRecovery, type CreativeExecutionClaim } from "./creative-execution-recovery.js";
+import { readCreativeAssets, creativeDerivedRights } from "./creative-execution-assets.js";
+import { creativeOwnerRunning, creativeOwnerStopped, refreshCreativeProgress, refreshMockupItem } from "./creative-execution-owner-state.js";
+import { executeCreativePod, creativeFailure, creativeFailureDiagnostic } from "./creative-execution-pod.js";
+import { creativeLocalResponse, decodeCreativeOutputs, type CreativeLocalOutput } from "./creative-execution-response.js";
+import { decodePodResponse } from "./pod-artwork-response.js";
 
 import { HttpPodArtworkGateway } from "./pod-artwork.http-gateway.js";
-import type { PodArtworkExecutionAsset, PodArtworkExecutionRecord, PodArtworkGateway } from "./pod-artwork.processor.js";
+import type { PodArtworkGateway } from "./pod-artwork.processor.js";
 
-type WorkerIdentity = Pick<TenantContext, "tenantId" | "userId">;
 
 export class CreativeDesignCandidateProcessor {
-  constructor(
-    private readonly database: DatabaseConnection,
-    private readonly storage: Storage,
-    private readonly gateway: PodArtworkGateway,
-  ) {}
-
+  private readonly recovery: CreativeExecutionRecovery;
+  constructor(database: DatabaseConnection, private readonly storage: Storage, private readonly gateway: PodArtworkGateway) {
+    this.recovery = new CreativeExecutionRecovery(database, storage, undefined, creativeOwnerStopped);
+  }
   async process(envelope: JobEnvelope, signal = new AbortController().signal) {
     const { candidateId } = CreativeDesignJobPayloadSchema.parse(envelope.payload);
     const identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
-    const claimed = await withTenant(this.database.db, workerContext(identity), async (tx) => {
-      const [row] = await tx.select({ candidate: creativeDesignCandidates, item: creativeDesignBatchItems, batch: creativeDesignBatches })
-        .from(creativeDesignCandidates)
-        .innerJoin(creativeDesignBatchItems, eq(creativeDesignCandidates.itemId, creativeDesignBatchItems.id))
-        .innerJoin(creativeDesignBatches, eq(creativeDesignBatchItems.batchId, creativeDesignBatches.id))
-        .where(eq(creativeDesignCandidates.id, candidateId)).limit(1);
-      if (!row) throw new Error(`Creative design candidate ${candidateId} was not found`);
-      if (row.candidate.status !== "queued") return undefined;
-      await tx.update(creativeDesignCandidates).set({ status: "running", errorCode: null, errorMessage: null, completedAt: null, updatedAt: new Date() })
-        .where(eq(creativeDesignCandidates.id, candidateId));
-      await tx.update(creativeDesignBatchItems).set({ status: "running", updatedAt: new Date() }).where(eq(creativeDesignBatchItems.id, row.item.id));
-      await tx.update(creativeDesignBatches).set({ status: "running", updatedAt: new Date() }).where(eq(creativeDesignBatches.id, row.batch.id));
-      return row;
-    });
-    if (!claimed) return { candidateId, disposition: "already_claimed" as const };
-
+    const operation: CreativeOperation = { kind: "creative_candidate", ownerId: candidateId, stepKey: "generate" };
+    let claim: CreativeExecutionClaim | undefined;
     try {
-      const inputs = await this.loadPinnedReferences(identity, claimed.item.referenceSnapshot);
-      const prompt = claimed.item.negativePrompt
-        ? `${claimed.item.prompt}\nAvoid: ${claimed.item.negativePrompt}`
-        : claimed.item.prompt;
-      const record: PodArtworkExecutionRecord = {
-        id: candidateId,
-        designTaskId: candidateId,
-        toolKey: "text_to_image",
-        parameterSnapshot: {
-          designTool: "text_to_image",
-          prompt,
-          referenceStrength: inputs.length ? 65 : 0,
-          creativity: 70,
-          aspectRatio: "1:1",
-          outputCount: 1,
-          outputFormat: "png",
-          markAiGenerated: true,
-          markGeneratedAreas: true,
-        },
-        inputAssets: inputs,
-        maxAttempts: envelope.maxAttempts,
-      };
-      const result = await this.gateway.execute(identity, record, signal);
-      const output = result.outputs.find((candidate) => candidate.mediaType.startsWith("image/"));
-      if (!output) throw new Error("Creative design processor returned no raster candidate");
-      const storedAsset = await storeAuthorizedAsset(this.database, this.storage, identity, {
-        bytes: output.bytes,
-        fileName: `${candidateId}.${mediaExtension(output.mediaType)}`,
-        mediaType: output.mediaType,
-        aiGenerated: true,
-        rightsMetadata: {
-          source: { kind: "ai_generated", reference: `creative-design:${result.modelKey}:${result.modelVersion}` },
-          candidateId,
-          modelKey: result.modelKey,
-          modelVersion: result.modelVersion,
-          seed: result.seed,
-          promptTemplateVersion: claimed.candidate.promptTemplateVersion,
-          processorQuality: result.qualityCheckSnapshot,
-          outputMetadata: output.metadata,
-        },
+      claim = await this.recovery.claim(identity, operation, (tx, admission) => creativeOwnerRunning(tx, admission.execution));
+      if (!claim) return { candidateId, disposition: "already_claimed" as const };
+      return await this.recovery.withLease(identity, claim, signal, async executionSignal => {
+        const source = await this.recovery.authorized(identity, claim!, async (_tx, admission) => {
+          if (admission.source.kind !== "creative_candidate") throw new Error("CREATIVE_INPUT_CHANGED");
+          return admission.source;
+        });
+        const references = await readCreativeAssets(this.recovery, this.storage, identity, claim!, source.referenceSnapshot.map(ref => ref.assetId));
+        const inputs = references.map(ref => ref.input), prompt = source.negativePrompt ? `${source.prompt}\nAvoid: ${source.negativePrompt}` : source.prompt;
+        const result = await executeCreativePod(this.recovery, identity, claim!, this.gateway, {
+          id: claim!.id, designTaskId: candidateId, toolKey: "text_to_image", maxAttempts: 1,
+          parameterSnapshot: { designTool: "text_to_image", prompt, referenceStrength: inputs.length ? 65 : 0, creativity: 70,
+            aspectRatio: "1:1", outputCount: 1, outputFormat: "png", markAiGenerated: true, markGeneratedAreas: true }, inputAssets: inputs,
+        }, executionSignal);
+        const output = result.outputs.find(output => ["image/png", "image/jpeg", "image/webp", "image/tiff"].includes(output.mediaType));
+        if (!output) throw new Error("CREATIVE_RESPONSE_INVALID");
+        const raster = sharp(output.bytes, { limitInputPixels: 64_000_000, failOn: "error" }); await raster.stats();
+        return this.recovery.complete(identity, claim!, [{ bytes: output.bytes, mediaType: output.mediaType, role: "master", aiGenerated: true,
+          rightsStatus: "unverified", rightsMetadata: { source: { kind: "ai_generated", reference: `creative-design:${result.modelKey}:${result.modelVersion}` },
+            candidateId, modelKey: result.modelKey, modelVersion: result.modelVersion, seed: result.seed,
+            promptTemplateVersion: source.promptTemplateVersion, processorQuality: result.qualityCheckSnapshot, outputMetadata: output.metadata } }],
+          async (tx, _admission, assets) => {
+            const stored = assets[0]!;
+            await tx.update(creativeDesignCandidates).set({ status: "generated", assetId: stored.id, assetVersion: stored.version,
+              checksumSha256: stored.checksumSha256, modelKey: result.modelKey, modelVersion: result.modelVersion, seed: result.seed ?? null,
+              costUsd: result.costUsd === undefined ? null : String(result.costUsd), qualitySnapshot: result.qualityCheckSnapshot,
+              completedAt: new Date(), updatedAt: new Date() }).where(eq(creativeDesignCandidates.id, candidateId));
+            if (inputs.length) await tx.insert(artifactRelations).values(inputs.map(input => ({ id: createEntityId(), tenantId: identity.tenantId,
+              fromAssetId: input.id, fromAssetVersion: input.version, toAssetId: stored.id, toAssetVersion: stored.version,
+              relationType: "source_to_result" as const, createdBy: identity.userId }))).onConflictDoNothing();
+            await refreshCreativeProgress(tx, source.batchId);
+            return { candidateId, disposition: "generated" as const, assetId: stored.id };
+          });
       });
-      await withTenant(this.database.db, workerContext(identity), async (tx) => {
-        await tx.update(creativeDesignCandidates).set({
-          status: "generated", assetId: storedAsset.id, assetVersion: storedAsset.version,
-          checksumSha256: storedAsset.checksumSha256, modelKey: result.modelKey,
-          modelVersion: result.modelVersion, seed: result.seed ?? null,
-          costUsd: result.costUsd === undefined ? null : String(result.costUsd),
-          qualitySnapshot: result.qualityCheckSnapshot, completedAt: new Date(), updatedAt: new Date(),
-        }).where(eq(creativeDesignCandidates.id, candidateId));
-        if (inputs.length) await tx.insert(artifactRelations).values(inputs.map((input) => ({
-          id: createEntityId(), tenantId: identity.tenantId,
-          fromAssetId: input.id, fromAssetVersion: input.version,
-          toAssetId: storedAsset.id, toAssetVersion: storedAsset.version,
-          relationType: "source_to_result" as const, createdBy: identity.userId,
-        }))).onConflictDoNothing();
-        await refreshCreativeProgress(tx, claimed.item.batchId);
-      });
-      return { candidateId, disposition: "generated" as const, assetId: storedAsset.id };
-    } catch (error) {
-      const terminal = envelope.attempt + 1 >= envelope.maxAttempts;
-      await withTenant(this.database.db, workerContext(identity), async (tx) => {
-        await tx.update(creativeDesignCandidates).set({
-          status: terminal ? "failed" : "queued",
-          errorCode: errorCode(error), errorMessage: safeMessage(error),
-          completedAt: terminal ? new Date() : null, updatedAt: new Date(),
-        }).where(eq(creativeDesignCandidates.id, candidateId));
-        await refreshCreativeProgress(tx, claimed.item.batchId);
-      });
-      throw error;
+    } catch (cause) {
+      const failure = creativeFailure(cause);
+      await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent);
+      throw new Error(failure.code);
     }
-  }
-
-  private async loadPinnedReferences(identity: WorkerIdentity, snapshots: Array<{ assetId: string; assetVersion: number; checksumSha256: string }>) {
-    if (!snapshots.length) return [];
-    const rows = await withTenant(this.database.db, workerContext(identity), (tx) => tx.select().from(assetFiles)
-      .where(inArray(assetFiles.id, snapshots.map((snapshot) => snapshot.assetId))));
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    return Promise.all(snapshots.map(async (snapshot): Promise<PodArtworkExecutionAsset> => {
-      const asset = byId.get(snapshot.assetId);
-      if (!asset || asset.version !== snapshot.assetVersion || asset.checksumSha256 !== snapshot.checksumSha256) {
-        throw new Error(`Creative design reference snapshot changed: ${snapshot.assetId}`);
-      }
-      if (asset.assetDomain !== "authorized" || asset.rightsStatus !== "approved") throw new Error("Creative design reference rights are no longer approved");
-      const rightsSourceKind = (asset.rightsMetadata as { source?: { kind?: PodArtworkExecutionAsset["rightsSourceKind"] } }).source?.kind;
-      if (rightsSourceKind === "customer_provided" || rightsSourceKind === "competitor") throw new Error("Creative design reference source is not publishable");
-      return {
-        id: asset.id, version: asset.version, checksumSha256: asset.checksumSha256,
-        domain: "authorized", rightsStatus: "approved", rightsSourceKind,
-        mediaType: asset.mediaType,
-        bytes: await this.storage.readPrivate(workerContext(identity), storedAssetView(asset), { requiredDomain: "authorized" }),
-      };
-    }));
   }
 }
 
 export class CreativeDesignAdaptationProcessor {
-  constructor(
-    private readonly database: DatabaseConnection,
-    private readonly storage: Storage,
-    private readonly gateway: PodArtworkGateway,
-  ) {}
-
+  private readonly recovery: CreativeExecutionRecovery;
+  constructor(private readonly database: DatabaseConnection, private readonly storage: Storage, private readonly gateway: PodArtworkGateway,
+    private readonly diagnostic?: (event: ReturnType<typeof creativeFailureDiagnostic>) => void) {
+    this.recovery = new CreativeExecutionRecovery(database, storage, undefined, creativeOwnerStopped);
+  }
   async process(envelope: JobEnvelope, signal = new AbortController().signal) {
     const { creativeDesignVersionId } = CreativeDesignAdaptationJobPayloadSchema.parse(envelope.payload);
     const identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
-    const loaded = await withTenant(this.database.db, workerContext(identity), async (tx) => {
-      const [row] = await tx.select({ version: creativeDesignVersions, candidate: creativeDesignCandidates, item: creativeDesignBatchItems })
-        .from(creativeDesignVersions)
-        .innerJoin(creativeDesignCandidates, eq(creativeDesignVersions.sourceCandidateId, creativeDesignCandidates.id))
-        .innerJoin(creativeDesignBatchItems, eq(creativeDesignCandidates.itemId, creativeDesignBatchItems.id))
-        .where(eq(creativeDesignVersions.id, creativeDesignVersionId)).limit(1);
-      if (!row) throw new Error(`Creative design version ${creativeDesignVersionId} was not found`);
-      if (row.version.status !== "adapting") return undefined;
-      const [master] = await tx.select({ versionAsset: creativeDesignVersionAssets, asset: assetFiles })
-        .from(creativeDesignVersionAssets).innerJoin(assetFiles, eq(creativeDesignVersionAssets.assetId, assetFiles.id))
-        .where(and(eq(creativeDesignVersionAssets.creativeDesignVersionId, creativeDesignVersionId), eq(creativeDesignVersionAssets.role, "master"))).limit(1);
-      if (!master) throw new Error("Creative design master asset is missing");
-      const specs = await tx.select().from(canvasPrintSpecVersions).where(inArray(canvasPrintSpecVersions.id, row.item.printSpecVersionIds));
-      if (specs.length !== row.item.printSpecVersionIds.length || specs.some((spec) => spec.status !== "approved")) throw new Error("Creative design print specification snapshot is no longer approved");
-      const existing = await tx.select().from(creativeDesignVersionAssets).where(and(
-        eq(creativeDesignVersionAssets.creativeDesignVersionId, creativeDesignVersionId), eq(creativeDesignVersionAssets.role, "aspect_variant"),
-      ));
-      return { ...row, master, specs, existing };
-    });
-    if (!loaded) return { creativeDesignVersionId, disposition: "already_completed" as const };
-    const masterBytes = await this.storage.readPrivate(workerContext(identity), storedAssetView(loaded.master.asset), { requiredDomain: "authorized" });
-    try {
-      for (const spec of loaded.specs) {
-        if (loaded.existing.some((asset) => asset.printSpecVersionId === spec.id)) continue;
-        const adapted = await adaptArtwork(masterBytes, loaded.item.focalPoint, spec, async () => {
-          const result = await this.gateway.execute(identity, {
-            id: `${creativeDesignVersionId}:${spec.id}`,
-            designTaskId: creativeDesignVersionId,
-            toolKey: "canvas_extend",
-            parameterSnapshot: {
-              designTool: "canvas_extend",
-              prompt: `Extend the existing artwork naturally to a ${spec.aspectWidth}:${spec.aspectHeight} canvas. Preserve the original subject and style.`,
-              referenceStrength: 95,
-              creativity: 25,
-              aspectRatio: nearestSupportedRatio(spec.aspectWidth / spec.aspectHeight),
-              outputCount: 1,
-              outputFormat: "png",
-              markAiGenerated: true,
-              markGeneratedAreas: true,
-            },
-            inputAssets: [{
-              id: loaded.master.asset.id, version: loaded.master.asset.version,
-              checksumSha256: loaded.master.asset.checksumSha256, domain: "authorized",
-              rightsStatus: loaded.master.asset.rightsStatus as "unverified" | "approved" | "rejected",
-              rightsSourceKind: "ai_generated", bytes: masterBytes, mediaType: loaded.master.asset.mediaType,
-            }],
-            maxAttempts: envelope.maxAttempts,
-          }, signal);
-          const output = result.outputs.find((entry) => entry.mediaType.startsWith("image/"));
-          if (!output) throw new Error("Canvas extension returned no raster output");
-          return { bytes: output.bytes, generatedRegions: output.metadata.inferenceRegions ?? [], qualitySnapshot: result.qualityCheckSnapshot };
+    const roots = await withTenant(this.database.db, { ...identity, permissions: [], dataScope: "tenant" }, tx =>
+      tx.select({ stepKey: creativeExecutions.stepKey }).from(creativeExecutions).where(and(
+        eq(creativeExecutions.creativeVersionId, creativeDesignVersionId), eq(creativeExecutions.effect, "internal_write"),
+        eq(creativeExecutions.requestedBy, identity.userId))));
+    if (!roots.length) throw new Error("CREATIVE_LEGACY_AUTHORITY_MISSING");
+    for (const root of roots) {
+      const operation: CreativeOperation = { kind: "creative_adaptation", ownerId: creativeDesignVersionId, stepKey: root.stepKey };
+      let claim: CreativeExecutionClaim | undefined;
+      try {
+        claim = await this.recovery.claim(identity, operation);
+        if (!claim) continue;
+        await this.recovery.withLease(identity, claim, signal, async executionSignal => {
+          const input = await this.recovery.authorized(identity, claim!, async (tx, admission) => {
+            if (admission.source.kind !== "creative_adaptation") throw new Error("CREATIVE_INPUT_CHANGED");
+            const [master] = await tx.select().from(assetFiles).where(eq(assetFiles.id, admission.source.master.assetId));
+            return { source: admission.source, master: master! };
+          });
+          if (!claim!.hasResponse) {
+            const [master] = await readCreativeAssets(this.recovery, this.storage, identity, claim!, [input.master.id], true);
+            const adapted = await adaptArtwork(master!.input.bytes, input.source.focalPoint, input.source.spec, async () => {
+              const child = await this.recovery.authorized(identity, claim!, (tx) => stageCreativeOutpaint(tx, identity, claim!.id, claim!.token));
+              const childOperation: CreativeOperation = { kind: "creative_adaptation", ownerId: creativeDesignVersionId, stepKey: child.stepKey };
+              let childClaim: CreativeExecutionClaim | undefined;
+              try {
+                childClaim = await this.recovery.claim(identity, childOperation);
+                let result;
+                if (childClaim) {
+                  result = await this.recovery.withLease(identity, childClaim, executionSignal, async childSignal => {
+                    const result = await executeCreativePod(this.recovery, identity, childClaim!, this.gateway, {
+                      id: child.id, designTaskId: creativeDesignVersionId, toolKey: "canvas_extend", maxAttempts: 1,
+                      parameterSnapshot: { designTool: "canvas_extend",
+                        prompt: `Extend the existing artwork naturally to a ${input.source.spec.aspectWidth}:${input.source.spec.aspectHeight} canvas. Preserve the original subject and style.`,
+                        referenceStrength: 95, creativity: 25, aspectRatio: nearestSupportedRatio(input.source.spec.aspectWidth / input.source.spec.aspectHeight),
+                        outputCount: 1, outputFormat: "png", markAiGenerated: true, markGeneratedAreas: true },
+                      inputAssets: [master!.input],
+                    }, childSignal);
+                    const output = result.outputs.find(output => ["image/png", "image/jpeg", "image/webp", "image/tiff"].includes(output.mediaType));
+                    if (!output) throw new Error("CREATIVE_RESPONSE_INVALID");
+                    await sharp(output.bytes, { limitInputPixels: 64_000_000, failOn: "error" }).stats();
+                    await this.recovery.complete(identity, childClaim!, [{ bytes: output.bytes, mediaType: output.mediaType, role: "expanded",
+                      aiGenerated: true, rightsStatus: "unverified", rightsMetadata: { source: input.master.rightsMetadata.source,
+                        derivative: { kind: "ai_outpaint", sourceAssetId: input.master.id, sourceAssetVersion: input.master.version },
+                        modelKey: result.modelKey, modelVersion: result.modelVersion, creativeDesignVersionId } }],
+                      async (tx, _admission, assets) => {
+                        await tx.insert(artifactRelations).values({ id: createEntityId(), tenantId: identity.tenantId,
+                          fromAssetId: input.master.id, fromAssetVersion: input.master.version, toAssetId: assets[0]!.id,
+                          toAssetVersion: assets[0]!.version, relationType: "result_to_derivative", createdBy: identity.userId }).onConflictDoNothing();
+                        return { assetId: assets[0]!.id, modelKey: result.modelKey, modelVersion: result.modelVersion };
+                      });
+                    return result;
+                  });
+                } else {
+                  const saved = await this.recovery.readCompleted(identity, childOperation);
+                  if (saved.kind !== "pod") throw new Error("CREATIVE_RESPONSE_INVALID");
+                  result = decodePodResponse(saved.checkpoint);
+                }
+                const output = result.outputs.find(output => ["image/png", "image/jpeg", "image/webp", "image/tiff"].includes(output.mediaType));
+                if (!output) throw new Error("CREATIVE_RESPONSE_INVALID");
+                return { bytes: output.bytes, generatedRegions: output.metadata.inferenceRegions ?? [],
+                  qualitySnapshot: { ...result.qualityCheckSnapshot, originalOutpaintExecutionId: child.id } };
+              } catch (cause) {
+                this.diagnostic?.(creativeFailureDiagnostic(cause));
+                const failure = creativeFailure(cause);
+                await this.recovery.fail(identity, childOperation, childClaim, failure.code, failure.permanent);
+                throw new Error(failure.code);
+              }
+            });
+            await this.recovery.record(identity, claim!, creativeLocalResponse(
+              [{ bytes: adapted.bytes, mediaType: "image/png", role: "aspect_variant" }],
+              { mode: adapted.mode, generatedRegions: adapted.generatedRegions, qualitySnapshot: adapted.qualitySnapshot }));
+          }
+          const response = await this.recovery.read(identity, claim!);
+          if (response.kind !== "local") throw new Error("CREATIVE_RESPONSE_INVALID");
+          const details = z.object({ mode: z.enum(["crop", "ai_outpaint"]), generatedRegions: z.array(z.object({
+            x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict()).max(100),
+            qualitySnapshot: z.record(z.string(), z.unknown()) }).strict().parse(response.result);
+          const outputs = decodeCreativeOutputs(response);
+          if (outputs.length !== 1 || outputs[0]!.mediaType !== "image/png" || outputs[0]!.role !== "aspect_variant") throw new Error("CREATIVE_RESPONSE_INVALID");
+          await this.recovery.complete(identity, claim!, [{ ...outputs[0]!, aiGenerated: input.master.aiGenerated || details.mode === "ai_outpaint",
+            rightsStatus: details.mode === "crop" && input.master.rightsStatus === "approved" ? "approved" : "unverified",
+            rightsMetadata: { source: input.master.rightsMetadata.source, creativeDesignVersionId, printSpecVersionId: input.source.spec.id,
+              derivative: { kind: details.mode, sourceAssetId: input.master.id, sourceAssetVersion: input.master.version,
+                sourceChecksum: input.master.checksumSha256, originalRights: input.master.rightsMetadata },
+              adaptationMode: details.mode, generatedRegions: details.generatedRegions } }], async (tx, _admission, assets) => {
+                const asset = assets[0]!;
+                await tx.insert(creativeDesignVersionAssets).values({ id: createEntityId(), tenantId: identity.tenantId,
+                  creativeDesignVersionId, assetId: asset.id, assetVersion: asset.version, role: "aspect_variant",
+                  printSpecVersionId: input.source.spec.id, adaptationMode: details.mode, generatedRegions: details.generatedRegions,
+                  qualitySnapshot: details.qualitySnapshot });
+                await tx.insert(artifactRelations).values({ id: createEntityId(), tenantId: identity.tenantId,
+                  fromAssetId: input.master.id, fromAssetVersion: input.master.version, toAssetId: asset.id,
+                  toAssetVersion: asset.version, relationType: "result_to_derivative", createdBy: identity.userId }).onConflictDoNothing();
+                const states = await tx.select({ id: creativeExecutions.id, phase: creativeExecutions.phase }).from(creativeExecutions)
+                  .where(and(eq(creativeExecutions.creativeVersionId, creativeDesignVersionId), eq(creativeExecutions.effect, "internal_write")));
+                if (states.every(row => row.id === claim!.id || row.phase === "completed"))
+                  await tx.update(creativeDesignVersions).set({ status: "pending_review" }).where(eq(creativeDesignVersions.id, creativeDesignVersionId));
+                return { creativeDesignVersionId, assetId: asset.id, printSpecVersionId: input.source.spec.id };
+              });
         });
-        const stored = await storeAuthorizedAsset(this.database, this.storage, identity, {
-          bytes: adapted.bytes, fileName: `${creativeDesignVersionId}-${spec.id}.png`, mediaType: "image/png",
-          aiGenerated: adapted.mode === "ai_outpaint",
-          rightsMetadata: {
-            source: { kind: adapted.mode === "ai_outpaint" ? "ai_generated" : "owned", reference: `creative-adaptation:${adapted.mode}:v1` },
-            creativeDesignVersionId, printSpecVersionId: spec.id,
-            adaptationMode: adapted.mode, generatedRegions: adapted.generatedRegions,
-          },
-        });
-        await withTenant(this.database.db, workerContext(identity), async (tx) => {
-          await tx.insert(creativeDesignVersionAssets).values({
-            id: createEntityId(), tenantId: identity.tenantId, creativeDesignVersionId,
-            assetId: stored.id, assetVersion: stored.version, role: "aspect_variant",
-            printSpecVersionId: spec.id, adaptationMode: adapted.mode,
-            generatedRegions: adapted.generatedRegions, qualitySnapshot: adapted.qualitySnapshot,
-          }).onConflictDoNothing();
-          await tx.insert(artifactRelations).values({
-            id: createEntityId(), tenantId: identity.tenantId,
-            fromAssetId: loaded.master.asset.id, fromAssetVersion: loaded.master.asset.version,
-            toAssetId: stored.id, toAssetVersion: stored.version,
-            relationType: "result_to_derivative", createdBy: identity.userId,
-          }).onConflictDoNothing();
-        });
+      } catch (cause) {
+        this.diagnostic?.(creativeFailureDiagnostic(cause));
+        const failure = creativeFailure(cause);
+        await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent);
+        throw new Error(failure.code);
       }
-      await withTenant(this.database.db, workerContext(identity), (tx) => tx.update(creativeDesignVersions)
-        .set({ status: "pending_review" }).where(eq(creativeDesignVersions.id, creativeDesignVersionId)));
-      return { creativeDesignVersionId, disposition: "pending_review" as const };
-    } catch (error) {
-      if (envelope.attempt + 1 >= envelope.maxAttempts) {
-        await withTenant(this.database.db, workerContext(identity), (tx) => tx.update(creativeDesignVersions)
-          .set({ status: "rejected", rejectionReason: `Adaptation failed: ${safeMessage(error)}` })
-          .where(eq(creativeDesignVersions.id, creativeDesignVersionId)));
-      }
-      throw error;
     }
+    return { creativeDesignVersionId, disposition: "processed" as const };
   }
 }
 
 export class MockupTemplateCompileProcessor {
-  constructor(
-    private readonly database: DatabaseConnection,
-    private readonly storage: Storage,
-    private readonly runner = new NativeImageMagickRunner(),
-  ) {}
-
-  async process(envelope: JobEnvelope) {
+  private readonly recovery: CreativeExecutionRecovery;
+  constructor(database: DatabaseConnection, private readonly storage: Storage, private readonly runner: ImageMagickRunner = new NativeImageMagickRunner()) {
+    this.recovery = new CreativeExecutionRecovery(database, storage, undefined, creativeOwnerStopped);
+  }
+  async process(envelope: JobEnvelope, signal = new AbortController().signal) {
     const { inspectionId } = MockupTemplateCompileJobPayloadSchema.parse(envelope.payload);
     const identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
-    const claimed = await withTenant(this.database.db, workerContext(identity), async (tx) => {
-      const [row] = await tx.select({ inspection: mockupTemplateSourceInspections, asset: assetFiles })
-        .from(mockupTemplateSourceInspections).innerJoin(assetFiles, eq(mockupTemplateSourceInspections.sourceAssetId, assetFiles.id))
-        .where(eq(mockupTemplateSourceInspections.id, inspectionId)).limit(1);
-      if (!row) throw new Error(`Mockup template inspection ${inspectionId} was not found`);
-      if (row.inspection.status !== "queued") return undefined;
-      if (row.asset.version !== row.inspection.sourceAssetVersion || row.asset.checksumSha256 !== row.inspection.checksumSha256) throw new Error("PSD template source snapshot changed");
-      await tx.update(mockupTemplateSourceInspections).set({ status: "running", errorCode: null, errorMessage: null, completedAt: null })
-        .where(eq(mockupTemplateSourceInspections.id, inspectionId));
-      return row;
-    });
-    if (!claimed) return { inspectionId, disposition: "already_claimed" as const };
+    const operation: CreativeOperation = { kind: "template_compile", ownerId: inspectionId, stepKey: "compile" };
+    let claim: CreativeExecutionClaim | undefined;
     try {
-      const bytes = await this.storage.readPrivate(workerContext(identity), storedAssetView(claimed.asset), { requiredDomain: "authorized" });
-      const compiled = await compileControlledPsd(bytes, claimed.inspection.slotKey, this.runner);
-      const stored = await Promise.all([
-        storeAuthorizedAsset(this.database, this.storage, identity, assetInput(compiled.background, `${inspectionId}-background.png`, "template_background", inspectionId)),
-        storeAuthorizedAsset(this.database, this.storage, identity, assetInput(compiled.foreground, `${inspectionId}-foreground.png`, "template_foreground", inspectionId)),
-        compiled.mask ? storeAuthorizedAsset(this.database, this.storage, identity, assetInput(compiled.mask, `${inspectionId}-mask.png`, "template_mask", inspectionId)) : undefined,
-        storeAuthorizedAsset(this.database, this.storage, identity, assetInput(compiled.preview, `${inspectionId}-preview.png`, "template_preview", inspectionId)),
-        storeAuthorizedAsset(this.database, this.storage, identity, { ...assetInput(compiled.manifestBytes, `${inspectionId}-manifest.json`, "template_manifest", inspectionId), mediaType: "application/json" }),
-      ]);
-      const [background, foreground, mask, preview, manifest] = stored;
-      await withTenant(this.database.db, workerContext(identity), async (tx) => {
-        await tx.update(mockupTemplateSourceInspections).set({
-          status: "completed",
-          compilation: {
-            canvasWidth: compiled.manifest.canvas.width, canvasHeight: compiled.manifest.canvas.height,
-            slotKey: compiled.manifest.slotKey, transform: compiled.manifest.transform,
-            backgroundAssetId: background.id, foregroundAssetId: foreground.id,
-            ...(mask ? { maskAssetId: mask.id } : {}), previewAssetId: preview.id,
-            manifestAssetId: manifest.id, checksumSha256: manifest.checksumSha256,
-            ssimPermille: compiled.ssimPermille, compilerVersion: MOCKUP_COMPILER_VERSION,
-          },
-          warnings: compiled.warnings, completedAt: new Date(),
-        }).where(eq(mockupTemplateSourceInspections.id, inspectionId));
-        await tx.insert(artifactRelations).values(stored.flatMap((asset) => asset ? [{
-          id: createEntityId(), tenantId: identity.tenantId,
-          fromAssetId: claimed.asset.id, fromAssetVersion: claimed.asset.version,
-          toAssetId: asset.id, toAssetVersion: asset.version,
-          relationType: "result_to_template" as const, createdBy: identity.userId,
-        }] : [])).onConflictDoNothing();
+      claim = await this.recovery.claim(identity, operation, (tx, admission) => creativeOwnerRunning(tx, admission.execution));
+      if (!claim) return { inspectionId, disposition: "already_claimed" as const };
+      return await this.recovery.withLease(identity, claim, signal, async executionSignal => {
+        const input = await this.recovery.authorized(identity, claim!, async (tx, admission) => {
+          if (admission.source.kind !== "template_compile" || admission.source.compilerVersion !== MOCKUP_COMPILER_VERSION) throw new Error("CREATIVE_INPUT_CHANGED");
+          const [file] = await tx.select().from(assetFiles).where(eq(assetFiles.id, admission.source.sourceAssetId));
+          return { source: admission.source, file: file! };
+        });
+        if (!claim!.hasResponse) {
+          const [source] = await readCreativeAssets(this.recovery, this.storage, identity, claim!, [input.source.sourceAssetId]);
+          executionSignal.throwIfAborted();
+          const compiled = await compileControlledPsd(source!.input.bytes, input.source.slotKey, this.runner);
+          const outputs: CreativeLocalOutput[] = [
+            { bytes: compiled.background, mediaType: "image/png", role: "background" },
+            { bytes: compiled.foreground, mediaType: "image/png", role: "foreground" },
+            ...(compiled.mask ? [{ bytes: compiled.mask, mediaType: "image/png" as const, role: "mask" }] : []),
+            { bytes: compiled.preview, mediaType: "image/png", role: "preview" },
+            { bytes: compiled.manifestBytes, mediaType: "application/json", role: "manifest" },
+          ];
+          await this.recovery.record(identity, claim!, creativeLocalResponse(outputs, {
+            manifest: compiled.manifest, ssimPermille: compiled.ssimPermille, warnings: compiled.warnings,
+          }));
+        }
+        const response = await this.recovery.read(identity, claim!);
+        if (response.kind !== "local") throw new Error("CREATIVE_RESPONSE_INVALID");
+        const details = z.object({ manifest: MockupRenderManifestSchema, ssimPermille: z.int().min(990).max(1000),
+          warnings: MockupTemplateInspectionSchema.shape.warnings }).strict().parse(response.result);
+        const outputs = decodeCreativeOutputs(response);
+        const roles = outputs.map(output => output.role);
+        if (new Set(roles).size !== roles.length || roles.some(role => !["background", "foreground", "mask", "preview", "manifest"].includes(role))
+          || ["background", "foreground", "preview", "manifest"].some(role => !roles.includes(role))) throw new Error("CREATIVE_RESPONSE_INVALID");
+        return this.recovery.complete(identity, claim!, outputs.map(output => ({
+          ...output, aiGenerated: input.file.aiGenerated, rightsStatus: "approved" as const,
+          rightsMetadata: { ...creativeDerivedRights([input.file], { kind: "controlled_psd_compile", compilerVersion: MOCKUP_COMPILER_VERSION }),
+            inspectionId, compiledAssetKind: output.role },
+        })), async (tx, _admission, assets) => {
+          const byRole = new Map(outputs.map((output, index) => [output.role, assets[index]!]));
+          const background = byRole.get("background")!, foreground = byRole.get("foreground")!, mask = byRole.get("mask"),
+            preview = byRole.get("preview")!, manifest = byRole.get("manifest")!;
+          await tx.update(mockupTemplateSourceInspections).set({ status: "completed", compilation: {
+            canvasWidth: details.manifest.canvas.width, canvasHeight: details.manifest.canvas.height,
+            slotKey: details.manifest.slotKey, transform: details.manifest.transform,
+            backgroundAssetId: background.id, foregroundAssetId: foreground.id, ...(mask ? { maskAssetId: mask.id } : {}),
+            previewAssetId: preview.id, manifestAssetId: manifest.id, checksumSha256: manifest.checksumSha256,
+            ssimPermille: details.ssimPermille, compilerVersion: MOCKUP_COMPILER_VERSION,
+          }, warnings: details.warnings, completedAt: new Date() }).where(eq(mockupTemplateSourceInspections.id, inspectionId));
+          await tx.insert(artifactRelations).values(assets.map(asset => ({ id: createEntityId(), tenantId: identity.tenantId,
+            fromAssetId: input.file.id, fromAssetVersion: input.file.version, toAssetId: asset.id, toAssetVersion: asset.version,
+            relationType: "result_to_template" as const, createdBy: identity.userId }))).onConflictDoNothing();
+          return { inspectionId, disposition: "completed" as const, ssimPermille: details.ssimPermille };
+        });
       });
-      return { inspectionId, disposition: "completed" as const, ssimPermille: compiled.ssimPermille };
-    } catch (error) {
-      const terminal = error instanceof MockupTemplatePolicyError || envelope.attempt + 1 >= envelope.maxAttempts;
-      await withTenant(this.database.db, workerContext(identity), (tx) => tx.update(mockupTemplateSourceInspections).set({
-        status: terminal ? "failed" : "queued", errorCode: errorCode(error), errorMessage: safeMessage(error),
-        completedAt: terminal ? new Date() : null,
-      }).where(eq(mockupTemplateSourceInspections.id, inspectionId)));
-      throw error;
+    } catch (cause) {
+      const failure = creativeFailure(cause);
+      await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent || cause instanceof MockupTemplatePolicyError);
+      throw new Error(failure.code);
     }
   }
 }
 
 export class MockupRenderProcessor {
-  constructor(
-    private readonly database: DatabaseConnection,
-    private readonly storage: Storage,
-    private readonly runner = new NativeImageMagickRunner(),
-  ) {}
-
-  async process(envelope: JobEnvelope) {
-    const { itemId } = MockupRenderJobPayloadSchema.parse(envelope.payload);
-    const identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
-    const loaded = await withTenant(this.database.db, workerContext(identity), async (tx) => {
-      const [row] = await tx.select({ item: mockupBatchItems, batch: mockupBatches, pack: mockupTemplatePackVersions })
-        .from(mockupBatchItems)
-        .innerJoin(mockupBatches, eq(mockupBatchItems.batchId, mockupBatches.id))
-        .innerJoin(mockupTemplatePackVersions, eq(mockupBatches.templatePackVersionId, mockupTemplatePackVersions.id))
-        .where(eq(mockupBatchItems.id, itemId)).limit(1);
-      if (!row) throw new Error(`Mockup batch item ${itemId} was not found`);
-      if (row.item.status === "cancelled") return undefined;
-      if (row.pack.status !== "approved") throw new Error("Mockup template pack is no longer approved");
-      const [artwork] = await tx.select({ asset: assetFiles }).from(designVersionFiles)
-        .innerJoin(assetFiles, eq(designVersionFiles.assetFileId, assetFiles.id))
-        .where(and(eq(designVersionFiles.versionId, row.item.designVersionId), eq(designVersionFiles.role, "production"))).limit(1);
-      if (!artwork) throw new Error("Formal design version is missing its production artwork");
-      const outputs = await tx.select({ output: mockupBatchOutputs, slot: mockupTemplateSlots, inspection: mockupTemplateSourceInspections })
-        .from(mockupBatchOutputs)
-        .innerJoin(mockupTemplateSlots, eq(mockupBatchOutputs.templateSlotId, mockupTemplateSlots.id))
-        .innerJoin(mockupTemplateSourceInspections, eq(mockupTemplateSlots.inspectionId, mockupTemplateSourceInspections.id))
-        .where(and(eq(mockupBatchOutputs.itemId, itemId), eq(mockupBatchOutputs.status, "queued")));
-      if (!outputs.length) return undefined;
-      await tx.update(mockupBatchOutputs).set({ status: "running", errorCode: null, errorMessage: null, completedAt: null })
-        .where(inArray(mockupBatchOutputs.id, outputs.map(({ output }) => output.id)));
-      await tx.update(mockupBatchItems).set({ status: "running", updatedAt: new Date() }).where(eq(mockupBatchItems.id, itemId));
-      await tx.update(mockupBatches).set({ status: "running", updatedAt: new Date() }).where(eq(mockupBatches.id, row.batch.id));
-      return { ...row, artwork: artwork.asset, outputs };
-    });
-    if (!loaded) return { itemId, disposition: "already_claimed" as const };
-    const artworkBytes = await this.storage.readPrivate(workerContext(identity), storedAssetView(loaded.artwork), { requiredDomain: "authorized" });
-    let succeeded = 0;
-    let failed = 0;
-    for (const entry of loaded.outputs) {
+  private readonly recovery: CreativeExecutionRecovery;
+  constructor(private readonly database: DatabaseConnection, private readonly storage: Storage, private readonly runner: ImageMagickRunner = new NativeImageMagickRunner()) {
+    this.recovery = new CreativeExecutionRecovery(database, storage, undefined, creativeOwnerStopped);
+  }
+  async process(envelope: JobEnvelope, signal = new AbortController().signal) {
+    const { itemId } = MockupRenderJobPayloadSchema.parse(envelope.payload), identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
+    const steps = await withTenant(this.database.db, { ...identity, permissions: [], dataScope: "tenant" }, tx =>
+      tx.select({ stepKey: creativeExecutions.stepKey }).from(creativeExecutions).where(and(eq(creativeExecutions.mockupItemId, itemId), eq(creativeExecutions.requestedBy, identity.userId))));
+    if (!steps.length) throw new Error("CREATIVE_LEGACY_AUTHORITY_MISSING");
+    let succeeded = 0, deferred = 0;
+    for (const step of steps) {
+      const operation: CreativeOperation = { kind: "mockup_render", ownerId: itemId, stepKey: step.stepKey };
+      let claim: CreativeExecutionClaim | undefined;
       try {
-        const compilation = entry.inspection.compilation;
-        if (entry.inspection.status !== "completed" || !compilation) throw new Error(`Template slot ${entry.slot.slotKey} is not compiled`);
-        const assetIds = [compilation.backgroundAssetId, compilation.foregroundAssetId, compilation.previewAssetId, compilation.manifestAssetId, ...(compilation.maskAssetId ? [compilation.maskAssetId] : [])];
-        const componentRows = await withTenant(this.database.db, workerContext(identity), (tx) => tx.select().from(assetFiles).where(inArray(assetFiles.id, assetIds)));
-        if (componentRows.length !== assetIds.length) throw new Error(`Compiled template assets for ${entry.slot.slotKey} are incomplete`);
-        const byId = new Map(componentRows.map((asset) => [asset.id, asset]));
-        const [background, foreground, preview, manifestBytes, mask] = await Promise.all([
-          readAuthorized(this.storage, identity, byId.get(compilation.backgroundAssetId)!),
-          readAuthorized(this.storage, identity, byId.get(compilation.foregroundAssetId)!),
-          readAuthorized(this.storage, identity, byId.get(compilation.previewAssetId)!),
-          readAuthorized(this.storage, identity, byId.get(compilation.manifestAssetId)!),
-          compilation.maskAssetId ? readAuthorized(this.storage, identity, byId.get(compilation.maskAssetId)!) : undefined,
-        ]);
-        const manifest = MockupRenderManifestSchema.parse(JSON.parse(new TextDecoder().decode(manifestBytes)));
-        const rendered = await renderCompiledMockup(artworkBytes, { manifest, background, foreground, preview, ...(mask ? { mask } : {}) }, this.runner);
-        const outputAsset = await storeAuthorizedAsset(this.database, this.storage, identity, {
-          bytes: rendered.bytes, fileName: `${itemId}-${entry.slot.slotKey}-v${entry.output.attempt}.png`, mediaType: "image/png",
-          aiGenerated: false,
-          rightsMetadata: {
-            source: { kind: "owned", reference: `controlled-mockup-render:${MOCKUP_COMPILER_VERSION}` },
-            mockupBatchItemId: itemId, mockupOutputId: entry.output.id,
-            designVersionId: loaded.item.designVersionId, templatePackVersionId: loaded.pack.id,
-            templateInspectionId: entry.inspection.id,
-          },
+        claim = await this.recovery.claim(identity, operation, (tx, admission) => creativeOwnerRunning(tx, admission.execution));
+        if (!claim) continue;
+        await this.recovery.withLease(identity, claim, signal, async executionSignal => {
+          const input = await this.recovery.authorized(identity, claim!, async (tx, admission) => {
+            if (admission.source.kind !== "mockup_render") throw new Error("CREATIVE_INPUT_CHANGED");
+            const [item] = await tx.select().from(mockupBatchItems).where(eq(mockupBatchItems.id, itemId));
+            const [artwork] = await tx.select({ file: assetFiles }).from(designVersionFiles).innerJoin(assetFiles, eq(assetFiles.id, designVersionFiles.assetFileId))
+              .where(and(eq(designVersionFiles.versionId, item!.designVersionId), eq(designVersionFiles.role, "production")));
+            const [template] = await tx.select({ slot: mockupTemplateSlots, inspection: mockupTemplateSourceInspections })
+              .from(mockupTemplateSlots).innerJoin(mockupTemplateSourceInspections, eq(mockupTemplateSourceInspections.id, mockupTemplateSlots.inspectionId))
+              .where(eq(mockupTemplateSlots.id, creativeMockupStep(step.stepKey).slotId));
+            const [original] = await tx.select().from(assetFiles).where(eq(assetFiles.id, template!.inspection.sourceAssetId));
+            return { item: item!, artwork: artwork!.file, template: template!, original: original!, outputId: admission.source.output.id,
+              templatePackVersionId: admission.source.templatePackVersionId };
+          });
+          const compilation = input.template.inspection.compilation!;
+          if (!claim!.hasResponse) {
+            const ids = [input.artwork.id, compilation.backgroundAssetId, compilation.foregroundAssetId,
+              compilation.previewAssetId, compilation.manifestAssetId, ...(compilation.maskAssetId ? [compilation.maskAssetId] : [])];
+            const files = await readCreativeAssets(this.recovery, this.storage, identity, claim!, ids);
+            const bytes = (id: string) => files.find(file => file.file.id === id)!.input.bytes;
+            const manifest = MockupRenderManifestSchema.parse(JSON.parse(new TextDecoder().decode(bytes(compilation.manifestAssetId))));
+            executionSignal.throwIfAborted();
+            const rendered = await renderCompiledMockup(bytes(input.artwork.id), {
+              manifest, background: bytes(compilation.backgroundAssetId), foreground: bytes(compilation.foregroundAssetId),
+              preview: bytes(compilation.previewAssetId), ...(compilation.maskAssetId ? { mask: bytes(compilation.maskAssetId) } : {}),
+            }, this.runner);
+            await this.recovery.record(identity, claim!, creativeLocalResponse([{ bytes: rendered.bytes, mediaType: "image/png", role: "mockup" }],
+              { outputId: input.outputId, width: rendered.width, height: rendered.height,
+                qualitySnapshot: { deterministic: true, compilerVersion: MOCKUP_COMPILER_VERSION, sourceUnchanged: true } }));
+          }
+          const response = await this.recovery.read(identity, claim!);
+          if (response.kind !== "local") throw new Error("CREATIVE_RESPONSE_INVALID");
+          const details = z.object({ outputId: z.uuidv7(), width: z.int().positive().max(100000), height: z.int().positive().max(100000),
+            qualitySnapshot: z.record(z.string(), z.unknown()) }).strict().parse(response.result);
+          const outputs = decodeCreativeOutputs(response);
+          if (details.outputId !== input.outputId || outputs.length !== 1 || outputs[0]!.role !== "mockup" || outputs[0]!.mediaType !== "image/png") throw new Error("CREATIVE_RESPONSE_INVALID");
+          await this.recovery.complete(identity, claim!, [{ ...outputs[0]!, aiGenerated: input.artwork.aiGenerated || input.original.aiGenerated,
+            rightsStatus: "unverified", rightsMetadata: { ...creativeDerivedRights([input.artwork, input.original], {
+              kind: "controlled_mockup_render", compilerVersion: MOCKUP_COMPILER_VERSION }),
+              mockupBatchItemId: itemId, mockupOutputId: input.outputId, designVersionId: input.item.designVersionId,
+              templatePackVersionId: input.templatePackVersionId, templateInspectionId: input.template.inspection.id } }],
+            async (tx, _admission, assets) => {
+              const asset = assets[0]!;
+              await tx.update(mockupBatchOutputs).set({ status: "succeeded", assetId: asset.id, assetVersion: asset.version,
+                checksumSha256: asset.checksumSha256, width: details.width, height: details.height,
+                qualitySnapshot: details.qualitySnapshot, completedAt: new Date() }).where(eq(mockupBatchOutputs.id, input.outputId));
+              await tx.insert(artifactRelations).values([input.artwork, input.original].map(from => ({ id: createEntityId(), tenantId: identity.tenantId,
+                fromAssetId: from.id, fromAssetVersion: from.version, toAssetId: asset.id, toAssetVersion: asset.version,
+                relationType: from.id === input.artwork.id ? "result_to_derivative" as const : "result_to_template" as const,
+                createdBy: identity.userId }))).onConflictDoNothing();
+              await refreshMockupItem(tx, itemId); return { itemId, outputId: input.outputId, assetId: asset.id };
+            });
+          succeeded++;
         });
-        await withTenant(this.database.db, workerContext(identity), async (tx) => {
-          await tx.update(mockupBatchOutputs).set({
-            status: "succeeded", assetId: outputAsset.id, assetVersion: outputAsset.version,
-            checksumSha256: outputAsset.checksumSha256, width: rendered.width, height: rendered.height,
-            qualitySnapshot: { deterministic: true, compilerVersion: MOCKUP_COMPILER_VERSION, sourceUnchanged: true }, completedAt: new Date(),
-          }).where(eq(mockupBatchOutputs.id, entry.output.id));
-          await tx.insert(artifactRelations).values([
-            {
-              id: createEntityId(), tenantId: identity.tenantId,
-              fromAssetId: loaded.artwork.id, fromAssetVersion: loaded.artwork.version,
-              toAssetId: outputAsset.id, toAssetVersion: outputAsset.version,
-              relationType: "result_to_derivative" as const, createdBy: identity.userId,
-            },
-            {
-              id: createEntityId(), tenantId: identity.tenantId,
-              fromAssetId: entry.inspection.sourceAssetId, fromAssetVersion: entry.inspection.sourceAssetVersion,
-              toAssetId: outputAsset.id, toAssetVersion: outputAsset.version,
-              relationType: "result_to_template" as const, createdBy: identity.userId,
-            },
-          ]).onConflictDoNothing();
-        });
-        succeeded += 1;
-      } catch (error) {
-        failed += 1;
-        await withTenant(this.database.db, workerContext(identity), (tx) => tx.update(mockupBatchOutputs).set({
-          status: "failed", errorCode: errorCode(error), errorMessage: safeMessage(error), completedAt: new Date(),
-        }).where(eq(mockupBatchOutputs.id, entry.output.id)));
+      } catch (cause) {
+        const failure = creativeFailure(cause);
+        const disposition = await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent);
+        if (disposition === "deferred") deferred++;
       }
     }
-    await withTenant(this.database.db, workerContext(identity), async (tx) => {
-      await tx.update(mockupBatchItems).set({
-        status: succeeded > 0 ? failed > 0 ? "partially_succeeded" : "awaiting_review" : "failed",
-        completedAt: new Date(), updatedAt: new Date(),
-      }).where(eq(mockupBatchItems.id, itemId));
-      await refreshMockupProgress(tx, loaded.batch.id);
-    });
-    return { itemId, disposition: failed ? "partially_succeeded" as const : "awaiting_review" as const, succeeded, failed };
+    return { itemId, disposition: deferred ? "recovery_pending" as const : "processed" as const, succeeded, deferred };
   }
 }
 
@@ -447,7 +381,7 @@ export async function adaptArtwork(
   spec: Pick<typeof canvasPrintSpecVersions.$inferSelect, "aspectWidth" | "aspectHeight" | "safeZoneMm" | "physicalSizes">,
   outpaint: () => Promise<{ bytes: Uint8Array; generatedRegions: Array<{ x: number; y: number; width: number; height: number }>; qualitySnapshot: Record<string, unknown> }>,
 ) {
-  const metadata = await sharp(bytes).metadata();
+  const metadata = await sharp(bytes, { limitInputPixels: 64_000_000, failOn: "error" }).metadata();
   if (!metadata.width || !metadata.height) throw new Error("Creative design master dimensions are unavailable");
   const desiredRatio = spec.aspectWidth / spec.aspectHeight;
   const sourceRatio = metadata.width / metadata.height;
@@ -477,7 +411,8 @@ export async function adaptArtwork(
   const exact = await cropToRatio(expanded.bytes, desiredRatio);
   return {
     bytes: exact, mode: "ai_outpaint" as const, generatedRegions: expanded.generatedRegions,
-    qualitySnapshot: { ...expanded.qualitySnapshot, policyVersion: "canvas-adaptation-v1", safeZonePreserved: true, focalPoint, sourceDimensions: metadata, expandedDimensions: expandedMetadata },
+    qualitySnapshot: { ...expanded.qualitySnapshot, policyVersion: "canvas-adaptation-v1", safeZonePreserved: true, focalPoint,
+      sourceDimensions: { width: metadata.width, height: metadata.height }, expandedDimensions: { width: expandedMetadata.width, height: expandedMetadata.height } },
   };
 }
 
@@ -492,101 +427,14 @@ async function cropToRatio(bytes: Uint8Array, targetRatio: number) {
   }).png().toBuffer());
 }
 
-async function storeAuthorizedAsset(
-  database: DatabaseConnection,
-  storage: Storage,
-  identity: WorkerIdentity,
-  input: { bytes: Uint8Array; fileName: string; mediaType: string; aiGenerated: boolean; rightsStatus?: "unverified" | "approved"; rightsMetadata: Record<string, unknown> },
-) {
-  const context = workerContext(identity);
-  const stored = await storage.putPrivate(context, { body: input.bytes, domain: "authorized", fileName: input.fileName, mediaType: input.mediaType });
-  return withTenant(database.db, context, async (tx) => {
-    const [existing] = await tx.select().from(assetFiles).where(eq(assetFiles.objectKey, stored.objectKey)).limit(1);
-    if (existing) return { id: existing.id, version: existing.version, checksumSha256: existing.checksumSha256 };
-    const [created] = await tx.insert(assetFiles).values({
-      id: createEntityId(), tenantId: identity.tenantId, ownerUserId: identity.userId,
-      objectKey: stored.objectKey, assetDomain: "authorized", fileName: input.fileName,
-      mediaType: input.mediaType, byteSize: input.bytes.byteLength, checksumSha256: stored.checksumSha256,
-      rightsStatus: input.rightsStatus ?? "unverified", rightsMetadata: input.rightsMetadata, aiGenerated: input.aiGenerated,
-    }).returning();
-    return { id: created!.id, version: created!.version, checksumSha256: created!.checksumSha256 };
-  });
-}
-
-function assetInput(bytes: Uint8Array, fileName: string, kind: string, inspectionId: string) {
-  return {
-    bytes, fileName, mediaType: "image/png", aiGenerated: false, rightsStatus: "approved" as const,
-    rightsMetadata: { source: { kind: "owned", reference: `controlled-psd-compile:${MOCKUP_COMPILER_VERSION}` }, inspectionId, compiledAssetKind: kind },
-  };
-}
-
-async function readAuthorized(storage: Storage, identity: WorkerIdentity, asset: typeof assetFiles.$inferSelect) {
-  return storage.readPrivate(workerContext(identity), storedAssetView(asset), { requiredDomain: "authorized" });
-}
-
-function storedAssetView(asset: typeof assetFiles.$inferSelect) {
-  return { id: asset.id, tenantId: asset.tenantId, assetDomain: asset.assetDomain as "authorized", objectKey: asset.objectKey };
-}
-
-async function refreshCreativeProgress(tx: TenantTransaction, batchId: string) {
-  const items = await tx.select({ id: creativeDesignBatchItems.id }).from(creativeDesignBatchItems).where(eq(creativeDesignBatchItems.batchId, batchId));
-  if (!items.length) return;
-  const candidates = await tx.select().from(creativeDesignCandidates).where(inArray(creativeDesignCandidates.itemId, items.map((item) => item.id)));
-  for (const item of items) {
-    const statuses = candidates.filter((candidate) => candidate.itemId === item.id).map((candidate) => candidate.status);
-    const itemStatus = statuses.every((status) => status === "failed") ? "failed"
-      : statuses.every((status) => ["generated", "selected", "failed"].includes(status)) ? statuses.includes("failed") ? "partially_succeeded" : "awaiting_review"
-        : statuses.some((status) => status === "running") ? "running" : "queued";
-    await tx.update(creativeDesignBatchItems).set({ status: itemStatus, completedAt: ["failed", "partially_succeeded", "awaiting_review"].includes(itemStatus) ? new Date() : null, updatedAt: new Date() })
-      .where(eq(creativeDesignBatchItems.id, item.id));
-  }
-  const generatedCount = candidates.filter((candidate) => ["generated", "selected"].includes(candidate.status)).length;
-  const failedItemCount = items.filter((item) => {
-    const statuses = candidates.filter((candidate) => candidate.itemId === item.id).map((candidate) => candidate.status);
-    return statuses.every((status) => status === "failed");
-  }).length;
-  const terminal = candidates.every((candidate) => ["generated", "selected", "failed", "cancelled"].includes(candidate.status));
-  const status = terminal ? generatedCount > 0 ? failedItemCount > 0 ? "partially_succeeded" : "awaiting_review" : "failed" : "running";
-  await tx.update(creativeDesignBatches).set({
-    status, generatedCount, failedCount: failedItemCount,
-    completedAt: terminal ? new Date() : null, updatedAt: new Date(),
-  }).where(eq(creativeDesignBatches.id, batchId));
-}
-
-async function refreshMockupProgress(tx: TenantTransaction, batchId: string) {
-  const items = await tx.select({ status: mockupBatchItems.status }).from(mockupBatchItems).where(eq(mockupBatchItems.batchId, batchId));
-  const failedCount = items.filter((item) => item.status === "failed").length;
-  const completedCount = items.filter((item) => item.status === "completed").length;
-  const finishedRendering = items.every((item) => ["awaiting_review", "partially_succeeded", "failed", "completed"].includes(item.status));
-  const status = finishedRendering
-    ? failedCount === items.length ? "failed" : failedCount > 0 || items.some((item) => item.status === "partially_succeeded") ? "partially_succeeded" : "awaiting_review"
-    : "running";
-  await tx.update(mockupBatches).set({ status, failedCount, completedCount, completedAt: finishedRendering ? new Date() : null, updatedAt: new Date() })
-    .where(eq(mockupBatches.id, batchId));
-}
-
-function workerContext(identity: WorkerIdentity): TenantContext {
-  return { ...identity, permissions: [Permission.AssetRead], dataScope: "tenant" };
-}
 
 function nearestSupportedRatio(ratio: number): "1:1" | "4:5" | "3:4" | "16:9" {
   const choices = [["1:1", 1], ["4:5", 0.8], ["3:4", 0.75], ["16:9", 16 / 9]] as const;
   return [...choices].sort((left, right) => Math.abs(left[1] - ratio) - Math.abs(right[1] - ratio))[0]![0];
 }
 
-function mediaExtension(mediaType: string) {
-  return mediaType === "image/jpeg" ? "jpg" : mediaType === "image/webp" ? "webp" : mediaType === "image/tiff" ? "tiff" : "png";
-}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function errorCode(error: unknown) {
-  if (error instanceof MockupTemplatePolicyError) return error.code;
-  return "PROCESSING_FAILED";
-}
-
-function safeMessage(error: unknown) {
-  return (error instanceof Error ? error.message : "POD batch processing failed").slice(0, 500);
-}

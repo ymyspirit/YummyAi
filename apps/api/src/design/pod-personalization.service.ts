@@ -120,10 +120,12 @@ export class PodPersonalizationService {
   }
 
   async listTemplateSourceInspections(context: TenantContext) {
-    const rows = await withTenant(this.database.db, context, (tx) => tx.select()
+    const rows = await withTenant(this.database.db, context, (tx) => tx.select({ inspection: personalizationTemplateSourceInspections })
       .from(personalizationTemplateSourceInspections)
+      .innerJoin(assetFiles, eq(assetFiles.id, personalizationTemplateSourceInspections.sourceAssetId))
+      .where(isNull(assetFiles.deletedAt))
       .orderBy(desc(personalizationTemplateSourceInspections.createdAt)).limit(100));
-    return PersonalizationTemplateSourceInspectionListSchema.parse({ items: rows.map(mapTemplateSourceInspection) });
+    return PersonalizationTemplateSourceInspectionListSchema.parse({ items: rows.map(row => mapTemplateSourceInspection(row.inspection)) });
   }
 
   async getTemplateSourceInspection(context: TenantContext, id: string) {
@@ -132,6 +134,15 @@ export class PodPersonalizationService {
       .where(eq(personalizationTemplateSourceInspections.id, id)).limit(1));
     if (!row) throw new NotFoundException("Template source inspection not found");
     return mapTemplateSourceInspection(row);
+  }
+
+  async templateAnalysisBasis(context: TenantContext, id: string) {
+    const inspection = await this.getTemplateSourceInspection(context, id);
+    await withTenant(this.database.db, context, async tx => {
+      const asset = await requireAuthorizedAsset(tx, inspection.sourceAssetId, inspection.sourceAssetVersion);
+      if (asset.checksumSha256 !== inspection.checksumSha256) throw new ConflictException("模板源文件已变化，请重新解析");
+    });
+    return inspection;
   }
 
   async confirmTemplateSourceInspection(
@@ -161,6 +172,7 @@ export class PodPersonalizationService {
           sourceLayerPath: detected.sourceLayerPath,
           confidencePermille: detected.confidencePermille,
           classificationConfirmed: true,
+          ...(slot.suggestedFieldKey ? { suggestedFieldKey: slot.suggestedFieldKey } : {}),
         },
       };
     });
