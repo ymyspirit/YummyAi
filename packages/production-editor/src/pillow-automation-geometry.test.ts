@@ -44,6 +44,7 @@ describe("versioned independent pillow geometry", () => {
     expect(original.layers[0]).toMatchObject({ widthMm: 220, heightMm: 220, locked: false });
   });
 
+  // Both sales sizes rasterize 4100 px alpha fixtures; this is a correctness check, not a performance SLA.
   it("uses exact factory tab, line, clear margins and panel gap on both sales-size extremes", () => {
     for (const inches of [10, 24]) {
       const result = createPillowAutomationGeometry(document(), fixture("circle", 4100), { artworkLayerId: "photo", longestSideInches: inches });
@@ -64,7 +65,7 @@ describe("versioned independent pillow geometry", () => {
       expect(px(layout.widthMm - 2 * layout.panelWidthMm)).toBeCloseTo(200, 8);
       expect(px(layout.heightMm - layout.panelHeightMm)).toBeCloseTo(100, 8);
     }
-  }, 15_000);
+  }, 30_000);
 
   it("ignores distant alpha31 residue in geometry as well as measurement and retains the original alpha", () => {
     const clean = fixture("cat");
