@@ -10,7 +10,9 @@ on:
         default: all
   pull_request:
   push:
-    branches: [main, "feature/**", "codex/**"]
+    # Branch updates are checked by pull_request.synchronize. Checking them
+    # again on push creates duplicate runs that cancel one another.
+    branches: [main]
 
 permissions:
   contents: read
