@@ -18,7 +18,11 @@ function pg(error: unknown): { code?: string; message?: string } {
   if ("code" in error) return error as { code?: string; message?: string };
   return "cause" in error ? pg(error.cause) : {};
 }
-const guard = (message: string) => (error: unknown) => pg(error).code === "23514" && pg(error).message === message;
+const guard = (message: string) => (error: unknown) => {
+  const actual = pg(error);
+  expect({ code: actual.code, message: actual.message }).toEqual({ code: "23514", message });
+  return true;
+};
 const xid = async (tx: TenantTransaction) => (await tx.execute<{ xid: string }>(sql`select pg_current_xact_id()::text as xid`))[0]!.xid;
 
 describe.sequential("factory ERP original sources, explicit delivery groups and append-only status observations", () => {
@@ -303,14 +307,19 @@ describe.sequential("factory ERP original sources, explicit delivery groups and 
       await tx.execute(sql`set constraints all immediate`);
       throw rollback;
     })).rejects.toBe(rollback);
-    await expect(withTenant(database.db, f.base.context, async tx => {
+    const incompleteApplication = (constraint: "all" | "factory_erp_application_closure") => withTenant(database.db, f.base.context, async tx => {
       const id = createEntityId(), input = { ...application!.input, idempotencyKey: randomUUID() }, createdAt = new Date();
       const requestCanonical = canonicalJson({ version: 1, operation: "factory-erp-apply", importId: view.id, input }), requestChecksum = sha(requestCanonical);
       await tx.insert(factoryErpApplications).values({ ...application!, id, input, idempotencyKey: input.idempotencyKey, requestCanonical, requestChecksum,
         createdAt, creationTransactionId: await xid(tx), result: { ...application!.result, id, requestChecksum, createdAt: createdAt.toISOString() } });
       await f.base.audit.recordInTransaction(tx, f.base.context, { action: "factory_erp.import_applied", resourceType: "factory_erp_application", resourceId: id, result: "success", metadata: { importId: view.id, rows: 1 } });
-      await tx.execute(sql`set constraints all immediate`);
-    })).rejects.toSatisfy(guard("factory_erp_rows_closure_required"));
+      await tx.execute(constraint === "all" ? sql`set constraints all immediate` : sql`set constraints factory_erp_application_closure immediate`);
+    });
+    // The newer association constraint runs first for ALL and rejects the
+    // absent binding. Flush the original owner constraint separately so its
+    // missing-row closure is still tested with its exact error as well.
+    await expect(incompleteApplication("all")).rejects.toSatisfy(guard("factory_erp_binding_closed"));
+    await expect(incompleteApplication("factory_erp_application_closure")).rejects.toSatisfy(guard("factory_erp_rows_closure_required"));
     await expect(withTenant(database.db, f.base.context, tx => tx.insert(factoryErpBindings).values({ ...binding!, id: createEntityId(), externalKey: "e".repeat(64), creationTransactionId: sql`pg_current_xact_id()::text` })))
       .rejects.toSatisfy(guard("factory_erp_application_birth_required"));
     const nativeGraph = async (tx: TenantTransaction, tamper: "none" | "result_status" | "observation_status" = "none") => {
