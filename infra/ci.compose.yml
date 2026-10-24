@@ -1,0 +1,9 @@
+services:
+  minio:
+    image: yummyai/minio-ci:0d7408fc9969
+    build:
+      context: ./ci
+      dockerfile: minio.Dockerfile
+    pull_policy: build
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]

@@ -1,11 +1,19 @@
 import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
+import process from "node:process";
 import { describe, expect, it } from "vitest";
 import { parseStoreNodeConfiguration } from "./config.js";
 import { noLinks, withStoreNodeLock } from "./storage.js";
 
 const passphrase = "synthetic-store-node-passphrase-for-unit";
+
+function markLockCase(name: "identity" | "execution", startedAt: number,
+  phase: "request1" | "held1" | "ack1" | "closed1" | "request2" | "held2" | "ack2" | "closed2") {
+  process.stdout.write(JSON.stringify({ code: "store_node_windows_test_phase", case: name, phase,
+    elapsedMs: Math.round(performance.now() - startedAt) }) + "\n");
+}
 
 async function withOwnedDirectory(label: string, action: (directory: string) => Promise<void>) {
   const parent = path.resolve(tmpdir()), prefix = `yummyai-store-node-${label}-`;
@@ -52,19 +60,38 @@ describe("store node Windows local boundary", () => {
 
   it("commits ciphertext under the Windows OS lock and safely reopens the same protected directory", async () => {
     await withOwnedDirectory("identity", async directory => {
-      await withStoreNodeLock(directory, async lock => { await lock.commit(Buffer.from("synthetic-cipher-v1")); lock.assertHeld(); });
-      await withStoreNodeLock(directory, async lock => { await lock.commit(Buffer.from("synthetic-cipher-v2")); lock.assertHeld(); });
+      const startedAt = performance.now();
+      markLockCase("identity", startedAt, "request1");
+      await withStoreNodeLock(directory, async lock => {
+        markLockCase("identity", startedAt, "held1");
+        await lock.commit(Buffer.from("synthetic-cipher-v1")); lock.assertHeld();
+        markLockCase("identity", startedAt, "ack1");
+      });
+      markLockCase("identity", startedAt, "closed1");
+      markLockCase("identity", startedAt, "request2");
+      await withStoreNodeLock(directory, async lock => {
+        markLockCase("identity", startedAt, "held2");
+        await lock.commit(Buffer.from("synthetic-cipher-v2")); lock.assertHeld();
+        markLockCase("identity", startedAt, "ack2");
+      });
+      markLockCase("identity", startedAt, "closed2");
       expect(await readFile(path.join(directory, "state.pe"), "utf8")).toBe("synthetic-cipher-v2");
     });
   }, 30000);
 
   it("serializes heartbeat and journal replacements under one Windows OS lock", async () => {
     await withOwnedDirectory("execution", async directory => {
+      const startedAt = performance.now();
+      markLockCase("execution", startedAt, "request1");
       await withStoreNodeLock(directory, async lock => {
+        markLockCase("execution", startedAt, "held1");
         await Promise.all([lock.commit(Buffer.from("synthetic-heartbeat-1")), lock.commitJournal(Buffer.from("synthetic-journal-1"))]);
+        markLockCase("execution", startedAt, "ack1");
         await Promise.all([lock.commitJournal(Buffer.from("synthetic-journal-2")), lock.commit(Buffer.from("synthetic-heartbeat-2"))]);
+        markLockCase("execution", startedAt, "ack2");
         lock.assertHeld();
       });
+      markLockCase("execution", startedAt, "closed1");
       expect(await readFile(path.join(directory, "state.pe"), "utf8")).toBe("synthetic-heartbeat-2");
       expect(await readFile(path.join(directory, "execution.pe"), "utf8")).toBe("synthetic-journal-2");
     });

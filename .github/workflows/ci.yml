@@ -2,6 +2,12 @@ name: YummyAI release gates
 
 on:
   workflow_dispatch:
+    inputs:
+      gate:
+        description: Checks to run
+        type: choice
+        options: [all, windows]
+        default: all
   pull_request:
   push:
     branches: [main, "feature/**", "codex/**"]
@@ -10,13 +16,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.gate || 'all' }}
   cancel-in-progress: true
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_dispatch' || inputs.gate == 'all'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       POSTGRES_DB: yummyai
       POSTGRES_USER: yummyai_local
@@ -72,15 +79,15 @@ jobs:
           });
           writeFileSync('.env', lines.join('\n') + '\n', { flag: 'wx', mode: 0o600 });
           NODE
-      - run: docker compose -f infra/docker-compose.yml up -d postgres redis minio keycloak clamav otel-collector
+      - run: docker compose -f infra/docker-compose.yml -f infra/ci.compose.yml up -d --build postgres redis minio keycloak clamav otel-collector
       - name: Wait for infrastructure
         run: |
           for i in {1..150}; do
-            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format json | jq -s '[.[] | select(.Health != "healthy" and .State != "exited")] | length')
+            unhealthy=$(docker compose -f infra/docker-compose.yml -f infra/ci.compose.yml ps --format json | jq -s '[.[] | select(.Health != "healthy" and .State != "exited")] | length')
             [ "$unhealthy" = "0" ] && exit 0
             sleep 2
           done
-          docker compose -f infra/docker-compose.yml ps
+          docker compose -f infra/docker-compose.yml -f infra/ci.compose.yml ps
           exit 1
       - name: Start pinned creative canvas
         run: docker compose -f infra/infinite-canvas.compose.yml up -d --wait --wait-timeout 180
@@ -122,7 +129,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - if: always()
-        run: docker compose -f infra/docker-compose.yml logs --tail=120
+        run: docker compose -f infra/docker-compose.yml -f infra/ci.compose.yml logs --tail=120
       - if: always()
         run: docker compose -f infra/infinite-canvas.compose.yml logs --tail=80
   windows-node-gates:
