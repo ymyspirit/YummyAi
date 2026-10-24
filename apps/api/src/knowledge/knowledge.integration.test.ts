@@ -173,6 +173,7 @@ describe.skipIf(!disposable)("native knowledge tenant lifecycle and immutable re
   });
   it("restricts product-scoped knowledge and rejects a different tenant's product", async () => {
     const ownSpu = await product(a),
+      unrelatedOwnSpu = await product(a),
       otherSpu = await product(b);
     const scoped = await service.save(a, null, save({ fields: { ...fields, spuId: ownSpu } }));
     const reader = {
@@ -208,10 +209,12 @@ describe.skipIf(!disposable)("native knowledge tenant lifecycle and immutable re
       ),
     ).toBe(true);
     expect(
-      (await service.search(a, { ...query, spuIds: [otherSpu] })).references.some(
+      (await service.search(a, { ...query, spuIds: [unrelatedOwnSpu] })).references.some(
         (reference) => reference.entryId === scoped.id,
       ),
     ).toBe(false);
+    await expect(service.search(a, { ...query, spuIds: [otherSpu] })).rejects.toMatchObject({ status: 404 });
+    await expect(service.search(a, { ...query, spuIds: [createEntityId()] })).rejects.toMatchObject({ status: 404 });
     await expect(service.search(reader, { ...query, spuIds: [ownSpu] })).rejects.toThrow();
     await expect(
       service.change(

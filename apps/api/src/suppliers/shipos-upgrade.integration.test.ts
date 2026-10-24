@@ -1,3 +1,4 @@
+import { insertLegacy, ensureLegacyMembership, legacyRecordSnapshot, upgradeLegacyDatabase } from "../orders/legacy-upgrade.test-fixture.js";
 import { randomUUID } from "node:crypto";
 import { SecretVault } from "@yummyai/ai-core";
 import { Permission } from "@yummyai/authz";
@@ -30,15 +31,16 @@ describe("actual pre-0137 ShipOS observation upgrade", () => {
     expect(shape!.count).toBe(0);
     await database.client.unsafe("insert into organizations(id,name,slug) values($1,'ShipOS upgrade fixture',$2)", [tenantId, `shipos-upgrade-${tenantId}`]);
     await database.client.unsafe("insert into app_users(id,oidc_subject,email,display_name) values($1,$2,$3,'Upgrade operator')", [userId, `shipos-upgrade-${userId}`, `${userId}@example.test`]);
+    await ensureLegacyMembership(database, context);
     const evidence = { orderNumber: "LEGACY", trackingNumber: "OLD-TRACK", labelAvailable: false, statusCode: 14, labelStatusCode: 2,
       cancelStatusCode: 0, settlementStatusCode: 1, channel: null, fee: null, currency: null, diagnostics: [] };
     await withTenant(database.db, context, async tx => {
-      await tx.insert(fulfillmentSuppliers).values({ id: supplierId, tenantId, name: "Upgrade supplier", kind: "manual", regionCode: "", settlementCurrency: "USD", createdBy: userId });
-      await tx.insert(marketplaceAccounts).values({ id: accountId, tenantId, platform: "amazon", displayName: "Upgrade shop", region: "NA", authorizationMode: "amazon_private", marketplaceIds: ["ATVPDKIKX0DER"], createdBy: userId });
-      await tx.insert(orderSourceSnapshots).values({ id: snapshotId, tenantId, accountId, platform: "amazon", externalEventId: `upgrade-${orderId}`, externalOrderId: "LEGACY", normalizedOrderId: orderId, redactedPayload: {}, payloadChecksum: "d".repeat(64) });
-      await tx.insert(orders).values({ id: orderId, tenantId, accountId, sourceSnapshotId: snapshotId, platform: "amazon", externalOrderId: "LEGACY", providerStatus: "synthetic", lineCount: 1, placedAt: new Date(), addressStatus: "protected" });
-      await tx.insert(orderLines).values({ id: lineId, tenantId, orderId, externalLineId: "upgrade-line", title: "Synthetic item", quantity: 1 });
-      await tx.insert(orderWorkItems).values({ id: lineId, tenantId, encryptedDataKey: vault.encrypt(Buffer.alloc(32, 8).toString("base64url")), expiresAt: sql`clock_timestamp()+interval '1 day'` });
+      await insertLegacy(tx, fulfillmentSuppliers, { id: supplierId, tenantId, name: "Upgrade supplier", kind: "manual", regionCode: "", settlementCurrency: "USD", createdBy: userId });
+      await insertLegacy(tx, marketplaceAccounts, { id: accountId, tenantId, platform: "amazon", displayName: "Upgrade shop", region: "NA", authorizationMode: "amazon_private", marketplaceIds: ["ATVPDKIKX0DER"], createdBy: userId });
+      await insertLegacy(tx, orderSourceSnapshots, { id: snapshotId, tenantId, accountId, platform: "amazon", externalEventId: `upgrade-${orderId}`, externalOrderId: "LEGACY", normalizedOrderId: orderId, redactedPayload: {}, payloadChecksum: "d".repeat(64) });
+      await insertLegacy(tx, orders, { id: orderId, tenantId, accountId, sourceSnapshotId: snapshotId, platform: "amazon", externalOrderId: "LEGACY", providerStatus: "synthetic", lineCount: 1, placedAt: new Date(), addressStatus: "protected" });
+      await insertLegacy(tx, orderLines, { id: lineId, tenantId, orderId, externalLineId: "upgrade-line", title: "Synthetic item", quantity: 1 });
+      await insertLegacy(tx, orderWorkItems, { id: lineId, tenantId, encryptedDataKey: vault.encrypt(Buffer.alloc(32, 8).toString("base64url")), expiresAt: sql`clock_timestamp()+interval '1 day'` });
       await tx.execute(sql`insert into shipos_connections(id,tenant_id,supplier_id,name,status,version,encrypted_credentials,last_request_key,last_request_checksum,created_by)
         values(${connectionId},${tenantId},${supplierId},'Legacy connection','active',1,${vault.encrypt(JSON.stringify({ appKey: "synthetic-upgrade-key", appSecret: "synthetic-upgrade-secret" }))},${randomUUID()},${"a".repeat(64)},${userId})`);
       await tx.execute(sql`insert into shipos_sync_runs(id,tenant_id,connection_id,connection_version,idempotency_key,request_checksum,order_numbers,status,created_by,created_at,completed_at)
@@ -46,12 +48,10 @@ describe("actual pre-0137 ShipOS observation upgrade", () => {
       await tx.execute(sql`insert into shipos_order_snapshots(id,tenant_id,run_id,evidence,local_order_id,local_line_id,match,fetched_at)
         values(${oldRecordId},${tenantId},${oldRunId},${JSON.stringify(evidence)}::jsonb,${orderId},${lineId},'matched',clock_timestamp()+interval '1 day')`);
     });
-    const original = () => withTenant(database.db, context, tx => tx.execute<{ connection: string; run: string; snapshot: string }>(sql`
-      select (select md5((to_jsonb(c)-'sync_sequence')::text) from shipos_connections c where id=${connectionId}) as connection,
-       (select md5((to_jsonb(r)-'sync_sequence')::text) from shipos_sync_runs r where id=${oldRunId}) as run,
-       (select md5(to_jsonb(s)::text) from shipos_order_snapshots s where id=${oldRecordId}) as snapshot`));
+    const original = await legacyRecordSnapshot(database, context, { connection: { table: "shipos_connections", id: connectionId },
+      run: { table: "shipos_sync_runs", id: oldRunId }, snapshot: { table: "shipos_order_snapshots", id: oldRecordId } });
     const before = await original();
-    await migrateDatabase(database);
+    await upgradeLegacyDatabase(database, 137);
     await expect(assertDatabaseMigrationsCurrent(database)).resolves.toEqual({ migrations: currentMigrationCount });
     expect(await original()).toEqual(before);
     const [connection] = await withTenant(database.db, context, tx => tx.select().from(shiposConnections));

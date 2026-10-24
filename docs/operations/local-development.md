@@ -8,4 +8,8 @@
 
 CI使用一次性账户、数据库和密钥；不会连接本机业务库或付费渠道。Windows专用节点锁测试在Windows job执行；Linux保留纯测试及可移植流程。普通Web smoke使用明确的默认文件列表；每个个人/历史/互斥验收仍使用自己的配置及disposable runner，不能绕开隔离旗标运行。P1的本人配置页另在Windows实际编译候选上验证。
 
+发布租约的定向集成使用 `pnpm test:e2e:order-daily --suite=publication-lease-integration`。它复用同一一次性数据库、对象桶和Redis生命周期，仅运行Worker的发布租约配置；完整CI仍运行全部集成检查。个人Studio验收由入口固定单连接池，普通Worker集成保留正常连接池以验证真实账户锁。
+
+原生PSD检查需要ImageMagick 7。Windows固定快照应包含 `packages/mockup-renderer/runtime-lock.json` 所列的本机工具文件；Linux CI按固定官方AppImage的SHA256校验、解包并验证真实透视运算，通过绝对可执行路径传给后续检查。版本及像素探针通过后仍须运行真实PSD集成检查。
+
 每阶段先冻结范围，通过相关检查和对应commit的CI，清理自有验收输出，完成备份、部署和日用核对后，才进入下一阶段。详见[阶段计划](../project-control/PHASE_RELEASE_PLAN.md)。

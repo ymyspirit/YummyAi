@@ -82,7 +82,12 @@ describe.sequential("advertising workbench tenant persistence", () => {
     timezone: "America/Los_Angeles",
     attributionWindowDays: 7,
     attributionBasis: "click",
-    observedAt: "2026-09-16T18:00:00.000Z",
+    conversionDefinition: {
+      model: "click",
+      source: "Synthetic report settings explicitly confirm seven-day click attribution",
+    },
+    // The complete September 1–15 report has passed its seven-day attribution window.
+    observedAt: "2026-09-23T18:00:00.000Z",
     dateOrder: null,
     allowPartial: false,
     idempotencyKey: "batch-original",

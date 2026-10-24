@@ -1,3 +1,4 @@
+import { ensureLegacyMembership, legacyRecordSnapshot, seedLegacyOrder, seedLegacyPassedProduction, upgradeLegacyDatabase } from "./legacy-upgrade.test-fixture.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SecretVault } from "@yummyai/ai-core";
 import { CreateShipmentInputSchema, RecordQualityInspectionInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
@@ -5,12 +6,11 @@ import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { connectDatabase, withTenant } from "@yummyai/database";
 import { sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
-import { migrateDatabase, assertDatabaseMigrationsCurrent } from "../../../../packages/database/src/migrate.js";
+import { assertDatabaseMigrationsCurrent } from "../../../../packages/database/src/migrate.js";
 import { AuditService } from "../audit/audit.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderShipmentService } from "./order-shipment.service.js";
 import { OrderProductionService } from "./order-production.service.js";
-import { syntheticPassedProduction } from "./shipment-production-fixture.js";
 import { inspectionRequestChecksum } from "./quality-inspection-evidence.js";
 import { productionReadyQuantity } from "@yummyai/order-core";
 
@@ -27,13 +27,14 @@ describe("actual pre-0132 physical quality group upgrade", () => {
     const context: TenantContext = { tenantId, userId, permissions: ["order:read", "order:write", "order:pii:read"], dataScope: "tenant" };
     await database.client.unsafe("insert into organizations(id,name,slug) values($1,'Synthetic physical group upgrade',$2)", [tenantId, `group-upgrade-${tenantId}`]);
     await database.client.unsafe("insert into app_users(id,oidc_subject,email,display_name) values($1,$2,$3,'Synthetic old quality operator')", [userId, `group-upgrade-${userId}`, `${userId}@example.test`]);
+    await ensureLegacyMembership(database, context);
     await database.client.unsafe("insert into marketplace_accounts(id,tenant_id,platform,display_name,region,authorization_mode,created_by) values($1,$2,'etsy','Synthetic old group shop','GLOBAL','etsy_oauth',$3)", [accountId, tenantId, userId]);
     const vault = new SecretVault(Buffer.alloc(32, 62)), audit = new AuditService(database), orders = new OrderService(database, vault, audit);
     const production = new OrderProductionService(database, vault, orders, audit), shipping = new OrderShipmentService(database, vault, orders, audit, { enqueue: async () => undefined });
-    const order = await orders.ingestNormalized(context, { accountId, platform: "etsy", externalEventId: randomUUID(), externalOrderId: randomUUID(), providerStatus: "paid",
+    const order = await seedLegacyOrder(database, context, { accountId, platform: "etsy", externalEventId: randomUUID(), externalOrderId: randomUUID(), providerStatus: "paid",
       placedAt: "2026-10-01T00:00:00.000Z", orderTotal: null, lines: [{ externalLineId: "old-group-item", externalListingId: null, skuCode: null, title: "Synthetic pre-group stock", quantity: 2, unitPrice: null, customizationCount: 0 }], redactedSource: { synthetic: true }, protectedDetails: null });
     await database.client.unsafe("update orders set workflow_state='awaiting_shipment',address_status='protected' where id=$1", [order.id]);
-    const [source] = await syntheticPassedProduction(database, context, order.id, [{ id: order.lines[0]!.id, quantity: 2 }]);
+    const [source] = await seedLegacyPassedProduction(database, context, order.id, [{ id: order.lines[0]!.id, quantity: 2 }]);
     const shipmentId = createEntityId(), versionId = createEntityId(), packageId = createEntityId(), packageLineId = createEntityId(), allocationId = createEntityId();
     const shipmentInput = CreateShipmentInputSchema.parse({ shipDate: "2026-10-02T00:00:00.000Z", shipFromCountryCode: "US", idempotencyKey: randomUUID(), packages: [{
       packageReferenceId: "OLD-GROUP-PACK", trackingNumber: "SYNTHETIC-OLD-GROUP", carrierCode: "SYNTHETIC", carrierName: "Synthetic old carrier", carrierService: "Synthetic old service",
@@ -63,14 +64,11 @@ describe("actual pre-0132 physical quality group upgrade", () => {
         values(${defectId},${tenantId},${source!.productionOrderId},${inspectionId},'STOCK','major','supplier','remake',${vault.encrypt(inspectionInput.defects[0]!.note)},${hash(inspectionInput.defects[0]!.note)},'[]'::jsonb)`);
       await tx.execute(sql`update production_orders set status='quality_hold',projection_version=6 where id=${source!.productionOrderId}`);
     });
-    const snapshot = async (after = false) => {
-      const [row] = await database.client.unsafe(`select (select to_jsonb(q) from quality_inspections q where q.id=$1) as inspection,
-        (select to_jsonb(d) from quality_defects d where d.id=$2) as defect,(select to_jsonb(v) from shipment_versions v where v.id=$3) as version,
-        (select to_jsonb(a)${after ? "-'quality_group_id'-'group_quality_result'" : ""} from shipment_production_allocations a where a.id=$4) as allocation`, [inspectionId, defectId, versionId, allocationId]);
-      return row;
-    };
-    const before = await snapshot(); await migrateDatabase(database); await assertDatabaseMigrationsCurrent(database);
-    expect(await snapshot(true)).toEqual(before);
+    const snapshot = await legacyRecordSnapshot(database, context, { inspection: { table: "quality_inspections", id: inspectionId },
+      defect: { table: "quality_defects", id: defectId }, version: { table: "shipment_versions", id: versionId },
+      allocation: { table: "shipment_production_allocations", id: allocationId } });
+    const before = await snapshot(); await upgradeLegacyDatabase(database, 132); await assertDatabaseMigrationsCurrent(database);
+    expect(await snapshot()).toEqual(before);
     const original = await production.inspect(context, source!.productionOrderId, inspectionInput);
     expect(original.inspections.find(item => item.id === inspectionId)!.assessmentVersion).toBe(2);
     expect(original.defects.find(item => item.id === defectId)).toMatchObject({ qualityGroupId: null, affectedQuantity: null });
@@ -102,6 +100,6 @@ describe("actual pre-0132 physical quality group upgrade", () => {
     }] }] });
     expect(revised.versions[1]!.productionSourceVersion).toBe(2);
     expect(revised.productionAllocations.find(item => item.shipmentVersionId === revised.versions[1]!.id)!.qualityGroupId).toBe(accepted.id);
-    expect(await snapshot(true)).toEqual(before);
+    expect(await snapshot()).toEqual(before);
   });
 });

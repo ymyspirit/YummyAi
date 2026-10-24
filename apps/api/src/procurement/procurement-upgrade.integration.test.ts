@@ -1,8 +1,9 @@
+import { insertLegacy, migrateLegacyThrough, migrateLegacyToCurrentPreserving } from "../orders/legacy-upgrade.test-fixture.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, withTenant, migrateDatabase, readMigrationEvidence, assertDatabaseMigrationsCurrent,
+import { connectDatabase, withTenant, readMigrationEvidence, assertDatabaseMigrationsCurrent,
   memberships, membershipRoles, roles, fulfillmentSuppliers, inventoryProcurementRequisitions,
   inventoryProcurementRequisitionVersions, inventoryProcurementRfqs, inventorySupplierQuoteVersions,
   inventoryPurchaseOrders, inventoryPurchaseOrderVersions, inventoryPurchaseOrderEvents, inventoryProcurementWriteRequests } from "@yummyai/database";
@@ -35,10 +36,10 @@ describe("genuine 145 to 148 procurement upgrade", () => {
     const supplierId = createEntityId();
     await withTenant(database.db, context, async tx => {
       const membershipId = createEntityId(), roleId = createEntityId();
-      await tx.insert(memberships).values({ id: membershipId, tenantId: context.tenantId, userId: context.userId, status: "active" });
-      await tx.insert(roles).values({ id: roleId, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
-      await tx.insert(membershipRoles).values({ tenantId: context.tenantId, membershipId, roleId });
-      await tx.insert(fulfillmentSuppliers).values({ id: supplierId, tenantId: context.tenantId, name: "Synthetic145 supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", createdBy: context.userId });
+      await insertLegacy(tx, memberships, { id: membershipId, tenantId: context.tenantId, userId: context.userId, status: "active" });
+      await insertLegacy(tx, roles, { id: roleId, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
+      await insertLegacy(tx, membershipRoles, { tenantId: context.tenantId, membershipId, roleId });
+      await insertLegacy(tx, fulfillmentSuppliers, { id: supplierId, tenantId: context.tenantId, name: "Synthetic145 supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", createdBy: context.userId });
     });
     const warehouse = await inventory.createWarehouse(context, { code: "OLD145", name: "Synthetic145 warehouse", type: "owned", countryCode: "US", timeZone: "UTC" });
     const location = await inventory.createLocation(context, { warehouseId: warehouse.id, code: "OLD145", name: "Synthetic145 location" });
@@ -55,22 +56,22 @@ describe("genuine 145 to 148 procurement upgrade", () => {
     // This is the actual old schema, before the new table and constraints exist.
     // These synthetic old facts intentionally have no invented request evidence.
     await withTenant(database.db, context, async tx => {
-      await tx.insert(inventoryProcurementRequisitions).values({ id: reqId, tenantId: context.tenantId, code: reqInput.code, status: "ordered", idempotencyKey: reqInput.idempotencyKey, createdBy: context.userId });
-      await tx.insert(inventoryProcurementRequisitionVersions).values({ id: reqVersionId, tenantId: context.tenantId, requisitionId: reqId, versionNumber: 1,
+      await insertLegacy(tx, inventoryProcurementRequisitions, { id: reqId, tenantId: context.tenantId, code: reqInput.code, status: "ordered", idempotencyKey: reqInput.idempotencyKey, createdBy: context.userId });
+      await insertLegacy(tx, inventoryProcurementRequisitionVersions, { id: reqVersionId, tenantId: context.tenantId, requisitionId: reqId, versionNumber: 1,
         reasonCode: reqInput.reasonCode, lineSnapshot: reqInput.lines, checksum: hash(reqInput), createdBy: context.userId });
       // The genuine 145 schema has no creation witness column yet.
       await tx.execute(sql`insert into inventory_procurement_rfqs
         (id,tenant_id,requisition_id,requisition_version_id,supplier_ids,response_due_at,idempotency_key,created_by)
         values(${rfqId},${context.tenantId},${reqId},${reqVersionId},${JSON.stringify([supplierId])}::jsonb,
           ${rfqInput.responseDueAt}::timestamptz,${rfqInput.idempotencyKey},${context.userId})`);
-      await tx.insert(inventorySupplierQuoteVersions).values({ id: quoteId, tenantId: context.tenantId, rfqId, supplierId, versionNumber: 1, currency: "USD",
+      await insertLegacy(tx, inventorySupplierQuoteVersions, { id: quoteId, tenantId: context.tenantId, rfqId, supplierId, versionNumber: 1, currency: "USD",
         validUntil: new Date(quoteInput.validUntil), lineSnapshot: quoteInput.lines, totalMinor: 4250, checksum: hash(quoteInput), idempotencyKey: quoteInput.idempotencyKey, createdBy: context.userId });
-      await tx.insert(inventoryPurchaseOrders).values({ id: orderId, tenantId: context.tenantId, code: purchaseInput.code, supplierId, requisitionId: reqId, quoteId,
+      await insertLegacy(tx, inventoryPurchaseOrders, { id: orderId, tenantId: context.tenantId, code: purchaseInput.code, supplierId, requisitionId: reqId, quoteId,
         expectedAt: new Date(purchaseInput.expectedAt), idempotencyKey: purchaseInput.idempotencyKey, createdBy: context.userId });
-      for (const [number, input] of [[1, purchaseInput], [2, revision]] as const) await tx.insert(inventoryPurchaseOrderVersions).values({ id: createEntityId(), tenantId: context.tenantId,
+      for (const [number, input] of [[1, purchaseInput], [2, revision]] as const) await insertLegacy(tx, inventoryPurchaseOrderVersions, { id: createEntityId(), tenantId: context.tenantId,
         purchaseOrderId: orderId, versionNumber: number, currency: input.currency, expectedAt: new Date(input.expectedAt), lineSnapshot: input.lines,
         totalMinor: input.lines.reduce((sum, row) => sum + row.quantity * row.unitCostMinor, 0), checksum: hash(input), createdBy: context.userId });
-      await tx.insert(inventoryPurchaseOrderEvents).values([
+      await insertLegacy(tx, inventoryPurchaseOrderEvents, [
         { id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: orderId, sequence: 1, action: "created", fromStatus: null, toStatus: "draft", idempotencyKey: purchaseInput.idempotencyKey, actorUserId: context.userId },
         { id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: orderId, sequence: 2, action: "revised", fromStatus: "draft", toStatus: "draft", idempotencyKey: revision.idempotencyKey, actorUserId: context.userId },
         { id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: orderId, sequence: 3, action: "approved", fromStatus: "draft", toStatus: "approved", reasonCode: review.reasonCode, idempotencyKey: review.idempotencyKey, actorUserId: context.userId },
@@ -79,10 +80,16 @@ describe("genuine 145 to 148 procurement upgrade", () => {
     });
     const checkpoint = await captureLegacyDataCheckpoint(database);
     const original = await checkpoint.snapshot();
-    await migrateDatabase(database);
+    await migrateLegacyThrough(database, 148);
     expect(await checkpoint.snapshot()).toEqual(original);
+    const historical = await readMigrationEvidence(database);
+    expect(historical.actualRows).toHaveLength(148);
+    expect(historical.actualRows.slice(0,145)).toEqual(oldLedger);
+    expect(historical.actualRows.slice(145)).toEqual(historical.canonicalRows.slice(145,148));
+    const preservation = await migrateLegacyToCurrentPreserving(database);
+    const adoptedOriginal = await checkpoint.snapshot();
     const current = await readMigrationEvidence(database);
-    expect(current.actualRows).toHaveLength(148);
+    expect(current.actualRows).toHaveLength(current.canonicalRows.length);
     expect(current.actualRows.slice(0, 145)).toEqual(oldLedger);
     expect(current.actualRows.slice(145)).toEqual(current.canonicalRows.slice(145));
     expect((await database.client.unsafe("select creation_transaction_id as witness from inventory_procurement_rfqs where id=$1", [rfqId]))[0]!.witness).toBeNull();
@@ -126,7 +133,7 @@ describe("genuine 145 to 148 procurement upgrade", () => {
       expect(inserted!.witness).toBe(inserted!.actual); expect(inserted!.witness).not.toBe("0");
       throw rollbackProbe;
     })).rejects.toBe(rollbackProbe);
-    expect(await checkpoint.snapshot()).toEqual(original);
+    expect(await checkpoint.snapshot()).toEqual(adoptedOriginal);
     const oldPreparations: PrepareProcurementCommand[] = [
       { kind: "requisition_create", targetId: null, input: reqInput },
       { kind: "rfq_create", targetId: reqId, input: rfqInput },
@@ -140,7 +147,7 @@ describe("genuine 145 to 148 procurement upgrade", () => {
         .rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: "procurement_input_unavailable" }) });
     }
     expect.soft(await withTenant(database.db, context, tx => tx.select().from(procurementCommands))).toEqual([]);
-    expect(await checkpoint.snapshot()).toEqual(original);
+    expect(await checkpoint.snapshot()).toEqual(adoptedOriginal);
     const [clock] = await withTenant(database.db, context, tx => tx.execute<{ now: string }>(sql`select clock_timestamp()::text as now`));
     const future = new Date(new Date(clock!.now).getTime() + 86_400_000).toISOString();
     const freshReq = await procurement.createRequisition(context, { ...reqInput, code: "NEW146-REQ", idempotencyKey: randomUUID() });
@@ -170,7 +177,7 @@ describe("genuine 145 to 148 procurement upgrade", () => {
     expect(await withTenant(database.db, context, tx => tx.select().from(procurementCommands))).toHaveLength(1);
     expect(await withTenant(database.db, context, tx => tx.select().from(inventoryProcurementWriteRequests))).toHaveLength(7);
     process.stdout.write(JSON.stringify({ type: "procurement.upgrade.case", genuineOldMigrations: 145, preservedTables: original.length,
-      preservedRows: original.reduce((sum, row) => sum + row.rows, 0), currentMigrations: 148, originalLedgerPreserved: true,
+      preservedRows: original.reduce((sum, row) => sum + row.rows, 0), historicalTarget: 148, currentMigrations: current.actualRows.length, originalLedgerPreserved: true, systemActorPreserved: preservation.actorProof,
       oldReplaysExplicitlyUnknown: 6, oldPreparationsExplicitlyUnknown: 6, noInventedOriginals: true,
       newDirectRequests: 6, newCommandRequests: 1, noDuplicateExecution: true }) + "\n");
   });

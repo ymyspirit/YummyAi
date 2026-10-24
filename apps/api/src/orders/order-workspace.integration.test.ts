@@ -396,6 +396,15 @@ describe("order centers explicit handoff and independent fulfillment", () => {
         { tenantId, membershipId: authorityMember, roleId: scopedRole },
       ]);
     });
+    // Cross-tenant empty reads use a genuine member of that tenant, rather than
+    // a caller-selected tenant with no authenticated membership.
+    await withTenant(database.db, other, async (tx) => {
+      const memberId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: memberId, tenantId: otherTenant, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId: otherTenant, name: "Synthetic other-tenant order authority",
+        permissions: context.permissions, dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: otherTenant, membershipId: memberId, roleId });
+    });
     await withTenant(database.db, context, async (tx) => {
       const providerId = createEntityId();
       await tx.insert(modelProviderConfigs).values({

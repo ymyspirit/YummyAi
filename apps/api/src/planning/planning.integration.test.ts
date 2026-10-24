@@ -1,11 +1,13 @@
 import { SecretVault } from "@yummyai/ai-core";
 import { UnprocessableEntityException } from "@nestjs/common";
+import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, migrateDatabase, operatingMetricProjections, withTenant } from "@yummyai/database";
+import { connectDatabase, migrateDatabase, operatingMetricProjections, memberships, roles, membershipRoles, withTenant } from "@yummyai/database";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AuditService } from "../audit/audit.service.js";
+import { FinanceService } from "../finance/finance.service.js";
 import { IntegrationService } from "../integrations/integration.service.js";
 import { PlanningService } from "./planning.service.js";
 
@@ -14,15 +16,16 @@ describe.sequential("P3 forecasting and operating cockpit", () => {
   const tenantA = createEntityId(); const tenantB = createEntityId(); const userA = createEntityId(); const userB = createEntityId();
   const contextA = context(tenantA, userA); const contextB = context(tenantB, userB);
   const audit = new AuditService(database);
+  const finance = new FinanceService(database, audit);
   const integrations = new IntegrationService(database, new SecretVault(Buffer.alloc(32, 8)), { enqueue: vi.fn(async () => undefined) }, audit);
   const service = new PlanningService(database, audit, integrations);
-  const profitRunA = createEntityId(); const profitRunB = createEntityId();
+  let profitRunA = ""; let profitRunB = "";
   let forecastId = ""; let definitionId = ""; let firstSnapshotId = "";
 
   beforeAll(async () => {
     await migrateDatabase(database);
-    await seedTenant(tenantA, userA, profitRunA, "A");
-    await seedTenant(tenantB, userB, profitRunB, "B");
+    profitRunA = await seedTenant(tenantA, userA, "A");
+    profitRunB = await seedTenant(tenantB, userB, "B");
   });
   afterAll(async () => database.client.end());
 
@@ -80,13 +83,44 @@ describe.sequential("P3 forecasting and operating cockpit", () => {
     expect(new Set(workspace.forecasts.map((run) => run.scopeKey)).size).toBe(100);
   });
 
-  async function seedTenant(tenantId: string, userId: string, profitRunId: string, suffix: string) {
-    const metricId = createEntityId(); const versionId = createEntityId();
+  async function seedTenant(tenantId: string, userId: string, suffix: string) {
     await database.client.unsafe("insert into organizations (id,name,slug) values ($1,$2,$3)", [tenantId, `Planning ${suffix}`, `planning-${suffix.toLowerCase()}-${tenantId}`]);
     await database.client.unsafe("insert into app_users (id,oidc_subject,email,display_name) values ($1,$2,$3,$4)", [userId, `planning-${suffix}-${userId}`, `planning-${suffix}-${userId}@example.test`, `Planning ${suffix}`]);
-    await database.client.unsafe("insert into finance_profit_metrics (id,tenant_id,name,current_version,status,created_by) values ($1,$2,$3,1,'active',$4)", [metricId, tenantId, `Profit ${suffix}`, userId]);
-    await database.client.unsafe("insert into finance_profit_metric_versions (id,tenant_id,metric_id,version_number,reporting_currency,revenue_fact_types,cost_fact_types,required_fact_types,reason_code,checksum,idempotency_key,created_by) values ($1,$2,$3,1,'USD','[]','[]','[]','P3','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',$4,$5)", [versionId, tenantId, metricId, `planning-profit-version-${suffix}`, userId]);
-    await database.client.unsafe("insert into finance_profit_runs (id,tenant_id,metric_id,metric_version_id,reporting_currency,status,revenue_minor,cost_minor,profit_minor,margin_bps,statement_ids,fx_rate_ids,diagnostics,input_checksum,idempotency_key,calculated_by) values ($1,$2,$3,$4,'USD','complete',2000,800,1200,6000,'[]','[]','[]','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',$5,$6)", [profitRunId, tenantId, metricId, versionId, `planning-profit-run-${suffix}`, userId]);
+    const current: TenantContext = { ...context(tenantId, userId), permissions: [
+      ...context(tenantId, userId).permissions, Permission.FinanceRead, Permission.FinanceWrite, Permission.FinanceReview,
+    ] };
+    await withTenant(database.db, current, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId, name: `Synthetic planning authority ${suffix}`,
+        permissions: current.permissions, dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId, membershipId, roleId });
+    });
+    const line = { currency: "USD", occurredAt: "2026-07-02T00:00:00.000Z", externalReference: null,
+      orderId: null, orderLineId: null, skuId: null, listingId: null, supplierId: null,
+      correctionKind: "original" as const, correctsFactId: null };
+    const statement = await finance.recordStatement(current, {
+      accountId: null, provider: "manual", statementKind: "manual_adjustment",
+      sourceIdentity: { schemaVersion: 2, kind: "named_source", sourceName: `SYNTHETIC-PLANNING-${suffix}` },
+      externalStatementId: `planning-statement-${suffix}`, sourceCurrency: "USD",
+      periodStart: "2026-07-01T00:00:00.000Z", periodEnd: "2026-07-02T23:59:59.000Z",
+      observedAt: "2026-07-03T00:00:00.000Z", idempotencyKey: `planning-statement-${tenantId}`,
+      lines: [
+        { ...line, sourceEntryId: "revenue", lineKey: "revenue", factType: "sale_revenue", direction: "credit", amountMinor: 2000 },
+        { ...line, sourceEntryId: "cost", lineKey: "cost", factType: "other_fee", direction: "debit", amountMinor: 800 },
+      ],
+    });
+    const metric = await finance.upsertProfitMetric(current, {
+      metricId: null, name: `Profit ${suffix}`, reportingCurrency: "USD", revenueFactTypes: ["sale_revenue"],
+      costFactTypes: ["other_fee"], requiredFactTypes: ["sale_revenue", "other_fee"], reasonCode: "P3_PLANNING_FIXTURE",
+      idempotencyKey: `planning-profit-version-${tenantId}`,
+    });
+    const run = await finance.calculateProfit(current, {
+      metricId: metric.id, expectedMetricVersion: 1, statementIds: [statement.id], fxRateIds: [],
+      coverageDimension: "aggregate", idempotencyKey: `planning-profit-run-${tenantId}`,
+    });
+    expect(run).toMatchObject({ status: "complete", revenueMinor: 2000, costMinor: 800, profitMinor: 1200, marginBps: 6000 });
+    return run.id;
   }
 });
 

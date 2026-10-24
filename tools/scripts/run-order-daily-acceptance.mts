@@ -265,6 +265,9 @@ const creativeRecoveryIntegration = creativeRecoverySuiteRequested;
 process.env.E2E_CREATIVE_RECOVERY_ISOLATED = creativeRecoveryIntegration ? "1" : "0";
 const studioPersonalIntegration = creativeRecoveryIntegration || studioModelSelectionIntegration || studioVideoDirectoryIntegration || studioDocumentTransferIntegration || studioOriginalIntegration || process.argv.includes("--suite=creative-studio-personal-integration");
 const studioPersonalBrowser = studioDraftRecoveryBrowser || studioModelSelectionBrowser || studioVideoDirectoryBrowser || studioDocumentTransferBrowser || studioOriginalBrowser || process.argv.includes("--suite=creative-studio-personal-browser");
+// These dedicated current-schema families require a bounded physical DB pool.
+// Set it in the disposable owner, so CI and local callers share the same gate.
+if (studioPersonalIntegration || studioPersonalBrowser) process.env.DATABASE_POOL_SIZE = "1";
 process.env.E2E_STUDIO_DRAFT_RECOVERY_ISOLATED = studioDraftRecoveryBrowser ? "1" : "0";
 process.env.E2E_STUDIO_MODEL_SELECTION_ISOLATED = studioModelSelectionIntegration || studioModelSelectionBrowser ? "1" : "0";
 process.env.E2E_STUDIO_VIDEO_DIRECTORY_ISOLATED = studioVideoDirectoryIntegration || studioVideoDirectoryBrowser ? "1" : "0";
@@ -1067,7 +1070,8 @@ try {
   const logisticsIntegration = forwarded.includes("--suite=logistics-integration");
   const logistics = forwarded.includes("--suite=logistics");
   if (logistics) knowledgeSandbox = await createKnowledgeBrowserSandbox(token, 3100);
-  const allIntegration = forwarded.includes("--suite=all-integration");
+  const publicationLeaseIntegration = forwarded.includes("--suite=publication-lease-integration");
+  const allIntegration = forwarded.includes("--suite=all-integration") || publicationLeaseIntegration;
   const productAuthorityIntegration = forwarded.includes("--suite=product-authority-integration");
   const catalogScopeIntegration = forwarded.includes("--suite=catalog-scope-integration");
   const productionDelivery = forwarded.includes("--suite=production-delivery");
@@ -1579,7 +1583,12 @@ try {
                                   ...extra,
                                 ]
                               : allIntegration
-                                ? [process.env.npm_execpath!, ...workspaceIntegrationArgs(extra)]
+                                ? publicationLeaseIntegration
+                                  ? [apiRequire.resolve("vitest/vitest.mjs"), "run",
+                                      "--root", fileURLToPath(new URL("../../apps/worker/", import.meta.url)),
+                                      "--config", fileURLToPath(new URL("../../apps/worker/vitest.integration.config.ts", import.meta.url)),
+                                      "--maxWorkers=1", "--cache=false", "src/processors/marketplace-publication-lease.integration.test.ts", ...extra]
+                                  : [process.env.npm_execpath!, ...workspaceIntegrationArgs(extra)]
                                 : logisticsIntegration
                                   ? [
                                       apiRequire.resolve("vitest/vitest.mjs"),

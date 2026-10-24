@@ -48,6 +48,7 @@ import {
 } from "@yummyai/marketplace-connectors";
 import type { Storage } from "@yummyai/storage";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 
 export interface PublicationExecutionSnapshot {
@@ -318,12 +319,29 @@ export class MarketplacePublicationProcessor {
   }
 }
 
+interface ActivePublicationAccountLease {
+  tenantId: string;
+  userId: string;
+  accountId: string;
+  requestId: string;
+  active: boolean;
+  processingEventId: string | null;
+}
+
 export class DrizzlePublicationExecutionRepository implements PublicationExecutionRepository {
+  private readonly executionLease = new AsyncLocalStorage<ActivePublicationAccountLease>();
+
   constructor(
     private readonly database: DatabaseConnection,
     private readonly secrets: SecretVault,
     private readonly storage: Storage,
   ) {}
+
+  private ownedLease(context: TenantContext, requestId: string, accountId?: string) {
+    const lease = this.executionLease.getStore();
+    return lease?.active && lease.tenantId === context.tenantId && lease.userId === context.userId
+      && lease.requestId === requestId && (accountId === undefined || lease.accountId === accountId) ? lease : undefined;
+  }
 
   async withAccountLease<T>(
     context: TenantContext,
@@ -340,10 +358,15 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
 
     const lockKey = `marketplace-publication:${context.tenantId}:${request.accountId}`;
     const connection = await this.database.client.reserve();
+    const lease: ActivePublicationAccountLease = { tenantId: context.tenantId, userId: context.userId,
+      accountId: request.accountId, requestId, active: false, processingEventId: null };
     try {
       await connection.unsafe("select pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
-      return await operation();
+      lease.active = true;
+      return await this.executionLease.run(lease, operation);
     } finally {
+      lease.active = false;
+      lease.processingEventId = null;
       await connection.unsafe("select pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]);
       await connection.release();
     }
@@ -354,7 +377,10 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
     requestId: string,
     attempt: number,
   ): Promise<PublicationExecutionSnapshot | undefined> {
-    return withTenant(this.database.db, context, async (tx) => {
+    const lease = this.ownedLease(context, requestId);
+    if (lease) lease.processingEventId = null;
+    let committedProcessingEventId: string | null = null;
+    const snapshot = await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`);
       const [request] = await tx.select().from(marketplacePublicationRequests)
         .where(eq(marketplacePublicationRequests.id, requestId))
@@ -441,12 +467,14 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         await insertEvent(tx, context, requestId, nextSequence, terminalFailure("PUBLICATION_PAYLOAD_MISMATCH", "Pinned publication payload is invalid"));
         return undefined;
       }
+      const processingEventId = createEntityId();
       await insertEvent(tx, context, requestId, nextSequence, {
         status: "processing",
         code: null,
         message: null,
         retryable: false,
-      });
+      }, processingEventId);
+      committedProcessingEventId = processingEventId;
       return {
         authority:current.authority,
         requestId,
@@ -466,6 +494,8 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         },
       };
     });
+    if (lease?.active && snapshot && lease.accountId === snapshot.accountId) lease.processingEventId = committedProcessingEventId;
+    return snapshot;
   }
 
   async readMedia(
@@ -547,11 +577,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
       if (!request || !latest || isTerminal(latest.status)) return;
       const current=await readPublicationAuthority(tx,context,requestId,Permission.ListingPublish,true);
       if(current.intent?.route!=="central"||request.action==="amazon_validation_preview")throw new PublicationAuthorityError();
-      const [capability]=await tx.select().from(marketplaceCapabilitySnapshots).where(eq(marketplaceCapabilitySnapshots.id,request.capabilitySnapshotId)).limit(1);
-      if(!capability||validateRuntime(request,current.account,capability,current.listing,current.version,isSafeStatusRead(request.action,latest.status as MarketplacePublicationStatus)))throw new PublicationAuthorityError("publication_source_changed");
-      const ids=request.assetManifest.map(pin=>pin.assetId),assets=ids.length?await tx.select().from(assetFiles).where(and(inArray(assetFiles.id,ids),isNull(assetFiles.deletedAt))):[];
-      if(validatePinnedAssets(request.assetManifest,assets))throw new PublicationAuthorityError("publication_asset_changed");
-      const [[identifierProgress], [mediaProgress]] = await Promise.all([
+      const [[identifierProgress], [mediaProgress], [processingClaim], [capability]] = await Promise.all([
         tx.select().from(marketplacePublicationEvents)
           .where(and(
             eq(marketplacePublicationEvents.requestId, requestId),
@@ -572,7 +598,49 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
           ))
           .orderBy(desc(marketplacePublicationEvents.sequence))
           .limit(1),
+        tx.select().from(marketplacePublicationEvents)
+          .where(and(
+            eq(marketplacePublicationEvents.requestId, requestId),
+            eq(marketplacePublicationEvents.status, "processing"),
+          ))
+          .orderBy(desc(marketplacePublicationEvents.sequence))
+          .limit(1),
+        tx.select().from(marketplaceCapabilitySnapshots)
+          .where(eq(marketplaceCapabilitySnapshots.id, request.capabilitySnapshotId)).limit(1),
       ]);
+      const acceptedStatus = identifierProgress ? MarketplacePublicationStatusSchema.parse(identifierProgress.status) : undefined;
+      const completesStatusRead = isSafeStatusRead(request.action, acceptedStatus)
+        && ["published", "sync_pending", "publication_failed"].includes(result.status);
+      const originalExternalListingId = identifierProgress?.externalListingId ?? request.sourceExternalListingId;
+      const originalExternalSubmissionId = identifierProgress?.externalSubmissionId;
+      const lease = this.ownedLease(context, requestId, request.accountId);
+      const hasOriginalIdentity = Boolean(originalExternalListingId
+        || (request.action === "amazon_feed_submit" && originalExternalSubmissionId));
+      const safeStatusRead = completesStatusRead && Boolean(lease && processingClaim
+        && lease.processingEventId === processingClaim.id
+        && processingClaim.actorUserId === current.authority.userId
+        && processingClaim.sequence <= latest.sequence
+        && identifierProgress && identifierProgress.sequence <= latest.sequence
+        && identifierProgress.actorUserId === current.authority.userId
+        && (latest.id === processingClaim.id || (latest.id === identifierProgress.id
+          && identifierProgress.sequence > processingClaim.sequence))
+        && hasOriginalIdentity);
+      // Only immutable accepted progress plus this request's own claim can
+      // authorize a status read. Mutation completions retain every source gate.
+      if(completesStatusRead && (!safeStatusRead
+        || (result.externalListingId !== undefined && (!originalExternalListingId || result.externalListingId !== originalExternalListingId))
+        || (result.externalSubmissionId !== undefined && (!originalExternalSubmissionId || result.externalSubmissionId !== originalExternalSubmissionId))))throw new PublicationAuthorityError("publication_source_changed");
+      if(!capability||validateRuntime(request,current.account,capability,current.listing,current.version,safeStatusRead))throw new PublicationAuthorityError("publication_source_changed");
+      if(!safeStatusRead){
+        const ids=request.assetManifest.map(pin=>pin.assetId),assets=ids.length?await tx.select().from(assetFiles).where(and(inArray(assetFiles.id,ids),isNull(assetFiles.deletedAt))):[];
+        if(validatePinnedAssets(request.assetManifest,assets))throw new PublicationAuthorityError("publication_asset_changed");
+      }
+      const assertCurrentStatusLease = () => {
+        if (!safeStatusRead) return;
+        const active = this.ownedLease(context, requestId, request.accountId);
+        if (active !== lease || active?.processingEventId !== processingClaim?.id) throw new PublicationAuthorityError("publication_source_changed");
+      };
+      assertCurrentStatusLease();
       if (result.refreshedCredential) {
         const [stored] = await tx.select({ id: marketplaceCredentials.id, version: marketplaceCredentials.version })
           .from(marketplaceCredentials)
@@ -611,6 +679,7 @@ export class DrizzlePublicationExecutionRepository implements PublicationExecuti
         externalState: result.externalState,
         retryable: false,
       });
+      assertCurrentStatusLease();
     });
   }
 
@@ -839,9 +908,10 @@ async function insertEvent(
     externalState?: string | null;
     retryable: boolean;
   },
+  eventId = createEntityId(),
 ): Promise<void> {
   await tx.insert(marketplacePublicationEvents).values({
-    id: createEntityId(),
+    id: eventId,
     tenantId: context.tenantId,
     requestId,
     sequence,

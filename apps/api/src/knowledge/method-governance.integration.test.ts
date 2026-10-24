@@ -303,9 +303,14 @@ describe.skipIf(!isolated)("tenant method governance and real assistant executio
       "creative.creative_adaptation.internal_write", "creative.template_compile.internal_write",
       "creative.mockup_render.internal_write", "creative.studio_generation.external_request",
     ];
-    const methodCount = 10 + 2 + 2 + PodExecutableToolKeySchema.options.length * 2 + creativeKeys.length;
+    const benchmarkKey = "yummyai.assist.knowledge_answer.benchmark.review";
+    // Preserve all ten original assistant methods plus the separate dataset benchmark.
+    const methodCount = 10 + 1 + 2 + 2 + PodExecutableToolKeySchema.options.length * 2 + creativeKeys.length;
     expect(workspace.catalog).toHaveLength(methodCount);
     expect(new Set(workspace.catalog.map(row => row.methodKey)).size).toBe(methodCount);
+    const benchmarkMethods = workspace.catalog.filter(row => row.methodKey.includes(".benchmark."));
+    expect(benchmarkMethods.map(row => row.methodKey)).toEqual([benchmarkKey]);
+    expect(benchmarkMethods[0]?.tools).toMatchObject([{ key: "yummyai.assist.knowledge_answer.benchmark", version: "assist-benchmark-2026-10-21-v1" }]);
     expect(workspace.catalog.filter(row => row.methodKey.startsWith("creative.")).map(row => row.methodKey).sort()).toEqual(creativeKeys.sort());
     expect(workspace.methods).toEqual([]);
     for (const method of workspace.catalog) {

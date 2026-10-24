@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { Permission } from "@yummyai/authz";
 import { SecretVault } from "@yummyai/ai-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
@@ -117,7 +117,9 @@ describe("ERP creative studio with RLS, private files and durable generation", (
     const restored = await invoke({ operation: "state.get", namespace: "image_files", key: attached.key });
     expect(restored).toMatchObject({ assetId: result.assetId, media: { contentBase64: image.toString("base64"), mediaType: "image/png" } });
     await expect(invoke({ operation: "reference.attach", assetId: result.assetId }, b)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(invoke({ operation: "state.set", namespace: "image_files", key: "image:invalid", revision: 0, media: { contentBase64: Buffer.from("not an image").toString("base64"), mediaType: "image/png" } })).rejects.toBeInstanceOf(BadRequestException);
+    const invalidOriginal = invoke({ operation: "state.set", namespace: "image_files", key: "image:invalid", revision: 0, media: { contentBase64: Buffer.from("not an image").toString("base64"), mediaType: "image/png" } });
+    await expect(invalidOriginal).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(invalidOriginal).rejects.toMatchObject({ status: 422, response: { code: "studio_original_invalid_media" } });
     const [asset] = await withTenant(database.db, a, tx => tx.select().from(assetFiles).where(eq(assetFiles.id, result.assetId)));
     await withTenant(database.db, a, tx => tx.update(assetFiles).set({ rightsMetadata: { source: { kind: "customer_provided" } } }).where(eq(assetFiles.id, asset!.id)));
     await expect(invoke({ operation: "state.get", namespace: "image_files", key })).rejects.toBeInstanceOf(NotFoundException);

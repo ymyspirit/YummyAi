@@ -1,9 +1,10 @@
+import { insertLegacy, seedLegacyProcurementStock, migrateLegacyThrough, migrateLegacyToCurrentPreserving } from "../orders/legacy-upgrade.test-fixture.js";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { Permission } from "@yummyai/authz";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { createEntityId, type TenantContext, type RecordProcurementReceiptInput } from "@yummyai/contracts";
-import { connectDatabase, withTenant, migrateDatabase, readMigrationEvidence, assertDatabaseMigrationsCurrent, memberships, membershipRoles, roles,
+import { connectDatabase, withTenant, readMigrationEvidence, assertDatabaseMigrationsCurrent, memberships, membershipRoles, roles,
   fulfillmentSuppliers, inventoryPurchaseOrders, inventoryPurchaseOrderEvents, inventoryProcurementReceipts, inventoryProcurementReceiptLines, inventoryProcurementReceiptRequests } from "@yummyai/database";
 import { eq, sql } from "drizzle-orm";
 import { requireDisposableIntegrationEnvironment } from "../../../../tools/testing/require-disposable-integration.mjs";
@@ -29,10 +30,10 @@ describe("genuine 142 inventory and receipt upgrade into incoming inspection", (
     const supplierId = createEntityId();
     await withTenant(database.db, context, async tx => {
       const membershipId = createEntityId(), roleId = createEntityId();
-      await tx.insert(memberships).values({ id: membershipId, tenantId: context.tenantId, userId: context.userId, status: "active" });
-      await tx.insert(roles).values({ id: roleId, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
-      await tx.insert(membershipRoles).values({ tenantId: context.tenantId, membershipId, roleId });
-      await tx.insert(fulfillmentSuppliers).values({ id: supplierId, tenantId: context.tenantId, name: "Synthetic historical supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", priority: 1, createdBy: context.userId });
+      await insertLegacy(tx, memberships, { id: membershipId, tenantId: context.tenantId, userId: context.userId, status: "active" });
+      await insertLegacy(tx, roles, { id: roleId, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
+      await insertLegacy(tx, membershipRoles, { tenantId: context.tenantId, membershipId, roleId });
+      await insertLegacy(tx, fulfillmentSuppliers, { id: supplierId, tenantId: context.tenantId, name: "Synthetic historical supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", priority: 1, createdBy: context.userId });
     });
     const warehouse = await inventory.createWarehouse(context, { code: "OLD-142", name: "Synthetic old warehouse", type: "owned", countryCode: "US", timeZone: "UTC" });
     const location = await inventory.createLocation(context, { warehouseId: warehouse.id, code: "OLD-142", name: "Synthetic old receiving" });
@@ -44,15 +45,15 @@ describe("genuine 142 inventory and receipt upgrade into incoming inspection", (
       lines: [{ lineKey: "L1", receivedQuantity: 1, rejectedQuantity: 0, rejectionReasonCode: null, lotCode: "OLD-142-LOT", expiresAt: null }] };
     const requestChecksum = createHash("sha256").update(canonicalJson({ version: 1, purchaseOrderId: order.id, input })).digest("hex");
     await withTenant(database.db, context, async tx => {
-      await tx.insert(inventoryProcurementReceipts).values({ id: receiptId, tenantId: context.tenantId, purchaseOrderId: order.id, purchaseOrderVersionId: order.versionId,
+      await insertLegacy(tx, inventoryProcurementReceipts, { id: receiptId, tenantId: context.tenantId, purchaseOrderId: order.id, purchaseOrderVersionId: order.versionId,
         receivedAt: new Date(input.receivedAt), externalReference: input.externalReference, hasVariance: false, idempotencyKey: input.idempotencyKey, createdBy: context.userId });
-      const posted = await inventory.receiveProcurementStock(tx, context, { receiptId, stockItemId: stock.id, locationId: location.id, lotCode: "OLD-142-LOT", quantity: 1, unit: "each", unitCostMinor: 100, currency: "USD", receivedAt: input.receivedAt, expiresAt: null, idempotencyKey: "synthetic-old-movement" });
-      await tx.insert(inventoryProcurementReceiptLines).values({ id: createEntityId(), tenantId: context.tenantId, receiptId, lineKey: "L1", stockItemId: stock.id, destinationLocationId: location.id,
+      const posted = await seedLegacyProcurementStock(tx, context, { receiptId, stockItemId: stock.id, locationId: location.id, lotCode: "OLD-142-LOT", quantity: 1, unit: "each", unitCostMinor: 100, currency: "USD", receivedAt: input.receivedAt, expiresAt: null, idempotencyKey: "synthetic-old-movement" });
+      await insertLegacy(tx, inventoryProcurementReceiptLines, { id: createEntityId(), tenantId: context.tenantId, receiptId, lineKey: "L1", stockItemId: stock.id, destinationLocationId: location.id,
         receivedQuantity: 1, rejectedQuantity: 0, rejectionReasonCode: null, unit: "each", unitCostMinor: 100, lotId: posted.lot.id, movementId: posted.movement.id });
-      await tx.insert(inventoryProcurementReceiptRequests).values({ id: createEntityId(), tenantId: context.tenantId, receiptId, purchaseOrderId: order.id, purchaseOrderVersionId: order.versionId,
+      await insertLegacy(tx, inventoryProcurementReceiptRequests, { id: createEntityId(), tenantId: context.tenantId, receiptId, purchaseOrderId: order.id, purchaseOrderVersionId: order.versionId,
         createdBy: context.userId, evidenceVersion: 1, requestChecksum, idempotencyKey: input.idempotencyKey });
       await tx.execute(sql`update inventory_purchase_orders set status='partially_received' where id=${order.id}::uuid`);
-      await tx.insert(inventoryPurchaseOrderEvents).values({ id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: order.id, sequence: 3, action: "partially_received", fromStatus: "approved", toStatus: "partially_received",
+      await insertLegacy(tx, inventoryPurchaseOrderEvents, { id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: order.id, sequence: 3, action: "partially_received", fromStatus: "approved", toStatus: "partially_received",
         reasonCode: null, idempotencyKey: input.idempotencyKey, actorUserId: context.userId, occurredAt: new Date(input.receivedAt) });
     });
     const columns = await database.client.unsafe("select table_name,column_name from information_schema.columns where table_schema='public' order by table_name,ordinal_position");
@@ -71,8 +72,10 @@ describe("genuine 142 inventory and receipt upgrade into incoming inspection", (
       return hashes;
     });
     const original = await snapshot();
-    await migrateDatabase(database);
+    await migrateLegacyThrough(database, 143);
     expect(await snapshot()).toEqual(original);
+    await migrateLegacyToCurrentPreserving(database);
+    const adoptedOriginal = await snapshot();
     const evidence = await readMigrationEvidence(database);
     expect(evidence.actualRows.slice(0, 142)).toEqual(oldLedger);
     await expect(assertDatabaseMigrationsCurrent(database)).resolves.toMatchObject({ migrations: evidence.canonicalRows.length });
@@ -81,7 +84,7 @@ describe("genuine 142 inventory and receipt upgrade into incoming inspection", (
       expect((await database.client.unsafe(`select count(*)::int as count from "${table}"`))[0]!.count).toBe(0);
     expect((await procurement.recordReceipt(context, order.id, input)).receipt.id).toBe(receiptId);
     await expect(procurement.recordReceipt(context, order.id, { ...input, externalReference: "Changed old body" })).rejects.toMatchObject({ status: 409 });
-    expect(await snapshot()).toEqual(original);
+    expect(await snapshot()).toEqual(adoptedOriginal);
     const remainder = { ...input, idempotencyKey: "synthetic-new-legacy-receipt", lines: [{ ...input.lines[0]!, lotCode: "OLD-142-SECOND" }] };
     await procurement.recordReceipt(context, order.id, remainder);
     const receiptWorkspace = await procurement.workspace(context);

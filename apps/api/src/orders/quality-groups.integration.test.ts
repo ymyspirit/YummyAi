@@ -4,7 +4,7 @@ import { ConflictException, NotFoundException, UnprocessableEntityException } fr
 import { ForbiddenError, Permission, summarizeRoleGrants } from "@yummyai/authz";
 import { CreateShipmentInputSchema, RecordQualityInspectionInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
 import { RecordQualityGroupsInputSchema, type QualityPhysicalGroupInput } from "@yummyai/contracts/order/quality-groups";
-import { connectDatabase, orderWorkItems, qualityInspectionGroups, qualityGroupDefects, qualityDefects, qualityInspections, shipmentProductionAllocations, withTenant } from "@yummyai/database";
+import { connectDatabase, memberships, membershipRoles, roles, orderWorkItems, qualityInspectionGroups, qualityGroupDefects, qualityDefects, qualityInspections, shipmentProductionAllocations, withTenant } from "@yummyai/database";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
@@ -14,6 +14,7 @@ import { OrderProductionService } from "./order-production.service.js";
 import { syntheticPassedProduction } from "./shipment-production-fixture.js";
 import { FactoryDirectoryService } from "../suppliers/factory-directory.service.js";
 import { syntheticQualityInspection } from "../../../../tools/testing/quality-fixtures.js";
+import { ProductionQuantityService } from "./production-quantity.service.js";
 
 describe("physical quality groups and independent defect quantities", () => {
   const database = connectDatabase(), tenantId = createEntityId(), userId = createEntityId(), otherUserId = createEntityId(), accountId = createEntityId(), otherTenantId = createEntityId();
@@ -25,10 +26,18 @@ describe("physical quality groups and independent defect quantities", () => {
   const shipping = new OrderShipmentService(database, vault, orders, audit, { enqueue: async () => undefined });
   const factories = new FactoryDirectoryService(database, audit);
   const production = new OrderProductionService(database, vault, orders, audit, undefined, factories);
+  const quantities = new ProductionQuantityService(database, audit);
   beforeAll(async () => {
     await database.client.unsafe("insert into organizations(id,name,slug) values($1,'Synthetic groups A',$2),($3,'Synthetic groups B',$4)", [tenantId, `groups-a-${tenantId}`, otherTenantId, `groups-b-${otherTenantId}`]);
     await database.client.unsafe("insert into app_users(id,oidc_subject,email,display_name) values($1,$2,$3,'Synthetic group operator'),($4,$5,$6,'Synthetic other group operator')", [userId, `groups-${userId}`, `${userId}@example.test`, otherUserId, `groups-${otherUserId}`, `${otherUserId}@example.test`]);
     await database.client.unsafe("insert into marketplace_accounts(id,tenant_id,platform,display_name,region,authorization_mode,created_by) values($1,$2,'etsy','Synthetic group shop','GLOBAL','etsy_oauth',$3)", [accountId, tenantId, userId]);
+    await withTenant(database.db, productionContext, async tx => {
+      const membershipId = createEntityId(), roleId = createEntityId();
+      await tx.insert(memberships).values({ id: membershipId, tenantId, userId, status: "active" });
+      await tx.insert(roles).values({ id: roleId, tenantId, name: "Synthetic current group quantity authority",
+        permissions: productionContext.permissions, dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId, membershipId, roleId });
+    });
   });
   afterAll(async () => { await database.client.end(); });
   const databaseTime = async () => {
@@ -267,8 +276,29 @@ describe("physical quality groups and independent defect quantities", () => {
     await production.recordRecoveryEvent(context, first.recoveryId, { action: "cancel", expectedProjectionVersion: 1, outcomeCode: "SYNTHETIC_CASE_CANCEL", occurredAt: new Date().toISOString(), note: null, externalReference: null });
     expect((await production.qualityGroups(context, f.source.productionOrderId)).groups.find(item => item.id === held.id)!.remainingRemakeQuantity).toBe(0);
     let child = await production.get(context, first.replacementProductionOrderId!);
-    for (const type of ["cancel_requested", "cancelled"] as const) child = await production.recordMilestone(context, child.productionOrder.id, {
-      type, expectedProjectionVersion: child.productionOrder.projectionVersion, occurredAt: new Date().toISOString(), externalEventId: randomUUID(), evidence: { code: "SYNTHETIC_FACTORY_STOP", note: null, assetIds: [] },
+    child = await production.recordMilestone(context, child.productionOrder.id, {
+      type: "cancel_requested", expectedProjectionVersion: child.productionOrder.projectionVersion, occurredAt: new Date().toISOString(),
+      externalEventId: randomUUID(), evidence: { code: "SYNTHETIC_FACTORY_STOP_REQUEST", note: null, assetIds: [] },
+    });
+    // Factory status alone does not free remake quantity. Attest the unstarted
+    // unit and approve its physical stop through the quantity owner first.
+    expect((await production.qualityGroups(context, f.source.productionOrderId)).groups.find(item => item.id === held.id)!.remainingRemakeQuantity).toBe(0);
+    const basis = (await quantities.workspace(productionContext, child.productionOrder.id)).basis;
+    const reported = await quantities.recordReport(productionContext, child.productionOrder.id, {
+      idempotencyKey: randomUUID(), productionVersionId: basis.productionVersionId,
+      expectedProductionProjectionVersion: basis.projectionVersion, expectedReviewId: basis.reviewId,
+      expectedBasisFingerprint: basis.fingerprint, observedAt: await databaseTime(),
+      quantities: { unstartedQuantity: 1, inProcessQuantity: 0, completedQuantity: 0, scrappedQuantity: 0 },
+      evidenceCode: "SYNTHETIC_FACTORY_UNSTARTED", evidenceAssetIds: [],
+    });
+    await quantities.review(productionContext, child.productionOrder.id, {
+      idempotencyKey: randomUUID(), reportId: reported.report.id, expectedProductionProjectionVersion: basis.projectionVersion,
+      expectedReviewId: basis.reviewId, expectedBasisFingerprint: basis.fingerprint, stoppedDelta: 1,
+      unstartedAcrossAllPoolsConfirmed: true, evidenceCode: "SYNTHETIC_STOP_ALL_POOLS_UNSTARTED", occurredAt: await databaseTime(),
+    });
+    child = await production.get(context, child.productionOrder.id);
+    child = await production.recordMilestone(context, child.productionOrder.id, {
+      type: "cancelled", expectedProjectionVersion: child.productionOrder.projectionVersion, occurredAt: new Date().toISOString(), externalEventId: randomUUID(), evidence: { code: "SYNTHETIC_FACTORY_STOP", note: null, assetIds: [] },
     });
     expect((await production.qualityGroups(context, f.source.productionOrderId)).groups.find(item => item.id === held.id)!.remainingRemakeQuantity).toBe(1);
     const another = await production.recover(productionContext, request(held.defects[1]!.id, 1));
@@ -354,10 +384,11 @@ describe("physical quality groups and independent defect quantities", () => {
   });
 
   it("rechecks actual personal membership before grouped reads, writes and original receipt recovery", async () => {
-    const f = await fixture(1), memberId = createEntityId(), roleId = createEntityId();
-    await database.client.unsafe("insert into memberships(id,tenant_id,user_id,status) values($1,$2,$3,'active')", [memberId, tenantId, userId]);
-    await database.client.unsafe("insert into roles(id,tenant_id,name,permissions,data_scope) values($1,$2,$3,$4::jsonb,'tenant')", [roleId, tenantId, `Synthetic group role ${roleId}`, JSON.stringify(permissions)]);
-    await database.client.unsafe("insert into membership_roles(tenant_id,membership_id,role_id) values($1,$2,$3)", [tenantId, memberId, roleId]);
+    const f = await fixture(1);
+    const currentMembers = await withTenant(database.db, context, tx => tx.select().from(memberships).where(eq(memberships.userId, userId)));
+    expect(currentMembers).toHaveLength(1);
+    expect(currentMembers[0]!.status).toBe("active");
+    const memberId = currentMembers[0]!.id;
     const personal = { ...context, ...summarizeRoleGrants([{ permissions, scope: "tenant" }]) };
     const whole = await syntheticQualityInspection(production, personal, f.source.productionOrderId, { qualityStandardVersionId: f.source.standardId,
       result: "passed", scoreBps: 10000, inspectedAt: await databaseTime(), evidenceAssetIds: [], defects: [], idempotencyKey: randomUUID() });

@@ -1,7 +1,8 @@
+import { insertLegacy, seedLegacyProcurementStock, legacyTableSnapshot, upgradeLegacyDatabase } from "../orders/legacy-upgrade.test-fixture.js";
 import { randomUUID } from "node:crypto";
 import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, withTenant, migrateDatabase, readMigrationEvidence, assertDatabaseMigrationsCurrent,
+import { connectDatabase, withTenant, readMigrationEvidence, assertDatabaseMigrationsCurrent,
   memberships, membershipRoles, roles, fulfillmentSuppliers, inventoryPurchaseOrders, inventoryPurchaseOrderEvents,
   inventoryProcurementReceipts, inventoryProcurementReceiptLines, inventoryProcurementReceiptRequests } from "@yummyai/database";
 import { eq, sql } from "drizzle-orm";
@@ -28,10 +29,10 @@ describe("actual legacy receipt-request upgrade", () => {
     const supplier = createEntityId();
     await withTenant(db.db, context, async tx => {
       const member = createEntityId(), role = createEntityId();
-      await tx.insert(memberships).values({ id: member, tenantId: context.tenantId, userId: context.userId, status: "active" });
-      await tx.insert(roles).values({ id: role, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
-      await tx.insert(membershipRoles).values({ tenantId: context.tenantId, membershipId: member, roleId: role });
-      await tx.insert(fulfillmentSuppliers).values({ id: supplier, tenantId: context.tenantId, name: "Synthetic old supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", priority: 1, createdBy: context.userId });
+      await insertLegacy(tx, memberships, { id: member, tenantId: context.tenantId, userId: context.userId, status: "active" });
+      await insertLegacy(tx, roles, { id: role, tenantId: context.tenantId, name: randomUUID(), permissions: context.permissions, dataScope: "tenant" });
+      await insertLegacy(tx, membershipRoles, { tenantId: context.tenantId, membershipId: member, roleId: role });
+      await insertLegacy(tx, fulfillmentSuppliers, { id: supplier, tenantId: context.tenantId, name: "Synthetic old supplier", kind: "manual", status: "active", regionCode: "US", settlementCurrency: "USD", priority: 1, createdBy: context.userId });
     });
     const warehouse = await inventory.createWarehouse(context, { code: "LEGACY", name: "Legacy warehouse", type: "owned", countryCode: "US", timeZone: "UTC" });
     const location = await inventory.createLocation(context, { warehouseId: warehouse.id, code: "LEGACY", name: "Legacy receiving" });
@@ -43,23 +44,20 @@ describe("actual legacy receipt-request upgrade", () => {
     // current recordReceipt() must not pretend future request evidence exists.
     await withTenant(db.db, context, async tx => {
       const [version] = await tx.execute<{ id: string }>(sql`select id from inventory_purchase_order_versions where purchase_order_id=${order.id}::uuid and version_number=1`);
-      await tx.insert(inventoryProcurementReceipts).values({ id: receiptId, tenantId: context.tenantId, purchaseOrderId: order.id, purchaseOrderVersionId: version!.id, receivedAt: new Date(receivedAt), externalReference: "OLD-ASN", hasVariance: false, idempotencyKey: key, createdBy: context.userId });
-      const posted = await inventory.receiveProcurementStock(tx, context, { receiptId, stockItemId: stock.id, locationId: location.id, lotCode: "LEGACY-LOT", quantity: 2,
+      await insertLegacy(tx, inventoryProcurementReceipts, { id: receiptId, tenantId: context.tenantId, purchaseOrderId: order.id, purchaseOrderVersionId: version!.id, receivedAt: new Date(receivedAt), externalReference: "OLD-ASN", hasVariance: false, idempotencyKey: key, createdBy: context.userId });
+      const posted = await seedLegacyProcurementStock(tx, context, { receiptId, stockItemId: stock.id, locationId: location.id, lotCode: "LEGACY-LOT", quantity: 2,
         unit: "each", unitCostMinor: 100, currency: "USD", receivedAt, expiresAt: null, idempotencyKey: "legacy-receipt-movement" });
-      await tx.insert(inventoryProcurementReceiptLines).values({ id: createEntityId(), tenantId: context.tenantId, receiptId, lineKey: "LINE-1", stockItemId: stock.id,
+      await insertLegacy(tx, inventoryProcurementReceiptLines, { id: createEntityId(), tenantId: context.tenantId, receiptId, lineKey: "LINE-1", stockItemId: stock.id,
         destinationLocationId: location.id, receivedQuantity: 2, rejectedQuantity: 0, rejectionReasonCode: null, unit: "each", unitCostMinor: 100, lotId: posted.lot.id, movementId: posted.movement.id });
       await tx.update(inventoryPurchaseOrders).set({ status: "received" }).where(eq(inventoryPurchaseOrders.id, order.id));
       const [sequence] = await tx.execute<{ value: number }>(sql`select coalesce(max(sequence),0)+1 as value from inventory_purchase_order_events where purchase_order_id=${order.id}::uuid`);
-      await tx.insert(inventoryPurchaseOrderEvents).values({ id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: order.id, sequence: sequence!.value,
+      await insertLegacy(tx, inventoryPurchaseOrderEvents, { id: createEntityId(), tenantId: context.tenantId, purchaseOrderId: order.id, sequence: sequence!.value,
         action: "received", fromStatus: "approved", toStatus: "received", reasonCode: null, idempotencyKey: key, actorUserId: context.userId, occurredAt: new Date(receivedAt) });
     });
     const tables = ["inventory_stock_items", "inventory_procurement_receipts", "inventory_procurement_receipt_lines", "inventory_lots", "inventory_movements", "inventory_balances", "inventory_purchase_orders", "inventory_purchase_order_versions", "inventory_purchase_order_events"];
-    const snapshot = async (table: string) => withTenant(db.db, context, async tx => {
-      await tx.execute(sql`set local time zone 'UTC'`);
-      return [...await tx.execute<{ id: string; hash: string }>(sql`select id::text as id,md5((to_jsonb(t)-'receiving_policy')::text) as hash from ${sql.identifier(table)} t order by id`)];
-    });
+    const snapshot = await legacyTableSnapshot(db, context, tables);
     const original = new Map<string, Awaited<ReturnType<typeof snapshot>>>(); for (const table of tables) original.set(table, await snapshot(table));
-    await migrateDatabase(db);
+    await upgradeLegacyDatabase(db, 142);
     for (const table of tables) expect(await snapshot(table)).toEqual(original.get(table));
     expect((await readMigrationEvidence(db)).actualRows.slice(0, oldLedger.length)).toEqual(oldLedger.map(row => ({ hash: String(row.hash), created_at: String(row.created_at) })));
     expect(await withTenant(db.db, context, tx => tx.select().from(inventoryProcurementReceiptRequests))).toEqual([]);

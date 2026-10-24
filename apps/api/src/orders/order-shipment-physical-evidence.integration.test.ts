@@ -44,9 +44,10 @@ describe("physical package handover is independent of marketplace acknowledgemen
     const fixture = await shipmentFixture(1), production = new OrderProductionService(database, vault, orderService, audit);
     expect(await production.productionAvailability(context, fixture.lineId)).toMatchObject({ orderedQuantity: 1, allocatedQuantity: 1, availableQuantity: 0, canRelease: true });
     expect(await production.productionAvailability({ ...context, permissions: ["order:read", "order:pii:read"] }, fixture.lineId)).toMatchObject({ allocatedQuantity: 1, canRelease: false });
-    // Persisted synthetic cancellation followed by a late carrier event; no real production action is asserted.
+    // A status-only cancellation cannot return coverage without an approved
+    // physical quantity stop. Later carrier evidence must keep that coverage.
     await withTenant(database.db, context, tx => tx.execute(sql`update production_orders set status='cancelled' where id=${fixture.stock.productionOrderId}`));
-    expect(await production.productionAvailability(context, fixture.lineId)).toMatchObject({ allocatedQuantity: 0, availableQuantity: 1 });
+    expect(await production.productionAvailability(context, fixture.lineId)).toMatchObject({ allocatedQuantity: 1, availableQuantity: 0 });
     await tracking(fixture, 0, "picked_up");
     await tracking(fixture, 0, "delivery_exception");
     expect(await production.productionAvailability(context, fixture.lineId)).toMatchObject({ allocatedQuantity: 1, availableQuantity: 0 });

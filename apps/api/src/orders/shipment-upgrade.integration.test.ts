@@ -1,3 +1,4 @@
+import { ensureLegacyMembership, legacyRecordSnapshot, seedLegacyOrder, seedLegacyPassedProduction, upgradeLegacyDatabase } from "./legacy-upgrade.test-fixture.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException } from "@nestjs/common";
@@ -5,11 +6,10 @@ import { CreateShipmentInputSchema, createEntityId, type TenantContext } from "@
 import { connectDatabase, withTenant } from "@yummyai/database";
 import { sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
-import { migrateDatabase, assertDatabaseMigrationsCurrent } from "../../../../packages/database/src/migrate.js";
+import { assertDatabaseMigrationsCurrent } from "../../../../packages/database/src/migrate.js";
 import { AuditService } from "../audit/audit.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderShipmentService } from "./order-shipment.service.js";
-import { syntheticPassedProduction } from "./shipment-production-fixture.js";
 
 describe("actual pre-0131 shipment upgrade", () => {
   const database = connectDatabase();
@@ -24,15 +24,16 @@ describe("actual pre-0131 shipment upgrade", () => {
     const context: TenantContext = { tenantId, userId, permissions: ["order:read", "order:write", "order:pii:read"], dataScope: "tenant" };
     await database.client.unsafe("insert into organizations(id,name,slug) values($1,'Synthetic old shipments',$2)", [tenantId, `old-shipments-${tenantId}`]);
     await database.client.unsafe("insert into app_users(id,oidc_subject,email,display_name) values($1,$2,$3,'Synthetic old packer')", [userId, `old-shipment-${userId}`, `${userId}@example.test`]);
+    await ensureLegacyMembership(database, context);
     await database.client.unsafe("insert into marketplace_accounts(id,tenant_id,platform,display_name,region,authorization_mode,created_by) values($1,$2,'etsy','Synthetic old shop','GLOBAL','etsy_oauth',$3)", [accountId, tenantId, userId]);
     const vault = new SecretVault(Buffer.alloc(32, 62)), audit = new AuditService(database), orders = new OrderService(database, vault, audit);
     const shipping = new OrderShipmentService(database, vault, orders, audit, { enqueue: async () => undefined });
     const fixtures = [];
     for (const dispatched of [false, true]) {
-      const order = await orders.ingestNormalized(context, { accountId, platform: "etsy", externalEventId: randomUUID(), externalOrderId: randomUUID(), providerStatus: "paid",
+      const order = await seedLegacyOrder(database, context, { accountId, platform: "etsy", externalEventId: randomUUID(), externalOrderId: randomUUID(), providerStatus: "paid",
         placedAt: "2026-10-01T00:00:00.000Z", orderTotal: null, lines: [{ externalLineId: "old-source-item", externalListingId: null, skuCode: null, title: "Synthetic old source", quantity: 2, unitPrice: null, customizationCount: 0 }], redactedSource: { synthetic: true }, protectedDetails: null });
       await database.client.unsafe("update orders set workflow_state='awaiting_shipment',address_status='protected' where id=$1", [order.id]);
-      const [source] = await syntheticPassedProduction(database, context, order.id, [{ id: order.lines[0]!.id, quantity: 2 }]);
+      const [source] = await seedLegacyPassedProduction(database, context, order.id, [{ id: order.lines[0]!.id, quantity: 2 }]);
       const shipmentId = createEntityId(), versionId = createEntityId(), packageId = createEntityId(), packageLineId = createEntityId();
       const input = CreateShipmentInputSchema.parse({ shipDate: "2026-10-02T00:00:00.000Z", shipFromCountryCode: "US", idempotencyKey: randomUUID(),
         packages: [{ packageReferenceId: "LEGACY-ONE", trackingNumber: "SYNTHETIC-OLD-TRACK", carrierCode: "SYNTHETIC", carrierName: "Synthetic old carrier", carrierService: "Synthetic service", lines: [{ orderLineId: order.lines[0]!.id, quantity: 1 }] }] });
@@ -56,13 +57,15 @@ describe("actual pre-0131 shipment upgrade", () => {
             values(${createEntityId()},${tenantId},${shipmentId},${packageId},'picked_up','legacy-synthetic',${randomUUID()},'SYNTHETIC_OLD_HANDOVER','2026-10-02T01:00:00Z')`);
         }
       });
-      const [old] = await database.client.unsafe("select to_jsonb(v) as version,(select jsonb_agg(to_jsonb(p) order by p.id) from shipment_packages p where p.shipment_id=v.shipment_id) as packages,(select jsonb_agg(to_jsonb(l) order by l.id) from shipment_package_lines l where l.shipment_id=v.shipment_id) as lines from shipment_versions v where v.id=$1", [versionId]);
-      fixtures.push({ orderId: order.id, lineId: order.lines[0]!.id, shipmentId, versionId, source: source!, input, review, old, dispatched });
+      const original = await legacyRecordSnapshot(database, context, { version: { table: "shipment_versions", id: versionId },
+        package: { table: "shipment_packages", id: packageId }, line: { table: "shipment_package_lines", id: packageLineId } });
+      const old = await original();
+      fixtures.push({ orderId: order.id, lineId: order.lines[0]!.id, shipmentId, versionId, source: source!, input, review, old, original, dispatched });
     }
-    await migrateDatabase(database);
+    await upgradeLegacyDatabase(database, 131);
     await expect(assertDatabaseMigrationsCurrent(database)).resolves.toMatchObject({ migrations: expect.any(Number) });
     for (const fixture of fixtures) {
-      const [after] = await database.client.unsafe("select to_jsonb(v)-'production_source_version'-'request_checksum' as version,(select jsonb_agg(to_jsonb(p) order by p.id) from shipment_packages p where p.shipment_id=v.shipment_id) as packages,(select jsonb_agg(to_jsonb(l) order by l.id) from shipment_package_lines l where l.shipment_id=v.shipment_id) as lines from shipment_versions v where v.id=$1", [fixture.versionId]);
+      const after = await fixture.original();
       expect(after).toEqual(fixture.old);
       const recovered = await shipping.create(context, fixture.orderId, fixture.input);
       expect(recovered.shipment.id).toBe(fixture.shipmentId);

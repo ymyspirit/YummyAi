@@ -1,14 +1,17 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { SecretVault } from "@yummyai/ai-core";
 import { Permission } from "@yummyai/authz";
 import { CreateCreativeDesignBatchInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
 import { CANVAS_BRIDGE } from "@yummyai/contracts/pod/canvas-bridge";
-import { StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { StudioGenerateRequestSchema, StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import type { StudioModel } from "@yummyai/contracts/pod/studio-personal";
 import { assetFiles, canvasPrintSpecVersions, connectDatabase, creativeDesignBatches, creativeDesignBatchItems, creativeDesignCandidates, creativeStudioEntries, creativeStudioGenerations, loadCurrentMembershipContext, migrateDatabase, roles, withTenant } from "@yummyai/database";
 import { createStorageFromEnvironment } from "@yummyai/storage";
 import { eq, inArray } from "drizzle-orm";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
+import { ModelConfigurationService } from "../ai/model-configuration.service.js";
 import { CanvasBridgeService } from "./canvas-bridge.service.js";
 import { CreativeStudioService } from "./creative-studio.service.js";
 import { DesignService, DrizzleDesignRepository } from "./design.service.js";
@@ -31,6 +34,8 @@ describe("canvas workflow authority with real tenant storage", () => {
   const studio = new CreativeStudioService(database, storage, scanner, bridge, audit, generations as unknown as StudioGenerationService);
   const generationQueue = { enqueue: vi.fn(async () => {}) };
   const realGenerations = new StudioGenerationService(database, storage, generationQueue, bridge);
+  const configuration = new ModelConfigurationService(database, new SecretVault(randomBytes(32)));
+  let imageModel: StudioModel;
   let png: Buffer, ownAsset: string, otherAsset: string, ownSpec: string, otherSpec: string, ownProject: string, otherProject: string;
   const current = () => withTenant(database.db, base, tx => loadCurrentMembershipContext(tx, base));
   async function grant(permissions: readonly string[] = all, dataScope: "tenant" | "team" | "self" = "tenant") {
@@ -87,6 +92,11 @@ describe("canvas workflow authority with real tenant storage", () => {
     ownSpec = a.id; otherSpec = b.id;
     await pod.reviewPrintSpec(base, ownSpec, { decision: "approve" }); await pod.reviewPrintSpec(other, otherSpec, { decision: "approve" });
     ownProject = (await bridge.create(base, brief())).id; otherProject = (await bridge.create(other, brief([otherAsset]))).id;
+    await configuration.invoke(base, { operation: "channel.save", name: "Synthetic authority channel", baseUrl: "http://127.0.0.1:9/v1",
+      apiKey: "synthetic-authority-only", models: [{ name: "synthetic-authority-image", capability: "image" }] });
+    const selected = (await realGenerations.models(base)).find(model => model.capability === "image");
+    if (!selected) throw new Error("Synthetic authority image model was not configured");
+    imageModel = selected;
   });
   beforeEach(async () => { vi.restoreAllMocks(); vi.clearAllMocks(); await grant(); await wide(); });
   afterAll(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await database.client.end(); });
@@ -270,12 +280,14 @@ describe("canvas workflow authority with real tenant storage", () => {
   });
 
   it("checks direct generation services against current membership and project write scope", async () => {
+    const input = StudioGenerateRequestSchema.parse({ ...generationInput(), modelId: imageModel.id,
+      capability: imageModel.capability, selectionRevision: imageModel.selectionRevision });
     const context = await current(); await grant([]);
     await expect(realGenerations.models(context)).rejects.toMatchObject({ status: 403 });
     await expect(realGenerations.list(context, "unassigned")).rejects.toMatchObject({ status: 403 });
-    await expect(realGenerations.create(context, "unassigned", generationInput())).rejects.toMatchObject({ status: 403 });
+    await expect(realGenerations.create(context, "unassigned", input)).rejects.toMatchObject({ status: 403 });
     await grant([Permission.DesignWrite, Permission.AssetWrite], "self"); await wide([Permission.DesignRead, Permission.AssetRead]);
-    await expect(realGenerations.create(await current(), otherProject, generationInput())).rejects.toMatchObject({ status: 403 });
+    await expect(realGenerations.create(await current(), otherProject, input)).rejects.toMatchObject({ status: 403 });
     expect(generationQueue.enqueue).not.toHaveBeenCalled();
   });
 
