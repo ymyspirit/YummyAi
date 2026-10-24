@@ -276,7 +276,7 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     schema: 188, paidExecution: false, configurationMutations: 0 }, observed: Request[] = [];
   const allowed = new Set<Request>(), requestStarts = new Map<Request, number>();
   const record = (request: Request) => { requestStarts.set(request, Date.now()); observed.push(request); }; page.on("request", record);
-  let failure: unknown;
+  let failure: unknown, removeLogoutRoute: (() => Promise<void>) | undefined;
   try {
     const basis = await seed(page, child, environment.nonce), before = await facts(child);
     const identityResponse = await page.request.get("/api/erp-auth/session"); expect(identityResponse.status()).toBe(200);
@@ -369,15 +369,43 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     await seen.markPhase(logoutPhase); const clearBoundary = await seen.clear.boundary();
     await seen.settle(false); verifyTransferNetwork(seen, allowed);
     const logoutOrigin = new URL(page.url()).origin, logoutStartIndex = seen.rows.length, logoutStartedAt = Date.now();
+    const logoutUrl = (url: URL) => url.origin === logoutOrigin && url.pathname === "/api/erp-auth/logout" && !url.search;
+    const logoutCapture = deferred<{ request: Request; status: number; url: string; bodyText: string; bodySha256: string; bodyBytes: number } | { error: Error }>();
+    let logoutFetches = 0;
+    await page.route(logoutUrl, async route => {
+      const request = route.request();
+      try {
+        expect(request.method()).toBe("POST"); expect(request.frame()).toBe(page.mainFrame());
+        expect(request.resourceType()).toBe("fetch"); expect(request.isNavigationRequest()).toBe(false);
+        logoutFetches++;
+        // Cache the complete real server body before navigation can release the
+        // browser's CDP resource. No headers, cookies or response bytes are replaced.
+        const response = await route.fetch({ maxRetries: 0, maxRedirects: 0 }), body = await response.body();
+        const captured = { request, status: response.status(), url: response.url(), bodyText: body.toString("utf8"),
+          bodySha256: originalSha(body), bodyBytes: body.length };
+        await route.fulfill({ response }); logoutCapture.resolve(captured);
+      } catch (error) {
+        logoutCapture.resolve({ error: routeError(error) }); await route.abort().catch(() => {});
+      }
+    }, { times: 1 });
+    removeLogoutRoute = () => page.unroute(logoutUrl);
     const logoutResponse = page.waitForResponse(response => {
       const url = new URL(response.url()), request = response.request();
       return url.origin === logoutOrigin && url.pathname === "/api/erp-auth/logout" && !url.search
         && request.method() === "POST" && request.frame() === page.mainFrame();
-    });
+    }).then(response => ({ response }), error => ({ error: routeError(error) }));
     await logoutButton.click();
-    const acknowledgement = await logoutResponse;
-    expect(acknowledgement.status()).toBe(200); expect(await acknowledgement.json()).toEqual({ signedOut: true });
+    const capturedLogout = await logoutCapture.promise;
+    if ("error" in capturedLogout) throw capturedLogout.error;
+    const observedLogout = await logoutResponse;
+    if ("error" in observedLogout) throw observedLogout.error;
+    const acknowledgement = observedLogout.response;
+    expect(logoutFetches).toBe(1); expect(capturedLogout.request).toBe(acknowledgement.request());
+    expect(capturedLogout.url).toBe(acknowledgement.url()); expect(capturedLogout.status).toBe(200);
+    expect(acknowledgement.status()).toBe(200); expect(JSON.parse(capturedLogout.bodyText)).toEqual({ signedOut: true });
     expect(await acknowledgement.finished()).toBeNull();
+    result.logoutResponseBody = { source: "original_request_route_fetch", sha256: capturedLogout.bodySha256, bytes: capturedLogout.bodyBytes,
+      status: capturedLogout.status, browserFinished: true, fetches: logoutFetches };
     await expect(page.getByRole("heading", { name: "登录运营工作台", exact: true })).toBeVisible(); await expect(embedded).toHaveCount(0);
     expect(new URL(page.url()).origin).toBe(logoutOrigin); expect(new URL(page.url()).pathname).toBe("/login");
     await expect(page.locator('iframe[title="无限画布模型配置"]')).toHaveCount(0);
@@ -422,6 +450,7 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     result.logoutPrivateSettingsCleared = true; result.logoutSessionStatus = 401; result.logoutAcknowledgementFinished = true;
   } catch (error) { failure = error; result.primaryFailure = true; await failedScreenshot(page, info, result); }
   finally {
+    try { await removeLogoutRoute?.(); } catch (error) { failure ??= error; }
     page.off("request", record);
     try { await seen.settle(false); noExecution(seen); expect(seen.consoles).toEqual([]); verifyTransferNetwork(seen, allowed); }
     catch (error) { result.networkGateFailed = true; failure ??= error; }
