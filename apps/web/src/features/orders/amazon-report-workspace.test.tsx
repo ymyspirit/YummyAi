@@ -88,7 +88,7 @@ describe("Amazon report workspace", () => {
     expect(() => decodeAmazonReport(new ArrayBuffer(5 * 1024 * 1024 + 1), "utf-8")).toThrow("5 MB");
   });
 
-  it("explains that pending attachments continue in the background and offers explicit recovery", () => {
+  it("shows pending attachments without claiming a worker is running and explains receipt reconciliation before retry", () => {
     const line = { ...detailFixture().line, state: "pending" as const };
     const html = renderToStaticMarkup(<AmazonReportWorkspace accounts={[{
       id: createEntityId(), platform: "amazon", displayName: "Synthetic shop", externalAccountId: null, region: "NA", marketplaceIds: ["ATVPDKIKX0DER"],
@@ -96,7 +96,11 @@ describe("Amazon report workspace", () => {
       healthStatus: "not_checked", lastHealthAt: null, lastCapabilitySyncAt: null, capabilityExpiresAt: null, quota: null, lastErrorCode: null,
       createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z",
     }]} initialWorkspace={{ batches: [], lines: [line] }} />);
-    expect(html).toContain("关闭页面后仍会继续");
+    expect(html).toContain("有 1 条定制附件等待完成解析");
+    expect(html).toContain("在导入批次中核对原文件名和导入时间");
+    expect(html).toContain("确认未导入后再重新导入");
+    expect(html).not.toContain("关闭页面后仍会继续");
+    expect(html).not.toContain("后台正在处理");
     expect(html).toContain("继续后台解析");
     expect(html).not.toContain("正在逐行下载");
     const idle = renderToStaticMarkup(<AmazonReportWorkspace accounts={[{

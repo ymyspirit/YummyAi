@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type { SecretVault } from "@yummyai/ai-core";
-import { Permission, authorize } from "@yummyai/authz";
+import { ForbiddenError, Permission, intersectPermissionContexts, requireTenantOrderPermissions } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { amazonOrderReportLines as reportLines, amazonOrderReportVersions as versions, amazonOrderReportReadModels as readModels, amazonOrderReportProcessingRequests as requests, marketplaceAccounts, orders, orderLines, auditEvents, purgeExpiredAmazonOrderReports, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
+import { amazonOrderReportLines as reportLines, amazonOrderReportVersions as versions, amazonOrderReportReadModels as readModels, amazonOrderReportProcessingRequests as requests, marketplaceAccounts, orders, orderLines, auditEvents, loadCurrentMembershipContext, purgeExpiredAmazonOrderReports, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { AMAZON_CUSTOM_PARSER_REVISION, parseAmazonCustomArchive } from "./amazon-custom-archive.js";
 import { AmazonArchiveAccessError, type AmazonReportArchiveGateway, MAX_AMAZON_ARCHIVE_BYTES } from "./amazon-report-archive.gateway.js";
@@ -25,13 +25,13 @@ export class AmazonReportArchiveProcessor {
     upload?: Uint8Array,
     requestId?: string,
   ): Promise<void> {
-    authorize(context, Permission.OrderWrite);
-    authorize(context, Permission.OrderPiiRead);
+    requireTenantOrderPermissions(context, [Permission.OrderWrite, Permission.OrderPiiRead]);
     if (upload && (!upload.byteLength || upload.byteLength > MAX_AMAZON_ARCHIVE_BYTES))
       throw new AmazonReportProcessingError("invalid", "ZIP 大小必须为 1 字节至 20 MiB");
     await purgeExpiredAmazonOrderReports(this.database, context);
     const token = createEntityId();
     const claimed = await withTenant(this.database.db, context, async (tx) => {
+      await this.currentAuthority(tx, context, requestId !== undefined);
       await lockLine(tx, context, id);
       const row = await this.loadLine(tx, id);
       const [request] = requestId ? await tx.select().from(requests).where(and(eq(requests.reportLineId, id), eq(requests.requestId, requestId))) : [];
@@ -85,7 +85,11 @@ export class AmazonReportArchiveProcessor {
     try {
       if (!upload && !claimed.source.line.customizedUrl)
         throw new AmazonArchiveAccessError("customization_missing");
+      // The claim transaction has ended. A revoked actor must not start another
+      // download or process bytes that arrived after that authority was removed.
+      await withTenant(this.database.db, context, tx => this.currentAuthority(tx, context, requestId !== undefined));
       const body = upload ?? (await this.gateway.download(claimed.source.line.customizedUrl!));
+      await withTenant(this.database.db, context, tx => this.currentAuthority(tx, context, requestId !== undefined));
       let evidence;
       try {
         evidence = await this.gateway.scan(body);
@@ -142,6 +146,7 @@ export class AmazonReportArchiveProcessor {
       const protectedArchive = this.vault.encrypt(Buffer.from(body).toString("base64"));
       const readModel = await createAmazonReportReadModel(stored);
       await withTenant(this.database.db, context, async (tx) => {
+        await this.currentAuthority(tx, context, requestId !== undefined);
         await lockLine(tx, context, id);
         const row = await this.loadLine(tx, id);
         const [currentRequest] = requestId ? await tx.select().from(requests).where(and(eq(requests.reportLineId, id), eq(requests.requestId, requestId), eq(requests.status, "processing"))) : [];
@@ -214,11 +219,16 @@ export class AmazonReportArchiveProcessor {
         });
       });
     } catch (error) {
-      const code = error instanceof AmazonArchiveAccessError ? error.code : "archive_invalid";
+      const code = error instanceof ForbiddenError ? "processing_blocked" : error instanceof AmazonArchiveAccessError ? error.code : "archive_invalid";
       await withTenant(this.database.db, context, async (tx) => {
         await lockLine(tx, context, id);
-        const [current] = await tx.select().from(reportLines).where(eq(reportLines.id, id));
-        if (current?.processingToken !== token) return;
+        const [current] = await tx.select({ processingToken: reportLines.processingToken, state: reportLines.state,
+          expiresAt: reportLines.expiresAt, retained: sql<boolean>`${reportLines.encryptedSource} is not null`,
+        }).from(reportLines).where(eq(reportLines.id, id));
+        // This metadata-only settlement cannot adopt bytes or revive erased or
+        // superseded sources, even when the original operator has lost access.
+        if (current?.processingToken !== token || current.state === "expired" ||
+          current.expiresAt <= new Date() || !current.retained) return;
         const retry = !!requestId && shouldRetryAmazonArchive(code, claimed.attemptCount);
         await tx
           .update(reportLines)
@@ -239,8 +249,19 @@ export class AmazonReportArchiveProcessor {
           metadata: { code },
         });
       });
+      if (error instanceof ForbiddenError) throw error;
     }
     return;
+  }
+
+  private async currentAuthority(tx: TenantTransaction, input: TenantContext, requireMembership: boolean) {
+    const required = [Permission.OrderWrite, Permission.OrderPiiRead] as const;
+    requireTenantOrderPermissions(input, required);
+    // Persisted background tasks always require a current member. Explicit
+    // server credential adapters retain the existing no-membership HTTP mode.
+    const current = requireMembership || input.permissionScopes !== undefined
+      ? await loadCurrentMembershipContext(tx, input, { lock: true }) : input;
+    requireTenantOrderPermissions(intersectPermissionContexts(input, current), required);
   }
 
   private async account(context: TenantContext, id: string) {

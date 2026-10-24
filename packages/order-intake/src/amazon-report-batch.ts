@@ -1,4 +1,5 @@
 import type { TenantContext } from "@yummyai/contracts";
+import { ForbiddenError } from "@yummyai/authz";
 import { amazonOrderReportBatches as batches, amazonOrderReportLines as lines, amazonOrderReportProcessingRequests as requests, withTenant, type DatabaseConnection } from "@yummyai/database";
 import { and, eq, sql } from "drizzle-orm";
 import { type AmazonReportArchiveProcessor, AmazonReportProcessingError } from "./amazon-report-processing.js";
@@ -35,6 +36,7 @@ export class AmazonReportBatchProcessor {
         try {
           await this.executor.process({ ...context, userId: task.requestedBy }, task.reportLineId, task.expectedVersionId, undefined, task.requestId);
         } catch (error) {
+          if (error instanceof ForbiddenError) { await this.repository.retire(context, task, true); continue; }
           if (!(error instanceof AmazonReportProcessingError)) { unavailable = true; continue; }
           if (error.code !== "busy") await this.repository.retire(context, task, ["conflict", "invalid"].includes(error.code));
         }

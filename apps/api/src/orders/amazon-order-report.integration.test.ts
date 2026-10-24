@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { SecretVault } from "@yummyai/ai-core";
+import { Permission } from "@yummyai/authz";
 import { ConflictException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { createEntityId, type AmazonReportImportInput, type AmazonReportLineView, type RecordCustomizationFileScanInput, type TenantContext } from "@yummyai/contracts";
 import {
   amazonOrderReportBatches, amazonOrderReportLines, amazonOrderReportVersions, amazonOrderReportReadModels,
   amazonOrderReportProcessingRequests,
   connectDatabase, marketplaceAccounts, migrateDatabase, orderLines, orderProtectedAccessEvents,
-  orderProtectedDetails, orders, withTenant,
+  orderProtectedDetails, orders, withTenant, memberships, membershipRoles, roles, purgeExpiredAmazonOrderReports,
 } from "@yummyai/database";
 import { eq } from "drizzle-orm";
 import JSZip from "jszip";
@@ -60,6 +61,7 @@ async function customZip(row: SourceRow, value = "Synthetic buyer choice", overr
 describe("manual Amazon order reports and private customization files", () => {
   const database = connectDatabase();
   const tenantA = createEntityId(), tenantB = createEntityId(), userA = createEntityId(), userB = createEntityId(), accountA = createEntityId(), accountB = createEntityId();
+  const memberA = createEntityId(), memberB = createEntityId(), roleA = createEntityId(), roleB = createEntityId(), notificationRoleA = createEntityId();
   const contextA: TenantContext = { tenantId: tenantA, userId: userA, permissions: ["order:read", "order:write", "order:pii:read"], dataScope: "tenant" };
   const contextB: TenantContext = { tenantId: tenantB, userId: userB, permissions: [...contextA.permissions], dataScope: "tenant" };
   const vault = new SecretVault(Buffer.alloc(32, 107));
@@ -152,10 +154,86 @@ describe("manual Amazon order reports and private customization files", () => {
     await migrateDatabase(database);
     await database.client.unsafe("insert into organizations (id,name,slug) values ($1,$2,$3),($4,$5,$6)", [tenantA, "Synthetic Report A", `report-a-${tenantA}`, tenantB, "Synthetic Report B", `report-b-${tenantB}`]);
     await database.client.unsafe("insert into app_users (id,oidc_subject,email,display_name) values ($1,$2,$3,$4),($5,$6,$7,$8)", [userA, `report-a-${userA}`, `report-a-${userA}@example.test`, "Synthetic A", userB, `report-b-${userB}`, `report-b-${userB}@example.test`, "Synthetic B"]);
-    await withTenant(database.db, contextA, (tx) => tx.insert(marketplaceAccounts).values({ id: accountA, tenantId: tenantA, platform: "amazon", displayName: "Synthetic Shop A", region: "NA", authorizationMode: "amazon_private", marketplaceIds: [marketplaceId], createdBy: userA }));
-    await withTenant(database.db, contextB, (tx) => tx.insert(marketplaceAccounts).values({ id: accountB, tenantId: tenantB, platform: "amazon", displayName: "Synthetic Shop B", region: "NA", authorizationMode: "amazon_private", marketplaceIds: [marketplaceId], createdBy: userB }));
+    for (const [context, membershipId, roleId, accountId] of [[contextA, memberA, roleA, accountA], [contextB, memberB, roleB, accountB]] as const) {
+      await withTenant(database.db, context, async (tx) => {
+        await tx.insert(memberships).values({ id: membershipId, tenantId: context.tenantId, userId: context.userId, status: "active" });
+        await tx.insert(roles).values({ id: roleId, tenantId: context.tenantId, name: "Synthetic report operator", permissions: [...context.permissions], dataScope: "tenant" });
+        await tx.insert(membershipRoles).values({ tenantId: context.tenantId, membershipId, roleId });
+        await tx.insert(marketplaceAccounts).values({ id: accountId, tenantId: context.tenantId, platform: "amazon", displayName: "Synthetic Shop", region: "NA", authorizationMode: "amazon_private", marketplaceIds: [marketplaceId], createdBy: context.userId });
+      });
+    }
+    await withTenant(database.db, contextA, async (tx) => {
+      await tx.insert(roles).values({ id: notificationRoleA, tenantId: tenantA, name: "Synthetic notification reader", permissions: [Permission.NotificationRead], dataScope: "tenant" });
+      await tx.insert(membershipRoles).values({ tenantId: tenantA, membershipId: memberA, roleId: notificationRoleA });
+    });
   }, 60_000);
   afterAll(async () => { await database.client.end(); });
+
+  it.each(["disabled_member", "order_write_revoked", "pii_revoked", "self_scope", "team_scope"] as const)(
+    "does not decrypt or download queued attachments after %s and does not replay on restored access", async (change) => {
+      const fixture = await importedLine(), download = vi.fn(gateway.download), scan = vi.fn(gateway.scan);
+      const decrypt = vi.spyOn(vault, "withSecret");
+      const worker = createAmazonReportBatchProcessor(database, new AmazonReportArchiveProcessor(database, vault, { download, scan }));
+      try {
+        await withTenant(database.db, contextA, async (tx) => {
+          if (change === "disabled_member") await tx.update(memberships).set({ status: "disabled" }).where(eq(memberships.id, memberA));
+          else if (change === "self_scope" || change === "team_scope") await tx.update(roles).set({ dataScope: change === "self_scope" ? "self" : "team" }).where(eq(roles.id, roleA));
+          else await tx.update(roles).set({ permissions: contextA.permissions.filter(permission => permission !== (change === "order_write_revoked" ? Permission.OrderWrite : Permission.OrderPiiRead)) }).where(eq(roles.id, roleA));
+        });
+        await expect(worker.process(contextA, fixture.batch.id)).resolves.toMatchObject({ completed: 0, failed: 1 });
+        expect(download).not.toHaveBeenCalled(); expect(scan).not.toHaveBeenCalled(); expect(decrypt).not.toHaveBeenCalled();
+        const [line] = await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id, fixture.line.id)));
+        const [request] = await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, fixture.line.id)));
+        expect(line).toMatchObject({ state: "failed", lastErrorCode: "processing_blocked", currentVersionId: null, versionNumber: 0 });
+        expect(request).toMatchObject({ status: "failed", lastErrorCode: "processing_blocked", attemptCount: 0 });
+      } finally {
+        decrypt.mockRestore();
+        await withTenant(database.db, contextA, async (tx) => {
+          await tx.update(memberships).set({ status: "active" }).where(eq(memberships.id, memberA));
+          await tx.update(roles).set({ permissions: [...contextA.permissions], dataScope: "tenant" }).where(eq(roles.id, roleA));
+        });
+      }
+      await expect(worker.process(contextA, fixture.batch.id)).resolves.toMatchObject({ completed: 0, failed: 1 });
+      expect(download).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["download", "scan"] as const)("discards in-flight bytes when access is revoked during %s", async (stage) => {
+    const fixture = await importedLine();
+    const revoke = () => withTenant(database.db, contextA, tx => tx.update(roles).set({ permissions: [Permission.OrderRead] }).where(eq(roles.id, roleA)));
+    const download = vi.fn(async () => { if (stage === "download") await revoke(); return archives.get(sourceUrl(fixture.row))!; });
+    const scan = vi.fn(async () => { if (stage === "scan") await revoke(); return cleanScan(); });
+    const worker = createAmazonReportBatchProcessor(database, new AmazonReportArchiveProcessor(database, vault, { download, scan }));
+    try {
+      await expect(worker.process(contextA, fixture.batch.id)).resolves.toMatchObject({ completed: 0, failed: 1 });
+      expect(download).toHaveBeenCalledTimes(1); expect(scan).toHaveBeenCalledTimes(stage === "download" ? 0 : 1);
+      const [line] = await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id, fixture.line.id)));
+      const versions = await withTenant(database.db, contextA, tx => tx.select({ id: amazonOrderReportVersions.id }).from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.reportLineId, fixture.line.id)));
+      expect(line).toMatchObject({ state: "failed", lastErrorCode: "processing_blocked", currentVersionId: null, versionNumber: 0, processingToken: null });
+      expect(versions).toEqual([]);
+    } finally {
+      await withTenant(database.db, contextA, tx => tx.update(roles).set({ permissions: [...contextA.permissions], dataScope: "tenant" }).where(eq(roles.id, roleA)));
+    }
+  });
+
+  it("erases expired private report evidence even after its requesting member is disabled", async () => {
+    const fixture = await importedLine();
+    await createAmazonReportBatchProcessor(database, new AmazonReportArchiveProcessor(database, vault, gateway)).process(contextA, fixture.batch.id);
+    try {
+      await withTenant(database.db, contextA, async (tx) => {
+        await tx.update(memberships).set({ status: "disabled" }).where(eq(memberships.id, memberA));
+        await tx.update(amazonOrderReportLines).set({ expiresAt: new Date(Date.now() - 1_000) }).where(eq(amazonOrderReportLines.id, fixture.line.id));
+      });
+      await purgeExpiredAmazonOrderReports(database, { ...contextA, permissions: [] });
+      const [line] = await withTenant(database.db, contextA, tx => tx.select({ state: amazonOrderReportLines.state, source: amazonOrderReportLines.encryptedSource }).from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id, fixture.line.id)));
+      const versions = await withTenant(database.db, contextA, tx => tx.select({ archive: amazonOrderReportVersions.encryptedArchive, document: amazonOrderReportVersions.encryptedDocument }).from(amazonOrderReportVersions).where(eq(amazonOrderReportVersions.reportLineId, fixture.line.id)));
+      const [batch] = await withTenant(database.db, contextA, tx => tx.select({ report: amazonOrderReportBatches.encryptedReport }).from(amazonOrderReportBatches).where(eq(amazonOrderReportBatches.id, fixture.batch.id)));
+      expect(line).toEqual({ state: "expired", source: null });
+      expect(versions).toEqual([{ archive: null, document: null }]); expect(batch).toEqual({ report: null });
+    } finally {
+      await withTenant(database.db, contextA, tx => tx.update(memberships).set({ status: "active" }).where(eq(memberships.id, memberA)));
+    }
+  });
 
   it("processes persisted attachment requests after import returns, without a browser, review or workflow transitions", async () => {
     const fixture = await importedLine();

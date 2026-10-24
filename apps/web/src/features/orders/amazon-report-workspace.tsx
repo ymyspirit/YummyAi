@@ -117,7 +117,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
       if (token !== context.current) return;
       setNotice(batchSummary(imported)); setBatchId(imported.id); setPage(0);
       await refreshWorkspace(accountId, imported.id, token);
-    } catch (cause) { if (token === context.current) setError(userError(cause)); }
+    } catch (cause) { if (token === context.current) setError(`${userError(cause)} 若未收到导入回执，请先刷新订单列表，在导入批次中核对原文件名和导入时间；确认未导入后再重新导入。`); }
     finally { if (token === context.current) setBusy(false); }
   }
   async function resumeQueue() {
@@ -125,7 +125,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
     setQueueActive(true); setError("");
     try {
       const result = AmazonReportResumeResultSchema.parse(await reportRequest("resume", { accountId, ...(batchId ? { batchId } : {}) }));
-      if (token === context.current) { setNotice(result.queued ? `已提交 ${result.queued} 条后台解析任务，关闭页面后仍会继续。` : "没有需要恢复的附件任务。处理中任务将继续运行；缺少来源的附件请补传 ZIP。"); await refreshWorkspace(accountId, batchId, token); }
+      if (token === context.current) { setNotice(result.queued ? `已登记 ${result.queued} 条解析任务，等待任务服务处理。` : "没有新增需要恢复的附件任务。请核对列表中的解析状态；缺少来源的附件请补传 ZIP。"); await refreshWorkspace(accountId, batchId, token); }
     } catch (cause) { if (token === context.current) setError(userError(cause)); }
     finally { if (token === context.current) setQueueActive(false); }
   }
@@ -180,7 +180,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
           <button className="ar-button" disabled={busy || loading || queueActive} onClick={() => void changeContext(accountId, batchId)} aria-label="刷新订单列表"><RefreshCw size={15} /></button>
         </div>
         {batch && <div className="ar-batch-summary"><span>{batchSummary(batch)}</span><time>{formatDate(batch.createdAt)}</time></div>}
-        <div className="ar-queue-status" role="status"><span>{queueActive ? <LoaderCircle size={15} className="ar-spin" /> : <FileArchive size={15} />}{queueActive ? "正在提交后台任务。" : pending.length ? `后台正在处理 ${pending.length} 条附件，关闭页面后仍会继续。` : "可恢复所选店铺或批次尚未完成的附件。"}</span><button className="ar-button" disabled={queueActive || busy || loading || lineBusy} onClick={() => void resumeQueue()}>{queueActive ? "提交中" : "继续后台解析"}</button></div>
+        <div className="ar-queue-status" role="status"><span>{queueActive ? <LoaderCircle size={15} className="ar-spin" /> : <FileArchive size={15} />}{queueActive ? "正在提交后台任务。" : pending.length ? `有 ${pending.length} 条定制附件等待完成解析，处理进度会在此更新。` : "可恢复所选店铺或批次尚未完成的附件。"}</span><button className="ar-button" disabled={queueActive || busy || loading || lineBusy} onClick={() => void resumeQueue()}>{queueActive ? "提交中" : "继续后台解析"}</button></div>
         <div className={`ar-body ${selectedId ? "has-detail" : ""}`}>
           <div className="ar-list">
             {loading ? <div className="ar-empty" role="status"><LoaderCircle className="ar-spin" size={24} /><p>正在读取订单…</p></div> : visibleLines.length === 0 ? <div className="ar-empty"><FileArchive size={26} /><h2>{error ? "订单数据尚未读取" : workspace.lines.length ? "没有匹配的订单" : "暂无导入订单"}</h2><p>{error ? "请根据页面提示重试。" : workspace.lines.length ? "调整搜索内容或筛选条件。" : "选择店铺并上传报告，订单和定制内容会显示在这里。"}</p></div> : <>
@@ -209,7 +209,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
           </section>}
         </div>
       </section>
-      <p className="ar-footnote">报告未提供的平台状态与发货期限不会推测补齐。“已核对”仅表示内部核对，不代表已生产或已发货。</p>
+      <p className="ar-footnote">报告未提供的平台状态与发货期限不会推测补齐。“已核对”仅表示内部核对，不代表已生产或已发货。导入后若未收到回执，请先刷新订单列表，在导入批次中核对原文件名和导入时间；确认未导入后再重新导入。</p>
     </>}
   </div>;
 }

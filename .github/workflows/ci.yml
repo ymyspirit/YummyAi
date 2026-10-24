@@ -138,6 +138,8 @@ jobs:
       - run: pnpm test:integration
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
+      - name: Validate order to factory status intake
+        run: pnpm test:e2e:order-daily --suite=factory-erp-import-integration
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e --workers=1
       - run: pnpm build --concurrency=2

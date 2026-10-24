@@ -1,4 +1,5 @@
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { ForbiddenError, Permission } from "@yummyai/authz";
 import { describe, expect, it, vi } from "vitest";
 import { AmazonReportBatchPendingError, AmazonReportBatchProcessor, type AmazonReportBatchRepository, type ReportProcessingTask } from "./amazon-report-batch.js";
 import { AmazonReportProcessingError, shouldRetryAmazonArchive } from "./amazon-report-processing.js";
@@ -53,6 +54,18 @@ describe("durable Amazon report attachment processing", () => {
     await new AmazonReportBatchProcessor(repo, { process }).process(context, createEntityId());
     expect(current.status).toBe("superseded");
     expect(repo.retire).toHaveBeenCalledWith(context, current, false);
+  });
+
+  it("ends a revoked request without automatic retry while another authorized line can finish", async () => {
+    const tasks = [task(), task()], repo = repository(tasks);
+    const process = vi.fn(async (_context, id: string) => {
+      if (id === tasks[0]!.reportLineId) throw new ForbiddenError(Permission.OrderWrite);
+      tasks[1]!.status = "completed";
+    });
+    await expect(new AmazonReportBatchProcessor(repo, { process }).process(context, createEntityId())).resolves.toMatchObject({ completed: 1, failed: 1 });
+    expect(repo.retire).toHaveBeenCalledWith(context, tasks[0], true);
+    await new AmazonReportBatchProcessor(repo, { process }).process(context, createEntityId());
+    expect(process).toHaveBeenCalledTimes(2);
   });
 
   it("stops reclaiming after three attempts and leaves a recoverable failure", async () => {
