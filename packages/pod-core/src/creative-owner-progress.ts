@@ -35,4 +35,3 @@ export async function refreshCreativeProgress(tx: TenantTransaction, batchId: st
     completedAt: terminal ? new Date() : null, updatedAt: new Date(),
   }).where(eq(creativeDesignBatches.id, batchId));
 }
-
