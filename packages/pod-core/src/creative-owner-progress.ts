@@ -8,7 +8,6 @@ export async function lockCreativeParent(tx: TenantTransaction, batchId: string)
   return batch && !batch.archivedAt && !closedItem(batch.status) ? batch : undefined;
 }
 
-
 export async function refreshCreativeProgress(tx: TenantTransaction, batchId: string) {
   if (!await lockCreativeParent(tx, batchId)) return;
   const items = await tx.select({ id: creativeDesignBatchItems.id, status: creativeDesignBatchItems.status }).from(creativeDesignBatchItems)
