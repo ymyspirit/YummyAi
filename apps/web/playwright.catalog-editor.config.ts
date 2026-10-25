@@ -4,7 +4,7 @@ import personal from "./playwright.erp-identity.config";
 const servers = Array.isArray(personal.webServer) ? personal.webServer : [];
 export default defineConfig({
   ...personal,
-  testMatch: "catalog-editor.spec.ts",
+  testMatch: ["catalog-editor.spec.ts", "pillow-size-basis.spec.ts"],
   outputDir: "../../tmp/catalog-ui-authority-browser",
   webServer:
     process.env.E2E_COMPILED_WEB === "1"
