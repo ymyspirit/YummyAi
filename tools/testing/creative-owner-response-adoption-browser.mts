@@ -10,7 +10,11 @@ type Database = Fixture["database"];
 export type CreativeOwnerResponseAdoptionBrowserRequest = { id: number; nonce: string; operation: "seed"; context: TenantContext }
   | { id: number; nonce: string; operation: "facts" | "close" };
 const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
-function invalid(): never { throw new Error("creative_owner_adoption_browser_request_invalid"); }
+type SeedGuard = "api_missing" | "session_http" | "identity_mismatch" | "schema_mismatch"
+  | "fixture_authority_mismatch" | "workspace_not_adoptable" | "png_invalid";
+function invalid(stage: SeedGuard | "request_invalid" = "request_invalid"): never {
+  throw new Error("creative_owner_adoption_browser_" + stage);
+}
 async function send(value: unknown) {
   await new Promise<void>((resolve, reject) => {
     if (!process.connected || !process.send) return reject(new Error("creative_owner_adoption_browser_channel_closed"));
@@ -109,34 +113,34 @@ export async function creativeOwnerResponseAdoptionBrowserChild() {
       if (packet.operation === "seed") {
         if (fixture || database || seed) invalid();
         const incoming = TenantContextSchema.strict().parse(packet.context), api = process.env.API_BASE_URL, token = process.env.API_ACCESS_TOKEN;
-        if (!api || !token) invalid();
+        if (!api || !token) invalid("api_missing");
         const response = await fetch(new URL("/v1/identity/session", api), { redirect: "error", signal: AbortSignal.timeout(15_000), headers: { authorization: "Bearer " + token } });
-        if (response.status !== 200) { await response.body?.cancel(); invalid(); }
+        if (response.status !== 200) { await response.body?.cancel(); invalid("session_http"); }
         const session = ErpSessionViewSchema.parse(await response.json());
         const actors = JSON.parse(process.env.ERP_FIXTURE_ACTORS ?? "null") as { operator?: { userId?: string; tenantId?: string } } | null;
         if (!actors?.operator || incoming.userId !== session.userId || incoming.tenantId !== session.tenantId
           || session.userId !== actors.operator.userId || session.tenantId !== actors.operator.tenantId
-          || erpSessionAuthority(incoming) !== erpSessionAuthority(session)) invalid();
+          || erpSessionAuthority(incoming) !== erpSessionAuthority(session)) invalid("identity_mismatch");
         context = TenantContextSchema.strict().parse(TenantContextSchema.parse(session));
         const db = await import("../../packages/database/src/index.js"); database = db.connectDatabase(environment.url);
         const [schema] = await database.client.unsafe("select current_database() as name,(select count(*)::int from drizzle.__drizzle_migrations) as migrations");
-        if (schema?.name !== environment.name || schema.migrations !== environment.schema) invalid();
+        if (schema?.name !== environment.name || schema.migrations !== environment.schema) invalid("schema_mismatch");
         const module = await import("../../apps/api/src/design/creative-owner-response-adoption.test-fixture.js");
         // Passing the current OIDC context suppresses API-test actor creation
         // and ALL-permission grants. Its existing membership must suffice.
         fixture = await module.createCreativeOwnerResponseAdoptionFixture({ database, context });
-        if (erpSessionAuthority(await fixture.current()) !== erpSessionAuthority(context)) invalid();
+        if (erpSessionAuthority(await fixture.current()) !== erpSessionAuthority(context)) invalid("fixture_authority_mismatch");
         seed = await fixture.seed("creative_adaptation");
         const workspace = await fixture.service(seed).workspace(await fixture.current(), seed.executionId);
         if (!workspace.basis || !workspace.canAdopt || !workspace.canInspectOriginal || workspace.requests.length
-          || workspace.parentId !== seed.batchId || workspace.parentExecutionId !== null) invalid();
+          || workspace.parentId !== seed.batchId || workspace.parentExecutionId !== null) invalid("workspace_not_adoptable");
         const preview = await fixture.service(seed).preview(await fixture.current(), seed.executionId, workspace.basis);
         const png = Buffer.from(preview.bytes);
         if (preview.mediaType !== "image/png" || png.length < 24
           || !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-          || png.toString("ascii", 12, 16) !== "IHDR") invalid();
+          || png.toString("ascii", 12, 16) !== "IHDR") invalid("png_invalid");
         const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
-        if (!width || !height) invalid();
+        if (!width || !height) invalid("png_invalid");
         await send({ id, ok: true, result: { nonce: environment.nonce, executionId: seed.executionId, ownerId: seed.operation.ownerId,
           batchId: seed.batchId, parentExecutionId: null, stepKey: seed.operation.stepKey, inputFingerprint: workspace.source.inputFingerprint,
           basis: workspace.basis, identityStamp: workspace.identityStamp, originalPhase: workspace.originalPhase,

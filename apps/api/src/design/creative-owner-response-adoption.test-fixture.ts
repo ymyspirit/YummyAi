@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { createEnvironmentSecretVault } from "@yummyai/ai-core";
-import { Permission } from "@yummyai/authz";
+import { intersectPermissionContexts, Permission } from "@yummyai/authz";
 import { CreateCreativeDesignBatchInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
 import type { CreativeResponseAdoptionCommand } from "@yummyai/contracts/harness/creative-response-adoption";
 import { CreativeOwnerResponseAdoptionWorkspaceSchema } from "@yummyai/contracts/harness/creative-owner-response-adoption";
@@ -85,7 +85,11 @@ export async function createCreativeOwnerResponseAdoptionFixture(fixtureOptions:
       catch (cause) { nativeFailures.push(cause); throw cause; }
     } };
   };
-  const current = () => { if (!context) throw new Error("owner_fixture_not_admitted"); return paid.current(context); };
+  const current = async () => {
+    if (!context) throw new Error("owner_fixture_not_admitted");
+    const latest = await paid.current(context);
+    return fixtureOptions.context ? intersectPermissionContexts(fixtureOptions.context, latest) : latest;
+  };
   const envelope = (payload: Record<string, string>): JobEnvelope => {
     if (!context) throw new Error("owner_fixture_not_admitted");
     return { jobId: createEntityId(), correlationId: createEntityId(), idempotencyKey: createEntityId(), traceId: createTraceId(),
@@ -386,7 +390,7 @@ export async function createCreativeOwnerResponseAdoptionFixture(fixtureOptions:
     if (failures.length) throw new AggregateError(failures, "owner_response_fixture_cleanup_failed");
   }
   try {
-    if (fixtureOptions.context) context = await paid.current(fixtureOptions.context);
+    if (fixtureOptions.context) context = intersectPermissionContexts(fixtureOptions.context, await paid.current(fixtureOptions.context));
     else { const actor = await paid.actor(undefined, "tenant"); context = await paid.grant(actor.context, permissions, "tenant"); }
     await paid.policy(context);
     const [metadata] = await database.client.unsafe("select current_database() as name,(select count(*)::int from drizzle.__drizzle_migrations) as migrations");
