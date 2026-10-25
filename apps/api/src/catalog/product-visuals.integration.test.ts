@@ -1,5 +1,5 @@
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,17 +7,18 @@ import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Permission } from "@yummyai/authz";
 import { SecretVault } from "@yummyai/ai-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { ConfigurationSnapshotSchema } from "@yummyai/contracts/ai/model-configuration";
 import { SalesPlanFieldsSchema, type SalesPlanView } from "@yummyai/contracts/catalog/sales-plan";
 import type {
   ProductVisualProject,
   VisualSlotKey,
 } from "@yummyai/contracts/catalog/product-visuals";
 import { StudioGenerateRequestSchema, StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import type { StudioPaidImageRequest } from "@yummyai/contracts/pod/studio-paid-image";
 import { admitCreativeExecution, stageCreativeExecution } from "@yummyai/pod-core";
 import {
   assetFiles,
   aiBudgetLedger,
-  aiBudgetPolicies,
   connectDatabase,
   creativeDesignBatches,
   creativeExecutions,
@@ -36,6 +37,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
+import { ModelConfigurationService } from "../ai/model-configuration.service.js";
 import { CanvasBridgeService } from "../design/canvas-bridge.service.js";
 import { CanvasWorkflowService } from "../design/canvas-workflow.service.js";
 import { CreativeStudioService } from "../design/creative-studio.service.js";
@@ -43,6 +45,8 @@ import { DesignService, DrizzleDesignRepository } from "../design/design.service
 import { PodBatchWorkflowService } from "../design/pod-batch-workflow.service.js";
 import { ProductionEditorService } from "../design/production-editor.service.js";
 import { StudioGenerationService } from "../design/studio-generation.service.js";
+import { StudioImageBudgetService } from "../design/studio-image-budget.service.js";
+import { StudioPaidImageService } from "../design/studio-paid-image.service.js";
 import { ListingService, DrizzleListingRepository } from "../listings/listing.service.js";
 import type { AmazonOrderReportService } from "../orders/amazon-order-report.service.js";
 import { OrderWorkspaceService } from "../orders/order-workspace.service.js";
@@ -73,6 +77,7 @@ describe.sequential(
       other = { ...a, userId: b.userId };
     const audit = new AuditService(db),
       queue = { enqueue: vi.fn(async () => undefined) };
+    const privateWrites = vi.spyOn(storage, "putPrivate");
     const scan = vi.fn(async () => ({
       result: "clean" as const,
       engine: "synthetic",
@@ -106,6 +111,8 @@ describe.sequential(
       workflow = new CanvasWorkflowService(db, storage, bridge, creative, editor, audit);
     const generation = new StudioGenerationService(db, storage, queue, bridge),
       studio = new CreativeStudioService(db, storage, { scan }, bridge, audit, generation);
+    const paid = new StudioPaidImageService(db, queue, bridge), budgets = new StudioImageBudgetService(db);
+    const configuration = new ModelConfigurationService(db, vault);
     const catalog = new ProductDevelopmentService(db, storage),
       listing = new ListingService(new DrizzleListingRepository(db)),
       plans = new SalesPlanService(db, listing);
@@ -118,6 +125,7 @@ describe.sequential(
       generation,
       studio,
       audit,
+      paid,
     );
     const checks = { identity: true, shape: true, facts: true, sides: true };
     const ids: Record<string, string[]> = { plans: [], groups: [], assets: [], generations: [] };
@@ -189,6 +197,52 @@ describe.sequential(
       slotKey,
       ...(artworkVersionId ? { artworkVersionId } : {}),
       size: "1024x1024",
+    });
+    async function quoteInput(slotKey: VisualSlotKey, artworkVersionId?: string) {
+      const selected = (await generation.models(a)).find(model => model.id === modelId);
+      if (!selected) throw new Error("Synthetic visual quote model missing");
+      return { requestId: randomUUID(), slotKey, selectionRevision: selected.selectionRevision,
+        prompt: "Synthetic retained visual quote", ...(artworkVersionId ? { artworkVersionId } : {}) };
+    }
+    async function quote(p: SalesPlanView, group: string, slotKey: VisualSlotKey, artworkVersionId?: string) {
+      const before = await producerState(), calls = { gateway: generate.mock.calls.length, queue: queue.enqueue.mock.calls.length,
+        storage: privateWrites.mock.calls.length, scanner: scan.mock.calls.length };
+      const request = await service.prepareImage(a, p.id, group, await quoteInput(slotKey, artworkVersionId));
+      (ids.requests ??= []).push(request.id);
+      expect(request).toMatchObject({ status: "prepared", generationId: null,
+        admission: { enabled: false, code: "operator_paused" }, quote: { visualDelivery: { groupId: group, slotKey } } });
+      expect((await producerState()).filter(row => row.table !== "creative_studio_image_requests"))
+        .toEqual(before.filter(row => row.table !== "creative_studio_image_requests"));
+      expect({ gateway: generate.mock.calls.length, queue: queue.enqueue.mock.calls.length,
+        storage: privateWrites.mock.calls.length, scanner: scan.mock.calls.length }).toEqual(calls);
+      return request;
+    }
+    async function cancelQuote(p: SalesPlanView, group: string, request: StudioPaidImageRequest) {
+      expect(await service.cancelImage(a, p.id, group, { slotKey: request.quote.visualDelivery!.slotKey,
+        requestId: request.requestId, quoteHash: request.quote.quoteHash })).toMatchObject({ id: request.id, status: "cancelled", generationId: null });
+    }
+    const producerState = () => withTenant(db.db, a, async tx => {
+      const state = [];
+      for (const name of ["creative_studio_generations", "creative_studio_image_requests", "creative_studio_image_cancellations", "creative_executions",
+        "ai_budget_ledger", "asset_files", "creative_studio_entries", "creative_studio_revisions", "creative_design_batches", "creative_design_batch_items",
+        "creative_design_candidates", "creative_design_versions"]) {
+        const [row] = await tx.execute<{ value: string }>(sql`select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb)::text as value
+          from public.${sql.identifier(name)} t where t.tenant_id=${a.tenantId}`);
+        expect(row).toBeDefined();
+        state.push({ table: name, sha256: createHash("sha256").update(row!.value).digest("hex") });
+      }
+      return state;
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+    async function noProducer(invoke: () => Promise<unknown>) {
+      const before = await producerState(), calls = { gateway: generate.mock.calls.length, queue: queue.enqueue.mock.calls.length,
+        storage: privateWrites.mock.calls.length, scanner: scan.mock.calls.length };
+      await invoke();
+      expect(await producerState()).toEqual(before);
+      expect({ gateway: generate.mock.calls.length, queue: queue.enqueue.mock.calls.length,
+        storage: privateWrites.mock.calls.length, scanner: scan.mock.calls.length }).toEqual(calls);
+    }
+    const paused = (invoke: () => Promise<unknown>) => noProducer(async () => {
+      await expect(invoke()).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
     });
     const operation = (id: string) => ({ kind: "studio_generation" as const, ownerId: id, stepKey: "generate" });
     const historyRows = (id: string) => withTenant(db.db, a, async tx => ({
@@ -270,23 +324,25 @@ describe.sequential(
           [context.userId, context.userId, `${context.userId}@example.test`],
         );
       }
-      const member = createEntityId();
-      roleId = createEntityId();
-      await withTenant(db.db, a, async (tx) => {
+      for (const context of [a, b, other]) {
+        const member = createEntityId(), fixtureRole = createEntityId();
+        if (context.userId === a.userId) roleId = fixtureRole;
+        await withTenant(db.db, context, async (tx) => {
         await tx
           .insert(memberships)
-          .values({ id: member, tenantId: a.tenantId, userId: a.userId, status: "active" });
+          .values({ id: member, tenantId: context.tenantId, userId: context.userId, status: "active" });
         await tx.insert(roles).values({
-          id: roleId,
-          tenantId: a.tenantId,
-          name: "Visual fixture",
+          id: fixtureRole,
+          tenantId: context.tenantId,
+          name: "Visual fixture " + context.userId,
           permissions: Object.values(Permission),
           dataScope: "tenant",
         });
         await tx
           .insert(membershipRoles)
-          .values({ tenantId: a.tenantId, membershipId: member, roleId });
-      });
+          .values({ tenantId: context.tenantId, membershipId: member, roleId: fixtureRole });
+        });
+      }
       opaque = await sharp({
         create: { width: 1024, height: 1024, channels: 4, background: "#428bc4" },
       })
@@ -352,6 +408,15 @@ describe.sequential(
           label: "Synthetic visual",
         })
       ).id;
+      // Configure the real free quote owner before any template, plan or
+      // visual group captures this route's immutable model fingerprint.
+      const channel = ConfigurationSnapshotSchema.parse(JSON.parse(JSON.stringify(await configuration.invoke(a, { operation: "configuration.get" }))))
+        .channels.find(value => value.id === providerId);
+      if (!channel) throw new Error("Synthetic visual quote channel missing");
+      await configuration.invoke(a, { operation: "studio.image-pricing.save", channelId: providerId, modelId, revision: channel.revision,
+        pricing: { estimatedUsd: "0.02000000", reservationUsd: "0.050000", reference: "Synthetic isolated quote Not a provider invoice" } });
+      await budgets.save(a, { revision: (await budgets.workspace(a)).revision,
+        monthlyCapUsd: "10.000000", defaultTaskCapUsd: "1.000000", imageTaskCapUsd: "1.000000" });
       const document = createDefaultProductionDocument("shaped_pillow");
       document.name = "Synthetic pillow template";
       if (document.productType !== "shaped_pillow")
@@ -484,16 +549,23 @@ describe.sequential(
         service.prepare(a, p.id, { ...input, direction: "Changed" }),
       ).rejects.toBeInstanceOf(ConflictException);
       await expect(service.get(b, p.id)).rejects.toBeInstanceOf(NotFoundException);
-      await expect(service.generate(other, p.id, group, command("artwork"))).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      const quoted = await quote(p, group, "artwork"), fixed = await quoteInput("artwork");
+      for (const context of [b, other]) {
+        const before = await producerState();
+        await expect(service.prepareImage(context, p.id, group, fixed)).rejects.toMatchObject({ status: 404 });
+        await expect(service.prepareImageOriginal(context, p.id, group, { slotKey: "artwork", requestId: quoted.requestId }))
+          .rejects.toMatchObject({ status: 404 });
+        expect(await producerState()).toEqual(before);
+        await paused(() => service.generate(context, p.id, group, command("artwork")));
+      }
+      await cancelQuote(p, group, quoted);
       await expect(
         service.prepare({ ...a, permissions: [Permission.ProductRead] }, p.id, {
           ...input,
           requestId: randomUUID(),
         }),
       ).rejects.toThrow();
-      for (const kind of ["competitor", "customer_provided"]) {
+      try { for (const kind of ["competitor", "customer_provided"]) {
         await withTenant(db.db, a, (tx) =>
           tx
             .update(assetFiles)
@@ -503,21 +575,26 @@ describe.sequential(
         await expect(
           service.prepare(a, p.id, { ...input, requestId: randomUUID() }),
         ).rejects.toThrow();
-      }
-      await withTenant(db.db, a, (tx) =>
+        const before = await producerState();
+        await expect(service.prepareImage(a, p.id, group, await quoteInput("artwork")))
+          .rejects.toMatchObject({ status: 400, response: {
+            message: "画布参考素材 cannot use order-private or competitor source material",
+          } });
+        expect(await producerState()).toEqual(before);
+      } } finally { await withTenant(db.db, a, (tx) =>
         tx
           .update(assetFiles)
           .set({ rightsMetadata: { source: { kind: "owned" } } })
           .where(eq(assetFiles.id, sampleId)),
-      );
+      ); }
     });
     it("reads exact retained artwork into three reviewed slots and adopts one new plan version once", async () => {
       const p = await plan(),
         { group } = await prepared(p),
         art = await candidate(p, group, "artwork");
-      await expect(
-        service.generate(a, p.id, group, command("scene", createEntityId())),
-      ).rejects.toThrow();
+      await expect(service.prepareImage(a, p.id, group, await quoteInput("scene", createEntityId())))
+        .rejects.toMatchObject({ status: 409, response: { code: "studio_visual_image_changed" } });
+      await paused(() => service.generate(a, p.id, group, command("scene", createEntityId())));
       const images = [];
       for (const slot of ["scene", "detail", "customization"] as const)
         images.push(await candidate(p, group, slot, art.versionId));
@@ -540,9 +617,7 @@ describe.sequential(
       ]);
       expect(await service.adopt(a, p.id, group, input)).toEqual(adopted);
       expect((await snapshot(p, group)).adoptedRevision).toBe(2);
-      await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await paused(() => service.generate(a, p.id, group, command("artwork")));
       expect(generate).toHaveBeenCalledTimes(before);
     });
     it("blocks mixed artwork origins, generic-review shortcuts and technical defects without changing originals", async () => {
@@ -586,9 +661,11 @@ describe.sequential(
       expect(task.result?.rejectionReason).toBe("Synthetic opaque artwork");
       const good = await candidate(q, next.group, "artwork", undefined, false);
       await creative.reviewCreativeVersion(a, good.versionId, { decision: "approve" });
-      await expect(
-        service.generate(a, q.id, next.group, command("scene", good.versionId)),
-      ).rejects.toThrow("视觉交付中完成");
+      const beforeControlledReview = await producerState();
+      await expect(service.prepareImage(a, q.id, next.group, await quoteInput("scene", good.versionId)))
+        .rejects.toMatchObject({ status: 409, response: { code: "studio_visual_image_changed" } });
+      expect(await producerState()).toEqual(beforeControlledReview);
+      await paused(() => service.generate(a, q.id, next.group, command("scene", good.versionId)));
       await service.review(a, q.id, next.group, {
         versionId: good.versionId,
         decision: "approve",
@@ -598,6 +675,9 @@ describe.sequential(
         (await snapshot(q, next.group)).tasks.find((t) => t.result?.versionId === good.versionId)
           ?.controlledReview,
       ).toBe(true);
+      const controlledQuote = await quote(q, next.group, "scene", good.versionId);
+      expect(controlledQuote.quote.references[0]?.assetId).toBe(good.assetId);
+      await cancelQuote(q, next.group, controlledQuote);
       output = await sharp(transparent)
         .resize(256, 256)
         .withMetadata({ density: 300 })
@@ -648,7 +728,7 @@ describe.sequential(
       expect(unknown.execution[0]).toMatchObject({ phase: "uncertain", receipt: null, errorCode: "CREATIVE_RESULT_UNCERTAIN" });
       expect(unknown.ledger[0]).toMatchObject({ state: "reserved", amountUsd: "0.100000" });
       expect(await generation.originalInput(a, job.scope, input.requestId)).toEqual(job.input);
-      await expect(service.generate(a, p.id, group, input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      await paused(() => service.generate(a, p.id, group, input));
       await candidate(p, group, "artwork", undefined, false);
       expect((await snapshot(p, group)).budget).toMatchObject({
         occupiedUsd: 0.2,
@@ -658,14 +738,14 @@ describe.sequential(
       const q = await plan(),
         fresh = await prepared(q, 0.1);
       const before = await withTenant(db.db, a, tx => tx.select().from(creativeStudioGenerations).orderBy(creativeStudioGenerations.id));
-      const concurrent = await Promise.allSettled([
+      await noProducer(async () => { const concurrent = await Promise.allSettled([
         service.generate(a, q.id, fresh.group, command("artwork")),
         service.generate(a, q.id, fresh.group, command("artwork")),
       ]);
       for (const result of concurrent) {
         expect(result.status).toBe("rejected");
         if (result.status === "rejected") expect(result.reason).toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
-      }
+      } });
       expect(await withTenant(db.db, a, tx => tx.select().from(creativeStudioGenerations).orderBy(creativeStudioGenerations.id))).toEqual(before);
       expect(generate).not.toHaveBeenCalled(); expect(queue.enqueue).not.toHaveBeenCalled();
     });
@@ -698,7 +778,7 @@ describe.sequential(
       });
       await expect(originalAdmission(next.id)).rejects.toThrow(); await dormant(next.id);
       expect((await snapshot(p, group)).stale).toBe(true);
-      await expect(generation.create(a, next.scope, next.input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      await paused(() => generation.create(a, next.scope, next.input));
     });
     it("keeps channel template and sample pin rejection in the original Harness without resuming legacy tasks", async () => {
       const p = await plan(),
@@ -713,7 +793,7 @@ describe.sequential(
       );
       try {
         await expect(originalAdmission(first.id)).rejects.toThrow(); await dormant(first.id);
-        await expect(generation.create(a, first.scope, first.input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+        await paused(() => generation.create(a, first.scope, first.input));
       } finally {
         await withTenant(db.db, a, (tx) =>
           tx
@@ -763,7 +843,7 @@ describe.sequential(
           r.canvasWorkflow?.visualDelivery?.groupId === group &&
           r.canvasWorkflow.visualDelivery.slotKey === "artwork",
       )!;
-      await expect(
+      await paused(async () =>
         generation.create(
           a,
           project.id,
@@ -778,7 +858,7 @@ describe.sequential(
             background: "transparent",
           }),
         ),
-      ).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      );
       const historical = await retained(p, group, command("artwork")); await originalAdmission(historical.id);
       await withTenant(db.db, a, (tx) =>
         tx
@@ -802,19 +882,13 @@ describe.sequential(
       const retainedPlan = await plan(), history = await prepared(retainedPlan);
       for (let i = 0; i < 4; i++) await candidate(retainedPlan, history.group, "artwork");
       expect((await snapshot(retainedPlan, history.group)).tasks).toHaveLength(4);
-      await expect(service.generate(a, retainedPlan.id, history.group, command("artwork"))).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      await paused(() => service.generate(a, retainedPlan.id, history.group, command("artwork")));
       const q = await plan(),
         next = await prepared(q);
-      await withTenant(db.db, a, (tx) =>
-        tx.insert(aiBudgetPolicies).values({
-          tenantId: a.tenantId,
-          monthlyCapUsd: "0.01",
-          defaultTaskCapUsd: "1",
-          taskCapsUsd: { studio_image: 1 },
-        }),
-      );
+      await budgets.save(a, { revision: (await budgets.workspace(a)).revision,
+        monthlyCapUsd: "0.010000", defaultTaskCapUsd: "1.000000", imageTaskCapUsd: "1.000000" });
       const before = await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).orderBy(aiBudgetLedger.id));
-      await expect(service.generate(a, q.id, next.group, command("artwork"))).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      await paused(() => service.generate(a, q.id, next.group, command("artwork")));
       expect(await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).orderBy(aiBudgetLedger.id))).toEqual(before);
       expect(generate).not.toHaveBeenCalled(); expect(queue.enqueue).not.toHaveBeenCalled();
     });
