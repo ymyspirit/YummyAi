@@ -22,7 +22,7 @@ await buildCanvasRuntime();const studio=await sealStudioRuntime(root);
 const run=async suite=>{
   const code=await new Promise((resolve,reject)=>{
     const child=spawn(process.execPath,["--env-file=.env","--import",pathToFileURL(path.join(root,"apps/api/node_modules/tsx/dist/loader.mjs")).href,
-      path.join(root,"tools/scripts/run-order-daily-acceptance.mts"),`--suite=${suite}`,`--candidate=${id}`],{
+      path.join(root,"tools/scripts/run-order-daily-acceptance.mts"),`--suite=${suite}`,"--compiled-web",`--candidate=${id}`],{
       cwd:root,env:{...process.env,E2E_STUDIO_RUNTIME_MANIFEST:studio.manifestPath,NODE_OPTIONS:"",TSX_DISABLE_CACHE:"1",
         TSX_TSCONFIG_PATH:path.join(root,"apps/api/tsconfig.json")},stdio:"inherit",windowsHide:true});
     child.once("error",reject);child.once("exit",code=>resolve(code));
