@@ -18,6 +18,7 @@ ReviseSalesRecipeSchema,
 SaveProductSpecificationSchema,
 specificationAttributesKey,
 specificationFactProblems,
+specificationProductionFactProblems,
 UpdateProductSpuSchema,
 type DevelopmentOptions
 } from "@yummyai/contracts/catalog/development";
@@ -72,6 +73,7 @@ readSpecification,
 resolvePrintBindings,
 savePrintBindings,
 } from "./development-data.js";
+import { assertSpecificationProductionSources } from "./specification-production-sources.js";
 
 @Injectable()
 export class ProductDevelopmentService {
@@ -714,6 +716,10 @@ export class ProductDevelopmentService {
       const problems = specificationFactProblems(facts);
       if (problems.length) throw new ConflictException(`产品事实未完成确认：${problems.join("；")}`);
     }
+    if (facts.productionConfirmed) {
+      const problems = specificationProductionFactProblems(facts);
+      if (problems.length) throw new ConflictException(`生产资料未完成核对：${problems.join("；")}`);
+    }
     if (input.processProfileVersionId) {
       const [process] = await tx
         .select({ profile: printProfileVersions, project: productionEditorProjects })
@@ -764,6 +770,13 @@ export class ProductDevelopmentService {
       ).length
     )
       throw new ConflictException("请选择共用空白品库存物料");
+    if (facts.productionConfirmed || facts.productionRuleReferences?.length) {
+      const [previous] = current ? await tx.select({ facts: productSpecificationVersions.facts }).from(productSpecificationVersions)
+        .where(and(eq(productSpecificationVersions.specificationId, current.id), eq(productSpecificationVersions.versionNumber, current.versionNumber))) : [];
+      await assertSpecificationProductionSources(tx, context, {
+        spuId: input.spuId, processProfileVersionId: input.processProfileVersionId, facts, previousFacts: previous?.facts,
+      });
+    }
     const id = current?.id ?? resourceId,
       versionNumber = input.expectedVersion + 1,
       versionId = createEntityId();

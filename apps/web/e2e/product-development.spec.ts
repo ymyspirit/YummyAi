@@ -90,7 +90,7 @@ test("SPU owns multiple specs; an independent artwork combines across products a
     await f.getByLabel("规格编号 2", { exact: true }).fill("RED");
     await fillSpecificationFacts(f, { prefix: "共用", basis: "diameter", length: "50" });
     await f.getByLabel("默认制作工艺", { exact: true }).selectOption(profile.versionId);
-    await f.getByLabel("已逐项核实所选规格的产品事实 核验依据与工艺").check();
+    await f.getByLabel("已逐项核实所选规格的完整商品资料 包括重量与包装测量").check();
     await f.getByRole("button", { name: "保存 2 个规格", exact: true }).click();
     await expect(page.locator(".oc-notice")).toContainText("所选规格已绑定");
     await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
@@ -187,7 +187,7 @@ test("multiple sizes and shapes preview, selectively bind, retain row-specific p
     .getByRole("button", { name: "更多设置" })
     .click();
   await fillSpecificationFacts(form.getByRole("group", { name: "规格 4 详细设置" }), { basis: "artwork_longest", length: "254" });
-  await form.getByLabel("已逐项核实所选规格的产品事实 核验依据与工艺").check();
+  await form.getByLabel("已逐项核实所选规格的完整商品资料 包括重量与包装测量").check();
   await form.getByRole("heading", { name: "1. 设置规格选项", exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("multiple-spec-options-desktop.png"),

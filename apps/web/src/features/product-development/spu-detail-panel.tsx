@@ -1,5 +1,5 @@
 "use client";
-import { specificationFactsReady } from "@yummyai/contracts/catalog/development";
+import { specificationFactsReady, specificationProductionFactsReady } from "@yummyai/contracts/catalog/development";
 
 import Link from "next/link";
 import type { DevelopmentOptions, SpecificationView } from "@yummyai/contracts/catalog/development";
@@ -106,22 +106,24 @@ export function SpuDetailPanel({
                 <td>
                   {spec.facts.material} · {spec.facts.dimensions}
                   <small>
-                    重量：{spec.facts.weightGrams ? `${spec.facts.weightGrams} g` : "待确认"} /
+                    商品净重：{spec.facts.weightGrams ? `${spec.facts.weightGrams} g` : "待确认"} /
                     含包装：
                     {spec.facts.packagedWeightGrams
                       ? `${spec.facts.packagedWeightGrams} g`
                       : "待确认"}
                   </small>
                   <small>
-                    {!spec.processProfileVersionId
-                      ? "规格草稿 · 待确认生产参数"
-                      : specificationFactsReady(spec.facts)
-                        ? "事实已核实"
-                        : "待核实事实"}
+                    {!spec.processProfileVersionId ? "规格草稿 · 待确认生产参数"
+                      : specificationProductionFactsReady(spec.facts) ? "生产资料可准备" : "生产资料待核对"}
+                    {" · "}{specificationFactsReady(spec.facts) ? "完整商品资料已齐备" : "上架资料待补"}
                   </small>
                   {spec.facts.structure && <small>结构：{spec.facts.structure}</small>}
                   <small>每份件数：{spec.facts.packageQuantity ?? "待确认"} · 包装尺寸：{spec.facts.packageDimensions || "待确认"}</small>
                   {spec.factVerification && <small>确认于 {new Date(spec.factVerification.confirmedAt).toLocaleString("zh-CN")} · 依据：{spec.factVerification.reference}</small>}
+                  {spec.productionVerification && <small>本版本生产资料核对于 {new Date(spec.productionVerification.confirmedAt).toLocaleString("zh-CN")} · 依据：{spec.productionVerification.reference}</small>}
+                  {!!spec.facts.productionRuleReferences?.length && <details className="pd-production-problems"><summary>本版本引用的制作规则 {spec.facts.productionRuleReferences.length} 条</summary>
+                    <ul>{spec.facts.productionRuleReferences.map(reference => <li key={reference.ruleId}><Link href={workflowHref(`/settings/rules?rule=${reference.ruleId}&version=${reference.version}`, workflow.current)}>查看原规则 · V{reference.version}</Link></li>)}</ul>
+                  </details>}
                 </td>
                 <td>
                   {spec.processName}

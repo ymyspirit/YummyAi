@@ -1,7 +1,7 @@
 import type { ProductionProductType } from "@yummyai/contracts/pod/production-editor";
 import { z } from "zod";
 import { SpecificationFactsSchema } from "@yummyai/contracts/catalog/specification-facts";
-export { SpecificationFactsSchema, SpecificationDimensionBases, specificationFactProblems, specificationFactsReady, normalizeSpecificationFactDisplay } from "@yummyai/contracts/catalog/specification-facts";
+export { SpecificationFactsSchema, SpecificationDimensionBases, specificationFactProblems, specificationFactsReady, specificationProductionFactProblems, specificationProductionFactsReady, ProductionFactRuleReferenceSchema, normalizeSpecificationFactDisplay } from "@yummyai/contracts/catalog/specification-facts";
 import {
   PrintBindingsSchema,
   CustomChoiceSchema,
@@ -329,6 +329,7 @@ export type SpecificationView = {
   attributes: Record<string, string>;
   facts: z.infer<typeof SpecificationFactsSchema>;
   factVerification?: { confirmedByUserId: string; confirmedAt: string; reference: string } | null;
+  productionVerification?: { confirmedByUserId: string; confirmedAt: string; reference: string } | null;
   processProfileVersionId: string | null;
   processName: string;
   productType: ProductionProductType | null;

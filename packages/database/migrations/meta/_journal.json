@@ -1317,6 +1317,13 @@
       "when": 1792800000000,
       "tag": "0188_studio_document_transfer",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1792886400000,
+      "tag": "0189_specification_production_purpose",
+      "breakpoints": true
     }
   ]
 }

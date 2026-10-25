@@ -250,7 +250,7 @@ test("single specification keeps its fields and confirmation when returning from
     .fill("Synthetic preserved material");
   await page.getByLabel("属性名称 1", { exact: true }).fill("Shape");
   await page.getByLabel("属性选项 1", { exact: true }).fill("Square");
-  await page.getByRole("checkbox", { name: "已核实材质、尺寸和包装内容", exact: true }).check();
+  await page.getByRole("checkbox", { name: "完整商品资料已核实 包括重量与包装测量", exact: true }).check();
   const source = page.url();
   await page.getByRole("link", { name: "登记工艺底稿", exact: true }).click();
   await page.getByRole("link", { name: "返回原任务", exact: true }).click();
@@ -263,6 +263,6 @@ test("single specification keeps its fields and confirmation when returning from
   );
   await expect(page.getByLabel("属性选项 1", { exact: true })).toHaveValue("Square");
   await expect(
-    page.getByRole("checkbox", { name: "已核实材质、尺寸和包装内容", exact: true }),
+    page.getByRole("checkbox", { name: "完整商品资料已核实 包括重量与包装测量", exact: true }),
   ).toBeChecked();
 });
