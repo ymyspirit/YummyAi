@@ -13,6 +13,31 @@ The collapsed row shows one lifecycle status, summed quantity and a concrete
 next task. Expansion lists individual requirements; review navigation advances
 once per order. Orders retain their matched-item inline editing behavior.
 
+The daily list distinguishes orders, item lines and physical units. `total` and
+`groupTotal` describe the complete matching filter before pagination;
+`matchingQuantity` sums those same matching lines. Expanded, nonmatching sibling
+lines do not increase that sum. Older responses may omit the new quantity, which
+the UI presents as unknown. Cohort `counts.quantity` intentionally has broader
+workflow/status scope and must not replace a matching total. Page and selection
+counts describe their own line sets separately from the whole-order totals.
+
+The order drawer puts the next business action and buyer requirements first.
+Recovery and exception providers remain mounted. Only a verified recovery
+directory with no unchecked results and an exception list with no unresolved entries collapse by default;
+pending results, failed reads, editing, access changes and unacknowledged results
+remain visible and keep their original write guards. Technical source/tool
+inspection remains available in a separate advanced disclosure. Original titles
+and raw customization values remain accessible alongside short display labels.
+
+Artwork, production and shipment lists show the platform shipping deadline
+separately from the internal plan. Whole-order lists use the earliest valid
+deadline of the outstanding lines and explicitly identify missing Amazon
+deadlines. Risk shortcuts use the existing `attention` filters; they preserve
+other search conditions and reset pagination. A factory submission succeeds
+before its default scheduled state applies; normal follow-up uses the factory's
+Excel/CSV scheduled/shipped observations, without requiring receipt or start
+milestones and without manufacturing QC, physical handover or platform confirmation.
+
 `GET /v1/order-centers/lines/:id/operations` isolates production, shipment and
 after-sales failures in `readErrors`. A failed read is distinct from an empty
 history and disables dependent writes until retry succeeds. The whole-detail

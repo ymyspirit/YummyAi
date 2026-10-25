@@ -342,6 +342,8 @@ export const OrderWorkListViewSchema = z
     items: z.array(OrderWorkListItemSchema),
     total: z.int().nonnegative(),
     groupTotal: z.int().nonnegative().optional(),
+    // Quantity of the matching lines before paging, excluding expanded siblings.
+    matchingQuantity: z.int().nonnegative().optional(),
     page: z.int(),
     pageSize: z.int(),
     counts: OrderQueueCountsSchema.optional(),

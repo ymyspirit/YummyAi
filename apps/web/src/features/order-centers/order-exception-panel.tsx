@@ -78,6 +78,7 @@ export function OrderExceptionPanel({
   focusId,
   refreshToken = 0,
   disabled = false,
+  compact = false,
   onChanged,
   onStateChange,
 }: {
@@ -85,6 +86,7 @@ export function OrderExceptionPanel({
   focusId?: string;
   refreshToken?: number;
   disabled?: boolean;
+  compact?: boolean;
   onChanged?(): void;
   onStateChange?(value: OrderReviewState): void;
 }) {
@@ -254,7 +256,7 @@ export function OrderExceptionPanel({
     }
   }
   const locked = disabled || saving || loading;
-  return (
+  const content = (
     <section className="order-exceptions" aria-label="订单异常处理">
       <header>
         <div>
@@ -508,4 +510,9 @@ export function OrderExceptionPanel({
       )}
     </section>
   );
+  const quiet = view && view.summary.open === 0 && !loading && !saving && !error && !notice && !draft
+    && !focusId && status === "all" && page === 1;
+  return compact && quiet
+    ? <details className="order-exception-history"><summary><CheckCircle2 size={14} aria-hidden="true" />本单异常 · 当前无待解决项</summary>{content}</details>
+    : content;
 }

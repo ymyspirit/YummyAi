@@ -35,6 +35,21 @@
 .oc-whole-editor { display: flex; padding: 0; overflow: hidden; }
 .oc-whole-editor .oc-whole-operation { display: flex; flex: 1; min-width: 0; }
 .oc-whole-loading { color: var(--muted-ink); min-height: 160px; background: var(--surface-muted); padding: 18px; font-size: 13px; }
+.oc-whole-next, .oc-whole-item, .oc-whole-follow-up { animation: oc-whole-enter 150ms ease-out both; }
+.oc-whole-follow-up { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--line); }
+.oc-whole-advanced > summary { display: flex; align-items: center; gap: 6px; min-height: 32px; color: var(--muted-ink); font-size: 12px; }
+.oc-whole-advanced > summary svg { flex: none; }
+.oc-whole-records::details-content { block-size: 0; opacity: 0; overflow: clip; interpolate-size: allow-keywords; transition: block-size 150ms ease, opacity 150ms ease, content-visibility 150ms allow-discrete; }
+.oc-whole-records[open]::details-content { block-size: auto; opacity: 1; }
+.oc-whole-next .oc-button, .oc-whole-advanced > summary { transition: background-color 140ms ease, color 140ms ease, transform 140ms ease; }
+.oc-whole-next .oc-button:hover:not(:disabled), .oc-whole-advanced > summary:hover { transform: scale(1.015); }
+.oc-whole-next .oc-button:active:not(:disabled), .oc-whole-advanced > summary:active { transform: scale(.985); }
+.oc-whole-next .oc-button:focus-visible, .oc-whole-advanced > summary:focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
+@keyframes oc-whole-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .oc-whole-next, .oc-whole-item, .oc-whole-follow-up, .oc-whole-records::details-content, .oc-whole-next .oc-button, .oc-whole-advanced > summary { animation: none; transition: none; transform: none; }
+  .oc-whole-next .oc-button:is(:hover,:active):not(:disabled), .oc-whole-advanced > summary:is(:hover,:active) { transform: none; }
+}
 @container order-review (max-width: 540px) {
   .oc-whole-item { grid-template-columns: 76px minmax(0, 1fr); }
   .oc-whole-image { width: 76px; }

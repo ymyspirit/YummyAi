@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, FileSearch, RefreshCw } from "lucide-react";
 import { Permission } from "@yummyai/authz/permissions";
 import { WholeOrderDetailViewSchema, type WholeOrderDetailView } from "@yummyai/contracts/order/whole-detail";
 import { pillowFactoryDeliveryProgress } from "@yummyai/contracts/order/production-delivery";
@@ -22,6 +22,7 @@ import { useErpAccess } from "../identity/erp-access";
 import { AgentFulfillmentEntry } from "../ai-tasks/agent-fulfillment-entry";
 import { FulfillmentCommandScope, FulfillmentCommandRecovery } from "./fulfillment-command-recovery";
 import { AgentFulfillmentProposalHandoff } from "../ai-tasks/agent-fulfillment-proposal-handoff";
+import { orderFieldLabel, orderFieldPriority, orderFieldValue, orderProductLabel } from "./order-operations-summary";
 
 const idle: OrderReviewState = { dirty: false, busy: false, loading: false };
 const stages: Array<[OrderWorkspaceModule, string]> = [["orders", "订单要求"], ["artwork", "审核与制图"], ["production", "生产"], ["shipments", "发货"], ["after-sales", "售后"]];
@@ -63,7 +64,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
     if (!element) return;
     let details = element.closest("details");
     while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     (element.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])")
       ?? element.querySelector<HTMLElement>("button:not([disabled])"))?.focus({ preventScroll: true });
     setPendingAction(null);
@@ -92,7 +93,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   const task = wholeOrderNextStep(view), disabled = busy || loading || itemState.loading;
   function nextAction() {
     if (task.section === "refresh") { setRefresh(value => value + 1); return; }
-    if (task.section === "delivery") { setDeliveryLoaded(true); setDeliveryOpen(true); window.setTimeout(() => delivery.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); return; }
+    if (task.section === "delivery") { setDeliveryLoaded(true); setDeliveryOpen(true); window.setTimeout(() => delivery.current?.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0); return; }
     setPendingAction(task);
     onSelectItem(task.lineId, task.module);
   }
@@ -107,16 +108,14 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   return <AgentFulfillmentProposalHandoff orderId={view.orderId} orderSequence={view.orderSequence}><FulfillmentCommandScope orderId={view.orderId} onChanged={() => { setDetailRefresh(value => value + 1); changed(); }} onStateChange={setFulfillmentState} returnQuery={params.toString()}>
   <section className={`oc-whole-detail${editorOpen ? " oc-whole-editor" : ""}`} aria-label="整单详情" aria-busy={loading}>
     {!editorOpen && <>
-      <header className="oc-header oc-whole-header"><div><h1>{first.externalOrderId}</h1><p>{first.storeName} · {view.items.length} 个商品 · 共 {quantity} 件 · 整单制作、统一打包</p><Link href={`/logistics?orderId=${view.orderId}`}>按发货工厂准备物流面单</Link>{back && <Link className="oc-button" href={back} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>{back.startsWith("/business-tasks?") ? "返回业务任务" : "返回来源页面"}</Link>}</div>
+      <header className="oc-header oc-whole-header"><div><h1>{first.externalOrderId}</h1><p>{first.storeName} · {view.items.length} 商品行 · 共 {quantity} 件 · 整单制作、统一打包</p><Link href={`/logistics?orderId=${view.orderId}`}>按发货工厂准备物流面单</Link>{back && <Link className="oc-button" href={back} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>{back.startsWith("/business-tasks?") ? "返回业务任务" : "返回来源页面"}</Link>}</div>
         <button className="oc-button" disabled={disabled || dirty} onClick={() => { setDetailRefresh(value => value + 1); setRefresh(value => value + 1); }}><RefreshCw size={14} />刷新整单</button></header>
       <OrderLifecycleProgress status={first.orderStatus} />
-      <FulfillmentCommandRecovery />
-      {!loading && !error && <AgentFulfillmentEntry key={`fulfillment:${view.orderId}:${view.orderSequence}`} orderId={view.orderId} expectedSequence={view.orderSequence} />}
-      <OrderExceptionPanel key={`exceptions:${view.orderId}`} orderId={view.orderId} focusId={params.get("exception")??undefined} refreshToken={refresh} disabled={loading||itemState.busy||itemState.dirty||deliveryState.busy||deliveryState.dirty||taskBusy} onChanged={changed} onStateChange={setExceptionState} />
-      <OrderTaskPanel key={view.orderId} lineId={id} refreshToken={refresh} disabled={dirty || itemState.busy || deliveryState.busy || loading || !!error} onBusyChange={setTaskBusy} onChanged={() => { setDetailRefresh(value => value + 1); changed(); }} />
       {error && <p role="alert" className="oc-error">{error} 下方为上次读取的记录。</p>}
       <div className="oc-whole-next" aria-label="整单下一步"><div><small>当前该做</small><strong>{task.title}</strong><p>{task.description}</p></div>
         <button className="oc-button primary" disabled={disabled || dirty || !!error} onClick={nextAction}>{task.action}<ArrowRight size={14} /></button></div>
+      <FulfillmentCommandRecovery compact />
+      <OrderExceptionPanel compact key={`exceptions:${view.orderId}`} orderId={view.orderId} focusId={params.get("exception")??undefined} refreshToken={refresh} disabled={loading||itemState.busy||itemState.dirty||deliveryState.busy||deliveryState.dirty||taskBusy} onChanged={changed} onStateChange={setExceptionState} />
       <section className="oc-whole-items" aria-label="本单全部商品与审核稿"><h2>本单全部商品与审核稿</h2>
         <p className="oc-hint">每个抱枕保留自己的定制要求和审核版本。点击商品可在下方处理。</p>
         {view.items.map((item, index) => {
@@ -124,12 +123,13 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
           return <article className={`oc-whole-item${item.line.id === id ? " selected" : ""}`} key={item.line.id}>
             <div className="oc-whole-image">{file?.preview ? <a href={file.preview.path} target="_blank" rel="noreferrer"><Image src={file.preview.path} alt={`商品 ${index + 1} 当前审核稿`} width={168} height={112} unoptimized /></a> : <span>{item.artwork.error ? "审核稿无法读取" : "暂无审核稿"}</span>}</div>
             <div className="oc-whole-requirements"><button className="oc-text-button" aria-pressed={item.line.id === id} disabled={disabled}
-              onClick={() => selectOperation(item.line.id, module)}>商品 {index + 1} · {item.line.title} · {item.line.quantity} 件</button>
+              onClick={() => selectOperation(item.line.id, module)}>商品行 {index + 1} · {orderProductLabel(item.line)} · {item.line.quantity} 件</button>
               <small>{item.line.skuCode ?? "未提供 SKU"} · {summary?.specification ?? item.line.specificationName ?? "规格待确认"} · {item.line.externalLineId}</small>
               {item.summary.error || summary?.error ? <p className="oc-error">{item.summary.error ?? summary?.error}</p> : <>
-                {summary?.fields.map((field, fieldIndex) => <p key={`${field.label}:${fieldIndex}`}><b>{field.label}：</b>{field.value || "待补充"}</p>)}
+                {summary?.fields.toSorted((a, b) => orderFieldPriority(a.label) - orderFieldPriority(b.label)).map((field, fieldIndex) => <p key={`${field.label}:${fieldIndex}`}><b title={field.label}>{orderFieldLabel(field.label, field.value)}：</b><span title={field.value}>{orderFieldValue(field.value) || "待补充"}</span></p>)}
                 <p>{summary?.instructions || "无额外定制说明"}</p>
               </>}
+              <details className="oc-original-title"><summary>平台原商品标题</summary><p>{item.line.title}</p></details>
               {item.line.held && <p className="oc-error">已暂停，请先核对原因</p>}
               {item.line.archivedAt && <p className="oc-notice">已归档，保留历史</p>}
             </div>
@@ -175,15 +175,23 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
       </section>
       <nav className="oc-whole-stages" aria-label="本单操作">{stages.map(([target, name]) => <button className="oc-button" key={target} aria-current={target === module ? "step" : undefined} disabled={disabled} onClick={() => selectOperation(id, target)}>{name}</button>)}</nav>
     </>}
-    {!editorOpen && <details className="oc-whole-records" key={`review:${view.orderId}`} onToggle={event => { if (event.currentTarget.open) setReviewLoaded(true); }}>
-      <summary>履约与利润复盘</summary>
-      {reviewLoaded && <OrderReviewPanel key={view.orderId} lineId={id} refreshToken={refresh} />}
-    </details>}
     {deliveryState.dirty && <p className="oc-hint">请先登记或清空工厂回执，再操作下方商品与发货表单。</p>}
     <div ref={operation} className="oc-whole-operation" inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
       <OrderWorkDetailPanel key={`${id}:${module}`} id={id} module={module} options={options} editorOpen={editorOpen} onEditor={onEditor} onBack={onClose} onChanged={changed} refreshToken={detailRefresh} unified onSelectItem={selectOperation}
         onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
     </div>
+    {!editorOpen && <section className="oc-whole-follow-up" aria-label="任务与高级核查">
+      <OrderTaskPanel key={view.orderId} lineId={id} refreshToken={refresh} disabled={dirty || itemState.busy || deliveryState.busy || loading || !!error} onBusyChange={setTaskBusy} onChanged={() => { setDetailRefresh(value => value + 1); changed(); }} />
+      <details className="oc-whole-records oc-whole-advanced" key={`advanced:${view.orderId}`}>
+        <summary><FileSearch size={15} aria-hidden="true" />高级履约核查</summary>
+        <p className="oc-hint">需要核对原来源、读取权限与执行依据时展开</p>
+        {!loading && !error && <AgentFulfillmentEntry key={`fulfillment:${view.orderId}:${view.orderSequence}`} orderId={view.orderId} expectedSequence={view.orderSequence} />}
+      </details>
+      <details className="oc-whole-records" key={`review:${view.orderId}`} onToggle={event => { if (event.currentTarget.open) setReviewLoaded(true); }}>
+        <summary>履约与利润复盘</summary>
+        {reviewLoaded && <OrderReviewPanel key={view.orderId} lineId={id} refreshToken={refresh} />}
+      </details>
+    </section>}
   </section></FulfillmentCommandScope></AgentFulfillmentProposalHandoff>;
 }
 function receiptLabel(status: Parameters<typeof pillowFactoryDeliveryProgress>[0]) {

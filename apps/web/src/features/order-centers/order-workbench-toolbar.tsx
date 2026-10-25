@@ -1,13 +1,21 @@
 "use client";
 import { useState, type FormEvent } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { CalendarClock, CircleAlert, PackageCheck, Pause, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { ORDER_LIFECYCLE_LABELS, type OrderQueueCounts } from "@yummyai/contracts/order/workbench";
 import type { OrderCenterOptions } from "@yummyai/contracts/order/workspace";
 import { OrderDateRange } from "./order-date-range";
 
 export const legacyWorkflowFilters = [
   "stage", "preparation", "artwork", "production", "proof", "shipment", "afterSales",
-  "attention", "labelStatus", "workView",
+  "labelStatus", "workView",
+] as const;
+const attentionChoices = [
+  ["platform_deadline_missing", "平台交期待核对", CalendarClock],
+  ["platform_overdue", "平台已超期", CircleAlert],
+  ["overdue", "内部计划超期", CalendarClock],
+  ["source_changed", "来源有更新", RefreshCw],
+  ["held", "已暂停", Pause],
+  ["platform_confirmation_pending", "平台发货待确认", PackageCheck],
 ] as const;
 
 export function OrderLifecycleSummary({ counts }: { counts?: OrderQueueCounts }) {
@@ -19,9 +27,10 @@ export function OrderLifecycleSummary({ counts }: { counts?: OrderQueueCounts })
   </div>;
 }
 
-export function OrderWorkbenchFilters({ query, options, disabled, onSubmit, onClear }: {
+export function OrderWorkbenchFilters({ query, options, disabled, onSubmit, onClear, onAttentionChange }: {
   query: string; options: OrderCenterOptions | null; disabled: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void; onClear: () => void;
+  onAttentionChange?: (attention: string | null) => void;
 }) {
   const params = new URLSearchParams(query);
   const advanced = ["sku", "spu", "printSku", "specification", "platform", "productType", "dateField", "orderNumbers", "archived"];
@@ -48,7 +57,16 @@ export function OrderWorkbenchFilters({ query, options, disabled, onSubmit, onCl
         </div>
       </div>
       <input type="hidden" name="caseScope" value={params.get("caseScope") ?? ""} />
+      <input type="hidden" name="attention" value={params.get("attention") ?? ""} />
       <input type="hidden" name="timeZone" value={Intl.DateTimeFormat().resolvedOptions().timeZone} />
+      <div className="oc-operations-quick-filters" role="group" aria-label="优先处理筛选">
+        <span>优先处理</span>
+        <button className="oc-button" type="button" aria-pressed={!params.get("attention")} disabled={!onAttentionChange}
+          onClick={() => onAttentionChange?.(null)}>不限关注条件</button>
+        {attentionChoices.map(([value, label, Icon]) => <button key={value} className="oc-button" type="button"
+          aria-pressed={params.get("attention") === value} disabled={!onAttentionChange}
+          onClick={() => onAttentionChange?.(params.get("attention") === value ? null : value)}><Icon size={14} aria-hidden="true" />{label}</button>)}
+      </div>
       <div className="oc-filter-advanced" hidden={!open}>
         <label>商品 SKU<input name="sku" defaultValue={params.get("sku") ?? ""} placeholder="输入 SKU" /></label>
         <label>产品 SPU<input name="spu" defaultValue={params.get("spu") ?? ""} placeholder="已绑定 SPU 编码" /></label>
