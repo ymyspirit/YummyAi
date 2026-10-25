@@ -212,11 +212,29 @@ async function seed(page: Page, child: Child, nonce: string, scenario: "adopt" |
   const session = ErpSessionViewSchema.parse(await response.json()); expect(session.userId).toBe(actors().operator.userId); expect(session.tenantId).toBe(actors().operator.tenantId);
   const basis = Seed.parse(await child.rpc("seed", TenantContextSchema.parse(session), scenario)); expect(basis.nonce).toBe(nonce); expect(basis.authorityHash).toBe(originalSha(erpSessionAuthority(session))); return basis;
 }
-async function openPanel(page: Page, basis: Basis) {
+async function openPanel(page: Page, basis: Basis, proof?: Record<string, unknown>) {
   await page.goto(`/creative-designs?batch=${basis.batchId}`);
   const history = page.getByRole("region", { name: "创作执行依据与恢复", exact: true });
   await history.getByRole("button", { name: "执行依据与恢复", exact: true }).click();
-  const panel = panelFor(page, basis); await panel.getByRole("button", { name: "查看原归档响应", exact: true }).click();
+  const panel = panelFor(page, basis), path = `/api/creative-executions/${basis.executionId}/response-adoption`;
+  const [response] = await Promise.all([
+    page.waitForResponse(value => new URL(value.url()).pathname === path && value.request().method() === "GET"
+      && value.request().frame() === page.mainFrame() && originalSha(value.request().headers()["x-yummyai-context-authority"] ?? "") === basis.authorityHash),
+    panel.getByRole("button", { name: "查看原归档响应", exact: true }).click(),
+  ]);
+  const completion = await response.finished(), responseAuthorityHash = originalSha(response.headers()["x-yummyai-context-authority"] ?? "");
+  const transport: Record<string, unknown> = { status: response.status(), resourceType: response.request().resourceType(),
+    requestAuthorityHash: basis.authorityHash, responseAuthorityHash, finished: completion === null, completionError: completion?.name ?? null };
+  if (proof) proof.originalWorkspaceTransport = transport;
+  expect(response.status()).toBe(200); expect(responseAuthorityHash).toBe(basis.authorityHash); expect(completion).toBeNull();
+  expect(response.headers()["content-type"]?.split(";")[0]?.trim()).toBe("application/json");
+  const body = await response.body(); transport.bodyBytes = body.byteLength; transport.bodySha256 = originalSha(body);
+  const workspace = CreativeResponseAdoptionWorkspaceSchema.parse(JSON.parse(body.toString("utf8")));
+  expect(workspace).toMatchObject({ executionId: basis.executionId, batchId: basis.batchId, candidateId: basis.candidateId,
+    identityStamp: basis.identityStamp, originalPhase: basis.originalPhase, basis: basis.basis, canAdopt: true, canInspectOriginal: true,
+    source: { responseChecksum: basis.responseChecksum }, requests: [] });
+  // Text can be painted before Chromium reports the transport complete. Require
+  // the original GET's successful body before starting a preview or later action.
   await expect(panel).not.toHaveAttribute("data-state", "loading"); await expect(panel.getByText("原服务报告费用", { exact: true })).toBeVisible(); return panel;
 }
 async function preview(page: Page, basis: Basis) {
@@ -359,7 +377,8 @@ test("a71c9e42_real_archived_original_adoption_lost_ACK_recovers_only_original_r
     await page.setViewportSize({ width: 1440, height: 960 });
     const basis = await seed(page, child, environment.nonce, "adopt"), before = await facts(child);
     seen.pinAuthority(basis.authorityHash);
-    await seen.mark("adoption.preview-original"); await openPanel(page, basis); await preview(page, basis); await seen.settle();
+    await seen.mark("adoption.workspace-original"); await openPanel(page, basis, proof); await seen.settle(); verifyNetwork(seen, allowed);
+    await seen.mark("adoption.preview-original"); await preview(page, basis); await seen.settle(); verifyNetwork(seen, allowed);
     expect(await facts(child)).toEqual(before); expect(seen.rows.filter(row => row.method === "POST")).toEqual([]);
     const panel = panelFor(page, basis); const images: string[] = [];
     await stableVisible(page, panel.getByRole("img", { name: "原任务归档响应预览", exact: true }), proof, "previewBounds1440");

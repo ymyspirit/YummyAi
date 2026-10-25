@@ -170,6 +170,8 @@ jobs:
             output/p2-creative-browser
             tmp/order-daily-artifacts-*/acceptance-manifest.json
             tmp/order-daily-artifacts-*/browser/**/*proof.json
+            tmp/order-daily-artifacts-*/playwright/**/*proof.json
+            tmp/order-daily-artifacts-*/playwright/**/*.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
