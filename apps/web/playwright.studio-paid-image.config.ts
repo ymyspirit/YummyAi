@@ -1,0 +1,26 @@
+import { defineConfig } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import { requireStudioPaidImageEnvironment } from "../../tools/testing/studio-paid-image-environment.mjs";
+import { requireP2BrowserLock as requireStudioDocumentTransferBrowserLock, p2PinnedBrowserUse as studioDocumentTransferPinnedBrowserUse } from "../../tools/testing/require-p2-browser-lock.mjs";
+import base from "./playwright.product-access.config.js";
+
+const isolated = requireStudioPaidImageEnvironment(process.env, true);
+const browser = requireStudioDocumentTransferBrowserLock(process.env);
+const operator = (JSON.parse(process.env.ERP_FIXTURE_ACTORS ?? "null") as { operator?: { tenantId?: string } } | null)?.operator;
+if (!operator?.tenantId || !/^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(operator.tenantId)
+    || process.env.STUDIO_PAID_IMAGE_ENABLED !== "1" || process.env.STUDIO_PAID_IMAGE_TENANT_IDS !== operator.tenantId)
+  throw new Error("studio_paid_image_browser_exact_synthetic_tenant_admission_required");
+const servers = Array.isArray(base.webServer) ? base.webServer : [];
+export default defineConfig({ ...base, testMatch: "studio-paid-image.spec.ts", grep: undefined,
+  workers: 1, fullyParallel: false, retries: 0, timeout: 300_000, expect: { timeout: 25_000 },
+  use: { ...studioDocumentTransferPinnedBrowserUse(browser, base.use), baseURL: "http://localhost:3130",
+    viewport: { width: 1440, height: 960 }, trace: "off", video: "off", screenshot: "off" },
+  projects: base.projects?.map(project => ({ ...project, use: { ...studioDocumentTransferPinnedBrowserUse(browser, project.use), viewport: { width: 1440, height: 960 } } })),
+  webServer: servers.map(server => ({ ...server, env: { ...server.env, CANVAS_STUDIO_URL: process.env.CANVAS_STUDIO_URL!,
+    CANVAS_STUDIO_PRODUCTION_ENABLED: "1", E2E_STUDIO_PAID_IMAGE_ISOLATED: "1", E2E_STUDIO_RUNTIME_MANIFEST: process.env.E2E_STUDIO_RUNTIME_MANIFEST!,
+    STUDIO_PAID_IMAGE_ENABLED: "1", STUDIO_PAID_IMAGE_TENANT_IDS: operator.tenantId,
+    NODE_OPTIONS: "", TSX_DISABLE_CACHE: "1", TSX_TSCONFIG_PATH: String(server.url).includes(":8130")
+      ? fileURLToPath(new URL("../api/tsconfig.json", import.meta.url)) : "" } })),
+  outputDir: `${isolated.lane}/browser`, metadata: { isolatedNonce: isolated.nonce,
+    scope: "single_image_quote_original_key_recovery_and_actual_synthetic_processor", realPaidCalls: 0, ordinaryWorkerStarted: false, browserLock: browser.metadata },
+});

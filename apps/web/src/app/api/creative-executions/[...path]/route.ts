@@ -1,5 +1,6 @@
 import { apiFetch } from "../../../../server-api";
 import { isSameOriginRequest } from "../../../../same-origin-request";
+import { creativeResponseAdoptionProxy, isCreativeResponseAdoptionPath } from "../../../../creative-response-adoption-server";
 
 export const dynamic = "force-dynamic";
 const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -12,6 +13,7 @@ export const POST = (request: Request, context: Context) => proxy(request, conte
 
 async function proxy(request: Request, context: Context, method: "GET" | "POST") {
   const path = (await context.params).path.join("/");
+  if (isCreativeResponseAdoptionPath(path)) return creativeResponseAdoptionProxy(request, path, method);
   if (!(method === "GET" ? readPath : writePath).test(path)) return failure(404);
   if (
     method === "POST" &&

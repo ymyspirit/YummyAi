@@ -41,6 +41,7 @@ import { parseWebCandidateArgs, verifyLocalWebCandidate } from "./local-web-cand
 import { startSealedStudioRuntime, verifyStudioRuntime } from "./serve-studio-runtime.mjs";
 import { canvasRuntimeSourceStamp } from "./build-canvas-runtime.mjs";
 import { requireStudioDocumentTransferBrowserLock } from "../testing/require-studio-document-transfer-browser-lock.mjs";
+import { requireP2BrowserLock } from "../testing/require-p2-browser-lock.mjs";
 import {
   startFactoryIdentityFixture,
   factoryFixtureAccounts,
@@ -87,9 +88,24 @@ const studioModelSelectionBrowserSelection = process.argv.includes("--suite=stud
 const studioModelSelectionSuiteRequested = process.argv.includes("--suite=studio-model-selection-browser")
   || process.argv.includes("--suite=studio-model-selection-integration");
 const studioDraftRecoverySuiteRequested = process.argv.includes("--suite=studio-draft-recovery-browser");
+const studioPaidImageLegacyRegression = process.argv.includes("--suite=studio-paid-image-legacy-regression");
+const creativeOwnerResponseAdoptionIntegration = process.argv.includes("--suite=creative-owner-response-adoption-integration");
+const creativeOwnerResponseAdoptionBrowser = process.argv.includes("--suite=creative-owner-response-adoption-browser");
+const studioVisualPaidImageIntegration = process.argv.includes("--suite=studio-visual-paid-image-integration");
+const studioPaidImageIntegration = creativeOwnerResponseAdoptionIntegration || studioVisualPaidImageIntegration || studioPaidImageLegacyRegression || process.argv.includes("--suite=studio-paid-image-integration");
+const studioPaidImageBrowser = process.argv.includes("--suite=studio-paid-image-browser");
+const studioPaidImageSuiteRequested = studioPaidImageIntegration || studioPaidImageBrowser || creativeOwnerResponseAdoptionBrowser;
+const studioPaidImageBrowserSelection = studioPaidImageBrowser ? requireP2BrowserLock(process.env) : null;
+const creativeOwnerResponseAdoptionBrowserSelection = creativeOwnerResponseAdoptionBrowser ? requireP2BrowserLock(process.env) : null;
 const studioDraftRecoveryBrowserSelection = studioDraftRecoverySuiteRequested
   ? requireStudioDocumentTransferBrowserLock(process.env) : null;
 const creativeRecoverySuiteRequested = process.argv.includes("--suite=creative-recovery-integration");
+const creativeResponseAdoptionIntegration = process.argv.includes("--suite=creative-response-adoption-integration");
+const creativeResponseAdoptionBrowser = process.argv.includes("--suite=creative-response-adoption-browser");
+const creativeResponseAdoptionSuiteRequested = creativeResponseAdoptionIntegration || creativeResponseAdoptionBrowser;
+const creativeResponseAdoptionBrowserSelection = creativeResponseAdoptionBrowser ? requireP2BrowserLock(process.env) : null;
+if ((studioPaidImageSuiteRequested || creativeResponseAdoptionSuiteRequested) && acceptanceArgs.filter(arg => arg.startsWith("--suite=")).length !== 1)
+  throw Error("P2 acceptance requires exactly one isolated suite family");
 const token = randomUUID().replaceAll("-", "");
 const name = `order_daily_e2e_${token}`,
   bucket = `order-daily-e2e-${token}`,
@@ -145,10 +161,13 @@ const manifest = {
   studioVideoDirectoryBrowser: studioVideoDirectoryBrowserSelection?.metadata ?? null,
   studioModelSelectionBrowser: studioModelSelectionBrowserSelection?.metadata ?? null,
   studioDraftRecoveryBrowser: studioDraftRecoveryBrowserSelection?.metadata ?? null,
+  studioPaidImageBrowser: studioPaidImageBrowserSelection?.metadata ?? null,
+  creativeResponseAdoptionBrowser: creativeResponseAdoptionBrowserSelection?.metadata ?? null,
+  creativeOwnerResponseAdoptionBrowser: creativeOwnerResponseAdoptionBrowserSelection?.metadata ?? null,
 };
 // Keep this family's complete raw output in its guarded owned leaf. Historical
 // families keep their existing manifest location and evidence conventions.
-const manifestPath = studioTransferSuiteRequested || studioVideoDirectorySuiteRequested || studioModelSelectionSuiteRequested || studioDraftRecoverySuiteRequested || creativeRecoverySuiteRequested ? join(artifactDirectory, "acceptance-manifest.json")
+const manifestPath = studioPaidImageSuiteRequested || creativeResponseAdoptionSuiteRequested || studioTransferSuiteRequested || studioVideoDirectorySuiteRequested || studioModelSelectionSuiteRequested || studioDraftRecoverySuiteRequested || creativeRecoverySuiteRequested ? join(artifactDirectory, "acceptance-manifest.json")
   : new URL(`../../tmp/order-daily-e2e-${token}.json`, import.meta.url);
 await mkdir(new URL("../../tmp/", import.meta.url), { recursive: true });
 await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -275,13 +294,40 @@ const studioModelSelectionBrowser = process.argv.includes("--suite=studio-model-
 const studioDraftRecoveryBrowser = studioDraftRecoverySuiteRequested;
 const creativeRecoveryIntegration = creativeRecoverySuiteRequested;
 process.env.E2E_CREATIVE_RECOVERY_ISOLATED = creativeRecoveryIntegration ? "1" : "0";
-const studioPersonalIntegration = creativeRecoveryIntegration || studioModelSelectionIntegration || studioVideoDirectoryIntegration || studioDocumentTransferIntegration || studioOriginalIntegration || process.argv.includes("--suite=creative-studio-personal-integration");
-const studioPersonalBrowser = studioDraftRecoveryBrowser || studioModelSelectionBrowser || studioVideoDirectoryBrowser || studioDocumentTransferBrowser || studioOriginalBrowser || process.argv.includes("--suite=creative-studio-personal-browser");
+const studioPersonalIntegration = studioPaidImageIntegration || creativeResponseAdoptionIntegration || creativeRecoveryIntegration || studioModelSelectionIntegration || studioVideoDirectoryIntegration || studioDocumentTransferIntegration || studioOriginalIntegration || process.argv.includes("--suite=creative-studio-personal-integration");
+const studioPersonalBrowser = creativeOwnerResponseAdoptionBrowser || studioPaidImageBrowser || creativeResponseAdoptionBrowser || studioDraftRecoveryBrowser || studioModelSelectionBrowser || studioVideoDirectoryBrowser || studioDocumentTransferBrowser || studioOriginalBrowser || process.argv.includes("--suite=creative-studio-personal-browser");
 // These dedicated current-schema families require a bounded physical DB pool.
 // Set it in the disposable owner, so CI and local callers share the same gate.
 if (studioPersonalIntegration || studioPersonalBrowser) process.env.DATABASE_POOL_SIZE = "1";
+process.env.E2E_STUDIO_PAID_IMAGE_ISOLATED = studioPaidImageSuiteRequested ? "1" : "0";
+process.env.E2E_CREATIVE_OWNER_RESPONSE_ADOPTION_ISOLATED = creativeOwnerResponseAdoptionIntegration || creativeOwnerResponseAdoptionBrowser ? "1" : "0";
+process.env.E2E_STUDIO_VISUAL_PAID_IMAGE_ISOLATED = studioVisualPaidImageIntegration ? "1" : "0";
+process.env.E2E_STUDIO_PAID_IMAGE_LEGACY_ISOLATED = studioPaidImageLegacyRegression ? "1" : "0";
+if (studioPaidImageSuiteRequested) {
+  process.env.DATABASE_POOL_SIZE = studioPaidImageLegacyRegression ? "2" : "1";
+  process.env.POD_PROCESSOR_DEPLOYMENT_ID = "synthetic-paid-image-73e2c9b1";
+  process.env.STUDIO_PAID_IMAGE_ENABLED = "0";
+  process.env.STUDIO_PAID_IMAGE_TENANT_IDS = "";
+}
+if (creativeOwnerResponseAdoptionIntegration || creativeOwnerResponseAdoptionBrowser || studioVisualPaidImageIntegration) {
+  process.env.POD_BATCH_WORKFLOWS_ENABLED = "true";
+  process.env.POD_MOCKUP_RENDERER_ENABLED = "true";
+  process.env.POD_ENABLED_TOOLS = "text_to_image,canvas_extend";
+  process.env.POD_PROCESSOR_URL = "http://127.0.0.1:9";
+  process.env.POD_PROCESSOR_API_KEY = "synthetic-p2-no-dispatch";
+  process.env.POD_PROCESSOR_DEPLOYMENT_ID = "synthetic-paid-image-73e2c9b1";
+}
+process.env.E2E_CREATIVE_RESPONSE_ADOPTION_ISOLATED = creativeResponseAdoptionSuiteRequested ? "1" : "0";
+if (creativeResponseAdoptionSuiteRequested) {
+  process.env.DATABASE_POOL_SIZE = "1";
+  process.env.POD_BATCH_WORKFLOWS_ENABLED = "true";
+  process.env.POD_ENABLED_TOOLS = "text_to_image,canvas_extend";
+  process.env.POD_PROCESSOR_URL = "http://127.0.0.1:9";
+  process.env.POD_PROCESSOR_API_KEY = "synthetic-adoption-no-dispatch";
+  process.env.POD_PROCESSOR_DEPLOYMENT_ID = "synthetic-adoption-original-deployment";
+}
 process.env.E2E_STUDIO_DRAFT_RECOVERY_ISOLATED = studioDraftRecoveryBrowser ? "1" : "0";
-process.env.E2E_STUDIO_MODEL_SELECTION_ISOLATED = studioModelSelectionIntegration || studioModelSelectionBrowser ? "1" : "0";
+process.env.E2E_STUDIO_MODEL_SELECTION_ISOLATED = studioPaidImageLegacyRegression || studioModelSelectionIntegration || studioModelSelectionBrowser ? "1" : "0";
 process.env.E2E_STUDIO_VIDEO_DIRECTORY_ISOLATED = studioVideoDirectoryIntegration || studioVideoDirectoryBrowser ? "1" : "0";
 process.env.E2E_STUDIO_ORIGINAL_ISOLATED = studioOriginalIntegration || studioOriginalBrowser ? "1" : "0";
 process.env.E2E_STUDIO_DOCUMENT_TRANSFER_ISOLATED = studioDocumentTransferIntegration || studioDocumentTransferBrowser ? "1" : "0";
@@ -605,7 +651,7 @@ try {
     throw Error("A Web candidate requires explicit compiled browser mode");
   if (compiledWeb && !erpPersonalBrowser)
     throw Error("Compiled browser mode requires an ERP personal-identity suite");
-  if (anyAgentTools || roleBenchmarkAny || factoryErpVoidReviewAny || factoryErpBindingIntegration || factoryErpBindingUpgradeIntegration || factoryErpBindingBrowser || factoryErpImportIntegration || factoryErpImportUpgradeIntegration || factoryErpImportBrowser || factoryErpSourceRetentionIntegration || factoryErpSourceRetentionUpgradeIntegration || factoryErpSourceRetentionBrowser || orderProfitReviewBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) {
+  if (studioPaidImageSuiteRequested || creativeResponseAdoptionSuiteRequested || anyAgentTools || roleBenchmarkAny || factoryErpVoidReviewAny || factoryErpBindingIntegration || factoryErpBindingUpgradeIntegration || factoryErpBindingBrowser || factoryErpImportIntegration || factoryErpImportUpgradeIntegration || factoryErpImportBrowser || factoryErpSourceRetentionIntegration || factoryErpSourceRetentionUpgradeIntegration || factoryErpSourceRetentionBrowser || orderProfitReviewBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) {
     // Fail before creating business fixtures. This suite uploads real synthetic
     // bytes through the real scanner; other finance suites do not prove it works.
     let scan;
@@ -962,10 +1008,14 @@ try {
         actors[key] = { roleId, membershipId, userId, tenantId: target };
       }
       process.env.ERP_FIXTURE_ACTORS = JSON.stringify(actors);
+      if (studioPaidImageBrowser) {
+        process.env.STUDIO_PAID_IMAGE_ENABLED = "1";
+        process.env.STUDIO_PAID_IMAGE_TENANT_IDS = actors.operator!.tenantId;
+      }
     }
     // This family owns an exact empty initial catalogue and seeds every model
     // through the real configuration owner. Other suites retain the upscale seed.
-    if (!studioModelSelectionSuiteRequested && !studioDraftRecoverySuiteRequested) {
+    if (!studioPaidImageSuiteRequested && !studioModelSelectionSuiteRequested && !studioDraftRecoverySuiteRequested) {
       const provider = createEntityId(),
         model = createEntityId();
       const modelVault = createEnvironmentSecretVault(
@@ -1166,9 +1216,9 @@ try {
   if (shipos || wholeOrder || qualityAssessmentBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) shiposFixture = await startShiposFixtureServer();
   if (logistics) logisticsFixture = await startLogisticsFixtureServer();
   const args = studioPersonalBrowser
-    ? [require.resolve("@playwright/test/cli"), "test", "--config", studioDraftRecoveryBrowser ? "apps/web/playwright.studio-draft-recovery.config.ts" : studioModelSelectionBrowser ? "apps/web/playwright.studio-model-selection.config.ts" : studioVideoDirectoryBrowser ? "apps/web/playwright.studio-video-directory.config.ts" : studioDocumentTransferBrowser ? "apps/web/playwright.studio-document-transfer.config.ts" : studioOriginalBrowser ? "apps/web/playwright.studio-original.config.ts" : "apps/web/playwright.creative-studio-personal.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
+    ? [require.resolve("@playwright/test/cli"), "test", "--config", creativeOwnerResponseAdoptionBrowser ? "apps/web/playwright.creative-owner-response-adoption.config.ts" : studioPaidImageBrowser ? "apps/web/playwright.studio-paid-image.config.ts" : creativeResponseAdoptionBrowser ? "apps/web/playwright.creative-response-adoption.config.ts" : studioDraftRecoveryBrowser ? "apps/web/playwright.studio-draft-recovery.config.ts" : studioModelSelectionBrowser ? "apps/web/playwright.studio-model-selection.config.ts" : studioVideoDirectoryBrowser ? "apps/web/playwright.studio-video-directory.config.ts" : studioDocumentTransferBrowser ? "apps/web/playwright.studio-document-transfer.config.ts" : studioOriginalBrowser ? "apps/web/playwright.studio-original.config.ts" : "apps/web/playwright.creative-studio-personal.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
     : studioPersonalIntegration
-    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", creativeRecoveryIntegration ? "vitest.creative-recovery.config.ts" : studioModelSelectionIntegration ? "vitest.studio-model-selection.config.ts" : studioVideoDirectoryIntegration ? "vitest.studio-video-directory.config.ts" : studioDocumentTransferIntegration ? "vitest.studio-document-transfer.config.ts" : studioOriginalIntegration ? "vitest.studio-original.config.ts" : "vitest.creative-studio-personal.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]
+    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", creativeOwnerResponseAdoptionIntegration ? "vitest.creative-owner-response-adoption.config.ts" : studioVisualPaidImageIntegration ? "vitest.studio-visual-paid-image.config.ts" : studioPaidImageLegacyRegression ? "vitest.studio-paid-image-legacy-regression.config.ts" : studioPaidImageIntegration ? "vitest.studio-paid-image.config.ts" : creativeResponseAdoptionIntegration ? "vitest.creative-response-adoption.config.ts" : creativeRecoveryIntegration ? "vitest.creative-recovery.config.ts" : studioModelSelectionIntegration ? "vitest.studio-model-selection.config.ts" : studioVideoDirectoryIntegration ? "vitest.studio-video-directory.config.ts" : studioDocumentTransferIntegration ? "vitest.studio-document-transfer.config.ts" : studioOriginalIntegration ? "vitest.studio-original.config.ts" : "vitest.creative-studio-personal.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]
     : shipmentCreateBrowser
     ? [require.resolve("@playwright/test/cli"), "test", "--config", "apps/web/playwright.agent-native-v4-shipment-create.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
     : shipmentCreateIntegration

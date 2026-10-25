@@ -1,0 +1,42 @@
+.creative-response-adoption { min-width: 0; margin-block: 10px; color: var(--ink); }
+.creative-response-adoption :is(button,a,input) { transition: background-color 160ms ease, border-color 160ms ease, opacity 180ms ease, transform 160ms ease; }
+.creative-response-toggle { width: 100%; text-align: left; }
+.creative-response-toggle span { flex: 1; }
+.creative-response-toggle svg:last-child { transition: transform 200ms ease; }
+.creative-response-toggle[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
+.creative-response-collapse { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 200ms ease, opacity 180ms ease; }
+.creative-response-collapse[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.creative-response-collapse > div { min-width: 0; min-height: 0; overflow: hidden; }
+.creative-response-collapse > div > header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
+.creative-response-adoption h4 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; font-weight: 650; }
+.creative-response-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.creative-response-collapse > div > header > .creative-response-actions { margin-inline-start: auto; }
+.creative-response-adoption :is(p,dd,code,li,label,figcaption) { min-width: 0; overflow-wrap: anywhere; }
+.creative-response-boundary, .creative-response-adoption figcaption, .creative-response-blockers, .creative-response-notice { color: var(--muted-ink); font-size: 11px; line-height: 1.65; }
+.creative-response-facts { display: grid; grid-template-columns: minmax(88px, 115px) minmax(0, 1fr); gap: 5px 8px; margin-block: 10px; font-size: 11px; line-height: 1.55; }
+.creative-execution-row .creative-response-facts { grid-template-columns: minmax(88px, 115px) minmax(0, 1fr); }
+.creative-response-facts dt { color: var(--muted-ink); }
+.creative-response-facts dd { margin: 0; }
+.creative-response-facts code { font-size: 10px; }
+.creative-response-blockers { margin-block: 8px; padding-inline-start: 18px; }
+.creative-response-preview { max-width: 100%; min-width: 0; margin: 10px 0; animation: creative-response-appear 180ms ease both; }
+.creative-response-preview img { display: block; width: auto; max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.creative-response-preview figcaption { margin-top: 5px; }
+.creative-response-preview code { display: block; font-size: 10px; }
+.creative-response-confirmation { display: grid; justify-items: start; gap: 8px; margin-block: 12px; }
+.creative-response-confirmation label { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; line-height: 1.65; }
+.creative-response-confirmation input { flex: none; margin-top: 3px; accent-color: var(--blue); }
+.creative-execution-history button.creative-response-primary { color: #fff; background: var(--blue, #1768df); border-color: var(--blue, #1768df); }
+.creative-execution-history button.creative-response-primary:not(:disabled):hover { background: var(--blue, #1768df); filter: brightness(.94); }
+.creative-response-request, .creative-response-receipt { min-width: 0; margin-block: 12px; padding-inline-start: 10px; border-inline-start: 2px solid var(--line); animation: creative-response-appear 180ms ease both; }
+.creative-response-receipt { border-inline-start-color: var(--blue); }
+.creative-response-request > p, .creative-response-receipt > p { font-size: 11px; line-height: 1.65; }
+.creative-response-receipt a { display: inline-block; color: var(--blue); font-size: 11px; text-underline-offset: 3px; }
+.creative-response-receipt a:hover { transform: translateX(2px); }
+.creative-response-adoption .creative-response-error { color: var(--danger, #b42318); font-size: 11px; line-height: 1.65; }
+.creative-response-adoption :is(button,a,input):focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.creative-response-adoption button:not(:disabled):hover { transform: scale(1.015); }
+.creative-response-adoption button:not(:disabled):active { transform: scale(.985); }
+@keyframes creative-response-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 640px) { .creative-response-collapse > div > header > .creative-response-actions { width: 100%; margin-inline-start: 0; } .creative-response-adoption button { max-width: 100%; white-space: normal; } }
+@media (prefers-reduced-motion: reduce) { .creative-response-adoption *, .creative-response-collapse { animation: none !important; transition: none !important; } }

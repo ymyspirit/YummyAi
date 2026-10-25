@@ -12,3 +12,7 @@ export { podExecutionFingerprint } from "./execution.js";
 export * from "./creative-execution-admission.js";
 export * from "./mockup-evidence.js";
 export * from "./creative-execution-operator-owner.js";
+export * from "./creative-owner-progress.js";
+export * from "./creative-response.js";
+export { studioImageAdmission, studioImageWireSize, studioImageHash, checkStudioImageBudget, reserveStudioImageBudget } from "./studio-image-billing.js";
+export type { StudioImageBudgetIdentity } from "./studio-image-billing.js";

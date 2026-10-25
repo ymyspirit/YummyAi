@@ -4,7 +4,8 @@ import type { CreateCreativeDesignBatchInput } from "@yummyai/contracts/pod/batc
 import { AlertTriangle, Check, ChevronRight, FileSpreadsheet, Plus, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
 import { CreativeExecutionHistoryPanel } from "../execution/creative-execution-history";
 import Link from "next/link";
-import { useActionState, useId, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useId, useMemo, useRef, useState, useTransition } from "react";
 
 import {
   bindCreativeSkus,
@@ -18,7 +19,7 @@ import {
   type PodBatchActionState,
 } from "./pod-batch-actions";
 import { parseCanvasBatchCsv } from "./canvas-batch-csv";
-import type { BatchCapabilities, CreativeBatch, CreativeVersion, DesignOptions } from "./pod-batch-types";
+import type { BatchCapabilities, CreativeBatch, CreativeCandidate, CreativeVersion, DesignOptions } from "./pod-batch-types";
 
 const idle: PodBatchActionState = { status: "idle", message: "" };
 type DraftItem = CreateCreativeDesignBatchInput["items"][number];
@@ -29,6 +30,8 @@ export function BatchDesignWorkbench({
   batches,
   batch,
   assetUrls,
+  assetErrors = {},
+  assetReadVersion,
   error,
 }: {
   capabilities?: BatchCapabilities;
@@ -36,6 +39,8 @@ export function BatchDesignWorkbench({
   batches: CreativeBatch[];
   batch?: CreativeBatch;
   assetUrls: Record<string, string>;
+  assetErrors?: Record<string, string>;
+  assetReadVersion?: string;
   error?: string;
 }) {
   const feature = capabilities?.batchDesign;
@@ -69,7 +74,7 @@ export function BatchDesignWorkbench({
 
       <div className="pod-batch-layout">
         <BatchLedger activeId={batch?.id} batches={batches} />
-        <BatchDetail assetUrls={assetUrls} batch={batch} options={options} />
+        <BatchDetail assetUrls={assetUrls} assetErrors={assetErrors} assetReadVersion={assetReadVersion} batch={batch} options={options} />
       </div>
     </div>
   );
@@ -188,7 +193,9 @@ function BatchLedger({ activeId, batches }: { activeId?: string; batches: Creati
   );
 }
 
-function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; assetUrls: Record<string, string>; options?: DesignOptions }) {
+function BatchDetail({ batch, assetUrls, assetErrors, assetReadVersion, options }: {
+  batch?: CreativeBatch; assetUrls: Record<string, string>; assetErrors: Record<string, string>; assetReadVersion?: string; options?: DesignOptions;
+}) {
   const [selectionState, selectionAction, selecting] = useActionState(selectCreativeCandidates, idle);
   const selectionFormId = useId();
   if (!batch?.items) return <section className="pod-batch-empty"><Sparkles size={24} /><h2>建立第一批创意需求</h2><p>先创建印刷规格，再用表格或 CSV 提交 1–50 条需求。</p></section>;
@@ -205,14 +212,8 @@ function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; ass
           <article className="pod-creative-row" key={item.id}>
             <header><div><code>{item.rowKey}</code><h3>{item.name}</h3><p>{item.prompt}</p></div><span>{statusLabel(item.status)}</span></header>
             <div className="pod-candidate-filmstrip">
-              {item.candidates.map((candidate) => (
-                <label className={`pod-candidate-frame ${candidate.status}`} key={candidate.id}>
-                  <div>{candidate.assetId && assetUrls[candidate.assetId] ? <img alt={`${item.name} 候选 ${candidate.ordinal + 1}`} src={assetUrls[candidate.assetId]} /> : <span>{candidate.status === "failed" ? <AlertTriangle size={20} /> : <Sparkles size={20} />}</span>}</div>
-                  <input form={selectionFormId} disabled={candidate.status !== "generated"} name="candidateId" type="checkbox" value={candidate.id} />
-                  <b>候选 {candidate.ordinal + 1}</b><small>{candidate.modelKey ?? statusLabel(candidate.status)}</small>
-                  {candidate.errorMessage ? <em>{candidate.errorMessage}</em> : null}
-                </label>
-              ))}
+              {item.candidates.map((candidate) => <CandidateFrame key={candidate.id} candidate={candidate} itemName={item.name} formId={selectionFormId}
+                url={candidate.assetId ? assetUrls[candidate.assetId] : undefined} error={candidate.assetId ? assetErrors[candidate.assetId] : undefined} readVersion={assetReadVersion} />)}
             </div>
             {item.status === "failed" || item.status === "partially_succeeded" ? <RetryCreativeForm batchId={batch.id} itemId={item.id} /> : null}
             {item.creativeVersions.map((version) => <CreativeVersionPanel assetUrls={assetUrls} key={version.id} options={options} version={version} canvasMaster={batch.executionMode === "infinite_canvas"} />)}
@@ -221,8 +222,47 @@ function BatchDetail({ batch, assetUrls, options }: { batch?: CreativeBatch; ass
         {batch.items.some((item) => item.candidates.some((candidate) => candidate.status === "generated")) ? <footer><ActionNotice state={selectionState} /><button form={selectionFormId} disabled={selecting} type="submit">{selecting ? "适配排队中…" : "将所选候选创建为独立创意族"}</button></footer> : null}
       </div>
       {!(["completed", "cancelled"].includes(batch.status)) ? <CancelDesignForm batchId={batch.id} /> : null}
+      <style>{`
+        .pod-candidate-preview-diagnostic { display: grid; grid-template-rows: 0fr; opacity: 0; margin-top: 0; transition: grid-template-rows 180ms ease, opacity 160ms ease, margin-top 180ms ease; }
+        .pod-candidate-preview-diagnostic[data-visible="true"] { grid-template-rows: 1fr; opacity: 1; margin-top: 8px; }
+        .pod-candidate-preview-diagnostic > div { min-width: 0; min-height: 0; overflow: hidden; display: grid; gap: 6px; }
+        .pod-candidate-preview-diagnostic button { max-width: 100%; white-space: normal; transition: transform 140ms ease, opacity 160ms ease; }
+        .pod-candidate-preview-diagnostic button:not(:disabled):hover { transform: scale(1.015); }
+        .pod-candidate-preview-diagnostic button:not(:disabled):active { transform: scale(.985); }
+        .pod-candidate-preview-diagnostic button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+        @media (prefers-reduced-motion: reduce) { .pod-candidate-preview-diagnostic, .pod-candidate-preview-diagnostic button { transition: none; } }
+      `}</style>
     </section>
   );
+}
+
+function CandidateFrame({ candidate, itemName, formId, url, error, readVersion }: {
+  candidate: CreativeCandidate; itemName: string; formId: string; url?: string; error?: string; readVersion?: string;
+}) {
+  const router = useRouter(), [refreshing, startRefresh] = useTransition();
+  const [failed, setFailed] = useState<{ url: string; readVersion?: string }>();
+  const current = useRef({ url, readVersion }); current.current = { url, readVersion };
+  const imageFailed = !!failed && failed.url === url && failed.readVersion === readVersion;
+  const previewError = error || (imageFailed ? "原图加载失败或读取地址已失效 请重新读取" : !url && candidate.assetId
+    ? "原图预览尚未核对 请重新读取" : !url && candidate.status === "generated" ? "候选已生成 但尚未找到原图资产 请重新读取" : "");
+  return <div style={{ minWidth: 0 }}>
+    <label className={`pod-candidate-frame ${candidate.status}`} data-preview-state={previewError ? "unavailable" : url ? "image" : "pending"}>
+      <div>{url && !previewError ? <img key={readVersion ?? url} alt={`${itemName} 候选 ${candidate.ordinal + 1}`} src={url} onError={() => {
+        if (current.current.url === url && current.current.readVersion === readVersion) setFailed({ url, readVersion });
+      }} /> : <span>{previewError || candidate.status === "failed" ? <AlertTriangle size={20} /> : <Sparkles size={20} />}</span>}</div>
+      <input form={formId} disabled={candidate.status !== "generated"} name="candidateId" type="checkbox" value={candidate.id} />
+      <b>候选 {candidate.ordinal + 1}</b><small>{candidate.modelKey ?? statusLabel(candidate.status)}</small>
+      {candidate.errorMessage ? <em>{candidate.errorMessage}</em> : null}
+    </label>
+    <div className="pod-inline-action pod-candidate-preview-diagnostic" data-visible={!!previewError} aria-hidden={!previewError} inert={!previewError}>
+      <div>
+        <p role="status" aria-label={`候选 ${candidate.ordinal + 1} 原图读取状态`} className="pod-action-notice error">{previewError}</p>
+        <button type="button" disabled={refreshing || !previewError} onClick={() => startRefresh(() => router.refresh())}>
+          <RefreshCw size={13} />{refreshing ? "正在重新读取候选图" : "重新读取候选图"}
+        </button>
+      </div>
+    </div>
+  </div>;
 }
 
 function CreativeVersionPanel({ version, assetUrls, options, canvasMaster = false }: { version: CreativeVersion; assetUrls: Record<string, string>; options?: DesignOptions; canvasMaster?: boolean }) {

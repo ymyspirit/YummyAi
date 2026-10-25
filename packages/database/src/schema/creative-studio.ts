@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { StudioGenerate } from "@yummyai/contracts/pod/creative-studio";
+import type { StudioPaidImageInput, StudioPaidImageQuote } from "@yummyai/contracts/pod/studio-paid-image";
 import type { StudioTransferReceipt, StudioTransferRequest } from "@yummyai/contracts/pod/studio-document-transfer";
 import { organizations, users } from "./identity.js";
 import { assetFiles } from "./assets.js";
@@ -54,7 +55,8 @@ export const creativeStudioGenerations = pgTable("creative_studio_generations", 
   id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id),
   ownerId: uuid("owner_id").notNull().references(() => users.id), scope: text("scope").notNull(),
   requestId: uuid("request_id").notNull(), input: jsonb("input").$type<StudioGenerate>().notNull(),
-  modelSnapshot: jsonb("model_snapshot").$type<{ providerConfigId: string; model: string; capability: "image" | "video" | "text"; routeId?: string; providerFingerprint?: string; visualCeilingUsd?: number }>().notNull(),
+  modelSnapshot: jsonb("model_snapshot").$type<{ providerConfigId: string; model: string; capability: "image" | "video" | "text"; routeId?: string; providerFingerprint?: string; visualCeilingUsd?: number;
+    paidImage?: { imageRequestId: string; quoteHash: string; reservationUsd: string; estimatedUsd: string } }>().notNull(),
   references: jsonb("references").$type<Array<{ assetId: string; version: number; checksum: string }>>().notNull(),
   status: text("status").$type<"queued" | "running" | "completed" | "failed">().notNull().default("queued"),
   providerTaskId: text("provider_task_id"), assetId: uuid("asset_id"), resultText: text("result_text"), error: text("error"),
@@ -67,3 +69,28 @@ export const creativeStudioGenerations = pgTable("creative_studio_generations", 
   check("creative_studio_generation_status_check", sql`${t.status} in ('queued','running','completed','failed')`),
   foreignKey({ columns: [t.tenantId, t.assetId], foreignColumns: [assetFiles.tenantId, assetFiles.id], name: "creative_studio_generation_asset_fk" }).onDelete("restrict"),
 ]);
+
+export const creativeStudioImageRequests = pgTable("creative_studio_image_requests", {
+  id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id),
+  ownerId: uuid("owner_id").notNull().references(() => users.id), scope: text("scope").notNull(), requestId: uuid("request_id").notNull(),
+  originalInput: jsonb("original_input").$type<StudioPaidImageInput>().notNull(),
+  input: jsonb("input").$type<StudioPaidImageInput>().notNull(), quote: jsonb("quote").$type<StudioPaidImageQuote>().notNull(),
+  generationId: uuid("generation_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  committedAt: timestamp("committed_at", { withTimezone: true, mode: "date" }), cancelledAt: timestamp("cancelled_at", { withTimezone: true, mode: "date" }),
+}, t => [
+  uniqueIndex("creative_studio_image_request_unique").on(t.tenantId, t.ownerId, t.requestId),
+  uniqueIndex("creative_studio_image_requests_tenant_id_unique").on(t.tenantId, t.id),
+  uniqueIndex("creative_studio_image_generation_unique").on(t.tenantId, t.generationId),
+  index("creative_studio_image_request_cursor_idx").on(t.tenantId, t.ownerId, t.scope, t.id),
+  check("creative_studio_image_receipt_check", sql`(${t.generationId} is null) = (${t.committedAt} is null)`),
+  check("creative_studio_image_terminal_check", sql`${t.cancelledAt} is null or ${t.generationId} is null`),
+  foreignKey({ columns: [t.tenantId, t.generationId], foreignColumns: [creativeStudioGenerations.tenantId, creativeStudioGenerations.id], name: "creative_studio_image_generation_fk" }).onDelete("restrict"),
+]);
+
+/** A cancelled original key also fences a delayed prepare whose ACK was lost. */
+export const creativeStudioImageCancellations = pgTable("creative_studio_image_cancellations", {
+  id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id),
+  ownerId: uuid("owner_id").notNull().references(() => users.id), scope: text("scope").notNull(), requestId: uuid("request_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, t => [uniqueIndex("creative_studio_image_cancel_original_unique").on(t.tenantId, t.ownerId, t.requestId)]);

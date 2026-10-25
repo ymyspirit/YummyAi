@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { requireMockupCompletionEvidence, stageCreativeExecution } from "@yummyai/pod-core";
-import { authorize, Permission, type PermissionValue } from "@yummyai/authz";
+import { authorize, Permission, requireAssetAuthority, type PermissionValue } from "@yummyai/authz";
 import { assertCatalogListingAccess, catalogAssetReadFilter, creativeOwnerFilter,
   mockupPackOwner, requireMockupInspectionAccess, requireMockupPackAccess, requireMockupBatchAccess,
   requireMockupAsset, requireMockupInspectionSources, requireMockupPackSources, requireMockupDesignSource, requirePrintSpecAccess, printSpecOwner } from "@yummyai/catalog-core";
@@ -127,13 +127,31 @@ export class PodMockupBatchService {
   async confirmInspection(context: TenantContext, inspectionId: string, expectedFingerprint: string) {
     await this.transaction(context, [Permission.DesignRead, Permission.DesignReview, Permission.AssetRead], async (tx, authority, checkedAt) => {
       const row = await requireMockupInspectionAccess(tx, authority, inspectionId, [Permission.DesignRead, Permission.DesignReview], "update");
-      const { assets } = await requireMockupInspectionSources(tx, authority, row, checkedAt, true);
+      // Only this explicit human confirmation may review adopted compilation
+      // files. Every ordinary pack, render and listing gate still requires
+      // approved files through requireMockupInspectionSources(..., true).
+      const { assets } = await requireMockupInspectionSources(tx, authority, row);
+      if (row.status !== "completed" || !row.compilation || row.compilation.ssimPermille < 990
+        || row.compilation.slotKey !== row.slotKey || row.compilation.compilerVersion !== row.compilerVersion)
+        throw new ConflictException("原模板编译与黄金图证据不完整");
+      await requireMockupAsset(tx, authority, row.sourceAssetId, { version: row.sourceAssetVersion, checksumSha256: row.checksumSha256 }, checkedAt);
+      for (const asset of assets) await requireMockupAsset(tx, authority, asset.id,
+        { version: asset.version, checksumSha256: asset.checksumSha256 }, checkedAt, true, true);
+      if (assets.find(asset => asset.id === row.compilation!.manifestAssetId)?.checksumSha256 !== row.compilation.checksumSha256)
+        throw new ConflictException("原编译清单校验值已经变化");
       if (this.inspectionFingerprint(row) !== expectedFingerprint) throw new ConflictException("模板检查依据已变化 请刷新后重新确认");
       const evidenceMode = await requireMockupCompletionEvidence(tx, authority, { kind: "template_compile", ownerId: row.id, stepKey: "compile" }, assets, true);
+      const drafts = assets.filter(asset => asset.rightsStatus === "unverified");
+      if (drafts.length && evidenceMode !== "adopted_original_response") throw new ConflictException("未审核编译文件缺少原采用证据");
       if (row.confirmedAt) return;
+      for (const asset of drafts) {
+        requireAssetAuthority(authority, Permission.AssetWrite, asset);
+        await tx.update(assetFiles).set({ rightsStatus: "approved" }).where(eq(assetFiles.id, asset.id));
+      }
       await tx.update(mockupTemplateSourceInspections).set({ confirmedBy: context.userId, confirmedAt: new Date() }).where(eq(mockupTemplateSourceInspections.id, inspectionId));
       await this.audit.recordInTransaction(tx, context, { action: "pod.mockup_template_inspection.confirm", resourceType: "mockup_template_source_inspection", resourceId: inspectionId,
-        result: "success", metadata: { ssimPermille: row.compilation!.ssimPermille, evidenceMode, expectedFingerprint } });
+        result: "success", metadata: { ssimPermille: row.compilation!.ssimPermille, evidenceMode, expectedFingerprint,
+          explicitlyReviewedAssetIds: drafts.map(asset => asset.id) } });
     });
     return this.getInspection(context, inspectionId);
   }

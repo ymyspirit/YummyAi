@@ -12,7 +12,8 @@ import type {
   ProductVisualProject,
   VisualSlotKey,
 } from "@yummyai/contracts/catalog/product-visuals";
-import { StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { StudioGenerateRequestSchema, StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { admitCreativeExecution, stageCreativeExecution } from "@yummyai/pod-core";
 import {
   assetFiles,
   aiBudgetLedger,
@@ -20,6 +21,7 @@ import {
   connectDatabase,
   creativeDesignBatches,
   creativeExecutions,
+  creativeStudioGenerations,
   memberships,
   membershipRoles,
   modelProviderConfigs,
@@ -30,7 +32,7 @@ import {
 import { createStorageFromEnvironment } from "@yummyai/storage";
 import type { JobEnvelope } from "@yummyai/jobs";
 import { createDefaultProductionDocument } from "@yummyai/production-editor/products";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
@@ -50,7 +52,7 @@ import { ProductVisualsService } from "./product-visuals.service.js";
 import { SalesPlanService } from "./sales-plan.service.js";
 
 describe.sequential(
-  "controlled pillow visuals through canonical services and the real processor",
+  "retained pillow visuals through canonical review and adoption with legacy generation paused",
   () => {
     const isolated = new URL(process.env.DATABASE_URL ?? "postgres://invalid/invalid");
     if (
@@ -130,18 +132,8 @@ describe.sequential(
       roleId: string;
     let transparent: Buffer,
       opaque: Buffer,
-      fault = false,
       output: Buffer | undefined;
-    const generate = vi.fn(async (request: { input: { background: string } }) => {
-      if (fault) {
-        fault = false;
-        throw new Error("synthetic-secret-provider-error");
-      }
-      return {
-        bytes: output ?? (request.input.background === "transparent" ? transparent : opaque),
-        mediaType: "image/png",
-      };
-    });
+    const generate = vi.fn(async () => { throw new Error("synthetic-legacy-generation-must-not-dispatch"); });
     const processor = new StudioGenerationProcessor(db, storage, vault, { generate }, { scan });
     const envelope = (id: string): JobEnvelope => ({
       jobId: id,
@@ -198,11 +190,53 @@ describe.sequential(
       ...(artworkVersionId ? { artworkVersionId } : {}),
       size: "1024x1024",
     });
-    async function stoppedBeforeSubmission(id: string) {
-      const [execution] = await withTenant(db.db, a, tx => tx.select().from(creativeExecutions).where(eq(creativeExecutions.studioGenerationId, id)));
-      expect(execution).toMatchObject({ phase: "failed", errorCode: "CREATIVE_AUTHORITY_OR_INPUT_CHANGED", submittedAt: null, receipt: null });
-      const [ledger] = await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, id)));
-      expect(ledger?.state).toBe("released");
+    const operation = (id: string) => ({ kind: "studio_generation" as const, ownerId: id, stepKey: "generate" });
+    const historyRows = (id: string) => withTenant(db.db, a, async tx => ({
+      generation: await tx.select().from(creativeStudioGenerations).where(eq(creativeStudioGenerations.id, id)),
+      execution: await tx.select().from(creativeExecutions).where(eq(creativeExecutions.studioGenerationId, id)),
+      ledger: await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, id)),
+    }));
+    const originalAdmission = (id: string) => withTenant(db.db, a, tx => admitCreativeExecution(tx, a, operation(id)));
+    async function dormant(id: string) {
+      const before = await historyRows(id), calls = generate.mock.calls.length;
+      const result = await processor.process(envelope(id));
+      expect(result).toMatchObject({ id, disposition: expect.stringMatching(/^(operator_paused|legacy_not_admitted)$/) });
+      expect(await historyRows(id)).toEqual(before); expect(generate).toHaveBeenCalledTimes(calls); expect(queue.enqueue).not.toHaveBeenCalled();
+      return before;
+    }
+    async function retained(p: SalesPlanView, group: string, input: ReturnType<typeof command>, status: "queued" | "completed" = "queued") {
+      const projects = await withTenant(db.db, a, tx => tx.select().from(creativeDesignBatches));
+      const project = projects.find(row => row.createdBy === a.userId && row.canvasWorkflow?.visualDelivery?.groupId === group && row.canvasWorkflow.visualDelivery.slotKey === input.slotKey);
+      if (!project?.canvasWorkflow?.visualDelivery) throw new Error("Synthetic retained visual project missing");
+      const pin = project.canvasWorkflow.visualDelivery, selected = (await generation.models(a)).find(model => model.id === pin.modelId);
+      if (!selected) throw new Error("Synthetic retained visual model missing");
+      const artwork = input.artworkVersionId ? projects.find(row => row.canvasWorkflow?.visualDelivery?.groupId === group && row.canvasWorkflow.visualDelivery.slotKey === "artwork") : undefined;
+      const art = artwork ? (await workflow.results(a, artwork.id)).items.find(row => row.versionId === input.artworkVersionId) : undefined;
+      if (input.slotKey !== "artwork" && !art) throw new Error("Synthetic retained artwork source missing");
+      const inputKeys = art ? [`image:asset-${art.assetId}`] : [];
+      const projectBrief = await bridge.get(a, project.id), originalPrompt = "Synthetic retained original";
+      const origin = input.slotKey !== "artwork" ? `\n\n套图固定图稿版本：${input.artworkVersionId}。首张参考图是已审核的唯一图稿来源，须保持图案、身份、姿态、比例和文字不变；真实样品参考用于核对抱枕轮廓、材质和单双面。不能用样品照片替换图稿内容。` : "";
+      const prompt = projectBrief.designInstructions ? `${originalPrompt}\n\n项目固定需求：\n${projectBrief.designInstructions}${origin}` : originalPrompt;
+      const storedInput = StudioGenerateRequestSchema.parse({ requestId: input.requestId, modelId: input.modelId, capability: "image", selectionRevision: selected.selectionRevision,
+        visualSlotKey: input.slotKey, ...(input.artworkVersionId ? { visualArtworkVersionId: input.artworkVersionId } : {}), size: input.size,
+        prompt, referenceKeys: inputKeys, quality: "high", background: input.slotKey === "artwork" ? "transparent" : "opaque", seconds: 4 });
+      const id = createEntityId(), assetId = status === "completed" ? createEntityId() : undefined;
+      ids.generations.push(id); if (assetId) ids.assets.push(assetId);
+      const bytes = output ?? (input.slotKey === "artwork" ? transparent : opaque);
+      const stored = assetId ? await storage.putPrivate(a, { domain: "authorized", fileName: `synthetic-retained-${id}.png`, mediaType: "image/png", body: bytes }) : undefined;
+      await withTenant(db.db, a, async tx => {
+        if (assetId && stored) await tx.insert(assetFiles).values({ id: assetId, tenantId: a.tenantId, ownerUserId: a.userId, ...stored, assetDomain: "authorized", fileName: `synthetic-retained-${id}.png`, mediaType: "image/png", byteSize: bytes.length,
+          aiGenerated: true, rightsStatus: "unverified", rightsMetadata: { source: { kind: "ai_generated" }, fixture: "retained-pre-quotation-history" } });
+        const references = await tx.select().from(assetFiles).where(inArray(assetFiles.id, [pin.sampleAssetId, ...(art ? [art.assetId] : [])]));
+        await tx.insert(creativeStudioGenerations).values({ id, tenantId: a.tenantId, ownerId: a.userId, scope: project.id, requestId: storedInput.requestId, input: storedInput, status,
+          assetId: assetId ?? null, references: references.map(file => ({ assetId: file.id, version: file.version, checksum: file.checksumSha256 })),
+          modelSnapshot: { routeId: pin.modelId, providerConfigId: pin.providerConfigId, model: pin.providerModel, capability: "image", providerFingerprint: pin.providerFingerprint, visualCeilingUsd: pin.callCeilingUsd } });
+        // Explicit historical fixtures keep their old occupancy without upgrading
+        // them into quoted requests or sending any provider/queue operation.
+        await tx.insert(aiBudgetLedger).values({ id: createEntityId(), tenantId: a.tenantId, requestId: id, taskType: "studio_image", modelKey: pin.providerModel, provider: "openai-compatible", amountUsd: pin.callCeilingUsd.toFixed(6), state: "reserved" });
+        if (status === "queued") await stageCreativeExecution(tx, a, operation(id), "external_request");
+      });
+      expect(pin.salesPlanId).toBe(p.id); return { id, scope: project.id, input: storedInput };
     }
     async function candidate(
       p: SalesPlanView,
@@ -211,13 +245,8 @@ describe.sequential(
       art?: string,
       approve = true,
     ) {
-      const result = await service.generate(a, p.id, group, command(slot, art));
-      ids.generations.push(result.id);
-      // A ready positive fixture must not depend on sub-second wall-clock drift.
-      // Future/retry admission tests set their own later schedule explicitly.
-      await withTenant(db.db, a, tx => tx.update(creativeExecutions)
-        .set({ nextAttemptAt: sql`clock_timestamp()-interval '1 second'` }).where(eq(creativeExecutions.studioGenerationId, result.id)));
-      await processor.process(envelope(result.id));
+      const result = await retained(p, group, command(slot, art), "completed");
+      await dormant(result.id);
       await service.collect(a, p.id, group);
       const task = (await snapshot(p, group)).tasks.find((t) => t.id === result.id)!;
       expect(task.result).not.toBeNull();
@@ -428,7 +457,7 @@ describe.sequential(
             templateId,
             modelCalls: generate.mock.calls.length,
             realPaidCalls: 0,
-            transport: "injected controlled PNG output; no model endpoint requests",
+            transport: "retained private PNG fixtures and dormant legacy Worker; no model endpoint requests",
             cleanup: "all database, storage and Redis resources owned by isolated runner",
           },
           null,
@@ -482,7 +511,7 @@ describe.sequential(
           .where(eq(assetFiles.id, sampleId)),
       );
     });
-    it("runs exact approved artwork into three reviewed slots and adopts one new plan version once", async () => {
+    it("reads exact retained artwork into three reviewed slots and adopts one new plan version once", async () => {
       const p = await plan(),
         { group } = await prepared(p),
         art = await candidate(p, group, "artwork");
@@ -603,24 +632,24 @@ describe.sequential(
         }),
       ).rejects.toThrow("没有可见主体");
     });
-    it("keeps uncertain failures reserved, replays without a new call and serializes budget admission", async () => {
+    it("keeps retained uncertain billing reserved and rejects generic retries or concurrent new unquoted calls", async () => {
       const p = await plan(),
         { group } = await prepared(p, 0.2),
         input = command("artwork"),
-        job = await service.generate(a, p.id, group, input);
-      ids.generations.push(job.id);
-      expect((await service.generate(a, p.id, group, input)).id).toBe(job.id);
-      fault = true;
-      await expect(processor.process(envelope(job.id))).rejects.toThrow("studio_generation_failed");
-      const calls = generate.mock.calls.length;
-      await processor.process(envelope(job.id));
-      expect(generate).toHaveBeenCalledTimes(calls);
-      const next = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(next.id);
-      await processor.process(envelope(next.id));
-      await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toThrow(
-        "剩余预算不足",
-      );
+        job = await retained(p, group, input);
+      await withTenant(db.db, a, async tx => {
+        const [ledger] = await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, job.id));
+        if (!ledger) throw new Error("Synthetic retained occupancy missing");
+        await tx.update(creativeStudioGenerations).set({ status: "failed", error: "studio_submission_interrupted" }).where(eq(creativeStudioGenerations.id, job.id));
+        await tx.update(creativeExecutions).set({ phase: "uncertain", errorCode: "CREATIVE_RESULT_UNCERTAIN", attemptCount: 1,
+          submittedAt: sql`clock_timestamp()-interval '1 hour'`, submissionToken: createEntityId(), budgetLedgerId: ledger.id, budgetLimitUsd: ledger.amountUsd }).where(eq(creativeExecutions.studioGenerationId, job.id));
+      });
+      const unknown = await dormant(job.id); await dormant(job.id);
+      expect(unknown.execution[0]).toMatchObject({ phase: "uncertain", receipt: null, errorCode: "CREATIVE_RESULT_UNCERTAIN" });
+      expect(unknown.ledger[0]).toMatchObject({ state: "reserved", amountUsd: "0.100000" });
+      expect(await generation.originalInput(a, job.scope, input.requestId)).toEqual(job.input);
+      await expect(service.generate(a, p.id, group, input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      await candidate(p, group, "artwork", undefined, false);
       expect((await snapshot(p, group)).budget).toMatchObject({
         occupiedUsd: 0.2,
         remainingUsd: 0,
@@ -628,65 +657,54 @@ describe.sequential(
       });
       const q = await plan(),
         fresh = await prepared(q, 0.1);
+      const before = await withTenant(db.db, a, tx => tx.select().from(creativeStudioGenerations).orderBy(creativeStudioGenerations.id));
       const concurrent = await Promise.allSettled([
         service.generate(a, q.id, fresh.group, command("artwork")),
         service.generate(a, q.id, fresh.group, command("artwork")),
       ]);
-      expect(concurrent.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-      const accepted = concurrent.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{
-        id: string;
-      }>;
-      await processor.process(envelope(accepted.value.id));
+      for (const result of concurrent) {
+        expect(result.status).toBe("rejected");
+        if (result.status === "rejected") expect(result.reason).toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      }
+      expect(await withTenant(db.db, a, tx => tx.select().from(creativeStudioGenerations).orderBy(creativeStudioGenerations.id))).toEqual(before);
+      expect(generate).not.toHaveBeenCalled(); expect(queue.enqueue).not.toHaveBeenCalled();
     });
-    it("rechecks membership and source pins in the Worker before submission and releases only unsubmitted calls", async () => {
+    it("retains original Harness membership and source checks while a dormant Worker leaves unsubmitted history unchanged", async () => {
       const p = await plan(),
         { group } = await prepared(p),
-        job = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(job.id);
+        job = await retained(p, group, command("artwork"));
+      await originalAdmission(job.id);
       await withTenant(db.db, a, (tx) =>
         tx
           .update(roles)
           .set({ permissions: [Permission.ProductRead] })
           .where(eq(roles.id, roleId)),
       );
-      const calls = generate.mock.calls.length;
       try {
-        await expect(processor.process(envelope(job.id))).rejects.toThrow("studio_generation_failed");
-        expect(generate).toHaveBeenCalledTimes(calls);
-        const [ledger] = await withTenant(db.db, a, (tx) =>
-          tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, job.id)),
-        );
-        expect(ledger).toMatchObject({ state: "released", amountUsd: "0.100000" });
-        const [execution] = await withTenant(db.db, a, tx => tx.select().from(creativeExecutions).where(eq(creativeExecutions.studioGenerationId, job.id)));
-        expect(execution).toMatchObject({ phase: "failed", errorCode: "CREATIVE_AUTHORITY_OR_INPUT_CHANGED", submittedAt: null, receipt: null });
+        await expect(originalAdmission(job.id)).rejects.toThrow();
+        const unchanged = await dormant(job.id);
+        expect(unchanged.ledger[0]).toMatchObject({ state: "reserved", amountUsd: "0.100000" });
+        expect(unchanged.execution[0]).toMatchObject({ phase: "pending", submittedAt: null, receipt: null });
       } finally {
         await withTenant(db.db, a, (tx) =>
           tx.update(roles).set({ permissions: Object.values(Permission) }).where(eq(roles.id, roleId)),
         );
       }
-      const next = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(next.id);
+      const next = await retained(p, group, command("artwork")); await originalAdmission(next.id);
       await plans.save(a, p.id, {
         fields: { ...p.fields, positioning: "Changed source" },
         expectedRevision: 1,
         idempotencyKey: randomUUID(),
       });
-      await expect(processor.process(envelope(next.id))).rejects.toThrow(
-        "studio_generation_failed",
-      );
-      await stoppedBeforeSubmission(next.id);
-      expect(generate).toHaveBeenCalledTimes(calls);
+      await expect(originalAdmission(next.id)).rejects.toThrow(); await dormant(next.id);
       expect((await snapshot(p, group)).stale).toBe(true);
-      await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toThrow(
-        "商品或规格已变化",
-      );
+      await expect(generation.create(a, next.scope, next.input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
     });
-    it("stops before calling changed channels, archived templates or modified sample versions", async () => {
+    it("keeps channel template and sample pin rejection in the original Harness without resuming legacy tasks", async () => {
       const p = await plan(),
         { group } = await prepared(p),
-        first = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(first.id);
-      const calls = generate.mock.calls.length;
+        first = await retained(p, group, command("artwork"));
+      await originalAdmission(first.id);
       await withTenant(db.db, a, (tx) =>
         tx
           .update(modelProviderConfigs)
@@ -694,15 +712,8 @@ describe.sequential(
           .where(eq(modelProviderConfigs.id, providerId)),
       );
       try {
-        await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toThrow(
-          "模型渠道配置已变化",
-        );
-        await expect(processor.process(envelope(first.id))).rejects.toThrow(
-          "studio_generation_failed",
-        );
-        expect(generate).toHaveBeenCalledTimes(calls);
-        const [execution] = await withTenant(db.db, a, tx => tx.select().from(creativeExecutions).where(eq(creativeExecutions.studioGenerationId, first.id)));
-        expect(execution).toMatchObject({ phase: "failed", errorCode: "CREATIVE_AUTHORITY_OR_INPUT_CHANGED", submittedAt: null, receipt: null });
+        await expect(originalAdmission(first.id)).rejects.toThrow(); await dormant(first.id);
+        await expect(generation.create(a, first.scope, first.input)).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
       } finally {
         await withTenant(db.db, a, (tx) =>
           tx
@@ -711,44 +722,35 @@ describe.sequential(
             .where(eq(modelProviderConfigs.id, providerId)),
         );
       }
-      const second = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(second.id);
+      const second = await retained(p, group, command("artwork")); await originalAdmission(second.id);
       await editor.archive(a, templateId, {
         archived: true,
         reason: "Synthetic source invalidation",
       });
       try {
-        await expect(processor.process(envelope(second.id))).rejects.toThrow(
-          "studio_generation_failed",
-        );
-        await stoppedBeforeSubmission(second.id);
-        expect(generate).toHaveBeenCalledTimes(calls);
+        await expect(originalAdmission(second.id)).rejects.toThrow(); await dormant(second.id);
       } finally {
         await editor.archive(a, templateId, {
           archived: false,
           reason: "Restore isolated synthetic template",
         });
       }
-      const third = await service.generate(a, p.id, group, command("artwork"));
-      ids.generations.push(third.id);
+      const third = await retained(p, group, command("artwork")); await originalAdmission(third.id);
       await withTenant(db.db, a, (tx) =>
         tx.update(assetFiles).set({ version: 2 }).where(eq(assetFiles.id, sampleId)),
       );
       try {
-        await expect(processor.process(envelope(third.id))).rejects.toThrow(
-          "studio_generation_failed",
-        );
-        await stoppedBeforeSubmission(third.id);
+        await expect(originalAdmission(third.id)).rejects.toThrow(); await dormant(third.id);
         expect((await snapshot(p, group)).stale).toBe(true);
-        expect(generate).toHaveBeenCalledTimes(calls);
       } finally {
         await withTenant(db.db, a, (tx) =>
           tx.update(assetFiles).set({ version: 1 }).where(eq(assetFiles.id, sampleId)),
         );
       }
-      expect((await snapshot(p, group)).budget).toMatchObject({ occupiedUsd: 0, remainingUsd: 2 });
+      expect((await snapshot(p, group)).budget).toMatchObject({ occupiedUsd: 0.3, remainingUsd: 1.7, actualUsd: null });
+      expect(generate).not.toHaveBeenCalled();
     });
-    it("pins the model route, limits attempts and respects the shared organizational budget", async () => {
+    it("retains model routes attempts and shared organizational occupancy while every unquoted create stays paused", async () => {
       const p = await plan(),
         { group } = await prepared(p);
       const [originalRoute] = await withTenant(db.db, a, (tx) =>
@@ -776,7 +778,8 @@ describe.sequential(
             background: "transparent",
           }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      const historical = await retained(p, group, command("artwork")); await originalAdmission(historical.id);
       await withTenant(db.db, a, (tx) =>
         tx
           .update(modelRoutes)
@@ -787,9 +790,7 @@ describe.sequential(
           })
           .where(eq(modelRoutes.id, modelId)),
       );
-      await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toThrow(
-        "模型渠道或路由已变化",
-      );
+      await expect(originalAdmission(historical.id)).rejects.toThrow(); await dormant(historical.id);
       await withTenant(db.db, a, (tx) =>
         tx
           .update(modelRoutes)
@@ -798,10 +799,10 @@ describe.sequential(
           })
           .where(eq(modelRoutes.id, modelId)),
       );
-      for (let i = 0; i < 4; i++) await candidate(p, group, "artwork");
-      await expect(service.generate(a, p.id, group, command("artwork"))).rejects.toThrow(
-        "最多 4 次尝试",
-      );
+      const retainedPlan = await plan(), history = await prepared(retainedPlan);
+      for (let i = 0; i < 4; i++) await candidate(retainedPlan, history.group, "artwork");
+      expect((await snapshot(retainedPlan, history.group)).tasks).toHaveLength(4);
+      await expect(service.generate(a, retainedPlan.id, history.group, command("artwork"))).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
       const q = await plan(),
         next = await prepared(q);
       await withTenant(db.db, a, (tx) =>
@@ -812,9 +813,10 @@ describe.sequential(
           taskCapsUsd: { studio_image: 1 },
         }),
       );
-      await expect(service.generate(a, q.id, next.group, command("artwork"))).rejects.toThrow(
-        "组织当月 AI 预算不足",
-      );
+      const before = await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).orderBy(aiBudgetLedger.id));
+      await expect(service.generate(a, q.id, next.group, command("artwork"))).rejects.toMatchObject({ status: 409, response: { code: "studio_paid_execution_paused" } });
+      expect(await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).orderBy(aiBudgetLedger.id))).toEqual(before);
+      expect(generate).not.toHaveBeenCalled(); expect(queue.enqueue).not.toHaveBeenCalled();
     });
   },
 );

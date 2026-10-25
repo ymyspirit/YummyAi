@@ -3,7 +3,7 @@
   "sourcePrefix": "web",
   "tag": "v0.20.0",
   "commit": "3a6b64b602ad062b29fac66902ed18a7ef5fd9dc",
-  "adapterVersion": "2.7.0",
+  "adapterVersion": "2.8.0",
   "documentProtocolVersion": 1,
   "configurationProtocolVersion": 1,
   "verifiedAgainstUpstreamTree": true,

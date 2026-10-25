@@ -25,7 +25,7 @@ jobs:
   verify:
     if: github.event_name != 'workflow_dispatch' || inputs.gate == 'all'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       POSTGRES_DB: yummyai
       POSTGRES_USER: yummyai_local
@@ -138,6 +138,13 @@ jobs:
       - run: pnpm test:integration
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
+      - name: Validate creative original adoption and explicit image quotations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for suite in creative-response-adoption-integration studio-paid-image-integration creative-owner-response-adoption-integration studio-visual-paid-image-integration studio-paid-image-legacy-regression; do
+            pnpm test:e2e:order-daily --suite="$suite" --cache=false
+          done
       - name: Validate order to factory status intake
         run: pnpm test:e2e:order-daily --suite=factory-erp-import-integration
       - run: pnpm exec playwright install --with-deps chromium
@@ -147,6 +154,8 @@ jobs:
       - name: Validate pinned pillow size basis in the personal editor
         run: pnpm test:e2e:order-daily --suite=catalog-editor --grep="pillow size basis"
       - run: pnpm build --concurrency=2
+      - name: Validate original creative recovery on one compiled candidate
+        run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - run: pnpm --filter @yummyai/extension zip
       - run: pnpm release:manifest
       - uses: actions/upload-artifact@v4
@@ -158,6 +167,9 @@ jobs:
             test-results
             apps/*/playwright-report
             apps/*/test-results
+            output/p2-creative-browser
+            tmp/order-daily-artifacts-*/acceptance-manifest.json
+            tmp/order-daily-artifacts-*/browser/**/*proof.json
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:

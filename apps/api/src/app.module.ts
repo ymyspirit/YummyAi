@@ -89,6 +89,8 @@ import { ModelConfigurationService } from "./ai/model-configuration.service.js";
 import { CreativeStudioController } from "./design/creative-studio.controller.js";
 import { CreativeStudioService } from "./design/creative-studio.service.js";
 import { CreativeStudioPersonalService } from "./design/creative-studio-personal.service.js";
+import { StudioPaidImageService } from "./design/studio-paid-image.service.js";
+import { StudioImageBudgetService } from "./design/studio-image-budget.service.js";
 import { StudioDocumentTransferService } from "./design/studio-document-transfer.service.js";
 import { StudioVideoDirectoryService } from "./design/studio-video-directory.service.js";
 import {
@@ -177,6 +179,10 @@ import { CanvasWorkflowService } from "./design/canvas-workflow.service.js";
 import { PodBatchWorkflowService } from "./design/pod-batch-workflow.service.js";
 import { CreativeExecutionOperatorController } from "./design/creative-execution-operator.controller.js";
 import { CreativeExecutionOperatorService } from "./design/creative-execution-operator.service.js";
+import { CreativeResponseAdoptionController } from "./design/creative-response-adoption.controller.js";
+import { CreativeResponseAdoptionService } from "./design/creative-response-adoption.service.js";
+import { CreativeOwnerResponseAdoptionController } from "./design/creative-owner-response-adoption.controller.js";
+import { CreativeOwnerResponseAdoptionService } from "./design/creative-owner-response-adoption.service.js";
 import { PodMockupBatchService } from "./design/pod-mockup-batch.service.js";
 import { RedisPodBatchWorkflowEnqueuer } from "./design/redis-pod-batch-workflow-enqueuer.js";
 import { RedisPersonalizationTemplateSourceInspectionEnqueuer } from "./design/redis-personalization-template-source-inspection-enqueuer.js";
@@ -448,6 +454,8 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     AssistTaskWorkspaceController,
     CreativeStudioController,
     CreativeExecutionOperatorController,
+    CreativeResponseAdoptionController,
+    CreativeOwnerResponseAdoptionController,
     AssetsController,
     AmazonCustomWorkflowController,
     CaptureController,
@@ -558,6 +566,8 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     { provide: StudioGenerationEnqueuer, useClass: RedisStudioGenerationEnqueuer },
     CreativeStudioService,
     CreativeStudioPersonalService,
+    StudioPaidImageService,
+    StudioImageBudgetService,
     StudioDocumentTransferService,
     StudioVideoDirectoryService,
     StudioGenerationService,
@@ -755,6 +765,8 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     CanvasWorkflowService,
     PodMockupBatchService,
     CreativeExecutionOperatorService,
+    CreativeResponseAdoptionService,
+    CreativeOwnerResponseAdoptionService,
     FinanceService,
     FinancePayablesService,
     FinancePayablesAdjustmentsService,

@@ -1,6 +1,7 @@
 import { BatchDesignWorkbench } from "../../../features/pod/batch-design-workbench";
 import type { BatchCapabilities, CreativeBatch, DesignOptions } from "../../../features/pod/pod-batch-types";
 import { apiFetch } from "../../../server-api";
+import { readStudioJson } from "../../../creative-studio-personal-server";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default async function CreativeDesignPage({ searchParams }: { searchParam
 
 async function loadConsole(requestedBatchId?: string): Promise<{
   capabilities?: BatchCapabilities; options?: DesignOptions; batches: CreativeBatch[]; batch?: CreativeBatch;
-  assetUrls: Record<string, string>; error?: string;
+  assetUrls: Record<string, string>; assetErrors?: Record<string, string>; assetReadVersion?: string; error?: string;
 }> {
   const apiBase = process.env.API_BASE_URL;
   if (!apiBase) return { batches: [], assetUrls: {}, error: "API_BASE_URL 未配置。" };
@@ -47,20 +48,45 @@ async function loadConsole(requestedBatchId?: string): Promise<{
       ...item.candidates.flatMap((candidate) => candidate.assetId ? [candidate.assetId] : []),
       ...item.creativeVersions.flatMap((version) => version.assets.map((asset) => asset.assetId)),
     ]) ?? [])];
-    return { capabilities, options, batches, batch, assetUrls: await signAssets(base, assetIds) };
+    return { capabilities, options, batches, batch, ...await signAssets(base, assetIds) };
   } catch (error) {
     return { batches: [], assetUrls: {}, error: error instanceof Error ? error.message : "画图设计控制台读取失败。" };
   }
 }
 
 async function signAssets(base: string, assetIds: string[]) {
-  const entries = await Promise.all(assetIds.map(async (assetId) => {
-    const response = await apiFetch(`${base}/assets/${assetId}/read-url`, {
-      method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ requiredDomain: "authorized" }),
-    });
-    if (!response.ok) return undefined;
-    const payload = await response.json() as { url?: unknown };
-    return typeof payload.url === "string" ? [assetId, payload.url] as const : undefined;
+  const entries = await Promise.all(assetIds.map(async (assetId): Promise<{ assetId: string; url?: string; error?: string }> => {
+    try {
+      const response = await apiFetch(`${base}/v1/assets/${encodeURIComponent(assetId)}/read-url`, {
+        method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ requiredDomain: "authorized" }),
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        return { assetId, error: assetReadFailure(response.status) };
+      }
+      const payload = await readStudioJson(response, 20 * 1024);
+      const url = payload && typeof payload === "object" && "url" in payload ? payload.url : undefined;
+      if (typeof url !== "string" || !url || url.length > 16384) return { assetId, error: "原图预览地址尚未核对 请重新读取" };
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password)
+        return { assetId, error: "原图预览地址尚未核对 请重新读取" };
+      return { assetId, url };
+    } catch {
+      return { assetId, error: assetReadFailure() };
+    }
   }));
-  return Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)));
+  return {
+    assetUrls: Object.fromEntries(entries.flatMap(entry => entry.url ? [[entry.assetId, entry.url] as const] : [])),
+    assetErrors: Object.fromEntries(entries.flatMap(entry => entry.error ? [[entry.assetId, entry.error] as const] : [])),
+    assetReadVersion: crypto.randomUUID(),
+  };
+}
+
+function assetReadFailure(status?: number) {
+  if (status === 401) return "登录已失效 请重新登录后读取原图";
+  if (status === 403) return "当前账户无权读取这份原图 请核对素材权限后重新读取";
+  if (status === 404) return "原图不存在或当前不可读取 请核对原资产后重新读取";
+  if (status === 409) return "原图或读取权限已变化 请重新读取";
+  if (status === 410) return "原图读取已失效 请核对原资产后重新读取";
+  return "原图预览暂时无法核对 请重新读取";
 }

@@ -5,6 +5,8 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { authorize, Permission } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
@@ -14,14 +16,23 @@ import {
   PrepareProductVisualsSchema,
   ReviewProductVisualSchema,
   VISUAL_SLOTS,
+  VisualDeliverySnapshotSchema,
   type ProductVisualProject,
   type ProductVisualWorkspace,
   type VisualDeliverySnapshot,
+  type VisualSlotKey,
 } from "@yummyai/contracts/catalog/product-visuals";
+import { CancelProductVisualImageSchema, CommitProductVisualImageSchema, PrepareProductVisualImageSchema,
+  ProductVisualImageAddressSchema, ProductVisualImageIndexSchema, ProductVisualImageLookupQuerySchema,
+  ProductVisualImageOriginalSchema } from "@yummyai/contracts/catalog/product-visual-generation";
+import { StudioOriginalInspectionSchema } from "@yummyai/contracts/pod/studio-original";
+import type { StudioPaidImageRequest } from "@yummyai/contracts/pod/studio-paid-image";
+import { assertCatalogSalesPlanAccess, currentCreativeAuthority, requireBatchAccess, requireReferenceAuthority } from "@yummyai/catalog-core";
 import {
   assetFiles,
   aiBudgetLedger,
   creativeDesignBatches,
+  creativeStudioEntries,
   developmentEvents,
   modelRoutes,
   modelProviderConfigs,
@@ -40,12 +51,13 @@ import { DATABASE_CONNECTION, PRIVATE_STORAGE } from "../platform.tokens.js";
 import { CanvasBridgeService } from "../design/canvas-bridge.service.js";
 import { CanvasWorkflowService } from "../design/canvas-workflow.service.js";
 import { StudioGenerationService } from "../design/studio-generation.service.js";
-import { StudioGenerateRequestSchema } from "@yummyai/contracts/pod/creative-studio";
+import { StudioPaidImageService } from "../design/studio-paid-image.service.js";
 import { CreativeStudioService } from "../design/creative-studio.service.js";
 import { assertAuthorizedAssets } from "../design/pod-batch-workflow.service.js";
 import { AuditService } from "../audit/audit.service.js";
 import { fingerprint } from "./development-data.js";
 import { SalesPlanService } from "./sales-plan.service.js";
+import { isDeepStrictEqual } from "node:util";
 
 @Injectable()
 export class ProductVisualsService {
@@ -58,6 +70,7 @@ export class ProductVisualsService {
     @Inject(StudioGenerationService) private readonly studio: StudioGenerationService,
     @Inject(CreativeStudioService) private readonly assets: CreativeStudioService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(StudioPaidImageService) private readonly paid?: StudioPaidImageService,
   ) {}
 
   private access(context: TenantContext) {
@@ -258,6 +271,7 @@ export class ProductVisualsService {
         id: groupId,
         name: group[0]!.name.replace(/ · (图稿候选|场景图|细节图|定制说明图)$/, ""),
         snapshot: pin,
+        slots: group.map(row => ({ slotKey: row.canvasWorkflow!.visualDelivery!.slotKey, projectId: row.id })),
         stale,
         adoptedRevision: adopted?.revision ?? null,
         tasks,
@@ -375,61 +389,140 @@ export class ProductVisualsService {
     return { groupId: input.requestId, replayed: false };
   }
   async generate(context: TenantContext, planId: string, groupId: string, raw: unknown) {
-    const input = GenerateProductVisualSchema.parse(raw),
-      rows = await this.group(context, planId, groupId);
-    const project = rows.find((r) => r.canvasWorkflow!.visualDelivery!.slotKey === input.slotKey);
-    if (!project) throw new ConflictException("图片步骤尚未准备完成，请重新读取交付");
-    const original = await this.studio.originalInput(context, project.id, input.requestId);
-    let selectionRevision: string;
-    if (original) {
-      const retained = StudioGenerateRequestSchema.safeParse(original);
-      if (!retained.success || retained.data.capability !== "image") throw new ConflictException("原任务未固定图片模型选择版本，请查看原任务，不要重新提交");
-      selectionRevision = retained.data.selectionRevision;
-    } else {
-      const selected = (await this.studio.models(context)).find(model => model.id === input.modelId && model.capability === "image");
-      if (!selected) throw new ConflictException("所选图片模型不可用，请重新读取视觉交付");
-      selectionRevision = selected.selectionRevision;
-    }
-    // Replay retains the original references. The original owner compares the
-    // complete input before it may dispatch; an unknown outcome never reattaches.
-    const referenceKeys = original ? [...original.referenceKeys] : [];
-    if (!original && input.slotKey !== "artwork") {
-      const artwork = rows.find((r) => r.canvasWorkflow!.visualDelivery!.slotKey === "artwork");
-      const result = artwork
-        ? (await this.workflow.results(context, artwork.id)).items.find(
-            (r) => r.versionId === input.artworkVersionId && r.status === "approved",
-          )
-        : undefined;
-      if (!result || (await this.inspect(context, result.assetId, true)).length)
-        throw new ConflictException("请先选择本交付中技术检查与人工审核通过的图稿");
-      try {
-        await withTenant(this.database.db, context, (tx) =>
-          assertVisualDeliveryReview(tx, project.canvasWorkflow!.visualDelivery!, result.versionId),
-        );
-      } catch {
-        throw new ConflictException("请在视觉交付中完成主体、轮廓、事实和单双面核对");
-      }
-      await this.assets.invoke(context, {
-        operation: "reference.attach",
-        scope: project.id,
-        assetId: result.assetId,
-      });
-      referenceKeys.push(`image:asset-${result.assetId}`);
-    }
-    return this.studio.create(context, project.id, {
-      requestId: input.requestId,
-      modelId: input.modelId,
-      capability: "image",
-      selectionRevision,
-      visualSlotKey: input.slotKey,
-      ...(input.artworkVersionId ? { visualArtworkVersionId: input.artworkVersionId } : {}),
-      prompt: input.prompt || "按本步骤固定需求生成一张可审核候选。",
-      referenceKeys,
-      size: input.size,
-      quality: input.quality,
-      background: input.slotKey === "artwork" ? "transparent" : "opaque",
-      seconds: 4,
+    this.access(context);
+    authorize(context, Permission.DesignWrite);
+    GenerateProductVisualSchema.parse(raw);
+    void planId; void groupId;
+    // Do not attach references or revive an old original before the paid gate.
+    throw new ConflictException({ code: "studio_paid_execution_paused", message: "请先准备本步骤的单张图片报价 再明确确认付费生成" });
+  }
+
+  private paidImages() {
+    if (!this.paid) throw new ServiceUnavailableException({ code: "studio_paid_image_unavailable" });
+    return this.paid;
+  }
+
+  /** Read an exact real slot owner, including retained archived originals. New
+   * writes are still admitted by the paid owner's current mutation gates. */
+  private async imageProject(context: TenantContext, planId: string, groupId: string, slotKey: VisualSlotKey) {
+    this.access(context);
+    return withTenant(this.database.db, context, async tx => {
+      const { authority } = await currentCreativeAuthority(tx, context, [Permission.ProductRead, Permission.DesignRead, Permission.AssetRead]);
+      await assertCatalogSalesPlanAccess(tx, authority, planId, [Permission.ProductRead]);
+      const rows = await tx.select().from(creativeDesignBatches).where(and(eq(creativeDesignBatches.createdBy, context.userId),
+        eq(creativeDesignBatches.executionMode, "infinite_canvas"),
+        sql`${creativeDesignBatches.canvasWorkflow}->'visualDelivery'->>'salesPlanId'=${planId}`,
+        sql`${creativeDesignBatches.canvasWorkflow}->'visualDelivery'->>'groupId'=${groupId}`,
+        sql`${creativeDesignBatches.canvasWorkflow}->'visualDelivery'->>'slotKey'=${slotKey}`)).limit(2).for("share");
+      if (!rows.length) throw new NotFoundException("本人的视觉步骤不存在或当前不可读取");
+      if (rows.length !== 1) throw new ConflictException("视觉步骤来源不唯一 请保留原请求后核对");
+      const project = await requireBatchAccess(tx, authority, rows[0]!.id, [Permission.DesignRead], { canvas: true });
+      const pin = VisualDeliverySnapshotSchema.parse(project.canvasWorkflow?.visualDelivery);
+      return { project, pin };
     });
+  }
+
+  private imageRequest(project: Awaited<ReturnType<ProductVisualsService["imageProject"]>>, request: StudioPaidImageRequest) {
+    const visual = request.quote.visualDelivery;
+    if (request.scope !== project.project.id || !visual || visual.groupId !== project.pin.groupId
+      || visual.salesPlanId !== project.pin.salesPlanId || visual.slotKey !== project.pin.slotKey
+      || request.originalInput.visualSlotKey !== project.pin.slotKey || request.input.visualSlotKey !== project.pin.slotKey)
+      throw new ConflictException("原图片请求与本视觉步骤不一致 请保留原编号核对");
+    return request;
+  }
+
+  async prepareImage(context: TenantContext, planId: string, groupId: string, raw: unknown) {
+    const input = PrepareProductVisualImageSchema.parse(raw), project = await this.imageProject(context, planId, groupId, input.slotKey);
+    const request = await this.paidImages().prepare(context, { scope: project.project.id, input: {
+      requestId: input.requestId, modelId: project.pin.modelId, capability: "image", selectionRevision: input.selectionRevision,
+      visualSlotKey: input.slotKey, ...(input.artworkVersionId ? { visualArtworkVersionId: input.artworkVersionId } : {}),
+      prompt: input.prompt || "按本步骤固定需求生成一张可审核候选。", referenceKeys: [], size: project.pin.size,
+      quality: "high", background: input.slotKey === "artwork" ? "transparent" : "opaque", seconds: 4,
+    } });
+    return this.imageRequest(await this.imageProject(context, planId, groupId, input.slotKey), request);
+  }
+
+  async commitImage(context: TenantContext, planId: string, groupId: string, raw: unknown) {
+    const input = CommitProductVisualImageSchema.parse(raw), project = await this.imageProject(context, planId, groupId, input.slotKey);
+    const found = await this.paidImages().lookup(context, { scope: project.project.id, requestId: input.requestId });
+    if (found.status !== "found") throw new NotFoundException({ code: "studio_paid_image_missing" });
+    this.imageRequest(project, found.request);
+    const request = await this.paidImages().commit(context, { scope: project.project.id, requestId: input.requestId,
+      quoteHash: input.quoteHash, confirmed: input.confirmed });
+    return this.imageRequest(await this.imageProject(context, planId, groupId, input.slotKey), request);
+  }
+
+  async lookupImage(context: TenantContext, planId: string, groupId: string, requestId: string, rawQuery: unknown) {
+    const query = ProductVisualImageLookupQuerySchema.parse(rawQuery), input = ProductVisualImageAddressSchema.parse({ ...query, requestId });
+    const project = await this.imageProject(context, planId, groupId, input.slotKey);
+    const found = await this.paidImages().lookup(context, { scope: project.project.id, requestId: input.requestId });
+    const current = await this.imageProject(context, planId, groupId, input.slotKey);
+    if (found.status === "found") this.imageRequest(current, found.request);
+    return found;
+  }
+
+  async imageRequests(context: TenantContext, planId: string, groupId: string, rawQuery: unknown) {
+    const input = ProductVisualImageIndexSchema.parse(rawQuery), project = await this.imageProject(context, planId, groupId, input.slotKey);
+    const page = await this.paidImages().requests(context, { scope: project.project.id, cursor: input.cursor, limit: input.limit });
+    const current = await this.imageProject(context, planId, groupId, input.slotKey);
+    for (const request of page.items) this.imageRequest(current, request);
+    return page;
+  }
+
+  async cancelImage(context: TenantContext, planId: string, groupId: string, raw: unknown) {
+    const input = CancelProductVisualImageSchema.parse(raw), project = await this.imageProject(context, planId, groupId, input.slotKey);
+    const found = await this.paidImages().lookup(context, { scope: project.project.id, requestId: input.requestId });
+    if (found.status !== "found") throw new NotFoundException({ code: "studio_paid_image_missing" });
+    this.imageRequest(project, found.request);
+    const request = await this.paidImages().cancel(context, { scope: project.project.id, requestId: input.requestId, quoteHash: input.quoteHash });
+    return this.imageRequest(await this.imageProject(context, planId, groupId, input.slotKey), request);
+  }
+
+  async abandonImage(context: TenantContext, planId: string, groupId: string, raw: unknown) {
+    const input = ProductVisualImageAddressSchema.parse(raw), project = await this.imageProject(context, planId, groupId, input.slotKey);
+    // The owning abandon command returns only a cancellation receipt. Do not
+    // require access to an expired former reference or fetch the old prompt.
+    const receipt = await this.paidImages().abandon(context, { scope: project.project.id, requestId: input.requestId });
+    await this.imageProject(context, planId, groupId, input.slotKey);
+    return receipt;
+  }
+
+  /** Pure original inspection. Saving a submission intent, submitting a result
+   * and reviewing it remain separate explicit Studio/visual-owner commands. */
+  async prepareImageOriginal(context: TenantContext, planId: string, groupId: string, raw: unknown) {
+    const input = ProductVisualImageAddressSchema.parse(raw);
+    const found = await this.lookupImage(context, planId, groupId, input.requestId, { slotKey: input.slotKey });
+    if (found.status !== "found" || found.request.status !== "completed" || !found.request.generationId || !found.request.result)
+      throw new ConflictException("本步骤尚无已保存的图片原件 请按原编号核对");
+    const request = found.request, result = request.result!, key = `image:${request.generationId}`;
+    if (result.key !== key || result.namespace !== "image_files") throw new ConflictException("原件所属键已变化 请核对原请求");
+    const inspection = StudioOriginalInspectionSchema.parse(await this.assets.invoke(context, {
+      operation: "asset.inspect", scope: request.scope, namespace: "image_files", key,
+    }));
+    const source = inspection.source;
+    if (source.namespace !== result.namespace || source.assetId !== result.assetId || source.checksumSha256 !== result.checksumSha256
+      || source.mediaType !== result.mediaType || source.byteSize !== result.byteSize)
+      throw new ConflictException("实际原件与原图片回执不一致 请重新核对");
+    await withTenant(this.database.db, context, async tx => {
+      const { authority, checkedAt } = await currentCreativeAuthority(tx, context, [Permission.ProductRead, Permission.DesignRead, Permission.AssetRead]);
+      await assertCatalogSalesPlanAccess(tx, authority, planId, [Permission.ProductRead]);
+      await requireBatchAccess(tx, authority, request.scope, [Permission.DesignRead], { canvas: true });
+      const [entry] = await tx.select({ entry: creativeStudioEntries, asset: assetFiles }).from(creativeStudioEntries)
+        .innerJoin(assetFiles, eq(assetFiles.id, creativeStudioEntries.assetId)).where(and(eq(creativeStudioEntries.id, source.entryId),
+          eq(creativeStudioEntries.ownerId, context.userId), eq(creativeStudioEntries.scope, request.scope), eq(creativeStudioEntries.namespace, "image_files"),
+          eq(creativeStudioEntries.key, key))).for("share", { of: [creativeStudioEntries, assetFiles] });
+      if (!entry || entry.entry.deletedAt || entry.entry.revision !== source.revision || entry.asset.deletedAt
+        || entry.asset.assetDomain !== "authorized" || entry.asset.id !== source.assetId || entry.asset.version !== source.assetVersion
+        || entry.asset.checksumSha256 !== source.checksumSha256 || entry.asset.mediaType !== source.mediaType || entry.asset.byteSize !== source.byteSize
+        || entry.asset.rightsStatus !== result.rightsStatus || (entry.asset.rightsMetadata.source as { kind?: string } | undefined)?.kind !== source.sourceKind)
+        throw new ConflictException("当前原件版本已变化 请重新读取原件");
+      requireReferenceAuthority(authority, [entry.asset], checkedAt);
+    });
+    const current = await this.lookupImage(context, planId, groupId, input.requestId, { slotKey: input.slotKey });
+    if (current.status !== "found" || current.request.status !== "completed" || current.request.generationId !== request.generationId
+      || !isDeepStrictEqual(current.request.result, result)) throw new ConflictException("原图片已变化 请继续按原编号核对");
+    return ProductVisualImageOriginalSchema.parse({ scope: request.scope, slotKey: input.slotKey, requestId: input.requestId,
+      generationId: request.generationId, key, inspection });
   }
   async collect(context: TenantContext, planId: string, groupId: string) {
     const rows = await this.group(context, planId, groupId);
@@ -440,6 +533,7 @@ export class ProductVisualsService {
         if (
           task.status === "completed" &&
           task.assetId &&
+          !task.model.paidImage &&
           !results.some((r) => r.assetId === task.assetId)
         )
           await this.studio.get(context, row.id, task.id);

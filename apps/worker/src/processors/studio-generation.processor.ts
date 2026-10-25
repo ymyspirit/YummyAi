@@ -16,10 +16,11 @@ import { decodeCreativeOutputs, parseCreativeResponse } from "./creative-executi
 import { creativeFailure } from "./creative-execution-pod.js";
 import { podInvocationReceipt } from "./pod-invocation-receipt.js";
 import type { CreativeOperation } from "@yummyai/pod-core";
+import { assertStudioImageOperatorAdmission, isStudioImageSubmissionBudgetGuard, readStudioImagePaidAdmission } from "./studio-image-paid-admission.js";
 
 export class StudioGenerationProcessor {
   private readonly recovery: CreativeExecutionRecovery;
-  constructor(database: DatabaseConnection, private readonly storage: Storage, private readonly modelVault: SecretVault,
+  constructor(private readonly database: DatabaseConnection, private readonly storage: Storage, private readonly modelVault: SecretVault,
     private readonly gateway: StudioGateway = new HttpStudioGateway(), scanner: Pick<ClamAvScanner, "scan"> = new ClamAvScanner(),
     executionVault?: SecretVault) {
     this.recovery = new CreativeExecutionRecovery(database, storage, executionVault, creativeOwnerStopped, scanner);
@@ -28,6 +29,9 @@ export class StudioGenerationProcessor {
     const { generationId: id } = z.object({ generationId: z.uuidv7() }).strict().parse(envelope.payload);
     const identity = { tenantId: envelope.tenantId, userId: envelope.requestedBy };
     const operation: CreativeOperation = { kind: "studio_generation", ownerId: id, stepKey: "generate" };
+    // Draining an old queue item must not claim, stop or upgrade its old owner.
+    const paid = await readStudioImagePaidAdmission(this.database, identity, id);
+    if (!paid.admitted) return { id, disposition: paid.code };
     let claim: CreativeExecutionClaim | undefined;
     try {
       claim = await this.recovery.claim(identity, operation, (tx, admission) => creativeOwnerRunning(tx, admission.execution));
@@ -40,19 +44,27 @@ export class StudioGenerationProcessor {
         });
         const row = loaded.generation;
         if (!claim!.hasResponse) {
+          assertStudioImageOperatorAdmission(identity.tenantId);
           const files = await readCreativeAssets(this.recovery, this.storage, identity, claim!, row.references.map(ref => ref.assetId));
+          assertStudioImageOperatorAdmission(identity.tenantId);
           if (!claim!.submissionToken) await this.recovery.markSubmitted(identity, claim!, {
             taskType: `studio_${row.modelSnapshot.capability}`, modelKey: row.modelSnapshot.model, provider: loaded.provider.provider,
-            ...(row.modelSnapshot.visualCeilingUsd === undefined ? {} : { ceilingUsd: row.modelSnapshot.visualCeilingUsd.toFixed(6) }),
+            ceilingUsd: row.modelSnapshot.paidImage!.reservationUsd,
           });
           let receipt = loaded.receipt, providerTaskId = row.providerTaskId;
-          const output = await this.modelVault.withSecret(loaded.provider.encryptedApiKey, apiKey => this.gateway.generate({
-            endpoint: loaded.provider.endpoint ?? "https://api.openai.com/v1", apiKey, model: row.modelSnapshot.model,
-            capability: row.modelSnapshot.capability, input: row.input, references: files.map(file => ({ bytes: Buffer.from(file.input.bytes), mediaType: file.input.mediaType })),
-            textProtocol: loaded.provider.provider === "openai" ? "responses" : "chat_completions",
-            providerTaskId, originalReceipt: receipt, signal: executionSignal,
-          }, async taskId => { await this.recovery.rememberStudioTask(identity, claim!, taskId); providerTaskId = taskId; },
-          async original => { await this.recovery.record(identity, claim!, undefined, original); receipt = original; }));
+          assertStudioImageOperatorAdmission(identity.tenantId);
+          executionSignal.throwIfAborted();
+          const output = await this.modelVault.withSecret(loaded.provider.encryptedApiKey, apiKey => {
+            assertStudioImageOperatorAdmission(identity.tenantId);
+            executionSignal.throwIfAborted();
+            return this.gateway.generate({
+              endpoint: loaded.provider.endpoint ?? "https://api.openai.com/v1", apiKey, model: row.modelSnapshot.model,
+              capability: row.modelSnapshot.capability, input: row.input, references: files.map(file => ({ bytes: Buffer.from(file.input.bytes), mediaType: file.input.mediaType })),
+              textProtocol: loaded.provider.provider === "openai" ? "responses" : "chat_completions",
+              providerTaskId, originalReceipt: receipt, signal: executionSignal,
+            }, async taskId => { await this.recovery.rememberStudioTask(identity, claim!, taskId); providerTaskId = taskId; },
+            async original => { await this.recovery.record(identity, claim!, undefined, original); receipt = original; });
+          });
           // Adapters without receipt support explicitly retain unknown billing/model-version evidence.
           receipt ??= podInvocationReceipt({ modelKey: row.modelSnapshot.model }, createHash("sha256").update("text" in output ? output.text : output.bytes).digest("hex"));
           const response = parseCreativeResponse({ version: "creative-response-v1", kind: "studio", receipt, providerTaskId,
@@ -94,7 +106,9 @@ export class StudioGenerationProcessor {
         return { id, disposition: "completed" as const };
       });
     } catch (cause) {
-      const failure = creativeFailure(cause), result = await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent);
+      const failure = isStudioImageSubmissionBudgetGuard(cause)
+        ? { code: "CREATIVE_ORIGINAL_BUDGET_CHANGED", permanent: true } : creativeFailure(cause);
+      const result = await this.recovery.fail(identity, operation, claim, failure.code, failure.permanent);
       if (result === "deferred") return { id, disposition: "recovery_pending" as const };
       throw new Error("studio_generation_failed");
     }

@@ -12,6 +12,7 @@ import {
   LaunchAdoptRequestSchema,
 } from "@yummyai/contracts/catalog/sales-plan-launch";
 import { isSameOriginRequest } from "../../../../same-origin-request";
+import { isProductVisualGenerationPath, productVisualGenerationProxy } from "../../../../product-visual-generation-server";
 import {
   PreparationStartSchema,
   PreparationCommandSchema,
@@ -52,6 +53,7 @@ export async function POST(request: Request, context: Context) {
 }
 async function proxy(request: Request, context: Context, method: "GET" | "POST") {
   const path = ((await context.params).path ?? []).join("/");
+  if (isProductVisualGenerationPath(path)) return productVisualGenerationProxy(request, path, method);
   if (!(method === "GET" ? getPath : postPath).test(path)) return failure(404, "此操作不存在");
   if (
     method === "POST" &&

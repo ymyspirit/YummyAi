@@ -10,6 +10,13 @@ export default defineConfig({
     exclude: [
       "src/orders/order-fulfillment-command.integration.test.ts", "src/orders/order-fulfillment-command-upgrade.integration.test.ts",
       // Dedicated families have mutually exclusive current/legacy guards and run only through their own configs.
+      "src/design/studio-paid-image.integration.test.ts",
+      "src/design/creative-response-adoption.integration.test.ts", "src/design/creative-response-adoption-late.integration.test.ts",
+      "src/design/creative-response-adoption-boundaries.integration.test.ts",
+      "src/design/creative-owner-response-adoption.integration.test.ts", "src/design/creative-owner-response-adoption-boundaries.integration.test.ts",
+      "src/design/creative-owner-response-adoption-retention.integration.test.ts",
+      "src/design/studio-visual-paid-image.integration.test.ts",
+      "src/design/creative-studio.integration.test.ts", "src/catalog/product-visuals.integration.test.ts", "src/ai/model-removal.integration.test.ts",
       "src/design/creative-cancellation-terminal.integration.test.ts",
       "src/design/creative-studio-personal.integration.test.ts", "src/design/studio-original.integration.test.ts",
       "src/design/studio-document-transfer.integration.test.ts", "src/design/studio-video-directory.integration.test.ts",

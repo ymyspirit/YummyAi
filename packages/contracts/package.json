@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./ai/studio-image-pricing": "./src/ai/studio-image-pricing.ts",
+    "./harness/creative-response": "./src/harness/creative-response.ts",
+    "./harness/creative-response-adoption": "./src/harness/creative-response-adoption.ts",
+    "./harness/creative-owner-response-adoption": "./src/harness/creative-owner-response-adoption.ts",
+    "./pod/studio-image-budget": "./src/pod/studio-image-budget.ts",
+    "./pod/studio-paid-image": "./src/pod/studio-paid-image.ts",
     "./pod/studio-video-directory": "./src/pod/studio-video-directory.ts",
     "./pod/studio-address": "./src/pod/studio-address.ts",
     "./pod/studio-document-transfer": "./src/pod/studio-document-transfer.ts",
@@ -192,7 +198,8 @@
     "./marketplace/store-node-execution-base": "./src/marketplace/store-node-execution-base.ts",
     "./marketplace/publication-preview": "./src/marketplace/publication-preview.ts",
     "./marketplace/publication-submit": "./src/marketplace/publication-submit.ts",
-    "./order/fulfillment-command": "./src/order/fulfillment-command.ts"
+    "./order/fulfillment-command": "./src/order/fulfillment-command.ts",
+    "./catalog/product-visual-generation": "./src/catalog/product-visual-generation.ts"
   },
   "scripts": {
     "test": "vitest run",

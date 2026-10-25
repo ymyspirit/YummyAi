@@ -24,7 +24,7 @@ interface SignAssetBody {
   traceId?: string;
 }
 
-@Controller("assets")
+@Controller(["assets", "v1/assets"])
 export class AssetsController {
   constructor(
     @Inject(PRIVATE_STORAGE) private readonly storage: Storage,

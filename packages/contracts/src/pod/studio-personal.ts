@@ -5,6 +5,9 @@ import { PillowRuntimeCapabilitySchema } from "@yummyai/contracts/pod/design-aut
 import { StudioOriginalInspectionSchema, StudioResultLookupSchema } from "@yummyai/contracts/pod/studio-original";
 import { StudioTransferLookupSchema, StudioTransferPageSchema, StudioTransferPreviewSchema } from "@yummyai/contracts/pod/studio-document-transfer";
 import { StudioVideoDirectorySchema, StudioVideoPreflightSchema } from "@yummyai/contracts/pod/studio-video-directory";
+import { StudioPaidImageLookupSchema, StudioPaidImagePageSchema, StudioPaidImageRequestSchema, StudioPaidImageAbandonSchema, StudioPaidImageAdmissionSchema } from "@yummyai/contracts/pod/studio-paid-image";
+import { StudioImagePricingSchema } from "@yummyai/contracts/ai/studio-image-pricing";
+import { StudioImageBudgetWorkspaceSchema } from "@yummyai/contracts/pod/studio-image-budget";
 import {
   assertStudioDocument, StudioGenerateSchema, StudioKeySchema, StudioNamespaceSchema, StudioSelectionRevisionSchema,
   StudioRpcSchema, StudioScopeSchema, type StudioRpc,
@@ -21,6 +24,8 @@ export const StudioWorkspaceSchema = z.object({
   originalHandoffVersion: z.literal(1).optional(),
   documentTransferVersion: z.literal(1).optional(),
   videoDirectoryVersion: z.literal(1).optional(),
+  paidImageVersion: z.literal(1).optional(),
+  paidImageAdmission: StudioPaidImageAdmissionSchema.optional(),
   capabilities: z.object({
     read: z.boolean(), save: z.boolean(), mediaWrite: z.boolean(),
     review: z.boolean(), submit: z.boolean(), configure: z.boolean(),
@@ -66,6 +71,7 @@ export const StudioModelSchema = z.object({
   id: Id, label: z.string().max(500), model: z.string().max(500),
   capability: z.enum(["image", "video", "text"]), providerLabel: z.string().max(500), isDefault: z.boolean(),
   selectionRevision: StudioSelectionRevisionSchema,
+  imagePricing: StudioImagePricingSchema.optional(),
 }).strict();
 export type StudioModel = z.infer<typeof StudioModelSchema>;
 const GenerationResult = z.union([
@@ -78,11 +84,21 @@ export const StudioGenerationRecordSchema = z.object({
     providerConfigId: Id, model: z.string().max(500), capability: z.enum(["image", "video", "text"]),
     routeId: Id.optional(), providerFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     visualCeilingUsd: z.number().finite().nonnegative().optional(),
+    paidImage: z.object({ imageRequestId: Id, quoteHash: z.string().regex(/^[a-f0-9]{64}$/),
+      reservationUsd: z.string().regex(/^(0|[1-9]\d{0,7})\.\d{6}$/), estimatedUsd: z.string().regex(/^(0|[1-9]\d{0,7})\.\d{8}$/) }).strict().optional(),
   }).strict(),
   createdAt: z.iso.datetime(), error: z.string().max(2000).nullable(),
 }).strict();
 
 export const studioPersonalDataSchemas = {
+  "paid.image.budget.get": StudioImageBudgetWorkspaceSchema,
+  "paid.image.budget.save": StudioImageBudgetWorkspaceSchema,
+  "paid.image.prepare": StudioPaidImageRequestSchema,
+  "paid.image.commit": StudioPaidImageRequestSchema,
+  "paid.image.lookup": StudioPaidImageLookupSchema,
+  "paid.image.requests": StudioPaidImagePageSchema,
+  "paid.image.cancel": StudioPaidImageRequestSchema,
+  "paid.image.abandon": StudioPaidImageAbandonSchema,
   "video.directory": StudioVideoDirectorySchema,
   "video.preflight": StudioVideoPreflightSchema,
   "document.preview": StudioTransferPreviewSchema,
@@ -114,6 +130,14 @@ function reply<Operation extends StudioRpc["operation"], Schema extends z.ZodTyp
     contextAuthority: ErpContextAuthoritySchema, operation: z.literal(operation), data }).strict();
 }
 export const StudioPersonalReplySchema = z.discriminatedUnion("operation", [
+  reply("paid.image.budget.get", studioPersonalDataSchemas["paid.image.budget.get"]),
+  reply("paid.image.budget.save", studioPersonalDataSchemas["paid.image.budget.save"]),
+  reply("paid.image.prepare", studioPersonalDataSchemas["paid.image.prepare"]),
+  reply("paid.image.commit", studioPersonalDataSchemas["paid.image.commit"]),
+  reply("paid.image.lookup", studioPersonalDataSchemas["paid.image.lookup"]),
+  reply("paid.image.requests", studioPersonalDataSchemas["paid.image.requests"]),
+  reply("paid.image.cancel", studioPersonalDataSchemas["paid.image.cancel"]),
+  reply("paid.image.abandon", studioPersonalDataSchemas["paid.image.abandon"]),
   reply("video.directory", studioPersonalDataSchemas["video.directory"]),
   reply("video.preflight", studioPersonalDataSchemas["video.preflight"]),
   reply("document.preview", studioPersonalDataSchemas["document.preview"]),

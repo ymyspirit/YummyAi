@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Check, Download, FolderOpen, History, RefreshCw, Settings2, X } from "lucide-react";
 import { StudioRpcSchema, StudioScopeSchema, StudioToolSchema, type StudioTool } from "@yummyai/contracts/pod/creative-studio";
 import { CanvasBriefSchema, CanvasProjectSummarySchema, type CanvasProjectSummary } from "@yummyai/contracts/pod/canvas-bridge";
@@ -18,6 +18,7 @@ import type { StudioVideoPreflight } from "@yummyai/contracts/pod/studio-video-d
 import { StudioVideoDirectory } from "./studio-video-directory";
 import { createStudioVideoRequiredNavigation } from "./studio-video-directory-state";
 import { bindStudioModelClear } from "./studio-model-clear";
+import { StudioImageGenerationPanel, StudioImagePreparationCleanup } from "./studio-image-generation-panel";
 import "./studio.css";
 
 const titles: Record<StudioTool, string> = { canvas: "我的画布", image: "生图工作台", video: "视频创作台", prompts: "提示词库", assets: "我的资产" };
@@ -32,6 +33,7 @@ function StudioWorkspaceContent({ tool, runtimeUrl, initialScope, active }: { to
   const router = useRouter(), [rows, setRows] = useState<CanvasProjectSummary[]>([]), [scope, setScope] = useState<string>(), [error, setError] = useState("");
   const [panel, setPanel] = useState<"assets" | "jobs" | null>(null), [blocked, setBlocked] = useState(false), [panelClosing, setPanelClosing] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false), runtimeFlush = useRef<(() => Promise<void>) | undefined>(undefined);
+  const [imageBusy, setImageBusy] = useState(false);
   const bindFlush = useCallback((flush?: () => Promise<void>) => { runtimeFlush.current = flush; }, []);
   const flushRuntime = useCallback(async () => { if (!runtimeFlush.current) throw new Error("创作工具尚未完成读取 请保留此页后重试"); await runtimeFlush.current(); }, []);
   const panelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,7 +46,17 @@ function StudioWorkspaceContent({ tool, runtimeUrl, initialScope, active }: { to
   const [recovering, setRecovering] = useState(false), [readAttempt, setReadAttempt] = useState(0);
   const [workspace, setWorkspace] = useState<Workspace>(), [requestedScope, setRequestedScope] = useState(initialScope);
   const [restricted, setRestricted] = useState(false), accessEpoch = useRef(0);
+  const search = useSearchParams(), handoff = StudioScopeSchema.safeParse(search.get("reviewOriginal"));
+  const handoffOriginal = handoff.success && handoff.data !== "unassigned" ? handoff.data : null;
+  const handoffVisit = useRef<string | null>(null);
   const visible = access.available && (!initialScope || !scope || initialScope === scope);
+  useEffect(() => {
+    if (!active) { handoffVisit.current = null; return; }
+    if (tool !== "assets" || !visible || !scope || scope !== initialScope || !handoffOriginal || workspace?.scope !== scope || !workspace.capabilities.read) return;
+    const visit = `${scope}:${handoffOriginal}`;
+    if (handoffVisit.current === visit) return;
+    handoffVisit.current = visit; stopPanelClose(); setPanel("assets");
+  }, [active, tool, visible, scope, initialScope, handoffOriginal, workspace?.scope, workspace?.capabilities.read, stopPanelClose]);
   const videoVisit = useRef({ tool, epoch: 0 });
   if (videoVisit.current.tool !== tool) { videoVisit.current = { tool, epoch: videoVisit.current.epoch + (tool === "video" ? 1 : 0) }; }
   const frameOwner = JSON.stringify([scope, access.authority, accessEpoch.current]);
@@ -123,7 +135,7 @@ function StudioWorkspaceContent({ tool, runtimeUrl, initialScope, active }: { to
     return () => controller.abort();
   }, [requestedScope, readAttempt, clearRestricted, capture, rememberedKey, access.available]);
   const changeScope = (value: string) => {
-    if (blocked || transferBusy || value === scope) return;
+    if (blocked || transferBusy || imageBusy || value === scope) return;
     if (!StudioScopeSchema.safeParse(value).success || !access.available) return;
     accessEpoch.current++; invalidate(); stopPanelClose();
     setRequestedScope(value); setScope(undefined); setWorkspace(undefined); setPanel(null); setRows([]);
@@ -133,12 +145,16 @@ function StudioWorkspaceContent({ tool, runtimeUrl, initialScope, active }: { to
   return <div className="studio-workspace"><header className="studio-page-header"><div><h1>{titles[tool]}</h1><p>画布、图片、视频和提示词使用同一项目的创作记录。</p></div><div className="studio-actions">
     <Link href={scope && scope !== "unassigned" ? `/creative-designs/canvas?brief=${scope}` : "/creative-designs/canvas"}><ArrowLeft size={15} />{scope && scope !== "unassigned" ? "返回项目审核" : "创意项目"}</Link>
     {access.can(Permission.ModelConfigure) && <Link href="/settings/ai"><Settings2 size={15} />AI 模型配置</Link>}</div></header>
-    <div className="studio-context"><label><FolderOpen size={15} />创作归属<select aria-label="创作归属" value={scope ?? ""} disabled={!scope || blocked || transferBusy} onChange={event => changeScope(event.target.value)}><option value="" disabled>{restricted ? "当前创作资料不可访问" : "正在读取项目…"}</option><option value="unassigned">个人工作区（未关联项目）</option>{rows.map(row => <option key={row.id} value={row.id}>{row.name}{row.stepIndex !== null ? ` · 第 ${row.stepIndex + 1} 步` : ""}</option>)}</select></label>
+    <div className="studio-context"><label><FolderOpen size={15} />创作归属<select aria-label="创作归属" value={scope ?? ""} disabled={!scope || blocked || transferBusy || imageBusy} onChange={event => changeScope(event.target.value)}><option value="" disabled>{restricted ? "当前创作资料不可访问" : "正在读取项目…"}</option><option value="unassigned">个人工作区（未关联项目）</option>{rows.map(row => <option key={row.id} value={row.id}>{row.name}{row.stepIndex !== null ? ` · 第 ${row.stepIndex + 1} 步` : ""}</option>)}</select></label>
       <div className="studio-actions"><button type="button" disabled={!scope} onClick={() => { if (panel === "assets") closePanel(); else { stopPanelClose(); setPanel("assets"); } }} aria-expanded={panel === "assets"}><Check size={14} />素材与审核</button><button type="button" disabled={!scope} onClick={() => { if (panel === "jobs") closePanel(); else { stopPanelClose(); setPanel("jobs"); } }} aria-expanded={panel === "jobs"}><History size={14} />生成任务</button>{tool === "image" && <Link href="/creative-designs">批量生图</Link>}</div></div>
     {visible && scope && <StudioDocumentTransfer key={scope} scope={scope} workspace={workspace} projects={rows} capture={capture} flush={flushRuntime} onBusy={setTransferBusy} />}
     {visible && scope && <StudioVideoDirectory key={videoOwner} scope={scope} workspace={workspace} active={active && tool === "video"} capture={capture} onReadDenied={clearRestricted} onAdmission={receiveVideoAdmission} />}
     {error && <p className={`studio-alert${restricted ? " studio-access-denied" : ""}`} role={recovering ? "status" : "alert"}>{recovering ? "项目暂时无法读取，正在自动恢复…" : error}<button type="button" onClick={() => setReadAttempt(value => value + 1)}>{restricted ? "重新核对访问权限" : "立即重试"}</button></p>}
-    {!access.localDevelopment && <p className="studio-generation-paused" role="status">真实付费生成暂未启用 可继续读取与保存画布 提示词和已有素材 新图片与视频生成保持关闭</p>}
+    {restricted && !access.localDevelopment && <StudioImagePreparationCleanup capture={capture} onReadDenied={clearRestricted} onBusy={setImageBusy} />}
+    {!access.localDevelopment && <p className="studio-generation-paused" role="status">{workspace?.paidImageAdmission?.enabled
+      ? "原生多图与视频仍暂停 单张生图请使用费用面板"
+      : "真实付费生成暂未启用 可继续读取与保存画布 提示词和已有素材 新图片与视频生成保持关闭"}</p>}
+    {visible && scope && <StudioImageGenerationPanel key={scope} scope={scope} workspace={workspace} active={active && tool === "image"} capture={capture} flush={flushRuntime} onReadDenied={clearRestricted} onBusy={setImageBusy} />}
     {visible && scope && panel && (panel === "assets" ? <StudioOriginalRecords key={`${scope}:assets`} scope={scope} closing={panelClosing} onClose={closePanel} onReadDenied={clearRestricted} accessEpoch={accessEpoch} capture={capture} workspace={workspace} /> : <StudioRecords key={`${scope}:jobs`} scope={scope} panel={panel} active={active} closing={panelClosing} onClose={closePanel} onReadDenied={clearRestricted} accessEpoch={accessEpoch} capture={capture} workspace={workspace} />)}
     {visible && scope && runtimeUrl && (canCreateFrame || keepFrame) ? <StudioFrame key={scope} tool={frameTool} videoAdmission={videoAdmission} scope={scope} runtimeUrl={runtimeUrl} active={active} onBlocked={setBlocked} onReadDenied={clearRestricted} accessEpoch={accessEpoch} capture={capture} workspace={workspace} onWorkspace={setWorkspace} onFlush={bindFlush} /> : !error && <p role="status" className="studio-empty">{runtimeUrl ? scope && tool === "video" ? "请先核对视频历史并明确打开工作台" : "正在核对本人创作范围…" : "创作界面尚未部署 请联系管理员核对已固定的创作服务 现有 ERP 资料不受影响"}</p>}
   </div>;

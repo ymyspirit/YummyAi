@@ -120,6 +120,9 @@ importers:
       '@yummyai/marketplace-connectors':
         specifier: workspace:*
         version: link:../../packages/marketplace-connectors
+      '@yummyai/mockup-renderer':
+        specifier: workspace:*
+        version: link:../../packages/mockup-renderer
       '@yummyai/order-core':
         specifier: workspace:*
         version: link:../../packages/order-core
@@ -175,9 +178,6 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
-      '@yummyai/mockup-renderer':
-        specifier: workspace:*
-        version: link:../../packages/mockup-renderer
       bullmq:
         specifier: ^5.80.5
         version: 5.80.5
