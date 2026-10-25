@@ -23,6 +23,7 @@ import { OrderDeadlineSummary } from "./order-deadline-summary";
 import { OrderLifecycleBadge } from "./order-lifecycle";
 import { useErpAccess } from "../identity/erp-access";
 import { orderSummaryMessages, orderSummaryState, type OrderSummaryState } from "./order-summary-state";
+import { orderCustomizationHighlights, orderFieldLabel, orderFieldPriority, orderFieldValue, orderLineUnits, orderProductLabel } from "./order-operations-summary";
 
 const initialState: OrderReviewState = { dirty: false, busy: false, loading: false };
 type ProductListProps = {
@@ -172,7 +173,7 @@ function OrderProductListContent({
             for (const id of batch) { pending.delete(id); failed.add(id); }
             return { ...current, pending, failed };
           });
-          setSummaryError("部分定制资料暂时读取失败 其他可用商品不受影响");
+          setSummaryError("部分定制内容暂时读取失败 其他已读取商品行不受影响");
         }
       }
       if (valid()) setSummaryRead(current => current.key === summaryKey ? { ...current, complete: true } : current);
@@ -188,8 +189,8 @@ function OrderProductListContent({
     const unavailableIds = [...selected.values()].filter(row => !usable(row)).map(row => row.id);
     if (unavailableIds.length) {
       setSelected(current => new Map([...current].filter(([id]) => !unavailableIds.includes(id))));
-      setBulk(null); setSelectionNotice(`${unavailableIds.length} 件商品的定制资料尚不可用 已取消选择 订单历史仍可查看`);
-    } else setSelectionNotice(current => current.startsWith("正在核对所选商品") ? `已核对 ${selected.size} 件商品的当前定制资料` : current);
+      setBulk(null); setSelectionNotice(`${unavailableIds.length} 个商品行的定制内容尚不可读取 已取消选择 订单历史仍可查看`);
+    } else setSelectionNotice(current => current.startsWith("正在核对所选商品") ? `已读取 ${selected.size} 商品行的当前定制内容` : current);
     if (inlineChoice && !usable(inlineChoice.row)) { inlineEpoch.current++; setInlineRow(null); setEditState(initialState); }
   }, [summaryRead, accepted, selected, inlineChoice, usable]);
   const leaveEditor = useCallback(() => {
@@ -237,7 +238,7 @@ function OrderProductListContent({
       else next.delete(row.id);
     }
     if (next.size > 100) {
-      setError("单批最多选择 100 件商品，请缩小范围或分批处理。");
+      setError("单批最多选择 100 个商品行，请缩小范围或分批处理。");
       return;
     }
     setError("");
@@ -262,7 +263,7 @@ function OrderProductListContent({
         throw new Error("selection_target_mismatch");
       setSelected(new Map(result.items.map((row) => [row.id, row])));
       setBulk(null);
-      setSelectionNotice("正在核对所选商品的定制资料 只有当前可用的商品可进入批量操作");
+      setSelectionNotice("正在核对所选商品的定制内容 只有当前可读取的商品行可进入批量操作");
     } catch {
       if (valid()) setError("筛选结果暂时无法核对 未建立新的批量操作 请重新读取");
     } finally {
@@ -305,8 +306,10 @@ function OrderProductListContent({
           onChange={(checked) => toggle(pageRows, checked)}
         />
         <span>
-          本页 {items.length} 件 · 资料可用 {pageRows.length} 件 · 已选 {selected.size} 件
-          {outside > 0 ? `（其他页 ${outside} 件）` : ""}
+          {loading ? "正在读取本页商品行与件数…" : <>
+            本页 {items.length} 商品行 · {orderLineUnits(items)} 件 · 内容可读取 {pageRows.length} 行 · 已选 {selected.size} 行 · {orderLineUnits(selectedRows)} 件
+            {outside > 0 ? `（其中其他页 ${outside} 行）` : ""}
+          </>}
         </span>
         <button
           className="oc-text-button"
@@ -339,7 +342,7 @@ function OrderProductListContent({
       </div>
       {!!selected.size && !unavailable && (
         <div className="oc-batch-toolbar" aria-label="所选商品批量操作">
-          <strong>已选 {selected.size} 件</strong>
+          <strong>已选 {selected.size} 商品行 · {orderLineUnits(selectedRows)} 件</strong>
           <button className="oc-button" disabled={busy || !selectionReady} onClick={() => openBulk("check")}>
             <ScanSearch size={15} />
             检查缺项
@@ -438,8 +441,8 @@ function OrderProductListContent({
                 {first.storeName} · {first.platform === "amazon" ? "Amazon" : "Etsy"}
               </span>
               <span>下单 {dateTime(first.placedAt)}</span>
-              <span>当前筛选 {rows.length} 件商品</span>
-              <span>整单 {first.orderQuantity ?? rows.reduce((total, row) => total + row.quantity, 0)} 件</span>
+              <span>当前筛选 {rows.length} 商品行 · {orderLineUnits(rows)} 件</span>
+              <span>整单 {first.orderLineCount === undefined ? "行数待核对" : `${first.orderLineCount} 商品行`} · {first.orderQuantity === undefined ? "件数待核对" : `${first.orderQuantity} 件`}</span>
               <OrderLifecycleBadge status={first.orderStatus} />
             </header>
             <div className="oc-product-columns" aria-hidden="true">
@@ -485,18 +488,24 @@ function OrderProductListContent({
                           </span>
                         )}
                         <div>
-                          <strong className="oc-rich-title" title={row.title}>
-                            {row.title}
+                          <strong className="oc-rich-title">
+                            {orderProductLabel(row)} · {row.quantity} 件
                           </strong>
+                          <details className="oc-original-title"><summary>平台原商品标题</summary><p>{row.title}</p></details>
                           <p>商品 SKU：{row.skuCode ?? "未提供"}</p>
                           <p>
                             商品行 {row.externalLineId} · 数量 {row.quantity} 件
                           </p>
                           {contentAvailable && (row.specificationName ?? summary?.specification) && <p>{row.specificationName ?? summary?.specification}</p>}
+                          {contentAvailable && <dl className="oc-primary-customization" aria-label="本件定制要求">
+                            {orderCustomizationHighlights(fields).map((field, index) => <div key={`${field.label}:${index}`}>
+                              <dt title={field.label}>{orderFieldLabel(field.label, field.value)}</dt><dd title={field.value}>{orderFieldValue(field.value)}</dd>
+                            </div>)}
+                          </dl>}
                         </div>
                       </div>
                       <div className={`oc-summary-state${contentAvailable ? " available" : ""}`} aria-label="定制资料状态" data-summary-availability={sourceState}>
-                        {contentAvailable ? <span className="oc-summary-available">{status.title}</span> : <SummaryState key={sourceState} state={sourceState}
+                        {contentAvailable ? <span className="oc-summary-available">定制内容可读取</span> : <SummaryState key={sourceState} state={sourceState}
                           denied={accepted && summaryRead.denied} onRetry={busy || !canRead || cleared || unavailable ? undefined : () => setSummaryRefresh(value => value + 1)} />}
                       </div>
                       {summary && <details className="oc-row-context" open={expanded || undefined}>
@@ -703,40 +712,6 @@ function SummaryState({ state, denied, onRetry }: { state: OrderSummaryState; de
   </div>;
 }
 
-function orderFieldPriority(label: string) {
-  if (/^size\b|尺寸/i.test(label)) return 0;
-  if (/^printing style$/i.test(label)) return 1;
-  if (/^style$/i.test(label)) return 2;
-  if (/印刷面数/i.test(label)) return 3;
-  if (/upload.*image|上传图片/i.test(label)) return 20;
-  return 5;
-}
-function orderFieldLabel(label: string, value: string) {
-  if (/^size\b/i.test(label)) return "尺寸";
-  if (
-    /^style$/i.test(label) &&
-    /^(Single-sided Printing|Double-sided Printing|single_sided|double_sided)$/i.test(value)
-  )
-    return "印刷面数";
-  if (/^printing style$/i.test(label) && /^(Only Face|Full Body|Whole Body)$/i.test(value))
-    return "裁切范围";
-  return label;
-}
-function orderFieldValue(value: string) {
-  return (
-    (
-      {
-        "Only Face": "仅头部",
-        "Full Body": "全身",
-        "Whole Body": "全身",
-        "Single-sided Printing": "单面印刷",
-        "Double-sided Printing": "双面印刷",
-        single_sided: "单面印刷",
-        double_sided: "双面印刷",
-      } as Record<string, string>
-    )[value] ?? value
-  );
-}
 function Check({
   label: title,
   rows,

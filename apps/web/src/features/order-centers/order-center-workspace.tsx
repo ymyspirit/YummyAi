@@ -22,6 +22,8 @@ import { orderOperatorTask } from "@yummyai/contracts/order/workbench";
 import "./order-centers.css";
 import "./order-operator.css";
 import { returnHref } from "../navigation/workflow-href";
+import { orderMatchingSummary } from "./order-operations-summary";
+import { OrderDeadlineSummary } from "./order-deadline-summary";
 
 const empty: {
   items: OrderWorkListItem[];
@@ -29,6 +31,7 @@ const empty: {
   page: number;
   pageSize: number;
   groupTotal?: number;
+  matchingQuantity?: number;
   counts?: OrderQueueCounts;
 } = { items: [], total: 0, page: 1, pageSize: 25 };
 const queryKeys = [
@@ -308,7 +311,8 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
       {module === "after-sales" && <div className="oc-case-scope"><p className="oc-hint">优先处理未结案问题。已结案记录保留在订单内。</p><button className="oc-text-button" disabled={loading || busy} onClick={() => navigate({ caseScope: params.get("caseScope") === "all" ? null : "all", afterSales: null, page: null, line: null })}>{params.get("caseScope") === "all" ? "只看未结案" : "查看全部售后订单"}</button></div>}
       <OrderLifecycleSummary counts={loading || error ? undefined : data.counts} />
       <OrderWorkbenchFilters key={listQuery} query={current} options={options}
-        disabled={busy || (!options && !optionsError)} onSubmit={filter} onClear={() => go(pathname)} />
+        disabled={busy || (!options && !optionsError)} onSubmit={filter} onClear={() => go(pathname)}
+        onAttentionChange={attention => navigate({ attention, page: null, line: null, editor: null })} />
       {!!legacyFilters.length && <p className="oc-notice" role="status">
         当前链接保留了旧版环节筛选；查询或清除后即可按统一订单状态筛选。
         <button className="oc-text-button" onClick={() => navigate({
@@ -337,13 +341,9 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
           {notice}
         </p>
       )}
-      <div className="oc-list-summary">
+      <div className="oc-list-summary" aria-label="当前订单列表统计" aria-live="polite">
         <span>
-          {loading
-            ? "正在读取…"
-            : error
-              ? "订单数量暂不可用"
-              : data.groupTotal !== undefined ? `共 ${data.groupTotal} 个订单` : `共 ${data.total} 条订单商品`}
+          {orderMatchingSummary(data, { loading, failed: !!error })}
         </span>
         {
           <button
@@ -380,6 +380,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
                 <th>制作依据</th>
                 <th>订单状态 / 当前任务</th>
                 <th>数量 / 发货</th>
+                <th>平台发货截止</th>
                 <th>内部计划时间</th>
                 <th>操作</th>
               </tr>
@@ -387,7 +388,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
             <tbody>
               {!loading && !data.items.length && (
                 <tr>
-                  <td colSpan={6} className="oc-empty">
+                  <td colSpan={7} className="oc-empty">
                     {error ? "订单暂时无法读取，请重试。" : "没有符合条件的订单商品。"}
                     {module === "artwork" && !error && (
                       <p>运营在订单中心推送后，任务会出现在这里。</p>
@@ -427,6 +428,9 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
                     <small>
                       已发 {row.shippedQuantity}/{row.quantity}
                     </small>
+                  </td>
+                  <td data-label="平台发货截止">
+                    <OrderDeadlineSummary row={{ ...row, dueAt: null }} />
                   </td>
                   <td data-label="内部计划时间">
                     {row.dueAt ? dateTime(row.dueAt) : "未设置"}

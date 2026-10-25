@@ -1,12 +1,14 @@
 import { fillQualityAssessment } from "./quality-assessment-form";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import {
   createEntityId,
   type AmazonReportBatchView,
   type AmazonReportWorkspaceView,
   type MarketplaceAccountView,
 } from "@yummyai/contracts";
-import type { OrderWorkDetail, OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import { OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
+import { OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
 import type { ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
 import { apiFetch } from "../src/server-api";
 import { centerApi, createCenterProfile } from "./order-centers-fixture";
@@ -16,8 +18,139 @@ import { createFactoryFixture } from "./factory-directory-fixture";
 import { createCapacityFixture, fillProductionCapacity } from "./factory-capacity-fixture";
 import { syntheticSupplierProfile } from "../../../tools/testing/factory-fixtures";
 import { loginErp } from "./erp-identity-fixture";
+import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 
 test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page); });
+
+test("six centers show real filtered order, product-row and unit totals without production or model actions", async ({ page }, testInfo) => {
+  test.skip(process.env.E2E_ISOLATED_DAILY !== "1", "This acceptance leaf owns disposable resources only");
+  requireDisposableIntegrationEnvironment();
+  test.setTimeout(90_000);
+  const prefix = `SYNTHETIC-DAILY-COUNTS-${createEntityId()}`;
+  const forbidden: string[] = [], errors: string[] = [];
+  let readOnlySummaryPosts = 0;
+  const forbid = (request: Request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && path === "/api/order-centers/summaries"
+      && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { readOnlySummaryPosts++; return; }
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) && path.startsWith("/api/")) forbidden.push(path);
+  };
+  page.on("request", forbid); page.on("pageerror", error => errors.push(error.message));
+  const account = await centerApi<MarketplaceAccountView>("marketplace-accounts", {
+    platform: "amazon", displayName: prefix, region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private", requestedScopes: [],
+  });
+  let batchId: string | null = null;
+  try {
+    const now = new Date().toISOString();
+    const content = ["order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price",
+      `${prefix}-A\tA0\t${now}\t${prefix}-A0\tSynthetic three-unit product row\t3\tUSD\t30.00`,
+      `${prefix}-A\tA1\t${now}\t${prefix}-A1\tSynthetic one-unit sibling\t1\tUSD\t10.00`,
+      `${prefix}-B\tB0\t${now}\t${prefix}-B0\tSynthetic two-unit second order\t2\tUSD\t20.00`].join("\n");
+    const batch = await centerApi<AmazonReportBatchView>("orders/reports/import", {
+      accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-operations-counts.tsv", content,
+    });
+    batchId = batch.id;
+    const scope = new URLSearchParams({ accountId: account.id, q: prefix });
+    const real = await centerApi<{ total: number; groupTotal: number; matchingQuantity: number }>(`order-centers/workspace?${scope}&module=orders&grouping=orders&pageSize=1`);
+    expect(real).toMatchObject({ total: 3, groupTotal: 2, matchingQuantity: 6 });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`/orders?${scope}`);
+    const statistics = page.getByLabel("当前订单列表统计", { exact: true });
+    await expect(statistics).toContainText("筛选结果 2 单 · 3 商品行 · 6 件");
+    await expect(page.locator(".oc-order-group")).toHaveCount(2);
+    await expect(page.locator("article.oc-product-row").getByText("平台交期待核对", { exact: true })).toHaveCount(3);
+    await expect(page.locator("article.oc-product-row").getByText("定制内容可读取", { exact: true })).toHaveCount(3);
+    await page.screenshot({ path: testInfo.outputPath("operations-counts-desktop.png"), fullPage: true });
+    const priority = page.getByRole("group", { name: "优先处理筛选", exact: true }).getByRole("button", { name: "平台交期待核对", exact: true });
+    await priority.click(); await expect(priority).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => { const url = new URL(page.url()); return { accountId: url.searchParams.get("accountId"), q: url.searchParams.get("q"), attention: url.searchParams.get("attention") }; }).toEqual({ accountId: account.id, q: prefix, attention: "platform_deadline_missing" });
+    await expect(statistics).toContainText("筛选结果 2 单 · 3 商品行 · 6 件");
+    await priority.click(); await expect(priority).toHaveAttribute("aria-pressed", "false");
+    await page.getByRole("button", { name: "更多筛选", exact: true }).click();
+    await page.getByRole("textbox", { name: "商品 SKU", exact: true }).fill(`${prefix}-A0`);
+    await page.getByRole("button", { name: "查询", exact: true }).click();
+    await expect(statistics).toContainText("筛选结果 1 单 · 1 商品行 · 3 件");
+    await expect(page.locator("article.oc-product-row")).toHaveCount(1);
+    await expect(page.getByText("整单 2 商品行 · 4 件", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("operations-counts-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: prefix + "-A", exact: true }).click();
+    const whole = page.getByRole("region", { name: "整单详情", exact: true });
+    const recovery = whole.getByRole("region", { name: "本单原履约提交恢复", exact: true });
+    const exceptions = whole.getByRole("region", { name: "订单异常处理", exact: true });
+    const recoveryHistory = whole.locator("details.oc-recovery-history");
+    const exceptionHistory = whole.locator("details.order-exception-history");
+    // Empty recovery and exception directories are real authenticated API reads.
+    await expect(recoveryHistory).toHaveCount(1); await expect(recoveryHistory).not.toHaveAttribute("open");
+    await expect(exceptionHistory).toHaveCount(1); await expect(exceptionHistory).not.toHaveAttribute("open");
+    await recoveryHistory.locator("summary").click(); await exceptionHistory.locator("summary").click();
+    await expect(recovery).toContainText("本次读取没有未核对的原履约提交");
+    await expect(exceptions).toContainText("待解决 0");
+    const recoveryRoute = "**/api/order-centers/fulfillment-commands?**";
+    const exceptionRoute = "**/api/order-exceptions/*?**";
+    // Read-only UI fault fixtures; no command/exception is persisted or executed.
+    const commandId = createEntityId(), exceptionId = createEntityId();
+    await page.route(recoveryRoute, async route => {
+      const request = route.request(); if (request.method() !== "GET") return route.continue();
+      const orderId = new URL(request.url()).searchParams.get("orderId")!;
+      const body = FulfillmentCommandListSchema.parse({ items: [{
+        id: commandId, requestId: createEntityId(), requestChecksum: "a".repeat(64), kind: "production_milestone",
+        targetId: createEntityId(), orderId, lineIds: [createEntityId()], status: "prepared", createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(), leaseExpiresAt: null, acknowledged: false,
+        canExecute: false, canCancel: false, summary: null, receipt: null, errorCode: null,
+      }], truncated: false });
+      await route.fulfill({ status: 200, headers: { "x-yummyai-context-authority": request.headers()["x-yummyai-context-authority"]! }, json: body });
+    });
+    await page.route(exceptionRoute, async route => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch(); expect(response.status()).toBe(200);
+      const realEmpty = OrderExceptionOperationsViewSchema.parse(await response.json());
+      expect(realEmpty.items).toEqual([]);
+      const body = OrderExceptionOperationsViewSchema.parse({ ...realEmpty, total: 1, summary: { open: 1, resolved: 0, missingEvent: 0 }, items: [{
+        exception: { id: exceptionId, orderId: realEmpty.orderId, category: "customization_missing", code: "SYNTHETIC-READ-ONLY-VISIBILITY",
+          message: "Synthetic unresolved exception remains visible", status: "open", resolution: null, openedAt: now, resolvedAt: null },
+        sequence: 1, sourceChecksum: "b".repeat(64), canResolve: false, eventMissing: false,
+      }] });
+      await route.fulfill({ response, json: body });
+    });
+    await recovery.getByRole("button", { name: "只读核对本单原提交", exact: true }).click();
+    await exceptions.getByRole("button", { name: "重新读取异常记录", exact: true }).click();
+    await expect(recovery.locator('article:not([hidden])')).toHaveCount(1);
+    await expect(recovery).toContainText("原提交已保存 等待执行");
+    await expect(exceptions.locator('[data-exception-id="' + exceptionId + '"]')).toBeVisible();
+    await expect(exceptions).toContainText("待解决 1");
+    await expect(recovery.locator('xpath=ancestor::details[not(@open)]')).toHaveCount(0);
+    await expect(exceptions.locator('xpath=ancestor::details[not(@open)]')).toHaveCount(0);
+    await expect(whole.locator("details.oc-whole-advanced")).not.toHaveAttribute("open");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(recovery).toBeVisible(); await expect(exceptions).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("operations-attention-mobile.png"), fullPage: true });
+    await page.unroute(recoveryRoute);
+    await page.route(recoveryRoute, route => route.fulfill({ status: 503, json: { message: "Synthetic read-only recovery outage" } }));
+    await recovery.getByRole("button", { name: "只读核对本单原提交", exact: true }).click();
+    await expect(recovery.getByRole("alert")).toContainText("本次响应尚未核对");
+    await expect(recovery.locator('xpath=ancestor::details[not(@open)]')).toHaveCount(0);
+    await page.unroute(recoveryRoute); await page.unroute(exceptionRoute);
+    await page.goto(`/orders?${scope}&sku=SYNTHETIC-NOT-MATCHED`);
+    await expect(statistics).toContainText("筛选结果 0 单 · 0 商品行 · 0 件");
+    await page.route("**/api/order-centers/workspace?**", route => route.fulfill({ status: 503, json: { message: "Synthetic list outage" } }));
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await expect(statistics).toContainText("订单与件数暂不可用");
+    await expect(statistics).not.toContainText("0 商品行");
+    expect(readOnlySummaryPosts).toBeGreaterThan(0); expect(forbidden).toEqual([]); expect(errors).toEqual([]);
+  } finally {
+    page.off("request", forbid);
+    await testInfo.attach("operations-counts-owned-fixtures", { contentType: "application/json", body: Buffer.from(JSON.stringify({
+      syntheticFixtureOnly: true, accountId: account.id, batchId, queryPrefix: prefix, forbiddenBrowserWrites: forbidden, readOnlySummaryPosts,
+      cleanupOwner: "disposable acceptance runner database/bucket/Redis finally", productionReleased: false, modelGenerationRequested: false,
+      realApiEvidence: ["authenticated report import", "filtered paged counts", "empty recovery and exception reads"],
+      readOnlyUiFaults: ["prepared command GET", "open exception GET", "recovery 503", "workspace 503"],
+    })) });
+  }
+});
 
 test("six centers preserve an operator-edited order through artwork, whole production, shipping and after-sales", async ({
   page,

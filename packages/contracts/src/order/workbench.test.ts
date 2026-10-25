@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { orderOperatorTask, orderOperatorException } from "./workbench.js";
+import { OrderWorkListViewSchema } from "./workspace.js";
 
 const row = {
   sideState: null, preparation: "pending_review", artwork: "not_pushed", production: "not_released",
@@ -28,6 +29,13 @@ describe("operations tasks preserve handoff and evidence boundaries", () => {
     expect(orderOperatorTask({ ...row, artwork: "queued" }).owner).toBe("制图岗位");
     expect(orderOperatorTask({ ...row, artwork: "queued", designExecutor: "agent" }).owner).toBe("设计 Agent");
   });
+  it.each(["submitted", "acknowledged"])("follows the factory's two statuses after %s without requiring an extra acknowledgement or start", production => {
+    const task = orderOperatorTask({ ...row, preparation: "pushed", artwork: "approved", production, orderStatus: "reviewed" });
+    expect(task).toMatchObject({ key: "waiting_production", title: "跟进工厂排产与发货", action: "核对工厂状态", module: "production" });
+    expect(task.description).toMatch(/Excel.*CSV/);
+    expect(task.description).toContain("质检");
+    expect(task.action).not.toMatch(/接单|开工/);
+  });
   it("keeps missing platform dates and internal overdue plans separate from workflow progress", () => {
     const now = Date.parse("2026-10-06T00:00:00Z");
     expect(orderOperatorException({ ...row, platform: "amazon" }, now)).toBe(true);
@@ -36,5 +44,18 @@ describe("operations tasks preserve handoff and evidence boundaries", () => {
     expect(orderOperatorException({ ...row, platform: "amazon", shippedQuantity: 2 }, now)).toBe(false);
     expect(orderOperatorException({ ...row, held: true, archivedAt: "2026-10-05T00:00:00Z" }, now)).toBe(false);
     expect(orderOperatorException({ ...row, sourceChanged: true, sideState: "cancelled" }, now)).toBe(false);
+  });
+});
+
+describe("matching order quantities preserve old response compatibility", () => {
+  const legacy = { items: [], total: 0, groupTotal: 0, page: 1, pageSize: 25 };
+  it("distinguishes omitted legacy quantities from a confirmed empty match", () => {
+    expect(OrderWorkListViewSchema.parse(legacy).matchingQuantity).toBeUndefined();
+    expect(OrderWorkListViewSchema.parse({ ...legacy, matchingQuantity: 0 }).matchingQuantity).toBe(0);
+    expect(OrderWorkListViewSchema.parse({ ...legacy, total: 3, groupTotal: 2, matchingQuantity: 6 }).matchingQuantity).toBe(6);
+  });
+  it("rejects negative and fractional unit totals", () => {
+    for (const matchingQuantity of [-1, 1.5])
+      expect(OrderWorkListViewSchema.safeParse({ ...legacy, matchingQuantity }).success).toBe(false);
   });
 });

@@ -288,10 +288,13 @@ function agentHref(orderId: string, commandId?: string, original = "") {
   return "/ai-tasks?" + query;
 }
 
-export function FulfillmentCommandRecovery() {
+export function FulfillmentCommandRecovery({ compact = false }: { compact?: boolean } = {}) {
   const state = useContext(CommandContext);
   if (!state) return null;
-  return <section className="oc-fulfillment-recovery" aria-label="本单原履约提交恢复" aria-busy={state.reading || state.busy}>
+  const needsAttention = state.blocked || state.reading || state.busy || !!state.error || !!state.notice
+    || state.denied || state.cleared || !!state.pending || state.truncated || !state.canRead
+    || state.items.some(item => !item.acknowledged);
+  const content = <section className="oc-fulfillment-recovery" aria-label="本单原履约提交恢复" aria-busy={state.reading || state.busy}>
     <header><h3><FileSearch size={15} aria-hidden="true" />本单原履约提交恢复</h3><button type="button" className="oc-text-button" disabled={!state.canRead || state.cleared || state.busy || state.reading} onClick={state.refresh}><RefreshCw size={14} />只读核对本单原提交</button></header>
     <p className="oc-hint">原交付 生产 质检与出库分别保留 关闭或刷新不会撤销已提交操作 读取不执行 原结果核对前暂停新的相关提交</p>
     {state.reading && <p role="status">正在读取本人同单原提交</p>}{state.error && <p role="alert" className="oc-error">{state.error}</p>}{state.notice && <p role="status" className="oc-notice">{state.notice}</p>}
@@ -315,6 +318,10 @@ export function FulfillmentCommandRecovery() {
     </article>)}
     {state.truncated && <p role="status" className="oc-hint">仍有未显示的原提交 当前目录有界 未读尽前不开放新提交 请核对当前结果后重新读取</p>}
   </section>;
+  // Presentation only: the provider and its recovery/admission checks stay mounted.
+  return compact && !needsAttention
+    ? <details className="oc-recovery-history"><summary><FileSearch size={14} aria-hidden="true" />已提交操作与恢复记录</summary>{content}</details>
+    : content;
 }
 export function FulfillmentCommandReceiptSummary({ value }: { value: FulfillmentCommandView }) {
   const receipt = value.receipt; if (!receipt) return null;

@@ -1,4 +1,11 @@
 .order-exceptions { min-width:0; border-block:1px solid var(--line); padding:12px 0; margin:12px 0; animation:order-exception-enter .18s ease-out; }
+.order-exception-history { min-width:0; margin-block:10px; font-size:13px; overflow-wrap:anywhere; animation:order-exception-enter .18s ease-out; }
+.order-exception-history > summary { display:flex; align-items:center; gap:7px; width:fit-content; padding-block:6px; cursor:pointer; color:var(--muted-ink,var(--muted-foreground,#64748b)); transition:color .16s,transform .16s; }
+.order-exception-history > summary:hover { color:var(--blue); transform:translateY(-1px); }
+.order-exception-history > summary:active { transform:scale(.985); }
+.order-exception-history > summary:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.order-exception-history::details-content { opacity:0; transition:opacity .16s,content-visibility .16s allow-discrete; }
+.order-exception-history[open]::details-content { opacity:1; }
 .order-exceptions>header,.order-exception-filters,.order-exception-pagination { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
 .order-exceptions h2 { font-size:14px; margin:0; }
 .order-exceptions p { font-size:12px; line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
@@ -22,4 +29,4 @@
 .order-exception-editor textarea:focus-visible,.order-exception-editor select:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
 @keyframes order-exception-enter { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
 @media(max-width:640px) { .order-exceptions>header,.order-exception-pagination { align-items:flex-start; } .order-exception-pagination .oc-actions { width:100%; justify-content:space-between; } }
-@media(prefers-reduced-motion:reduce) { .order-exceptions,.order-exceptions *,.order-exception-editor,.order-exception-editor * { animation:none!important; transition:none!important; } }
+@media(prefers-reduced-motion:reduce) { .order-exceptions,.order-exceptions *,.order-exception-editor,.order-exception-editor *,.order-exception-history,.order-exception-history::details-content,.order-exception-history>summary { animation:none!important; transition:none!important; }.order-exception-history>summary:hover,.order-exception-history>summary:active { transform:none; } }

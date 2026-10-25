@@ -273,7 +273,8 @@ export class OrderWorkspaceService {
       context,
       [Permission.OrderRead], async (tx) => {
         const totals = await tx.execute(
-          sql`with v as (${workProjection}) select count(*)::int as total, count(distinct "orderId")::int as groups from v where ${filter}`,
+          sql`with v as (${workProjection}) select count(*)::int as total, count(distinct "orderId")::int as groups,
+            coalesce(sum(quantity),0) as "matchingQuantity" from v where ${filter}`,
         );
         const rows = await tx.execute(
           query.grouping === "orders"
@@ -371,6 +372,7 @@ export class OrderWorkspaceService {
         return {
           items: rows.map(parseLine),
           total: Number(totals[0]?.total ?? 0),
+          matchingQuantity: Number(totals[0]?.matchingQuantity ?? 0),
           ...(query.grouping === "orders" ? { groupTotal: Number(totals[0]?.groups ?? 0) } : {}),
           page: query.page,
           pageSize: query.pageSize,

@@ -62,6 +62,10 @@ const {
 const { id: webCandidateId, nextArgs: acceptanceArgs } = parseWebCandidateArgs(process.argv.slice(2));
 const specificationProductionIntegrationRequested = acceptanceArgs.includes("--suite=specification-production-integration");
 const orderSiteIntegrationRequested = acceptanceArgs.includes("--suite=order-site-integration");
+const orderOperationsIntegrationRequested = acceptanceArgs.includes("--suite=order-operations-integration");
+if (orderOperationsIntegrationRequested && (webCandidateId || acceptanceArgs.some(arg =>
+  arg !== "--suite=order-operations-integration" && arg !== "--cache=false")))
+  throw new Error("Order operations acceptance accepts only its isolated suite and cache flag");
 if (orderSiteIntegrationRequested && (webCandidateId || acceptanceArgs.some(arg =>
   arg !== "--suite=order-site-integration" && arg !== "--cache=false")))
   throw new Error("Order site acceptance accepts only its isolated suite and cache flag");
@@ -1092,6 +1096,7 @@ try {
   const databaseIntegration = forwarded.includes("--suite=database-integration");
   const specificationProductionIntegration = specificationProductionIntegrationRequested;
   const orderSiteIntegration = orderSiteIntegrationRequested;
+  const orderOperationsIntegration = orderOperationsIntegrationRequested;
   const integration =
     studioPersonalIntegration ||
     shipmentCreateIntegration ||
@@ -1116,6 +1121,7 @@ try {
     databaseIntegration ||
     specificationProductionIntegration ||
     orderSiteIntegration ||
+    orderOperationsIntegration ||
     databaseUpgrade ||
     backupRestore ||
     catalogScopeIntegration ||
@@ -1409,6 +1415,8 @@ try {
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/catalog/specification-production-purpose.integration.test.ts"]
     : orderSiteIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/orders/order-site-source.integration.test.ts"]
+    : orderOperationsIntegration
+    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/orders/order-operations-counts.integration.test.ts"]
     : databaseIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", ...extra]
     : backupRestore
