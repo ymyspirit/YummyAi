@@ -135,6 +135,9 @@ jobs:
         working-directory: apps/api
         run: node --import tsx src/bootstrap-local.ts
       - run: pnpm --filter @yummyai/database exec drizzle-kit check
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Validate original creative recovery on one compiled candidate
+        run: env -u CHROME_BIN node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - run: pnpm test:integration
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
@@ -147,15 +150,12 @@ jobs:
           done
       - name: Validate order to factory status intake
         run: pnpm test:e2e:order-daily --suite=factory-erp-import-integration
-      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e --workers=1
       - name: Validate production specification purpose and rule adoption
         run: pnpm test:e2e:order-daily --suite=specification-facts --grep=production-purpose
       - name: Validate pinned pillow size basis in the personal editor
         run: pnpm test:e2e:order-daily --suite=catalog-editor --grep="pillow size basis"
       - run: pnpm build --concurrency=2
-      - name: Validate original creative recovery on one compiled candidate
-        run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - run: pnpm --filter @yummyai/extension zip
       - run: pnpm release:manifest
       - uses: actions/upload-artifact@v4

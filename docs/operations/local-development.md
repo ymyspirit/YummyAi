@@ -10,6 +10,8 @@
 
 CI使用一次性账户、数据库和密钥；不会连接本机业务库或付费渠道。Windows专用节点锁测试在Windows job执行；Linux保留纯测试及可移植流程。普通Web smoke使用明确的默认文件列表；每个个人/历史/互斥验收仍使用自己的配置及disposable runner，不能绕开隔离旗标运行。P1的本人配置页另在Windows实际编译候选上验证。
 
+Linux P2三类编译候选验收及其Playwright安装在身份初始化、Drizzle检查之后，完整集成之前执行。GitHub Ubuntu的[镜像脚本](https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-google-chrome.sh)默认设置`CHROME_BIN=/usr/bin/google-chrome`，因此仅P2启动命令使用`env -u CHROME_BIN node ...`移除该宿主浏览器路径。严格browser guard保持不变：官方registry SHA、固定revision/version、默认缓存中的精确可执行路径及实际binary SHA读取与复核全部保留；其余集成、E2E、构建和扩展门继续完整执行。
+
 发布租约的定向集成使用 `pnpm test:e2e:order-daily --suite=publication-lease-integration`。它复用同一一次性数据库、对象桶和Redis生命周期，仅运行Worker的发布租约配置；完整CI仍运行全部集成检查。个人Studio验收由入口固定单连接池，普通Worker集成保留正常连接池以验证真实账户锁。
 
 原生PSD检查需要ImageMagick 7。Windows固定快照应包含 `packages/mockup-renderer/runtime-lock.json` 所列的本机工具文件；Linux CI按固定官方AppImage的SHA256校验、解包并验证真实透视运算，通过绝对可执行路径传给后续检查。版本及像素探针通过后仍须运行真实PSD集成检查。

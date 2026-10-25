@@ -9,10 +9,16 @@ import { captureRuntimeSource } from "./database-upgrade.mts";
 import { buildLocalWebCandidate, verifyLocalWebCandidate } from "./local-web-candidate.mjs";
 import { buildCanvasRuntime } from "./build-canvas-runtime.mjs";
 import { sealStudioRuntime } from "./studio-runtime-artifact.mjs";
+import { requireP2BrowserLock, p2PinnedBrowserUse } from "../testing/require-p2-browser-lock.mjs";
 
 const root=fileURLToPath(new URL("../../",import.meta.url));
 const require=createRequire(import.meta.url);
 if(process.argv.length!==2)throw Error("P2_BROWSER_NO_ARGUMENTS_ALLOWED");
+// Validate the actual fixed browser before creating a candidate or fixtures.
+// Every isolated suite still revalidates its own selection and launch options.
+const browser=requireP2BrowserLock(process.env);p2PinnedBrowserUse(browser);
+process.stdout.write(JSON.stringify({type:"p2-browser-admission",family:browser.metadata.family,
+  browserVersion:browser.browserVersion,registrySha256:browser.registrySha256,executableSha256:browser.executableSha256})+"\n");
 // One immutable build is shared by all three isolated browser suites. Each suite
 // still owns and tears down its own DB, bucket, Redis and identity processes.
 const source=await captureRuntimeSource(root),id=randomUUID().replaceAll("-","");
