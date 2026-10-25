@@ -255,7 +255,7 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
       }) }));
     await openPanel(page); await expect(panel(page).getByRole("button", { name: "载入当前输入草稿", exact: true })).toBeEnabled();
     await seen.settle(); const initial = await facts(child); expect(initial.requests).toEqual([]); expect(initial.generations).toEqual([]); expect(initial.budget).toEqual([]);
-    expect(initial.gatewayCalls).toEqual([]); expect(initial.draft.value).toEqual(seed.draft);
+    expect(initial.gatewayCalls).toEqual([]); expect(initial.draft.value).toEqual({ studioDocument: true, data: seed.draft });
     const images: string[] = [];
     await seen.markPhase("paid-image.configure-budget-through-actual-ui");
     const readingBudget = page.waitForResponse(value => { const parsed = rpcRequest(value.request()); return parsed.success && parsed.data.request.operation === "paid.image.budget.get"; });
