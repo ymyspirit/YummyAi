@@ -7,14 +7,16 @@ import { setTimeout as delay } from "node:timers/promises";
 import { SecretVault } from "@yummyai/ai-core";
 import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { ConfigurationSnapshotSchema } from "@yummyai/contracts/ai/model-configuration";
 import { StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { StudioPaidImageInputSchema, StudioPaidImageRequestSchema } from "@yummyai/contracts/pod/studio-paid-image";
 import { aiBudgetLedger, aiBudgetPolicies, assetFiles, connectDatabase, creativeExecutions, creativeStudioGenerations,
   loadCurrentMembershipContext, memberships, membershipRoles, migrateDatabase, modelProviderConfigs, modelRoutes, roles, visualDeliveryModelFingerprint, withTenant } from "@yummyai/database";
 import { stageCreativeExecution, type CreativeOperation } from "@yummyai/pod-core";
 import { createStorageFromEnvironment, type Storage } from "@yummyai/storage";
 import { and, eq, sql } from "drizzle-orm";
 import sharp from "sharp";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CreativeExecutionRecovery, type CreativeExecutionClaim } from "../../../worker/src/processors/creative-execution-recovery.js";
 import { creativeLocalResponse, creativeResponseChecksum } from "../../../worker/src/processors/creative-execution-response.js";
 import { podInvocationReceipt } from "../../../worker/src/processors/pod-invocation-receipt.js";
@@ -25,7 +27,14 @@ import { ClamAvScanner } from "@yummyai/storage";
 import { objectKey } from "@yummyai/storage";
 import { hashPodResponse } from "../../../worker/src/processors/pod-artwork-response.js";
 import { vi } from "vitest";
+import { ModelConfigurationService } from "../ai/model-configuration.service.js";
+import { AuditService } from "../audit/audit.service.js";
+import { CanvasBridgeService } from "./canvas-bridge.service.js";
 import { CreativeExecutionOperatorService } from "./creative-execution-operator.service.js";
+import { DesignService, DrizzleDesignRepository } from "./design.service.js";
+import { PodBatchWorkflowService } from "./pod-batch-workflow.service.js";
+import { StudioGenerationService } from "./studio-generation.service.js";
+import { StudioPaidImageService } from "./studio-paid-image.service.js";
 
 if (process.env.E2E_ISOLATED_DAILY !== "1" || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname))
   throw new Error("Use the disposable creative editing acceptance runner");
@@ -34,6 +43,11 @@ describe("creative original submission, response and asset recovery", () => {
   const database = connectDatabase(), storage = createStorageFromEnvironment(), vault = new SecretVault(Buffer.alloc(32, 43)), modelVault = new SecretVault(Buffer.alloc(32, 37));
   const context: TenantContext = { tenantId: createEntityId(), userId: createEntityId(), permissions: Object.values(Permission), dataScope: "tenant" };
   const roleId = createEntityId(); let image: Buffer;
+  let originalAdmission: { enabled: string | undefined; tenants: string | undefined };
+  const admission = (enabled: boolean) => {
+    process.env.STUDIO_PAID_IMAGE_ENABLED = enabled ? "1" : "0";
+    process.env.STUDIO_PAID_IMAGE_TENANT_IDS = enabled ? context.tenantId : "";
+  };
   const recovery = (store: Storage = storage) => new CreativeExecutionRecovery(database, store, vault);
   const grant = (permissions: readonly string[] = Object.values(Permission)) => withTenant(database.db, context, tx => tx.update(roles).set({ permissions }).where(eq(roles.id, roleId)));
   const current = () => withTenant(database.db, context, tx => loadCurrentMembershipContext(tx, context));
@@ -60,6 +74,55 @@ describe("creative original submission, response and asset recovery", () => {
       return stageCreativeExecution(tx, authority, op, "external_request");
     });
     return { op, execution, billing: { taskType: `studio_${capability}`, modelKey, provider: "openai-compatible", ceilingUsd: "0.100000" } };
+  }
+  // New Processor recovery must start from the real quoted image producer.
+  // Directly staged owners above are retained pre-quotation history only.
+  async function paidOperation(endpoint = "http://127.0.0.1:9/v1") {
+    const authority = await current(), modelKey = `synthetic-${createEntityId()}`;
+    const configuration = new ModelConfigurationService(database, modelVault);
+    const channelName = `Synthetic recovery image ${createEntityId()}`;
+    const configured = ConfigurationSnapshotSchema.parse(JSON.parse(JSON.stringify(await configuration.invoke(authority, {
+      operation: "channel.save", name: channelName, baseUrl: endpoint, apiKey: "synthetic-test-only",
+      models: [{ name: modelKey, capability: "image" }],
+    }))));
+    const channel = configured.channels.find(row => row.name === channelName);
+    if (!channel || channel.models.length !== 1) throw new Error("Synthetic quoted recovery model missing");
+    const modelId = channel.models[0]!.id;
+    await configuration.invoke(authority, { operation: "studio.image-pricing.save", channelId: channel.id,
+      modelId, revision: channel.revision, pricing: { estimatedUsd: "0.02000000", reservationUsd: "0.100000",
+        reference: "Synthetic isolated recovery estimate Not a provider invoice" } });
+    const audit = new AuditService(database);
+    const forbiddenDispatch = async () => { throw new Error("Synthetic recovery unexpected POD dispatch"); };
+    const designs = new PodBatchWorkflowService(database, { enqueueCreativeCandidate: forbiddenDispatch,
+      enqueueCreativeAdaptation: forbiddenDispatch, enqueueTemplateCompile: forbiddenDispatch, enqueueMockupRender: forbiddenDispatch },
+    audit, new DesignService(new DrizzleDesignRepository(database, storage)));
+    const clam = new ClamAvScanner();
+    const bridge = new CanvasBridgeService(database, storage, audit, designs,
+      { scan: (body: Uint8Array, fileName: string, mediaType: string) => clam.scan({ body, fileName, mediaType }) });
+    const deliveries: Array<{ id: string; tenantId: string; userId: string }> = [];
+    const queue = { async enqueue(value: { id: string; tenantId: string; userId: string }) { deliveries.push(value); } };
+    const generations = new StudioGenerationService(database, storage, queue, bridge);
+    const selected = (await generations.models(authority)).find(row => row.id === modelId);
+    if (!selected) throw new Error("Synthetic quoted recovery selection missing");
+    const input = StudioPaidImageInputSchema.parse({ requestId: randomUUID(), modelId, capability: "image",
+      selectionRevision: selected.selectionRevision, prompt: "Synthetic quoted original creative recovery",
+      size: "1024x1024", quality: "high", background: "opaque" });
+    const service = new StudioPaidImageService(database, queue, bridge);
+    const prepared = StudioPaidImageRequestSchema.parse(await service.prepare(authority, { scope: "unassigned", input }));
+    expect(prepared.status).toBe("prepared"); expect(deliveries).toEqual([]);
+    admission(true);
+    const accepted = StudioPaidImageRequestSchema.parse(await service.commit(authority, {
+      scope: prepared.scope, requestId: prepared.requestId, quoteHash: prepared.quote.quoteHash, confirmed: true,
+    }));
+    if (!accepted.generationId) throw new Error("Synthetic quoted recovery generation missing");
+    expect(deliveries).toEqual([{ id: accepted.generationId, tenantId: context.tenantId, userId: context.userId }]);
+    const execution = await withTenant(database.db, authority, async tx => {
+      const rows = await tx.select().from(creativeExecutions).where(eq(creativeExecutions.studioGenerationId, accepted.generationId!));
+      expect(rows).toHaveLength(1); return rows[0]!;
+    });
+    const op: CreativeOperation = { kind: "studio_generation", ownerId: accepted.generationId, stepKey: "generate" };
+    return { op, execution, routeId: prepared.quote.modelId,
+      billing: { taskType: "studio_image", modelKey, provider: "openai-compatible", ceilingUsd: prepared.quote.pricing.reservationUsd } };
   }
   async function submitted(reserve = false) {
     const item = await operation(undefined, reserve), repo = recovery(), claim = (await repo.claim(context, item.op))!;
@@ -90,7 +153,16 @@ describe("creative original submission, response and asset recovery", () => {
     });
     image = await sharp({ create: { width: 32, height: 24, channels: 4, background: "#2879be" } }).png().toBuffer();
   });
-  beforeEach(() => grant());
+  beforeEach(async () => {
+    originalAdmission = { enabled: process.env.STUDIO_PAID_IMAGE_ENABLED, tenants: process.env.STUDIO_PAID_IMAGE_TENANT_IDS };
+    admission(false); await grant();
+  });
+  afterEach(() => {
+    if (originalAdmission.enabled === undefined) delete process.env.STUDIO_PAID_IMAGE_ENABLED;
+    else process.env.STUDIO_PAID_IMAGE_ENABLED = originalAdmission.enabled;
+    if (originalAdmission.tenants === undefined) delete process.env.STUDIO_PAID_IMAGE_TENANT_IDS;
+    else process.env.STUDIO_PAID_IMAGE_TENANT_IDS = originalAdmission.tenants;
+  });
   afterAll(() => database.client.end());
   const job = (id: string): JobEnvelope => ({ jobId: createEntityId(), idempotencyKey: createEntityId(), correlationId: id, traceId: createTraceId(),
     tenantId: context.tenantId, requestedBy: context.userId, requestedAt: new Date().toISOString(), attempt: 0, maxAttempts: 1, payload: { generationId: id } });
@@ -264,24 +336,34 @@ describe("creative original submission, response and asset recovery", () => {
     const [generation] = await withTenant(database.db, context, tx => tx.select().from(creativeStudioGenerations).where(and(eq(creativeStudioGenerations.id, item.op.ownerId), eq(creativeStudioGenerations.status, "completed"))));
     expect(generation?.assetId).toBe((await read(item.claim.id)).completionEvidence!.artifacts[0]!.assetId);
   });
-  it("resumes the original known video task through GET only and retains its first receipt and budget", async () => {
+  it("keeps a submitted legacy video and its original receipt dormant with paid images off or enabled for its tenant", async () => {
     const item = await operation(undefined, false, "video"), repo = recovery(), claim = (await repo.claim(context, item.op))!;
     await repo.markSubmitted(context, claim, item.billing); await repo.rememberStudioTask(context, claim, "video_synthetic_original");
     const original = podInvocationReceipt({ modelKey: item.billing.modelKey, modelVersion: "synthetic-v1", costUsd: 0.02345678 }, "a".repeat(64), "video_synthetic_original");
     await repo.record(context, claim, undefined, original); await due(claim.id);
-    // Synthetic control-plane bytes exercise recovery; codec/playback quality is a separate acceptance.
-    const bytes = Buffer.from([0, 0, 0, 16, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0]);
-    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ status: "completed" })).mockResolvedValueOnce(new Response(bytes));
+    const transport = vi.fn<typeof fetch>();
     const processor = new StudioGenerationProcessor(database, storage, modelVault, new HttpStudioGateway(transport, 1), new ClamAvScanner(), vault);
-    expect(await processor.process(job(item.op.ownerId))).toMatchObject({ disposition: "completed" });
-    expect(transport.mock.calls.every(([, options]) => options!.method === "GET")).toBe(true); expect(transport).toHaveBeenCalledTimes(2);
-    const row = await read(claim.id); expect(row.receipt).toEqual(original); expect(row.submissionToken).toBe(claim.submissionToken); expect(row.phase).toBe("completed");
-    expect(await withTenant(database.db, context, tx => tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, item.op.ownerId)))).toHaveLength(1);
-    await processor.process(job(item.op.ownerId)); expect(transport).toHaveBeenCalledTimes(2);
+    const facts = () => withTenant(database.db, context, async tx => ({
+      owner: await tx.select().from(creativeStudioGenerations).where(eq(creativeStudioGenerations.id, item.op.ownerId)),
+      execution: await tx.select().from(creativeExecutions).where(eq(creativeExecutions.id, claim.id)),
+      ledger: await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, item.op.ownerId)),
+    }));
+    const before = await facts();
+    expect(before.execution[0]).toMatchObject({ phase: "submitted", receipt: original, submissionToken: claim.submissionToken });
+    expect(before.owner[0]?.providerTaskId).toBe("video_synthetic_original");
+    expect(before.ledger).toHaveLength(1); expect(before.ledger[0]).toMatchObject({ state: "committed", amountUsd: "0.023457" });
+    // The image opt-in cannot grant legacy video polling, claims or local adoption.
+    // HttpStudioGateway's separate unit coverage retains the GET-only algorithm.
+    for (const enabled of [false, true]) {
+      admission(enabled);
+      expect(await processor.process(job(item.op.ownerId))).toEqual({ id: item.op.ownerId,
+        disposition: enabled ? "legacy_not_admitted" : "operator_paused" });
+      expect(transport).not.toHaveBeenCalled(); expect(await facts()).toEqual(before);
+    }
     await expect(withTenant(database.db, context, tx => tx.update(creativeStudioGenerations).set({ providerTaskId: "video_other" }).where(eq(creativeStudioGenerations.id, item.op.ownerId)))).rejects.toThrow();
   });
-  it("does not submit another video when the original acknowledgement is unknown", async () => {
-    const item = await operation(undefined, false, "video"), repo = recovery(), claim = (await repo.claim(context, item.op))!;
+  it("keeps a quoted image's unknown original acknowledgement uncertain without submitting it again", async () => {
+    const item = await paidOperation(), repo = recovery(), claim = (await repo.claim(context, item.op))!;
     await repo.markSubmitted(context, claim, item.billing); await due(claim.id);
     const transport = vi.fn<typeof fetch>();
     await new StudioGenerationProcessor(database, storage, modelVault, new HttpStudioGateway(transport), new ClamAvScanner(), vault).process(job(item.op.ownerId));
@@ -292,9 +374,11 @@ describe("creative original submission, response and asset recovery", () => {
     await expect(repo.rememberStudioTask(context, claim, "video_unsubmitted")).rejects.toThrow("CREATIVE_SUBMISSION_MISSING");
     await expect(withTenant(database.db, context, tx => tx.update(creativeStudioGenerations).set({ providerTaskId: "video_unsubmitted" }).where(eq(creativeStudioGenerations.id, item.op.ownerId)))).rejects.toThrow();
   });
-  it("rejects a changed model route before any provider call", async () => {
-    const item = await operation();
-    await withTenant(database.db, context, tx => tx.update(modelRoutes).set({ status: "disabled" }).where(eq(modelRoutes.modelKey, item.billing.modelKey)));
+  it("rejects a changed quoted image model route before any provider call", async () => {
+    const item = await paidOperation();
+    const disabled = await withTenant(database.db, context, tx => tx.update(modelRoutes).set({ status: "disabled" })
+      .where(eq(modelRoutes.id, item.routeId)).returning({ id: modelRoutes.id, status: modelRoutes.status }));
+    expect(disabled).toEqual([{ id: item.routeId, status: "disabled" }]);
     const transport = vi.fn<typeof fetch>();
     await expect(new StudioGenerationProcessor(database, storage, modelVault, new HttpStudioGateway(transport), new ClamAvScanner(), vault).process(job(item.op.ownerId))).rejects.toThrow("studio_generation_failed");
     expect(transport).not.toHaveBeenCalled(); expect((await read(item.execution.id)).submittedAt).toBeNull();
@@ -349,12 +433,14 @@ describe("creative original submission, response and asset recovery", () => {
         throw new Error("Creative process acceptance checkpoint timed out");
       };
       try {
-        const item = await operation(undefined, false, "image", endpoint);
+        const item = await paidOperation(endpoint);
         const launch = (hold = false) => {
           const child = spawn(process.execPath, ["--import", "./apps/api/node_modules/tsx/dist/loader.mjs", "tools/testing/creative-recovery-worker.mts"], {
             cwd: fileURLToPath(new URL("../../../../", import.meta.url)), windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: {
               ...process.env, CREATIVE_RECOVERY_PROBE_QUEUE: queueName, CREATIVE_RECOVERY_PROBE_EXECUTION: item.execution.id,
               CREATIVE_RECOVERY_PROBE_URL: endpoint, CREATIVE_RECOVERY_PROBE_HOLD: hold ? "1" : "0",
+              CREATIVE_RECOVERY_PROBE_TENANT: context.tenantId, CREATIVE_RECOVERY_PROBE_ACTOR: context.userId,
+              CREATIVE_RECOVERY_PROBE_GENERATION: item.op.ownerId,
             },
           });
           let stdout = "", stopped = false;

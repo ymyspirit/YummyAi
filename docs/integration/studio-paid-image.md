@@ -31,3 +31,5 @@
 原件检查只读取实际原资产和技术信息。页面可直达该槽的“素材与审核”，由运营明确送审；收集结果不会替付费任务自动提交方案或批准图稿。
 
 隔离API套件为`studio-paid-image-integration`、`studio-visual-paid-image-integration`及保留历史的`studio-paid-image-legacy-regression`。浏览器套件`studio-paid-image-browser`使用固定编译候选和一次性OIDC/数据库/存储/Redis，注入的受控模型不产生真实付费。
+
+旧创作权限和进程恢复可通过`pnpm test:e2e:order-daily --suite=creative-owner-legacy-regression --cache=false`定向检查两个原集成文件，完整CI仍覆盖它们。图片进程恢复必须由真实报价和明确确认创建原任务，再使用仅限本地端点的合成服务验证未知回执、原费用、真实进程中断和撤权。图片准入不能使旧视频恢复轮询；已提交的旧视频保留原任务、回执和账本不变。
