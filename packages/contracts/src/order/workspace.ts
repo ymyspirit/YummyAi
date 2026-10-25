@@ -370,11 +370,22 @@ export const OrderWorkEventViewSchema = z
     occurredAt: z.iso.datetime(),
   })
   .strict();
+export const OrderSalesSiteResolutionSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("resolved"),
+    marketplaceId: z.string().trim().min(1).max(100),
+  }).strict(),
+  z.object({ status: z.literal("missing"), marketplaceId: z.null() }).strict(),
+  z.object({ status: z.literal("conflict"), marketplaceId: z.null() }).strict(),
+]);
+export type OrderSalesSiteResolution = z.infer<typeof OrderSalesSiteResolutionSchema>;
+
 export const OrderWorkDetailViewSchema = z
   .object({
     catalog: z
       .object({
         status: z.enum(["matched", "unmatched", "ambiguous", "pinned"]),
+        site: OrderSalesSiteResolutionSchema.optional(),
         packageId: Id.nullable(),
         channelPackageId: Id.nullable().optional(),
         channelRecipeId: Id.nullable().optional(),

@@ -5,6 +5,7 @@ import {
   amazonOrderReportBatchItems,
   orders,
   orderLines,
+  orderSourceSnapshots,
   salesChannelBindings,
   salesPackageVersions,
   salesRecipeVersions,
@@ -21,6 +22,7 @@ import { matchesCustomChoice } from "@yummyai/contracts/catalog/composition";
 import { OrderSalesDeliverySnapshotSchema } from "@yummyai/contracts/catalog/sales-plan-delivery";
 import type { OrderIntakeCheck } from "@yummyai/contracts/order/workspace";
 import type { OrderWorkDraft } from "@yummyai/contracts/order/workspace";
+import { orderSalesSiteIssue, resolveOrderSalesSite } from "./order-sales-site.js";
 import {
   readArtwork,
   readRecipe,
@@ -29,6 +31,51 @@ import {
   assertSpecificationProcess,
   readArtworkMaterials,
 } from "./development-data.js";
+
+export async function readOrderSalesSite(
+  tx: TenantTransaction,
+  order: Pick<typeof orders.$inferSelect, "id" | "accountId" | "platform" | "externalOrderId">,
+) {
+  // Updates append immutable sources while orders.sourceSnapshotId retains the
+  // initial source. Read the exact order identity, including later deliveries,
+  // and project only the adapter-owned, non-private site fields.
+  const siteSources = order.platform === "amazon" ? await tx
+    .select({
+      marketplaceId: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'marketplaceId'`,
+      apiVersion: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'apiVersion'`,
+      source: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'source'`,
+      orderId: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'orderId'`,
+    })
+    .from(orderSourceSnapshots)
+    .where(and(
+      eq(orderSourceSnapshots.normalizedOrderId, order.id),
+      eq(orderSourceSnapshots.accountId, order.accountId),
+      eq(orderSourceSnapshots.platform, order.platform),
+      eq(orderSourceSnapshots.externalOrderId, order.externalOrderId),
+    )) : [];
+  const reportSites = order.platform === "amazon" ? await tx
+    .select({ site: amazonOrderReportBatches.marketplaceId })
+    .from(amazonOrderReportBatchItems)
+    .innerJoin(
+      amazonOrderReportBatches,
+      eq(amazonOrderReportBatches.id, amazonOrderReportBatchItems.batchId),
+    )
+    .where(and(
+      eq(amazonOrderReportBatchItems.orderId, order.id),
+      eq(amazonOrderReportBatchItems.externalOrderId, order.externalOrderId),
+      eq(amazonOrderReportBatches.accountId, order.accountId),
+      or(
+        eq(amazonOrderReportBatchItems.status, "imported"),
+        eq(amazonOrderReportBatchItems.status, "duplicate"),
+      ),
+    )) : [];
+  return resolveOrderSalesSite(
+    order.platform,
+    order.externalOrderId,
+    siteSources,
+    reportSites.map((row) => row.site),
+  );
+}
 
 export async function resolveOrderSalesBasis(
   tx: TenantTransaction,
@@ -41,17 +88,8 @@ export async function resolveOrderSalesBasis(
     .innerJoin(orders, eq(orders.id, orderLines.orderId))
     .where(eq(orderLines.id, lineId));
   if (!source) throw new NotFoundException("订单商品不存在");
-  const reportSites = await tx
-    .select({ site: amazonOrderReportBatches.marketplaceId })
-    .from(amazonOrderReportBatchItems)
-    .innerJoin(
-      amazonOrderReportBatches,
-      eq(amazonOrderReportBatches.id, amazonOrderReportBatchItems.batchId),
-    )
-    .where(eq(amazonOrderReportBatchItems.orderId, source.order.id));
-  const sites = [...new Set(reportSites.map((r) => r.site))];
-  const site = sites.length === 1 ? sites[0] : null;
-  const matches = source.line.skuCode
+  const site = await readOrderSalesSite(tx, source.order);
+  const matches = source.line.skuCode && site.status === "resolved"
     ? await tx
         .select({ binding: salesChannelBindings, pack: salesPackageVersions })
         .from(salesChannelBindings)
@@ -62,7 +100,7 @@ export async function resolveOrderSalesBasis(
         .where(
           and(
             eq(salesChannelBindings.accountId, source.order.accountId),
-            site ? eq(salesChannelBindings.marketplaceId, site) : undefined,
+            eq(salesChannelBindings.marketplaceId, site.marketplaceId),
             eq(salesChannelBindings.externalSku, source.line.skuCode),
             source.line.externalListingId
               ? eq(salesChannelBindings.externalListingId, source.line.externalListingId)
@@ -72,6 +110,28 @@ export async function resolveOrderSalesBasis(
           ),
         )
         .orderBy(desc(salesChannelBindings.effectiveFrom))
+    : [];
+  // Unknown/conflicting sites cannot produce candidates. Keep only an internal
+  // existence check so removing a package cannot bypass a controlled channel.
+  const controlledSiteUnknown = source.line.skuCode && site.status !== "resolved"
+    ? await tx
+        .select({ exists: sql<boolean>`true` })
+        .from(salesChannelBindings)
+        .innerJoin(
+          salesPackageVersions,
+          eq(salesPackageVersions.id, salesChannelBindings.packageId),
+        )
+        .where(and(
+          eq(salesChannelBindings.accountId, source.order.accountId),
+          eq(salesChannelBindings.externalSku, source.line.skuCode),
+          source.line.externalListingId
+            ? eq(salesChannelBindings.externalListingId, source.line.externalListingId)
+            : undefined,
+          lte(salesChannelBindings.effectiveFrom, source.order.placedAt),
+          eq(salesPackageVersions.platform, source.order.platform),
+          sql`${salesPackageVersions.snapshot} ? 'salesPlanDelivery'`,
+        ))
+        .limit(1)
     : [];
   const identities = new Map<string, (typeof matches)[number]>();
   for (const m of matches) {
@@ -88,13 +148,14 @@ export async function resolveOrderSalesBasis(
   const picked = candidates.length === 1 ? candidates[0]! : null;
   const recipe = picked ? await readRecipe(tx, picked.pack.recipeId) : null;
   return {
+    site,
     status: picked
       ? ("matched" as const)
       : candidates.length > 1
         ? ("ambiguous" as const)
         : ("unmatched" as const),
     packageId: picked?.pack.id ?? null,
-    controlledDelivery: matches.some(
+    controlledDelivery: controlledSiteUnknown.length > 0 || matches.some(
       (match) => match.pack.snapshot.salesPlanDelivery !== undefined,
     ),
     matchingPackageIds: matches
@@ -275,6 +336,8 @@ export async function validateOrderSalesBasis(
       lineId,
       Object.fromEntries(draft.fields.map((f) => [f.key, f.value])),
     );
+    const siteIssue = orderSalesSiteIssue(resolved.site);
+    if (siteIssue && (delivery || resolved.controlledDelivery)) deliveryIssues.push(siteIssue);
     // A legacy package cannot bypass a controlled channel's delivery checks.
     // Preserve genuine legacy/manual flows and the immutable pin of a saved order.
     if (pack && (delivery || resolved.controlledDelivery)) {

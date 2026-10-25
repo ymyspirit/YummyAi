@@ -1,5 +1,6 @@
 import { sealWork as sharedSealWork, openWork as sharedOpenWork } from "@yummyai/order-core";
-import { resolveOrderSalesBasis, validateOrderSalesBasis, orderSalesChoices } from "../catalog/order-sales-basis.js";
+import { readOrderSalesSite, resolveOrderSalesBasis, validateOrderSalesBasis, orderSalesChoices } from "../catalog/order-sales-basis.js";
+import { orderSalesSiteIssue } from "../catalog/order-sales-site.js";
 import { ArchiveRecordInputSchema } from "@yummyai/contracts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readArtwork, readSpecification } from "../catalog/development-data.js";
@@ -576,20 +577,26 @@ export class OrderWorkspaceService {
             key && revision
               ? OrderWorkDraftSchema.parse(openWork(key, revision.encryptedDraft))
               : defaultDraft(report);
-          if (!revision) {
-            const basis = await resolveOrderSalesBasis(
+          const basis = !revision
+            ? await resolveOrderSalesBasis(
               tx,
               line.id,
               Object.fromEntries(draft.fields.map((f) => [f.key, f.value])),
-            );
-            if (basis.recipe) {
-              draft.artworkVersionId = basis.recipe.artwork.versionId;
-              draft.specificationVersionId = basis.recipe.specification.versionId;
-              draft.printProfileVersionId = basis.recipe.specification.processProfileVersionId;
-            }
-            if (basis.status === "ambiguous")
-              summary.blockers.push("商品 SKU 匹配到多个方案，需人工确认");
+            )
+            : null;
+          if (basis?.recipe) {
+            draft.artworkVersionId = basis.recipe.artwork.versionId;
+            draft.specificationVersionId = basis.recipe.specification.versionId;
+            draft.printProfileVersionId = basis.recipe.specification.processProfileVersionId;
           }
+          if (basis?.status === "ambiguous")
+            summary.blockers.push("商品 SKU 匹配到多个方案，需人工确认");
+          const site = basis?.site ?? await readOrderSalesSite(
+            tx,
+            sourceOrders.find((order) => order.id === line.orderId)!,
+          );
+          const siteIssue = orderSalesSiteIssue(site);
+          if (siteIssue) summary.blockers.push(siteIssue.message);
           if (draft.artworkVersionId) {
             if (!artworks.has(draft.artworkVersionId))
               artworks.set(draft.artworkVersionId, await readArtwork(tx, draft.artworkVersionId));
@@ -957,6 +964,7 @@ export class OrderWorkspaceService {
           packageId: draft.salesPackageId ?? resolved.packageId,
           channelPackageId: resolved.packageId,
           channelRecipeId: resolved.recipe?.id ?? null,
+          site: resolved.site,
           ...choices,
         };
       });

@@ -1270,14 +1270,20 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
 
   it("catalog durable recovery preserves a live claim and recovers the original version only after lease expiry", async () => {
     const f = await catalogEditorFixture(), render = await editor.render(a, f.project.project.id, f.renderInput), token = createEntityId();
-    await withTenant(db.db, a, tx => tx.update(productionEditorRenders).set({ status: "processing", processingToken: token, leaseUntil: sql`now()+interval '2 minutes'`, updatedAt: sql`now()-interval '3 minutes'` }).where(eq(productionEditorRenders.id, render.id)));
+    // Make the dispatch deadline explicitly due so this case isolates the lease.
+    await withTenant(db.db, a, tx => tx.update(productionEditorRenders).set({
+      status: "processing", processingToken: token,
+      nextDispatchAt: sql`clock_timestamp()-interval '1 minute'`,
+      leaseUntil: sql`clock_timestamp()+interval '2 minutes'`,
+      updatedAt: sql`clock_timestamp()-interval '3 minutes'`,
+    }).where(eq(productionEditorRenders.id, render.id)));
     const enqueue = vi.fn<(input: { renderId: string; tenantId: string; requestedBy: string }) => Promise<void>>(async () => undefined);
     await dispatchApprovedProductionRenders(db, vault, enqueue);
     expect(enqueue.mock.calls.some(([input]) => input.renderId === render.id)).toBe(false);
     expect(await worker.process(f.envelope(render.id))).toMatchObject({ disposition: "already_claimed" });
     let [row] = await withTenant(db.db, a, tx => tx.select().from(productionEditorRenders).where(eq(productionEditorRenders.id, render.id)));
     expect(row).toMatchObject({ status: "processing", processingToken: token, encryptedManifest: null });
-    await withTenant(db.db, a, tx => tx.update(productionEditorRenders).set({ leaseUntil: sql`now()-interval '1 second'` }).where(eq(productionEditorRenders.id, render.id)));
+    await withTenant(db.db, a, tx => tx.update(productionEditorRenders).set({ leaseUntil: sql`clock_timestamp()-interval '1 second'` }).where(eq(productionEditorRenders.id, render.id)));
     await dispatchApprovedProductionRenders(db, vault, enqueue);
     expect(enqueue).toHaveBeenCalledWith({ renderId: render.id, tenantId: a.tenantId, requestedBy: a.userId });
     expect(await worker.process(f.envelope(render.id))).toMatchObject({ disposition: "completed" });
