@@ -22,12 +22,12 @@ test("measured specification facts preserve unknown drafts and pin an actual con
   await expect(form.getByLabel("每份件数", { exact: true })).toHaveValue("");
   let writes = 0;
   page.on("request", request => { if (request.method() === "POST" && /\/api\/product-development\/specifications$/.test(request.url())) writes++; });
-  await form.getByRole("checkbox", { name: "已核实材质、尺寸和包装内容", exact: true }).check();
+  await form.getByRole("checkbox", { name: "完整商品资料已核实 包括重量与包装测量", exact: true }).check();
   await form.getByRole("button", { name: "保存新版本", exact: true }).click();
   await expect(form.getByRole("alert")).toContainText("尺寸");
   expect(writes).toBe(0);
   await fillSpecificationFacts(form, { basis: "diameter", length: "50" });
-  const confirmation = form.getByRole("checkbox", { name: "已核实材质、尺寸和包装内容", exact: true });
+  const confirmation = form.getByRole("checkbox", { name: "完整商品资料已核实 包括重量与包装测量", exact: true });
   await expect(confirmation).not.toBeChecked();
   await confirmation.check();
   await form.getByRole("button", { name: "保存新版本", exact: true }).click();
@@ -40,7 +40,7 @@ test("measured specification facts preserve unknown drafts and pin an actual con
   const savedFacts = page.getByRole("dialog").locator("tbody");
   await expect(savedFacts).toContainText("Synthetic measured fabric");
   await expect(savedFacts).toContainText("50 mm");
-  await expect(savedFacts).toContainText("事实已核实");
+  await expect(savedFacts).toContainText("完整商品资料已齐备");
   await expect(savedFacts).toContainText("确认于");
   await expect(savedFacts).toContainText("V2");
   await page.screenshot({ path: info.outputPath("measured-facts-desktop.png"), fullPage: false });
@@ -75,12 +75,12 @@ test("batch specification labels do not invent measurements or package counts", 
   await expect(form.getByText("口径与测量值待填写", { exact: true })).toHaveCount(2);
   await expect(form.getByLabel("共用每份件数", { exact: true })).toHaveValue("");
   await form.getByLabel("默认制作工艺", { exact: true }).selectOption(profile.versionId);
-  await form.getByLabel("已逐项核实所选规格的产品事实 核验依据与工艺", { exact: true }).check();
+  await form.getByLabel("已逐项核实所选规格的完整商品资料 包括重量与包装测量", { exact: true }).check();
   await form.getByRole("button", { name: "保存 2 个规格", exact: true }).click();
   await expect(form.getByRole("alert")).toContainText("尺寸");
   expect((await centerApi<DevelopmentOptions>("product-development/options")).specifications.some(row => row.spuId === spu.id)).toBe(false);
   await fillSpecificationFacts(form, { prefix: "共用", basis: "diameter", length: "50" });
-  await form.getByLabel("已逐项核实所选规格的产品事实 核验依据与工艺", { exact: true }).check();
+  await form.getByLabel("已逐项核实所选规格的完整商品资料 包括重量与包装测量", { exact: true }).check();
   await form.getByRole("button", { name: "保存 2 个规格", exact: true }).click();
   await expect(page.locator(".oc-notice")).toContainText("所选规格已绑定");
   const saved = (await centerApi<DevelopmentOptions>("product-development/options")).specifications.filter(row => row.spuId === spu.id);

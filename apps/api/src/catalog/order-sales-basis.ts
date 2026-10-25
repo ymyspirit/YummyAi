@@ -1,4 +1,4 @@
-import { specificationFactsReady } from "@yummyai/contracts/catalog/development";
+import { specificationProductionFactsReady } from "@yummyai/contracts/catalog/development";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import {
   amazonOrderReportBatches,
@@ -151,9 +151,8 @@ export async function validateOrderSalesBasis(
   assertSpecificationProcess(specification);
   if (recipe && recipe.specification.versionId !== specificationId)
     throw new ConflictException("所选规格与销售 SKU 制作版本不一致，请重新匹配");
-  if (!specification.facts.factsConfirmed) throw new ConflictException("产品规格事实尚未确认");
-  if (requireNewFacts && !specificationFactsReady(specification.facts))
-    throw new ConflictException("新匹配的产品规格须补齐尺寸口径 结构与核验依据并保存事实确认版本");
+  if (!specificationProductionFactsReady(specification.facts) && (requireNewFacts || !specification.facts.factsConfirmed))
+    throw new ConflictException("产品规格生产资料尚未确认 新匹配须补齐尺寸口径 结构与核验依据");
   if (draft.printProfileVersionId !== specification.processProfileVersionId)
     throw new ConflictException("订单工艺应与所选产品规格保持一致");
   let pack: typeof salesPackageVersions.$inferSelect | undefined;
@@ -351,7 +350,7 @@ export async function orderSalesChoices(
     )
     .orderBy(desc(salesRecipeVersions.createdAt));
   const recipes = (await Promise.all(rows.map((r) => readRecipe(tx, r.id)))).filter(
-    (r) => r.id === pinnedRecipeId || (!r.artwork.archived && specificationFactsReady(r.specification.facts)),
+    (r) => r.id === pinnedRecipeId || (!r.artwork.archived && specificationProductionFactsReady(r.specification.facts)),
   );
   const artworkIds = await tx
     .select({
@@ -418,7 +417,7 @@ export async function orderSalesChoices(
     specifications: specifications
       .filter(
         (s): s is typeof s & { processProfileVersionId: string } =>
-          !!s.processProfileVersionId && (specificationFactsReady(s.facts) || (s.versionId === pinnedSpecificationId && s.facts.factsConfirmed)),
+          !!s.processProfileVersionId && (specificationProductionFactsReady(s.facts) || (s.versionId === pinnedSpecificationId && s.facts.factsConfirmed)),
       )
       .map((s) => ({
         id: s.versionId,

@@ -11,6 +11,7 @@ import { businessRules as rules, businessRuleVersions as versions, businessRuleE
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { AuditService } from "../audit/audit.service.js";
+import { ProductionFactRuleReferenceSchema, type ProductionFactRuleReference } from "@yummyai/contracts/catalog/specification-facts";
 
 function versionView(row: typeof versions.$inferSelect) {
   const definition = RuleDefinitionSchema.parse(row.definition);
@@ -21,6 +22,38 @@ function versionView(row: typeof versions.$inferSelect) {
 async function writeEvent(tx: TenantTransaction, context: TenantContext, ruleId: string, version: number, action: typeof events.$inferInsert.action, reason: string) {
   await tx.insert(events).values({ id: createEntityId(), tenantId: context.tenantId, createdBy: context.userId, ruleId, version, action, reason });
 }
+function appliesToProduction(definition: RuleDefinition, productType: string | null, spuId: string | null) {
+  return definition.appliesTo === "order_design" && (definition.scopeKind === "all" ||
+    definition.scopeKind === "product_type" && definition.productType === productType || definition.scopeKind === "spu" && definition.spuId === spuId);
+}
+
+/** Rule-owned provenance validation inside the caller's current tenant transaction. No publication or business write. */
+export async function assertSpecificationProductionRuleReferences(
+  tx: TenantTransaction,
+  context: TenantContext,
+  references: readonly ProductionFactRuleReference[],
+  source: { spuId: string; productType: string | null; requireActive: boolean; retainedReferences?: readonly ProductionFactRuleReference[] },
+) {
+  if (!references.length) return;
+  authorize(context, Permission.WorkflowRead);
+  if (references.length > 12 || new Set(references.map(reference => reference.ruleId)).size !== references.length)
+    throw new ConflictException("生产规则引用不可重复且最多十二项");
+  // Lock mutable rule identities in a stable order; immutable versions need no row lock.
+  for (const value of [...references].sort((left, right) => left.ruleId.localeCompare(right.ruleId))) {
+    const reference = ProductionFactRuleReferenceSchema.parse(value);
+    const [row] = await tx.select({ rule: rules, version: versions }).from(rules)
+      .innerJoin(versions, and(eq(versions.ruleId, rules.id), eq(versions.id, reference.versionId)))
+      .where(eq(rules.id, reference.ruleId)).for("share", { of: [rules] });
+    if (!row || row.version.version !== reference.version)
+      throw new NotFoundException("生产规则引用不存在或版本不一致");
+    if (!appliesToProduction(RuleDefinitionSchema.parse(row.version.definition), source.productType, source.spuId))
+      throw new ConflictException("引用规则不适用于本产品或固定工艺类型");
+    const retained = source.retainedReferences?.some(previous => previous.ruleId === reference.ruleId &&
+      previous.versionId === reference.versionId && previous.version === reference.version) ?? false;
+    if (row.rule.activeVersion !== reference.version && (source.requireActive || !retained))
+      throw new ConflictException("新生产确认须引用当前启用规则 草稿只能保留本规格原有历史引用");
+  }
+}
 /** Called only when creating a new order design snapshot; resumes use its encrypted copy. */
 export async function resolveOrderRules(tx: TenantTransaction, productType: string, spuId: string | null) {
   const rows = await tx.select({ rule: rules, version: versions }).from(rules)
@@ -28,8 +61,7 @@ export async function resolveOrderRules(tx: TenantTransaction, productType: stri
     .where(isNotNull(rules.activeVersion)).orderBy(asc(rules.code));
   return OrderRuleSnapshotSchema.parse({ schemaVersion: 1, capturedAt: new Date().toISOString(), rules: rows.flatMap(({ rule, version }) => {
     const definition = RuleDefinitionSchema.parse(version.definition);
-    const matches = definition.appliesTo === "order_design" && (definition.scopeKind === "all" ||
-      definition.scopeKind === "product_type" && definition.productType === productType || definition.scopeKind === "spu" && definition.spuId === spuId);
+    const matches = appliesToProduction(definition, productType, spuId);
     return matches ? [{ ...versionView(version), code: rule.code }] : [];
   }) });
 }

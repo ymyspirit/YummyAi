@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EntityIdSchema } from "@yummyai/contracts/common/ids";
 
 export const SpecificationDimensionBases = {
   finished_outer_2d: "成品外轮廓 平面尺寸",
@@ -12,6 +13,18 @@ const measure = z.number().positive().max(1000000).nullable();
 const measurements = z.object({
   unit: unit.nullable(), length: measure, width: measure, height: measure,
 }).strict();
+export const ProductionFactRuleReferenceSchema = z.object({
+  ruleId: EntityIdSchema.toLowerCase(),
+  versionId: EntityIdSchema.toLowerCase(),
+  version: z.int().positive(),
+}).strict();
+const productionRuleReferences = z.array(ProductionFactRuleReferenceSchema).max(12).superRefine((references, context) => {
+  const seen = new Set<string>();
+  references.forEach((reference, index) => {
+    if (seen.has(reference.ruleId)) context.addIssue({ code: "custom", message: "同一规则只能引用一个版本", path: [index, "ruleId"] });
+    seen.add(reference.ruleId);
+  });
+});
 export const SpecificationFactsSchema = z.object({
   formatVersion: z.literal(2).optional(),
   material: z.string().trim().max(300),
@@ -23,6 +36,8 @@ export const SpecificationFactsSchema = z.object({
   packageContents: z.string().trim().max(1000),
   packageQuantity: z.int().positive().max(10000).nullable(),
   factsConfirmed: z.boolean(),
+  productionConfirmed: z.boolean().optional(),
+  productionRuleReferences: productionRuleReferences.optional(),
   weightGrams: z.number().positive().max(1000000).nullable().optional(),
   packagedWeightGrams: z.number().positive().max(1000000).nullable().optional(),
   packageDimensions: z.string().trim().max(300).optional(),
@@ -60,6 +75,37 @@ export function specificationFactProblems(facts: SpecificationFacts): string[] {
 
 export const specificationFactsReady = (facts: SpecificationFacts): boolean =>
   specificationFactProblems(facts).length === 0;
+
+/** Production confirmation does not establish missing commercial or shipping facts. */
+export function specificationProductionFactProblems(facts: SpecificationFacts): string[] {
+  if (!SpecificationFactsSchema.safeParse(facts).success) return ["规格事实格式或测量数值无效"];
+  if (facts.formatVersion !== 2)
+    return ["旧规格缺少明确的尺寸口径与核验依据 请保存新的生产资料确认版本"];
+  if (specificationFactsReady(facts)) return [];
+  const problems: string[] = [];
+  if (!facts.productionConfirmed) problems.push("生产资料尚未核对");
+  if (!facts.material.trim()) problems.push("材质尚未确认");
+  if (!facts.structure?.trim()) problems.push("产品结构尚未确认");
+  const size = facts.physicalDimensions;
+  if (!size?.basis || !size.unit || !size.length ||
+    (["finished_outer_2d", "finished_outer_3d", "flat_piece"].includes(size.basis) && !size.width) ||
+    (size.basis === "finished_outer_3d" && !size.height))
+    problems.push("生产尺寸的口径 单位和必要测量值尚未确认");
+  else if ((["artwork_longest", "diameter"].includes(size.basis) && (size.width !== null || size.height !== null)) ||
+    (["finished_outer_2d", "flat_piece"].includes(size.basis) && size.height !== null))
+    problems.push("测量值与所选尺寸口径不一致");
+  if (!facts.packageContents.trim() || facts.packageQuantity === null)
+    problems.push("包装内容与每份件数尚未确认");
+  if (facts.weightGrams && facts.packagedWeightGrams && facts.packagedWeightGrams < facts.weightGrams)
+    problems.push("含包装重量不能小于商品重量");
+  if (!facts.verificationReference?.trim()) problems.push("请填写生产资料核对依据");
+  return problems;
+}
+
+export const specificationProductionFactsReady = (facts: SpecificationFacts): boolean =>
+  specificationProductionFactProblems(facts).length === 0;
+
+export type ProductionFactRuleReference = z.infer<typeof ProductionFactRuleReferenceSchema>;
 
 function measurementText(size: z.infer<typeof measurements>): string {
   if (!size.unit || size.length === null) return "";

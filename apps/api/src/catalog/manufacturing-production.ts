@@ -3,7 +3,7 @@ import { authorize, Permission } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 import type { OrderWorkDraft } from "@yummyai/contracts/order/workspace";
 import { manufacturingApprovalProblems } from "@yummyai/contracts/catalog/manufacturing";
-import { specificationFactsReady } from "@yummyai/contracts/catalog/specification-facts";
+import { specificationProductionFactsReady } from "@yummyai/contracts/catalog/specification-facts";
 import { assertCatalogSourceActive, assertCatalogSpuAccess, currentCatalogContext } from "@yummyai/catalog-core";
 import { manufacturingRecipes as recipes, manufacturingRecipeVersions as versions, manufacturingRecipeReviews as reviews,
   spus, productSpecifications, productSpecificationVersions, inventoryStockItems, salesRecipeVersions, printProfileVersions, skus, type TenantTransaction } from "@yummyai/database";
@@ -97,7 +97,7 @@ async function readProductionSpecification(tx: TenantTransaction, input: TenantC
     .from(productSpecificationVersions).innerJoin(productSpecifications, eq(productSpecifications.id, productSpecificationVersions.specificationId))
     .innerJoin(spus, eq(spus.id, productSpecifications.spuId)).innerJoin(printProfileVersions, eq(printProfileVersions.id, productSpecificationVersions.processProfileVersionId))
     .where(eq(productSpecificationVersions.id, source.specificationVersionId));
-  if (!specification || !specificationFactsReady(specification.facts)) throw new ConflictException("原产品规格的制造事实尚未完整核实");
+  if (!specification || !specificationProductionFactsReady(specification.facts)) throw new ConflictException("原产品规格的制造事实尚未完整核实");
   await assertCatalogSpuAccess(tx, current, specification.spuId, [Permission.ProductRead]);
   await assertCatalogSourceActive(tx, specification.spuId);
   if (source.kind !== "approved_product_confirmation" && specification.processProfileVersionId !== source.processProfileVersionId)
@@ -134,7 +134,7 @@ export async function productionManufacturingOptions(tx: TenantTransaction, inpu
     if (!source) throw new NotFoundException("原产品规格不存在或不可读取");
     await assertCatalogSpuAccess(tx, current, source.identity.spuId, [Permission.ProductRead]);
     await assertCatalogSourceActive(tx, source.identity.spuId);
-    if (!source.specification.processProfileVersionId || !specificationFactsReady(source.specification.facts)) return ProductionManufacturingOptionsSchema.parse({ source: null, items: [], nextCursor: null, contextAuthority,
+    if (!source.specification.processProfileVersionId || !specificationProductionFactsReady(source.specification.facts)) return ProductionManufacturingOptionsSchema.parse({ source: null, items: [], nextCursor: null, contextAuthority,
       diagnostics: ["原产品规格的工艺、尺寸口径或制造事实不完整 请核对新的审单及审核稿"] });
     const rows = await tx.select({ root: recipes, version: versions, approvedAt: reviews.createdAt }).from(versions)
       .innerJoin(recipes, eq(recipes.id, versions.recipeId)).innerJoin(reviews, eq(reviews.versionId, versions.id))

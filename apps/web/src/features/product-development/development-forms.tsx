@@ -1,6 +1,7 @@
 "use client";
 import { SpecificationFactsSchema, specificationFactProblems, specificationFactsReady } from "@yummyai/contracts/catalog/development";
 import { SpecificationFactFields, specificationFactDraftKeys, specificationFactsDraft, specificationFactsFromDraft, type SpecificationFactDraft } from "./specification-fact-fields";
+import { SpecificationProductionFields, productionDraftProblems, productionRuleReferenceProblems, useProductionRuleWorkspace } from "./specification-production-fields";
 import { Fragment, useId, useState, type FormEvent } from "react";
 import Link from "next/link";
 import type {
@@ -445,6 +446,7 @@ export function SpecificationForm({
   const formId = useId();
   const [value] = useState(suppliedValue);
   const workflow = useWorkflowReturn();
+  const productionRules = useProductionRuleWorkspace();
   const draftKey = `${catalogDraftScope(options)}:specification:${value?.versionId ?? initialSpuId ?? "new"}`;
   const [fields, setFields, recoveryError] = useTaskDraft<Record<string, string[]>>(draftKey, "fields", {}, { session: true, validate: (value): value is Record<string, string[]> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(row => Array.isArray(row) && row.every(item => typeof item === "string")) });
   const field = (name: string, fallback?: string | number) => fields[name]?.[0] ?? fallback;
@@ -468,12 +470,18 @@ export function SpecificationForm({
   );
   const [error, setError] = useState("");
   const initialFacts = specificationFactsDraft(value?.facts);
-  const factValues = Object.fromEntries(specificationFactDraftKeys.map(key => [key, String(field(key, fields[key === "packageContents" ? "contents" : key === "packageQuantity" ? "quantity" : key]?.[0] ?? initialFacts[key]) ?? "")])) as SpecificationFactDraft;
+  const factValues = Object.fromEntries(specificationFactDraftKeys.map(key => [key, String(field(key, fields[key === "packageContents" ? "contents" : key === "packageQuantity" ? "quantity" : key]?.[0] ?? (key === "productionConfirmed" && fields._captured ? "" : initialFacts[key])) ?? "")])) as SpecificationFactDraft;
   const confirmed = !recoveryError && (fields._captured ? !!fields.confirmed?.length : !!value && specificationFactsReady(value.facts));
+  const productType = options.processes.find(item => item.versionId === references.process)?.productType ?? null;
   const changeReference = (reference: keyof typeof references, next: string) =>
-    setFields((current) => ({ ...current, [reference]: [next] }));
+    setFields((current) => ({ ...current, [reference]: [next], productionConfirmed: [], confirmed: [], _captured: ["1"] }));
+  const changeProduction = (patch: Partial<SpecificationFactDraft>) => setFields(current => ({
+    ...current, ...Object.fromEntries(Object.entries(patch).map(([key, next]) => [key, [next]])),
+    ...(Object.keys(patch).some(key => key !== "productionConfirmed") ? { confirmed: [] } : {}), _captured: ["1"],
+  }));
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (recoveryError) { setError("原规格草稿无法恢复 请先核对恢复提示 本次未保存"); return; }
     if (missingReferences.size) return;
     const d = new FormData(e.currentTarget);
     const attributeValues = d.getAll("attribute-value");
@@ -489,9 +497,14 @@ export function SpecificationForm({
     }
     setError("");
     const draft = Object.fromEntries(specificationFactDraftKeys.map(key => [key, d.has(key) ? string(d, key) : factValues[key]])) as SpecificationFactDraft;
-    const checked = SpecificationFactsSchema.safeParse(specificationFactsFromDraft(draft, confirmed));
+    let facts;
+    try { facts = specificationFactsFromDraft(draft, confirmed); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "原生产规则引用无法核对"); return; }
+    const checked = SpecificationFactsSchema.safeParse(facts);
     if (!checked.success) { setError("规格事实的数值或格式无效 请检查测量值和件数"); return; }
     const problems = confirmed ? specificationFactProblems(checked.data) : [];
+    if (checked.data.productionConfirmed) problems.push(...productionDraftProblems(draft, string(d, "process")),
+      ...productionRuleReferenceProblems(checked.data.productionRuleReferences ?? [], productionRules, string(d, "spu"), productType));
     if (problems.length) { setError(problems.join("；")); return; }
     const saved = await onSave({
       spuId: string(d, "spu"),
@@ -512,10 +525,12 @@ export function SpecificationForm({
       onSubmit={submit}
       onChangeCapture={(event) => {
         const data = new FormData(event.currentTarget);
-        if (event.target.getAttribute("name") !== "confirmed") data.delete("confirmed");
+        const confirmation = ["confirmed", "productionConfirmed"].includes(event.target.getAttribute("name") ?? "");
+        if (!confirmation) { data.delete("confirmed"); data.delete("productionConfirmed"); }
         setFields(
           Object.fromEntries([
             ...[...data.keys()].map((key) => [key, data.getAll(key).map(String)]),
+            ["productionConfirmed", data.has("productionConfirmed") ? data.getAll("productionConfirmed").map(String) : []],
             ["_captured", ["1"]],
           ]),
         );
@@ -580,7 +595,7 @@ export function SpecificationForm({
           attributes={value?.attributes ?? { 尺寸: "" }}
         />
         {value && value.facts.formatVersion !== 2 && <p className="pd-form-hint pd-span">旧规格保留原记录 请核对原尺寸说明 {value.facts.dimensions} 再填写明确的口径 测量值与核验依据</p>}
-        <SpecificationFactFields values={factValues} onChange={patch => setFields(current => ({ ...current, ...Object.fromEntries(Object.entries(patch).map(([key, next]) => [key, [next]])), confirmed: [], _captured: ["1"] }))} />
+        <SpecificationFactFields values={factValues} onChange={patch => setFields(current => ({ ...current, ...Object.fromEntries(Object.entries(patch).map(([key, next]) => [key, [next]])), confirmed: [], productionConfirmed: [], _captured: ["1"] }))} />
         <label>
           通用工艺底稿
           <select
@@ -642,21 +657,24 @@ export function SpecificationForm({
             ))}
           </select>
         </label>
-        <label className="oc-check">
+        <SpecificationProductionFields values={factValues} onChange={changeProduction} source={productionRules}
+          spuId={value?.spuId ?? initialSpuId ?? ""} productType={productType} processProfileVersionId={references.process}
+          disabled={busy || !!recoveryError || missingReferences.size > 0} />
+        <label className="oc-check pd-span">
           <input
             type="checkbox"
             name="confirmed"
             checked={confirmed}
             onChange={event => setFields(current => ({ ...current, confirmed: event.target.checked ? ["on"] : [], _captured: ["1"] }))}
           />
-          已核实材质、尺寸和包装内容
+          完整商品资料已核实 包括重量与包装测量
         </label>
         <div className="oc-actions pd-span">
           <TaskDrawerActions>
             <button
               form={formId}
               className="oc-button primary"
-              disabled={busy || missingReferences.size > 0 || !options.spus.length}
+              disabled={busy || !!recoveryError || missingReferences.size > 0 || !options.spus.length}
             >
               {busy ? "保存中…" : value ? "保存新版本" : "保存规格"}
             </button>

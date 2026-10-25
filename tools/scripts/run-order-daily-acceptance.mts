@@ -60,6 +60,10 @@ const {
   HeadBucketCommand,
 } = storageRequire("@aws-sdk/client-s3");
 const { id: webCandidateId, nextArgs: acceptanceArgs } = parseWebCandidateArgs(process.argv.slice(2));
+const specificationProductionIntegrationRequested = acceptanceArgs.includes("--suite=specification-production-integration");
+if (specificationProductionIntegrationRequested && (webCandidateId || acceptanceArgs.some(arg =>
+  arg !== "--suite=specification-production-integration" && arg !== "--cache=false")))
+  throw new Error("Production specification acceptance accepts only its isolated suite and cache flag");
 // This local browser selection is fixed by source and validated before any
 // acceptance output, database client, bucket or disposable Redis is created.
 const studioTransferBrowserSelection = process.argv.includes("--suite=studio-document-transfer-browser")
@@ -1082,6 +1086,7 @@ try {
   const factoryDirectory = forwarded.includes("--suite=factory-directory");
   const databaseUpgrade = forwarded.includes("--suite=database-upgrade");
   const databaseIntegration = forwarded.includes("--suite=database-integration");
+  const specificationProductionIntegration = specificationProductionIntegrationRequested;
   const integration =
     studioPersonalIntegration ||
     shipmentCreateIntegration ||
@@ -1104,6 +1109,7 @@ try {
     qualityGroupsUpgradeIntegration ||
     qualityUpgradeIntegration ||
     databaseIntegration ||
+    specificationProductionIntegration ||
     databaseUpgrade ||
     backupRestore ||
     catalogScopeIntegration ||
@@ -1393,6 +1399,8 @@ try {
     ? ["--import", "./node_modules/tsx/dist/loader.mjs", "../../tools/testing/database-upgrade-acceptance.mts", ...extra]
     : productionCommandIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "src/orders/production-manufacturing.integration.test.ts", "src/orders/order-workspace.integration.test.ts", "--cache=false", ...extra]
+    : specificationProductionIntegration
+    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/catalog/specification-production-purpose.integration.test.ts"]
     : databaseIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", ...extra]
     : backupRestore

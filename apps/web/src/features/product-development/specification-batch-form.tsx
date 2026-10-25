@@ -1,6 +1,7 @@
 "use client";
-import { SpecificationFactsSchema, specificationFactProblems } from "@yummyai/contracts/catalog/development";
+import { SpecificationFactsSchema, specificationFactProblems, specificationFactsReady, specificationProductionFactsReady } from "@yummyai/contracts/catalog/development";
 import { SpecificationFactFields, emptySpecificationFactDraft, specificationFactsFromDraft, type SpecificationFactDraft } from "./specification-fact-fields";
+import { SpecificationProductionFields, productionDraftProblems, productionRuleReferenceProblems, useProductionRuleWorkspace } from "./specification-production-fields";
 
 import { Fragment, useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
@@ -58,6 +59,7 @@ export function SpecificationBatchForm({
   onSave: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
   const workflow = useWorkflowReturn();
+  const productionRules = useProductionRuleWorkspace();
   const draftKey = catalogSpecificationDraftKey(options, spuId);
   const existing = options.specifications.filter((spec) => spec.spuId === spuId);
   const [axes, setAxes, axesRecovery] = useTaskDraft<SpecificationAxis[]>(draftKey, "axes", () => {
@@ -86,9 +88,31 @@ export function SpecificationBatchForm({
   const selected = rows.filter((row) => row.selected && !row.existing);
   const knownCount = rows.filter((row) => row.existing).length;
   const spu = options.spus.find((item) => item.id === spuId);
+  const rowValues = (row: Draft): Defaults => ({ ...emptySpecificationFactDraft, ...defaults, ...row.overrides, dimensions: row.dimensions });
+  const productType = (process: string) => options.processes.find(item => item.versionId === process)?.productType ?? null;
+  function rowProductionProblems(row: Draft) {
+    const values = rowValues(row), problems = productionDraftProblems(values, values.processProfileVersionId);
+    if (values.processProfileVersionId && !options.processes.some(item => item.versionId === values.processProfileVersionId))
+      problems.push("原工艺当前不可用 请重新选择已审核工艺");
+    try {
+      const facts = specificationFactsFromDraft(values, false);
+      problems.push(...productionRuleReferenceProblems(facts.productionRuleReferences ?? [], productionRules, spuId, productType(values.processProfileVersionId)));
+    } catch { /* The draft problem above already explains invalid rule references. */ }
+    return problems;
+  }
+  const selectedProductionProblems = !selected.length ? ["请先选择需要新增的规格"] : stale ? ["选项已变化 请先更新组合预览"] :
+    selected.flatMap(row => rowProductionProblems(row).map(problem => `${row.code} ${problem}`));
+  const productionConfirmed = !!selected.length && !recoveryError && selected.every(row => rowValues(row).productionConfirmed === "1");
+
+  function clearProductionConfirmations() {
+    setDefaults(current => ({ ...current, productionConfirmed: "" }));
+    setRows(current => current.map(row => ({ ...row, overrides: { ...row.overrides, productionConfirmed: "" } })));
+  }
 
   function updateAxis(id: string, patch: Partial<SpecificationAxis>) {
     setAxes((current) => current.map((axis) => (axis.id === id ? { ...axis, ...patch } : axis)));
+    setConfirmed(false);
+    clearProductionConfirmations();
   }
   function addValues(axis: SpecificationAxis) {
     updateAxis(axis.id, {
@@ -99,13 +123,19 @@ export function SpecificationBatchForm({
   function addAxis(name: string) {
     const id = `axis-${nextAxis.current++}`;
     setAxes((current) => [...current, { id, name, values: [] }]);
+    setConfirmed(false);
+    clearProductionConfirmations();
   }
   function updateDefaults(patch: Partial<Defaults>) {
-    setDefaults((current) => ({ ...current, ...patch }));
+    setDefaults((current) => ({ ...current, ...patch, productionConfirmed: "" }));
+    setRows(current => current.map(row => ({ ...row, overrides: { ...row.overrides, productionConfirmed: "" } })));
     setConfirmed(false);
   }
   function updateRow(key: string, patch: Partial<Draft>) {
-    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+    const changesFacts = patch.dimensions !== undefined || patch.code !== undefined || patch.name !== undefined || patch.selected !== undefined || !!patch.overrides;
+    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch,
+      ...(changesFacts ? { overrides: { ...(patch.overrides ?? row.overrides), productionConfirmed: "" } } : {}),
+    } : row)));
     if (patch.dimensions !== undefined || patch.selected !== undefined || patch.overrides)
       setConfirmed(false);
   }
@@ -113,9 +143,22 @@ export function SpecificationBatchForm({
     setConfirmed(false);
     setRows((current) =>
       current.map((row) =>
-        row.key === key ? { ...row, overrides: { ...row.overrides, ...patch } } : row,
+        row.key === key ? { ...row, overrides: { ...row.overrides, ...patch, productionConfirmed: "" } } : row,
       ),
     );
+  }
+  function confirmProductionDefaults(patch: Partial<SpecificationFactDraft>) {
+    if (Object.keys(patch).some(key => key !== "productionConfirmed")) { updateDefaults(patch); return; }
+    setDefaults(current => ({ ...current, productionConfirmed: patch.productionConfirmed ?? "" }));
+    setRows(current => current.map(row => {
+      const overrides = { ...row.overrides };
+      delete overrides.productionConfirmed;
+      return { ...row, overrides };
+    }));
+  }
+  function confirmProductionRow(key: string, patch: Partial<SpecificationFactDraft>) {
+    if (Object.keys(patch).some(field => field !== "productionConfirmed")) { override(key, patch); return; }
+    setRows(current => current.map(row => row.key === key ? { ...row, overrides: { ...row.overrides, productionConfirmed: patch.productionConfirmed ?? "" } } : row));
   }
   function preview() {
     try {
@@ -137,7 +180,10 @@ export function SpecificationBatchForm({
         combinations.map((attributes) => {
           const key = specificationAttributesKey(attributes),
             saved = known.get(key);
-          if (previous.has(key) && !saved) return previous.get(key)!;
+          if (previous.has(key) && !saved) {
+            const previousRow = previous.get(key)!;
+            return { ...previousRow, overrides: { ...previousRow.overrides, productionConfirmed: "" } };
+          }
           return {
             key,
             attributes,
@@ -156,12 +202,14 @@ export function SpecificationBatchForm({
       setPreviewKey(optionSelectionKey(complete));
       setError("");
       setConfirmed(false);
+      setDefaults(current => ({ ...current, productionConfirmed: "" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法生成规格组合");
     }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (recoveryError) { setError("原规格草稿无法恢复 请先核对恢复提示 本次未保存"); return; }
     if (stale || !selected.length) {
       setError("请更新组合预览，并选择需要新增的规格");
       return;
@@ -175,8 +223,9 @@ export function SpecificationBatchForm({
       }
       codes.add(code);
     }
-    const items = selected.map((row) => {
-      const values = { ...defaults, ...row.overrides };
+    let items;
+    try { items = selected.map((row) => {
+      const values = rowValues(row);
       return {
         code: row.code.trim(),
         name: row.name.trim(),
@@ -186,7 +235,7 @@ export function SpecificationBatchForm({
         canvasPrintSpecVersionId: values.canvasPrintSpecVersionId || null,
         stockItemId: values.stockItemId || null,
       };
-    });
+    }); } catch (cause) { setError(cause instanceof Error ? cause.message : "原生产规则引用无法核对"); return; }
     for (const item of items) {
       if (!item.name || item.name.length > 160) { setError("请填写规格名称 名称最多160个字符"); return; }
       const parsed = SpecificationFactsSchema.safeParse(item.facts);
@@ -194,6 +243,7 @@ export function SpecificationBatchForm({
       item.facts = parsed.data;
       const problems = confirmed ? specificationFactProblems(item.facts) : [];
       if (confirmed && !item.processProfileVersionId) problems.push("工艺未配置 请取消事实确认保存草稿");
+      if (item.facts.productionConfirmed) problems.push(...rowProductionProblems(selected.find(row => row.code.trim() === item.code)!));
       if (problems.length) { setError("规格 " + item.code + "：" + problems.join("；")); return; }
     }
     setError("");
@@ -286,6 +336,7 @@ export function SpecificationBatchForm({
                 type="button"
                 aria-label={`删除${axis.name}维度`}
                 onClick={() => {
+                  setConfirmed(false); clearProductionConfirmations();
                   setAxes((current) => current.filter((item) => item.id !== axis.id));
                   setPending((current) => {
                     const next = { ...current };
@@ -337,6 +388,10 @@ export function SpecificationBatchForm({
                 <label>默认制作工艺<ProcessOptions options={options} label="默认制作工艺" value={defaults.processProfileVersionId} onChange={value => updateDefaults({ processProfileVersionId: value })} /></label>
                 <label>默认套图印刷规格<CanvasOptions options={options} label="默认套图印刷规格" value={defaults.canvasPrintSpecVersionId} onChange={value => updateDefaults({ canvasPrintSpecVersionId: value })} /></label>
                 <label>默认空白品库存物料<StockOptions options={options} label="默认空白品库存物料" value={defaults.stockItemId} onChange={value => updateDefaults({ stockItemId: value })} /></label>
+                <SpecificationProductionFields values={{ ...emptySpecificationFactDraft, ...defaults, productionConfirmed: productionConfirmed ? "1" : "" }}
+                  onChange={confirmProductionDefaults} source={productionRules} spuId={spuId}
+                  productType={productType(defaults.processProfileVersionId)} processProfileVersionId={defaults.processProfileVersionId}
+                  prefix="所选规格共用" namePrefix="common." problems={selectedProductionProblems} disabled={busy || !!recoveryError} />
               </div>
             </section>
             <section className="pd-span pd-option-section" aria-label="规格组合预览">
@@ -366,10 +421,12 @@ export function SpecificationBatchForm({
                           }
                           onChange={(event) => {
                             setConfirmed(false);
+                            setDefaults(current => ({ ...current, productionConfirmed: "" }));
                             setRows((current) =>
                               current.map((row) => ({
                                 ...row,
                                 selected: !row.existing && event.target.checked,
+                                overrides: { ...row.overrides, productionConfirmed: "" },
                               })),
                             );
                           }}
@@ -384,8 +441,16 @@ export function SpecificationBatchForm({
                   </thead>
                   <tbody>
                     {rows.map((row, index) => {
-                      const values = { ...defaults, ...row.overrides };
+                      const values = rowValues(row);
                       const label = Object.values(row.attributes).join(" · ");
+                      let dimensions = "资料格式待核对";
+                      let productionReady = false, commercialReady = false;
+                      try {
+                        const facts = specificationFactsFromDraft(values, confirmed);
+                        dimensions = facts.dimensions || "测量值待填写";
+                        productionReady = !!values.processProfileVersionId && specificationProductionFactsReady(facts) && !rowProductionProblems(row).length;
+                        commercialReady = specificationFactsReady(facts);
+                      } catch { /* Keep the row and recovery actions visible. */ }
                       return (
                         <Fragment key={row.key}>
                           <tr className={row.existing ? "pd-existing-spec" : undefined}>
@@ -417,7 +482,9 @@ export function SpecificationBatchForm({
                                 }
                               />
                             </td>
-                            <td data-label="实际尺寸"><span>{values.sizeBasis ? specificationFactsFromDraft(values, false).dimensions || "测量值待填写" : row.dimensions ? "原记录待核对：" + row.dimensions : "口径与测量值待填写"}</span></td>
+                            <td data-label="实际尺寸"><span>{values.sizeBasis ? dimensions : row.dimensions ? "原记录待核对：" + row.dimensions : "口径与测量值待填写"}</span>
+                              {!row.existing && <small>{productionReady ? "生产资料已核对" : "生产资料待核对"} · {commercialReady ? "完整商品资料已齐备" : "上架资料待补"}</small>}
+                            </td>
                             <td data-label="制作工艺">
                               {row.existing ? (
                                 <span>保留已有工艺</span>
@@ -458,6 +525,10 @@ export function SpecificationBatchForm({
                                   <SpecificationFactFields values={values} namePrefix={"row" + index + "."} onChange={patch => override(row.key, patch)} />
                                   <label>套图印刷规格<CanvasOptions options={options} value={values.canvasPrintSpecVersionId} onChange={value => override(row.key, { canvasPrintSpecVersionId: value })} /></label>
                                   <label>空白品库存物料<StockOptions options={options} value={values.stockItemId} onChange={value => override(row.key, { stockItemId: value })} /></label>
+                                  <SpecificationProductionFields values={values} onChange={patch => confirmProductionRow(row.key, patch)}
+                                    source={productionRules} spuId={spuId} productType={productType(values.processProfileVersionId)}
+                                    processProfileVersionId={values.processProfileVersionId} prefix={`本规格 ${label} `} namePrefix={`row${index}.`}
+                                    disabled={busy || !!recoveryError || !row.selected} />
                                   <button
                                     type="button"
                                     className="oc-button"
@@ -481,7 +552,7 @@ export function SpecificationBatchForm({
                   checked={confirmed}
                   onChange={(event) => setConfirmed(event.target.checked)}
                 />
-                已逐项核实所选规格的产品事实 核验依据与工艺
+                已逐项核实所选规格的完整商品资料 包括重量与包装测量
               </label>
             </section>
           </>
@@ -493,10 +564,10 @@ export function SpecificationBatchForm({
         )}
         {!!rows.length && (
           <div className="oc-actions pd-span">
-            <button className="oc-button primary" disabled={stale || !selected.length}>
+            <button className="oc-button primary" disabled={stale || !selected.length || !!recoveryError}>
               {busy ? "保存中…" : `保存 ${selected.length} 个规格`}
             </button>
-            <small>未确认的规格保存为草稿，补齐工艺与产品事实后才能用于订单制作。</small>
+            <small>生产资料确认且工艺已审核后可用于订单制作 完整商品资料待补的项目继续保留</small>
           </div>
         )}
         {!options.processes.length && (

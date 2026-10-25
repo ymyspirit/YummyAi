@@ -1,6 +1,6 @@
 import type { TenantContext } from "@yummyai/contracts";
 import { composedArtwork,legacyPrintBinding,PrintBindingsSchema,type PrintBinding } from "@yummyai/contracts/catalog/composition";
-import { specificationFactsReady,type ArtworkView,type SalesRecipeView,type SpecificationView } from "@yummyai/contracts/catalog/development";
+import { specificationFactsReady,specificationProductionFactsReady,type ArtworkView,type SalesRecipeView,type SpecificationView } from "@yummyai/contracts/catalog/development";
 import { OriginalOwnerError } from "@yummyai/contracts/common/original-owner-error";
 import { artworkMasters,artworkMasterVersions,assetFiles,creativeDesignVersionAssets,withTenant as databaseWithTenant,printProfileVersions,productSpecifications,productSpecificationVersions,salesRecipePrintBindings,salesRecipeVersions,salesSkuDefinitions,skus,spus,type DatabaseConnection,type TenantTransaction } from "@yummyai/database";
 import { and,eq,inArray } from "drizzle-orm";
@@ -113,6 +113,9 @@ export async function readSpecification(
     attributes: version.attributes,
     facts: version.facts,
     factVerification: specificationFactsReady(version.facts)
+      ? { confirmedByUserId: version.createdBy, confirmedAt: version.createdAt.toISOString(), reference: version.facts.verificationReference! }
+      : null,
+    productionVerification: specificationProductionFactsReady(version.facts)
       ? { confirmedByUserId: version.createdBy, confirmedAt: version.createdAt.toISOString(), reference: version.facts.verificationReference! }
       : null,
     processProfileVersionId: process?.id ?? null,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SpecificationFactsSchema, specificationFactProblems, specificationFactsReady, normalizeSpecificationFactDisplay } from "./specification-facts.js";
+import { SpecificationFactsSchema, specificationFactProblems, specificationFactsReady, specificationProductionFactProblems, specificationProductionFactsReady, normalizeSpecificationFactDisplay } from "./specification-facts.js";
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
 
 describe("explicit product specification facts", () => {
@@ -36,5 +36,49 @@ describe("explicit product specification facts", () => {
       expect(SpecificationFactsSchema.safeParse(syntheticSpecificationFacts({ weightGrams: value })).success).toBe(false);
     expect(SpecificationFactsSchema.safeParse({ ...syntheticSpecificationFacts(), confirmedByUserId: "invented" }).success).toBe(false);
     expect(SpecificationFactsSchema.safeParse(syntheticSpecificationFacts({ physicalDimensions: { basis: "artwork_longest", unit: "mm", length: -1, width: null, height: null } })).success).toBe(false);
+  });
+
+  it("allows an explicitly checked production specification without claiming a net weight or full product confirmation", () => {
+    const facts = syntheticSpecificationFacts({ factsConfirmed: false, productionConfirmed: true, weightGrams: null });
+    expect(SpecificationFactsSchema.parse(facts).weightGrams).toBeNull();
+    expect(specificationProductionFactsReady(facts)).toBe(true);
+    expect(specificationFactsReady(facts)).toBe(false);
+    expect(specificationFactProblems(facts)).toContain("商品重量与含包装重量尚未确认");
+    expect(specificationProductionFactsReady({ ...facts, productionConfirmed: false })).toBe(false);
+  });
+
+  it("does not require package measurements for artwork production or turn missing shipping facts into zero", () => {
+    const facts = syntheticSpecificationFacts({ factsConfirmed: false, productionConfirmed: true, weightGrams: null,
+      packagedWeightGrams: null, packageMeasurements: null });
+    expect(specificationProductionFactsReady(facts)).toBe(true);
+    expect(specificationFactsReady(facts)).toBe(false);
+    expect(normalizeSpecificationFactDisplay(facts).packagedWeightGrams).toBeNull();
+  });
+
+  it("retains production requirements and rejects contradictory weights even under a production-only confirmation", () => {
+    const facts = syntheticSpecificationFacts({ factsConfirmed: false, productionConfirmed: true, weightGrams: null });
+    for (const patch of [{ material: "" }, { structure: "" }, { physicalDimensions: null },
+      { packageContents: "" }, { packageQuantity: null }, { verificationReference: "" },
+      { weightGrams: 200, packagedWeightGrams: 100 }])
+      expect(specificationProductionFactsReady({ ...facts, ...patch })).toBe(false);
+    expect(specificationProductionFactsReady({ ...facts, physicalDimensions: {
+      basis: "artwork_longest", unit: "in", length: 16, width: 10, height: null,
+    } })).toBe(false);
+    expect(specificationProductionFactsReady({ ...facts, formatVersion: undefined })).toBe(false);
+    expect(specificationProductionFactProblems({ ...facts, productionConfirmed: false })).toContain("生产资料尚未核对");
+  });
+
+  it("preserves fully confirmed V2 compatibility and pins each rule to one immutable version", () => {
+    expect(specificationProductionFactsReady(syntheticSpecificationFacts())).toBe(true);
+    const reference = { ruleId: "019f7600-0000-7000-8000-000000000901", versionId: "019f7600-0000-7000-8000-000000000902", version: 1 };
+    const facts = syntheticSpecificationFacts({ factsConfirmed: false, productionConfirmed: true, weightGrams: null,
+      productionRuleReferences: [reference] });
+    expect(SpecificationFactsSchema.parse(facts).productionRuleReferences).toEqual([reference]);
+    const upperReference = { ...reference, ruleId: reference.ruleId.toUpperCase(), versionId: reference.versionId.toUpperCase() };
+    expect(SpecificationFactsSchema.parse({ ...facts, productionRuleReferences: [upperReference] }).productionRuleReferences).toEqual([reference]);
+    expect(SpecificationFactsSchema.safeParse({ ...facts, productionRuleReferences: [reference, upperReference] }).success).toBe(false);
+    expect(SpecificationFactsSchema.safeParse({ ...facts, productionRuleReferences: [reference, { ...reference, version: 2 }] }).success).toBe(false);
+    expect(SpecificationFactsSchema.safeParse({ ...facts, productionRuleReferences: [{ ...reference, confirmedByUserId: "invented" }] }).success).toBe(false);
+    expect(SpecificationFactsSchema.safeParse({ ...facts, productionRuleReferences: Array.from({ length: 13 }, () => reference) }).success).toBe(false);
   });
 });

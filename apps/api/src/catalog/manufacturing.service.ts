@@ -8,7 +8,7 @@ import {
   type ManufacturingRecipeContent, type ManufacturingRecipeVersionView, type ManufacturingRecipeWorkspace, type ManufacturingTransport,
   type ManufacturingReferences, type ManufacturingMaterialOptions,
 } from "@yummyai/contracts/catalog/manufacturing";
-import { specificationFactsReady } from "@yummyai/contracts/catalog/development";
+import { specificationProductionFactsReady } from "@yummyai/contracts/catalog/development";
 import { CatalogError, catalogContextAuthority, currentCatalogContext, assertCatalogSpuAccess, assertCatalogSourceActive, assertCatalogUnambiguousPlan } from "@yummyai/catalog-core";
 import {
   manufacturingRecipes as recipes, manufacturingRecipeVersions as versions, manufacturingBomLines as materials,
@@ -161,7 +161,7 @@ export class ManufacturingService {
       if (input.decision === "approved") {
         authorize(current, Permission.InventoryRead);
         const problems = [...manufacturingApprovalProblems(version.content), ...await this.stockProblems(tx, version.content, false)];
-        if (!specificationFactsReady(spec.facts)) problems.push("当前产品规格事实尚未确认完整");
+        if (!specificationProductionFactsReady(spec.facts)) problems.push("当前产品规格生产资料尚未确认完整");
         if (problems.length) throw new ConflictException(problems.join("；"));
       }
       await tx.insert(reviews).values({ id: createEntityId(), tenantId: current.tenantId, createdBy: current.userId, recipeId,
@@ -203,7 +203,7 @@ export class ManufacturingService {
       catch (error) { if (error instanceof CatalogError) problems.push(error.message); else throw error; }
       try {
         const spec = await this.currentSpecification(tx, root, version.content.specificationVersionId);
-        if (!specificationFactsReady(spec.facts)) problems.push("当前产品规格事实尚未确认完整");
+        if (!specificationProductionFactsReady(spec.facts)) problems.push("当前产品规格生产资料尚未确认完整");
       } catch (error) {
         if (error instanceof ConflictException || error instanceof NotFoundException) problems.push(error.message); else throw error;
       }
@@ -226,7 +226,7 @@ export class ManufacturingService {
       if (root.archivedAt || !version || version.versionId !== input.versionId) throw new ConflictException("请明确使用当前已批准的制造版本");
       const spec = await this.currentSpecification(tx, root, version.content.specificationVersionId);
       const problems = await this.stockProblems(tx, version.content, false);
-      if (!specificationFactsReady(spec.facts)) problems.push("产品规格事实不可用于新制造");
+      if (!specificationProductionFactsReady(spec.facts)) problems.push("产品规格生产资料不可用于新制造");
       if (problems.length) throw new ConflictException(problems.join("；"));
       return { recipeId, versionId: version.versionId, specificationVersionId: version.content.specificationVersionId,
         ...calculateManufacturingDemand(version.content, input.outputQuantity) };
@@ -248,7 +248,7 @@ export class ManufacturingService {
         .from(productSpecifications).innerJoin(productSpecificationVersions, and(eq(productSpecificationVersions.specificationId, productSpecifications.id), eq(productSpecificationVersions.versionNumber, productSpecifications.versionNumber)))
         .where(eq(productSpecifications.spuId, spuId)).orderBy(asc(productSpecifications.code), asc(productSpecifications.id));
       return { spu: { ...spu!, ...plan!, active: !sourceProblems.length }, sourceProblems, canReadMaterials: current.permissions.includes(Permission.InventoryRead),
-        specifications: specs.map(({ facts, ...spec }) => ({ ...spec, factsReady: specificationFactsReady(facts) })) };
+        specifications: specs.map(({ facts, ...spec }) => ({ ...spec, factsReady: specificationProductionFactsReady(facts) })) };
     }, wrapped);
   }
   materialOptions<Wrapped extends boolean = false>(context: TenantContext, query: unknown, wrapped?: Wrapped) {
