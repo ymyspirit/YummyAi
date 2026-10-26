@@ -5,6 +5,7 @@ import { Permission } from "@yummyai/authz";
 import { AgentNativeV4ItemReceiptSchema } from "@yummyai/contracts/ai/agent-native-v4";
 import { AgentCommandViewSchema } from "@yummyai/contracts/ai/agent-command";
 import { AssistViewSchema } from "@yummyai/contracts/ai/assist";
+import { ErpSessionViewSchema } from "@yummyai/contracts/auth/session";
 import type { KnowledgeWorkspace } from "@yummyai/contracts/knowledge";
 import { centerApi } from "./order-centers-fixture";
 import { loginErp } from "./erp-identity-fixture";
@@ -227,20 +228,35 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
     }, { times: 1 });
     await page.evaluate(() => window.dispatchEvent(new Event("focus"))); await capturedResponse;
     await f.removeWorkflowRead();
-    const denied = page.waitForResponse(value => value.request().method() === "GET" && new URL(value.url()).pathname === "/api/ai-assists/runs/" + run.id && value.status() === 403);
-    await page.clock.fastForward(31_000); await denied;
+    // The global identity boundary also refreshes at 30 seconds. A changed authority
+    // reloads this page before an individual answer GET is necessarily attempted.
+    const denied = page.waitForResponse(value => value.request().method() === "GET" &&
+      new URL(value.url()).pathname === "/api/knowledge/workspace" && value.status() === 403);
+    await page.clock.fastForward(31_000); expect((await denied).status()).toBe(403);
     expect(await originalCancelled).toBe("net::ERR_ABORTED");
-    await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
-    await expect(chat.getByRole("textbox", { name: "问题或追问", exact: true })).toHaveCount(0);
-    await expect(chat.getByRole("status")).toHaveText("当前知识读取权限已变化 原回答 范围和填写已隐藏 同一账号的纯 ID 标识保留供后续核对");
+    await expect(page.getByText("当前账号没有此操作权限", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "知识对话", exact: true })).toHaveCount(0);
+    await expect(page.getByText(answer, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(f.seed.query, { exact: false })).toHaveCount(0);
+    await expect(page.locator('a[href="' + href + '"]')).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "问题或追问", exact: true })).toHaveCount(0);
+    const sessionResponse = await page.request.get("/api/erp-auth/session"); expect(sessionResponse.status()).toBe(200);
+    const revokedSession = ErpSessionViewSchema.parse(await sessionResponse.json());
+    expect(revokedSession.userId).toBe(f.context.userId); expect(revokedSession.tenantId).toBe(f.context.tenantId);
+    expect(revokedSession.permissions).not.toContain(Permission.WorkflowRead);
     releaseLate(); await lateRouteSettled; expect(lateRouteFailure).toBeUndefined();
     expect(lateFulfillAttempted).toBe(true); expect(originalBrowserStatus).toBeNull();
     await page.clock.runFor(100);
-    await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
-    await expect(chat.locator('a[href="' + href + '"]')).toHaveCount(0);
+    await expect(page.getByText(answer, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(f.seed.query, { exact: false })).toHaveCount(0);
+    await expect(page.locator('a[href="' + href + '"]')).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "问题或追问", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "知识对话", exact: true })).toHaveCount(0);
     Object.assign(proof, { lateOriginalRead: { upstreamStatus: 200, originalRequestFailure: requestFailure,
       browserResponseStatus: originalBrowserStatus, lateFulfillAttempted, handlerSettled: true,
-      interpretation: "original_GET_cancelled_before_late_delivery_no_successful_page_200_claimed" } });
+      interpretation: "original_GET_cancelled_during_global_authority_reload_before_late_delivery_no_page_200_claimed" },
+      revocationBoundary: { kind: "global_ERP_authority_reload", workspacePath: "/api/knowledge/workspace", workspaceStatus: 403,
+        independentSessionStatus: 200, sameUserAndTenant: true, currentWorkflowRead: false } });
     await f.restore();
     await page.goto(href);
     await expect(detail(page).getByRole("combobox", { name: "查看版本", exact: true })).toHaveValue("1");
