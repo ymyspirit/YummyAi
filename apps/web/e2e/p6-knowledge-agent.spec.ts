@@ -14,6 +14,8 @@ test.describe.configure({ mode: "serial" });
 type Fixture = Awaited<ReturnType<typeof p6KnowledgeAgentFixture>>;
 const answer = "先核对资料并保留复核记录。";
 const detail = (page: Page) => page.getByRole("region", { name: "知识详情", exact: true });
+// Authenticated POST transport used by read-only discovery; never allow a prefix or any run/command mutation here.
+const discoveryPostPaths = ["/api/agent-resources/definition", "/api/agent-tools/definition", "/api/agent-resources/candidates"];
 
 async function publish(page: Page, version: number) {
   await page.getByRole("button", { name: "提交审核", exact: true }).click();
@@ -96,8 +98,12 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     await native.getByRole("button", { name: "加入本次固定读取范围", exact: true }).click();
     await expect(composer.locator(".anv2-bindings > ol > li")).toHaveCount(1);
     await expect(composer.locator(".anv2-bindings code")).toHaveText(f.seed.spuId);
-    await expect(paidStart).toBeDisabled(); expect(posts).toEqual([]);
-    Object.assign(proof, { configurationUiPosts: [...posts], paidStartDisabledBeforeAndAfterBinding: true });
+    await expect(paidStart).toBeDisabled();
+    const configurationDiscoveryPosts = [...posts];
+    expect(configurationDiscoveryPosts.filter(path => !discoveryPostPaths.includes(path))).toEqual([]);
+    expect(configurationDiscoveryPosts.filter(path => /\/(?:runs|prepare|confirm|cancel|acknowledge|stop)(?:\/|$)/.test(path))).toEqual([]);
+    Object.assign(proof, { configurationDiscoveryPosts, auditedDiscoveryPostAllowlist: discoveryPostPaths,
+      configurationTaskOrCommandPosts: [], paidStartDisabledBeforeAndAfterBinding: true });
     const plan = await f.plan(card.id, 1), before = await f.nativeState();
     expect(plan.knowledgeEntryId).toBe(card.id); expect(plan.knowledgeVersion).toBe(1); expect(before.providerFailures).toBe(0);
     await page.goto("/ai-tasks?agentNativeV4=" + plan.runId);
@@ -106,8 +112,8 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     await expect(item).toContainText("P6 internal requisition only");
     const href = "/knowledge?entry=" + card.id + "&version=1";
     await expect(page.getByRole("link", { name: "核对原知识 V1", exact: true }).first()).toHaveAttribute("href", href);
-    const preparedResponse = page.waitForResponse(value => value.request().method() === "POST" && new URL(value.url()).pathname ===
-      "/api/agent-native-v4/runs/" + plan.runId + "/items/" + plan.itemId + "/prepare");
+    const preparePath = "/api/agent-native-v4/runs/" + plan.runId + "/items/" + plan.itemId + "/prepare";
+    const preparedResponse = page.waitForResponse(value => value.request().method() === "POST" && new URL(value.url()).pathname === preparePath);
     await item.getByRole("button", { name: "保存这项原准备并核对", exact: true }).click();
     const preparedHttp = await preparedResponse; expect(preparedHttp.status()).toBe(201);
     const prepared = AgentNativeV4ItemReceiptSchema.parse(await preparedHttp.json());
@@ -149,9 +155,13 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     expect(after.requisitions - before.requisitions).toBe(1); expect(after.commandState).toBe("succeeded");
     expect(after.modelCalls).toBe(plan.modelCalls); expect(after.parentChecksum).toBe(before.parentChecksum); expect(after.providerFailures).toBe(0);
     expect(posts.filter(path => path.endsWith("/prepare"))).toHaveLength(1); expect(posts.filter(path => path.endsWith("/confirm"))).toEqual([confirmPath]);
+    const originalCommandPosts = posts.filter(path => !discoveryPostPaths.includes(path));
+    expect(originalCommandPosts).toEqual([preparePath, confirmPath]);
     await frames(page, info, "p6-original-receipt");
     Object.assign(proof, { seed: f.seed, plan, commandId, originalStockItemIds: originalInput.command.input.lines.map(line => line.stockItemId),
-      confirmation: confirmed?.state, before, after, originalPosts: posts, lostAck: true, recoveredByGetOnly: true });
+      confirmation: confirmed?.state, before, after, allRecordedAgentPosts: [...posts],
+      discoveryPosts: posts.filter(path => discoveryPostPaths.includes(path)), originalCommandPosts,
+      browserTaskStartPosts: [], lostAck: true, recoveredByGetOnly: true });
   } finally {
     releaseAck();
     try { await archive(f, entryId); } finally { await f.close(); }
