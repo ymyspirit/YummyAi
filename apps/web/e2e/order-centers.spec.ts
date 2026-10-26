@@ -57,21 +57,32 @@ test("six centers show real filtered order, product-row and unit totals without 
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/orders?${scope}`);
     const statistics = page.getByLabel("当前订单列表统计", { exact: true });
+    const productRows = page.locator("article.oc-product-row");
+    async function expectUnknownPlatformDeadlines(count: number) {
+      const deadlines = productRows.locator(".oc-task-deadline");
+      await expect(productRows).toHaveCount(count);
+      await expect(deadlines).toHaveCount(count);
+      await expect(deadlines.getByText("平台最晚发货时间待补齐", { exact: true })).toHaveCount(count);
+      await expect(deadlines.getByText("未取得平台截止", { exact: true })).toHaveCount(count);
+      await expect(deadlines.locator("time")).toHaveCount(0);
+    }
     await expect(statistics).toContainText("筛选结果 2 单 · 3 商品行 · 6 件");
     await expect(page.locator(".oc-order-group")).toHaveCount(2);
-    await expect(page.locator("article.oc-product-row").getByText("平台交期待核对", { exact: true })).toHaveCount(3);
+    await expectUnknownPlatformDeadlines(3);
     await expect(page.locator("article.oc-product-row").getByText("定制内容可读取", { exact: true })).toHaveCount(3);
     await page.screenshot({ path: testInfo.outputPath("operations-counts-desktop.png"), fullPage: true });
     const priority = page.getByRole("group", { name: "优先处理筛选", exact: true }).getByRole("button", { name: "平台交期待核对", exact: true });
     await priority.click(); await expect(priority).toHaveAttribute("aria-pressed", "true");
     await expect.poll(() => { const url = new URL(page.url()); return { accountId: url.searchParams.get("accountId"), q: url.searchParams.get("q"), attention: url.searchParams.get("attention") }; }).toEqual({ accountId: account.id, q: prefix, attention: "platform_deadline_missing" });
     await expect(statistics).toContainText("筛选结果 2 单 · 3 商品行 · 6 件");
+    await expectUnknownPlatformDeadlines(3);
     await priority.click(); await expect(priority).toHaveAttribute("aria-pressed", "false");
     await page.getByRole("button", { name: "更多筛选", exact: true }).click();
     await page.getByRole("textbox", { name: "商品 SKU", exact: true }).fill(`${prefix}-A0`);
     await page.getByRole("button", { name: "查询", exact: true }).click();
     await expect(statistics).toContainText("筛选结果 1 单 · 1 商品行 · 3 件");
     await expect(page.locator("article.oc-product-row")).toHaveCount(1);
+    await expectUnknownPlatformDeadlines(1);
     await expect(page.getByText("整单 2 商品行 · 4 件", { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
