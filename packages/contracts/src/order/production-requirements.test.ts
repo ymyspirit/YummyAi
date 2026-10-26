@@ -54,6 +54,23 @@ describe("explicit order production requirements", () => {
       expect(orderProductionRequirements(report([size(value)])).sizeInches, value).toBeNull();
   });
 
+  it.each([
+    ["10 inch-Mini Keepsake", 10], ["12 inch-Small Travel", 12],
+    ["16 inch–Everyday Hug", 16], ["18 inch — Large Cuddle", 18],
+    ["24 inch-XX-Large", 24],
+  ])("recognizes an explicitly selected size with a nonnumeric descriptive name: %s", (value, inches) => {
+    const source = report([size(String(value))]);
+    expect(orderProductionRequirements(source)).toMatchObject({ sizeInches: inches, warnings: [] });
+    expect(source.surfaces[0]!.fields[0]!.value).toBe(value);
+  });
+
+  it.each(["10 inch-Mini Keepsake 12", "10 inch-Mini Keepsake / Large", "10 inch-Small or Large",
+    "10 inch-Small to Large", "10 inch-Small and Large", "10 inch-twelve inches"])("rejects competing choices in a descriptive suffix: %s", value => {
+    const actual = orderProductionRequirements(report([size(value)]));
+    expect(actual.sizeInches).toBeNull();
+    expect(actual.warnings).toContain("尺寸选项无法唯一识别，请对照原文填写。");
+  });
+
   it("keeps size missing when only a title, surface label or image contains size text", () => {
     const source = report([{ label: "Product title", value: "Custom shaped pillow 16 inches" },
       { label: "Upload image", kind: "image", value: "16 inches" }]);

@@ -19,6 +19,10 @@ definition can be carried in when its latest version is eligible; an ineligible
 latest version cannot silently fall back to old artwork. Matching prepares only
 an editable draft and reports its immutable source version and blockers.
 
+A selected option such as `10 inch-Mini Keepsake` retains its original text while
+matching the explicit 10-inch size. A descriptive suffix may contain words and
+hyphens; additional numbers, units or competing-choice words remain unresolved.
+
 Saved order pins and local manual edits remain in control. Controlled channel
 packages retain their original mapping boundary. A pending-information draft may
 save incomplete authorized catalog choices; `ready_to_push`, template approval,
