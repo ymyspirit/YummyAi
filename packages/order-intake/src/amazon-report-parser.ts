@@ -16,6 +16,8 @@ export type ParsedAmazonReportLine = {
   taxTotalMinor: number | null;
   customizedUrl: string | null;
   customizedPage: string | null;
+  /** Only an unshipped report's complete, timezone-qualified promise-date. */
+  platformShipByAt?: string | null;
 };
 
 export type ParsedAmazonReportOrder = {
@@ -101,6 +103,15 @@ function bounded(value: string, max: number, row: number, nullable = false): str
   return value;
 }
 
+function unshippedPromise(value: string): string | null {
+  const match = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)$/.exec(value);
+  if (!match) return null;
+  const date = new Date(`${match[1]}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== match[1]) return null;
+  const time = new Date(value);
+  return Number.isFinite(time.getTime()) ? time.toISOString() : null;
+}
+
 export function parseAmazonOrderReport(text: string): { orders: ParsedAmazonReportOrder[]; rowCount: number; warnings: string[]; reportType: "priced" | "unshipped" } {
   const records = readTsv(text);
   if (records.length < 2) fail("report_empty");
@@ -142,6 +153,7 @@ export function parseAmazonOrderReport(text: string): { orders: ParsedAmazonRepo
       taxTotalMinor: currency === null ? null : money(get("item-tax"), currency, row, true) + money(get("shipping-tax"), currency, row, true),
       customizedUrl: bounded(get("customized-url"), 10_000, row, true) || null,
       customizedPage: bounded(get("customized-page"), 10_000, row, true) || null,
+      ...(!priced ? { platformShipByAt: unshippedPromise(get("promise-date")) } : {}),
     };
     if (line.taxTotalMinor !== null && !Number.isSafeInteger(line.taxTotalMinor)) fail("report_tax_overflow", row);
     const email = get("buyer-email") || null;

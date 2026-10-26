@@ -45,7 +45,7 @@ export class AmazonOrdersAdapter implements MarketplaceOrderIngestionAdapter {
       url.searchParams.set("lastUpdatedAfter", input.updatedAfter);
       url.searchParams.set("lastUpdatedBefore", input.updatedBefore);
       url.searchParams.set("maxResultsPerPage", String(input.pageSize));
-      url.searchParams.set("includedData", "BUYER,RECIPIENT,PROCEEDS,CANCELLATION");
+      url.searchParams.set("includedData", "BUYER,RECIPIENT,PROCEEDS,CANCELLATION,FULFILLMENT");
       if (input.checkpoint.cursor) url.searchParams.set("paginationToken", input.checkpoint.cursor);
       const response = await requestJson(this.request, url.toString(), {
         headers: {

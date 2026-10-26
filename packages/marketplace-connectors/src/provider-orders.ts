@@ -6,21 +6,28 @@ import type { ProviderOrderRecord } from "./order-ingestion.js";
 const AmazonMoneySchema = z.object({ amount: z.string().regex(/^-?\d+(?:\.\d+)?$/), currencyCode: z.string().regex(/^[A-Z]{3}$/) }).passthrough();
 const AmazonOrderItemSchema = z.object({
   orderItemId: z.string().min(1),
-  product: z.object({ asin: z.string().optional(), sellerSku: z.string().optional(), title: z.string().min(1) }).passthrough(),
+  product: z.object({
+    asin: z.string().optional(), sellerSku: z.string().optional(), title: z.string().min(1),
+    price: z.object({ unitPrice: AmazonMoneySchema.optional() }).passthrough().optional(),
+  }).passthrough(),
   quantityOrdered: z.number().int().positive(),
   unitPrice: AmazonMoneySchema.optional(),
-  proceeds: z.object({ total: AmazonMoneySchema }).passthrough().optional(),
+  proceeds: z.object({ total: AmazonMoneySchema.optional() }).passthrough().optional(),
   customization: z.array(z.object({ name: z.string().min(1), value: z.string() }).passthrough()).optional(),
 }).passthrough();
 const AmazonOrderSchema = z.object({
   orderId: z.string().min(1),
   createdTime: z.iso.datetime(),
   lastUpdatedTime: z.iso.datetime(),
-  fulfillmentStatus: z.string().min(1),
+  fulfillmentStatus: z.string().min(1).optional(),
+  fulfillment: z.object({
+    fulfillmentStatus: z.string().min(1).optional(),
+    shipByWindow: z.object({ latestDateTime: z.iso.datetime({ offset: true }).nullish() }).passthrough().nullish(),
+  }).passthrough().optional(),
   salesChannel: z.object({ marketplaceId: z.string().min(1) }).passthrough(),
   orderItems: z.array(AmazonOrderItemSchema).min(1),
   orderTotal: AmazonMoneySchema.optional(),
-  proceeds: z.object({ total: AmazonMoneySchema }).passthrough().optional(),
+  proceeds: z.object({ total: AmazonMoneySchema.optional(), grandTotal: AmazonMoneySchema.optional() }).passthrough().optional(),
   buyer: z.object({ name: z.string().nullable().optional(), email: z.email().nullable().optional(), phone: z.string().nullable().optional() }).passthrough().optional(),
   recipient: z.object({
     name: z.string().nullable().optional(), addressLines: z.array(z.string()).max(5).optional(), city: z.string().nullable().optional(),
@@ -66,10 +73,14 @@ export interface AmazonOrderChangeReference {
 
 export function normalizeAmazonOrder(accountId: string, externalEventId: string, raw: unknown): ProviderOrderRecord {
   const order = AmazonOrderSchema.parse(raw);
-  const total = order.orderTotal ?? order.proceeds?.total;
+  const providerStatus = order.fulfillment?.fulfillmentStatus ?? order.fulfillmentStatus;
+  if (!providerStatus) throw new Error("Amazon fulfillment status was not included");
+  if (order.fulfillment?.fulfillmentStatus && order.fulfillmentStatus && order.fulfillment.fulfillmentStatus !== order.fulfillmentStatus)
+    throw new Error("Amazon fulfillment statuses conflict");
+  const total = order.proceeds?.grandTotal ?? order.orderTotal ?? order.proceeds?.total;
   if (!total) throw new Error("Amazon order total was not included");
   const lines = order.orderItems.map((line) => {
-    const price = line.unitPrice ?? line.proceeds?.total;
+    const price = line.product.price?.unitPrice ?? line.unitPrice ?? line.proceeds?.total;
     if (!price) throw new Error(`Amazon order item ${line.orderItemId} has no price`);
     return {
       externalLineId: line.orderItemId,
@@ -82,19 +93,23 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
     };
   });
   const protectedDetails = amazonProtectedDetails(order);
+  const platformShipByAt = order.fulfillment?.shipByWindow?.latestDateTime;
   const normalized = NormalizeOrderInputSchema.parse({
     accountId,
     platform: "amazon",
     externalEventId,
     externalOrderId: order.orderId,
-    providerStatus: order.fulfillmentStatus,
+    providerStatus,
     placedAt: order.createdTime,
     orderTotal: amazonMoney(total),
     lines,
     redactedSource: {
       apiVersion: "2026-01-01", orderId: order.orderId, marketplaceId: order.salesChannel.marketplaceId,
-      fulfillmentStatus: order.fulfillmentStatus, lastUpdatedTime: order.lastUpdatedTime,
+      fulfillmentStatus: providerStatus, lastUpdatedTime: order.lastUpdatedTime,
       orderItemIds: order.orderItems.map((line) => line.orderItemId),
+      platformShipByAt: platformShipByAt ? new Date(platformShipByAt).toISOString() : null,
+      platformShipBySource: "amazon_orders_2026_fulfillment_ship_by_window",
+      platformShipByField: "fulfillment.shipByWindow.latestDateTime",
     },
     protectedDetails,
   });

@@ -733,20 +733,8 @@ export function OrderWorkDetailPanel({
             </span>
             {dirty && <span className="oc-badge warning">有未保存修改</span>}
           </summary>
-          {detail.catalog && (
-            <div className="oc-hint">
-              {draft.artworkVersionId &&
-              (draft.specificationVersionId || draft.salesRecipeVersionId)
-                ? "本单印花与规格已选定；确认派发后按固定版本准备素材。"
-                : detail.catalog.status === "ambiguous"
-                  ? "店铺映射存在多个候选，请为本单匹配印花和具体规格。"
-                  : "为此订单商品匹配印花 SKU、产品 SPU 和具体规格。"}{" "}
-              {draft.salesPackageId && "已关联下单时生效的渠道资料包。"}
-            </div>
-          )}
           <fieldset disabled={!editable || navigationBusy} className="oc-fields">
-            <OrderArtworkBasis detail={detail} draft={draft} onChange={setDraft} />
-
+            <OrderArtworkBasis detail={detail} draft={draft} onChange={setDraft}>
             <label>
               通用工艺底稿
               <select
@@ -765,19 +753,29 @@ export function OrderWorkDetailPanel({
                 ))}
               </select>
             </label>
-            <label>
-              内部计划发货时间
-              <input
-                type="datetime-local"
-                value={draft.dueAt ? localDateTime(draft.dueAt) : ""}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    dueAt: event.target.value ? new Date(event.target.value).toISOString() : null,
-                  })
-                }
-              />
-            </label>
+            </OrderArtworkBasis>
+            <details className="oc-optional-internal-plan">
+              <summary>人工内部计划 可不填
+                <small>{draft.dueAt !== detail.line.dueAt ? "有未保存修改" : draft.dueAt ? "已保存人工时间" : "未设置"}</small>
+              </summary>
+              <div>
+                <p>外部工厂履约以平台最晚发货时间跟进 这里仅保留可选人工备注时间 不替代平台截止</p>
+                <label>
+                  内部计划发货时间
+                  <input
+                    type="datetime-local"
+                    value={draft.dueAt ? localDateTime(draft.dueAt) : ""}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        dueAt: event.target.value ? new Date(event.target.value).toISOString() : null,
+                      })
+                    }
+                  />
+                  <small>输入时区 {Intl.DateTimeFormat().resolvedOptions().timeZone} 随本单制作需求保存 留空即可</small>
+                </label>
+              </div>
+            </details>
             <label className="oc-check">
               <input
                 type="checkbox"

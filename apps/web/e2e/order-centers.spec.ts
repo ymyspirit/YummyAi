@@ -10,6 +10,7 @@ import { OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperatio
 import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
 import { OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
 import type { ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
+import type { ArtworkView, DevelopmentOptions, SpecificationView } from "@yummyai/contracts/catalog/development";
 import { apiFetch } from "../src/server-api";
 import { centerApi, createCenterProfile } from "./order-centers-fixture";
 import { startProductionEditorWorker, stopProductionEditorWorker, syntheticProductionPng } from "./production-editor-fixture";
@@ -497,4 +498,193 @@ test("finance and advertising keep mixed attribution and incomplete costs explic
     }
   }
   expect(errors).toEqual([]);
+});
+
+test("six centers automatically match shaped-pillow intake while keeping original sources and manual changes", async ({ page }, testInfo) => {
+  if (process.env.E2E_ISOLATED_DAILY !== "1") throw new Error("Disposable shaped-pillow acceptance resources required");
+  requireDisposableIntegrationEnvironment();
+  test.setTimeout(120_000);
+  const { default: JSZip } = await import("jszip");
+  const { createHash } = await import("node:crypto");
+  const { AmazonReportDetailViewSchema } = await import("@yummyai/contracts/order/report");
+  const { OrderWorkDetailViewSchema } = await import("@yummyai/contracts/order/workspace");
+  const suffix = createEntityId(), externalId = `SYNTHETIC-AUTO-PILLOW-${suffix}`, externalLineId = `ITEM-${suffix}`;
+  const fixtureIds: Record<string, string | null> = { accountId: null, batchId: null, reportLineId: null, orderLineId: null,
+    spuId: null, specificationId: null, specificationVersionId: null, artworkId: null, artworkVersionId: null, sourceVersionId: null };
+  const reusedCatalog = { spu: false, specification: false, artwork: false };
+  const evidence = { assertionsCompleted: false, originalSourcePreserved: false, originalBytesCheckedBeforeAndAfter: false, reportReviewedAfter: null as boolean | null };
+  const apiTraffic: Array<{ method: string; path: string }> = [], forbidden: string[] = [], errors: string[] = [];
+  let summaryReads = 0, draftWrites = 0, draftSourceVersion: string | null = null;
+  const api = async <T,>(path: string, input?: unknown) => {
+    apiTraffic.push({ method: input === undefined ? "GET" : "POST", path });
+    return centerApi<T>(path, input);
+  };
+  const observe = (request: Request) => {
+    const path = new URL(request.url()).pathname;
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) || !path.startsWith("/api/")) return;
+    if (request.method() === "POST" && path === "/api/order-centers/summaries"
+      && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { summaryReads++; return; }
+    if (request.method() === "POST" && fixtureIds.orderLineId && path === `/api/order-centers/lines/${fixtureIds.orderLineId}/draft`) {
+      const body = request.postDataJSON();
+      if (body.status === "pending_review" && body.expectedSourceVersionId === draftSourceVersion
+        && body.draft.specificationVersionId === null && body.draft.printProfileVersionId === null
+        && body.draft.artworkVersionId === fixtureIds.artworkVersionId && body.draft.dueAt === null) { draftWrites++; return; }
+    }
+    forbidden.push(`${request.method()} ${path}`);
+  };
+  const onError = (error: Error) => errors.push(error.message);
+  page.on("request", observe); page.on("pageerror", onError);
+  try {
+    const initial = await api<DevelopmentOptions>("product-development/options");
+    const canonical = initial.spus.filter(spu => spu.code === "CUSTOM-SHAPED-PILLOW");
+    expect(canonical.length, "Canonical SPU must be unique before this independent leaf").toBeLessThanOrEqual(1);
+    reusedCatalog.spu = !!canonical[0];
+    const spu = canonical[0] ?? (await api<{ spu: DevelopmentOptions["spus"][number] }>("product-development/spus", {
+      code: "CUSTOM-SHAPED-PILLOW", name: "Synthetic custom shaped pillow", idempotencyKey: createEntityId(),
+    })).spu;
+    fixtureIds.spuId = spu.id;
+    const existingSpecifications = initial.specifications.filter(specification => specification.spuId === spu.id && specification.code === "SIZE-16IN");
+    expect(existingSpecifications.length).toBeLessThanOrEqual(1);
+    reusedCatalog.specification = !!existingSpecifications[0];
+    const specification = existingSpecifications[0] ?? (await api<{ specification: SpecificationView }>("product-development/specifications", {
+      spuId: spu.id, code: "SIZE-16IN", name: "Synthetic 16 inch pillow pending production facts", attributes: { size: "16 inch" },
+      facts: { formatVersion: 2, material: "", structure: "", dimensions: "", physicalDimensions: null,
+        packageContents: "", packageQuantity: null, weightGrams: null, packagedWeightGrams: null, packageMeasurements: null,
+        factsConfirmed: false, productionConfirmed: false, verificationReference: "Synthetic unconfirmed acceptance fixture" },
+      processProfileVersionId: null, expectedVersion: 0, idempotencyKey: createEntityId(),
+    })).specification;
+    fixtureIds.specificationId = specification.id; fixtureIds.specificationVersionId = specification.versionId;
+    expect(specification.processProfileVersionId).toBeNull(); expect(specification.facts.factsConfirmed).toBe(false);
+    expect(specification.facts.productionConfirmed ?? false).toBe(false); expect(specification.facts.weightGrams).toBeNull();
+    const commonArt = initial.artworks.filter(artwork => artwork.code === "ART-CUSTOM-SHAPED-PILLOW" && !artwork.archived);
+    const latestArt = commonArt.filter(artwork => artwork.version === Math.max(0, ...commonArt.map(value => value.version)));
+    expect(latestArt.length).toBeLessThanOrEqual(1);
+    reusedCatalog.artwork = !!latestArt[0];
+    const artwork = latestArt[0] ?? (await api<{ artwork: ArtworkView }>("product-development/artworks", {
+      code: "ART-CUSTOM-SHAPED-PILLOW", name: "Synthetic common customer-photo pillow", mode: "customer_image",
+      customization: { version: 1, fields: [{ key: "photo", label: "Customer image", type: "image", required: true,
+        validation: { allowedMediaTypes: ["image/png"], maxFiles: 1, maxBytes: 1_000_000 } }] },
+      instructions: "Synthetic customer-photo scheme only Preserve the original image and customer-selected size",
+      expectedVersion: 0, idempotencyKey: createEntityId(),
+    })).artwork;
+    fixtureIds.artworkId = artwork.id; fixtureIds.artworkVersionId = artwork.versionId;
+    expect(artwork.mode).toBe("customer_image"); expect(artwork.materials.every(material => material.role === "reference")).toBe(true);
+    const account = await api<MarketplaceAccountView>("marketplace-accounts", {
+      platform: "amazon", displayName: externalId, region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private", requestedScopes: [],
+    });
+    fixtureIds.accountId = account.id;
+    const promiseDate = new Date(Date.now() + 72 * 3_600_000 + 9 * 3_600_000).toISOString().replace("Z", "+09:00");
+    const expectedDeadline = new Date(promiseDate).toISOString();
+    const txt = [
+      ["order-id", "order-item-id", "purchase-date", "sku", "product-name", "quantity-purchased", "quantity-shipped", "quantity-to-ship", "promise-date"],
+      [externalId, externalLineId, new Date(Date.now() - 3_600_000).toISOString(), `SYNTHETIC-PILLOW-${suffix}`,
+        "Synthetic custom shaped photo pillow with customer-selected size", "1", "0", "1", promiseDate],
+    ].map(row => row.join("\t")).join("\r\n");
+    const batch = await api<AmazonReportBatchView>("orders/reports/import", {
+      accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-unshipped-pillow.txt", content: txt,
+    });
+    fixtureIds.batchId = batch.id;
+    expect(batch).toMatchObject({ rowCount: 1, newOrderCount: 1, failedOrderCount: 0 });
+    const workspace = await api<AmazonReportWorkspaceView>(`orders/reports/workspace?accountId=${account.id}`);
+    expect(workspace.lines).toHaveLength(1);
+    const line = workspace.lines[0]!;
+    fixtureIds.reportLineId = line.id; fixtureIds.orderLineId = line.orderLineId;
+    const beforeUpload = AmazonReportDetailViewSchema.parse(await api(`orders/reports/lines/${line.id}`));
+    const buyerBytes = syntheticProductionPng(), buyerSha = createHash("sha256").update(buyerBytes).digest("hex");
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalId, orderItemId: externalLineId,
+      customizationData: { type: "PageContainerCustomization", snapshot: { imageName: "preview.png" }, children: [
+        { type: "ImageCustomization", label: "Customer image", image: { imageName: "buyer.png", buyerFilename: "synthetic-buyer.png" } },
+        ...[["Size (12/16/18/24 inch)", "16 inch"], ["Pillow Shape", "Only Face"], ["Style", "Single-sided Printing"]]
+          .map(([label, name]) => ({ type: "OptionCustomization", label, optionSelection: { name } })),
+      ] } }));
+    zip.file("preview.png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aOd8AAAAASUVORK5CYII=", "base64"));
+    zip.file("buyer.png", buyerBytes);
+    const source = AmazonReportDetailViewSchema.parse(await api(`orders/reports/lines/${line.id}/upload`, {
+      expectedVersionId: beforeUpload.versionId, fileName: "synthetic-pillow-original.zip", contentBase64: await zip.generateAsync({ type: "base64" }),
+    }));
+    expect(source.versionId).not.toBeNull(); expect(source.line.reviewed).toBe(false);
+    fixtureIds.sourceVersionId = source.versionId; draftSourceVersion = source.versionId;
+    const immutableSource = { versionId: source.versionId, surfaces: source.surfaces, files: source.files };
+    const original = source.files.find(file => file.role === "buyer_image");
+    expect(original, "Real archive processing must retain an original buyer image").toBeTruthy();
+    const originalKey = original!.originalFileKey ?? original!.key;
+    const originalPath = `orders/reports/lines/${line.id}/files/${encodeURIComponent(originalKey)}?versionId=${source.versionId}`;
+    const originalHash = async () => {
+      apiTraffic.push({ method: "GET", path: originalPath });
+      const response = await apiFetch(`${process.env.API_BASE_URL}/v1/${originalPath}`);
+      expect(response.status).toBe(200);
+      return createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
+    };
+    expect(await originalHash()).toBe(buyerSha);
+    const detail = OrderWorkDetailViewSchema.parse(await api(`order-centers/lines/${line.orderLineId}`));
+    expect(detail.draft).toMatchObject({ specificationVersionId: specification.versionId, artworkVersionId: artwork.versionId, printProfileVersionId: null, dueAt: null });
+    expect(detail.catalog?.automatic).toMatchObject({ status: "partial", applied: true, sizeInches: 16, specificationVersionId: specification.versionId, artworkVersionId: artwork.versionId });
+    expect(detail.shippingTime?.platform).toMatchObject({ at: expectedDeadline, source: "report_import", verifiedAt: null });
+    expect(detail.shippingTime?.platform.sourceVersionId).toBeTruthy();
+    const deadlineSource = detail.shippingTime!.platform.sourceVersionId;
+    const scope = new URLSearchParams({ accountId: account.id, q: externalId, line: line.orderLineId });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`/orders?${scope}`);
+    const whole = page.getByRole("region", { name: "整单详情", exact: true });
+    const basis = whole.getByRole("region", { name: "本单制作依据匹配", exact: true });
+    const platform = whole.getByRole("region", { name: "本单平台发货截止", exact: true });
+    const manual = whole.locator("details.oc-basis-manual"), internal = whole.locator("details.oc-optional-internal-plan");
+    await expect(basis).toContainText(specification.name); await expect(basis).toContainText(artwork.name);
+    await expect(basis).toContainText("通用工艺底稿待审核绑定");
+    await expect(basis.getByLabel("制作依据待办", { exact: true })).toContainText("底稿");
+    await expect(manual).not.toHaveAttribute("open"); await expect(internal).not.toHaveAttribute("open");
+    await expect(internal.locator("summary")).toContainText("可不填"); await expect(internal.locator("input")).toHaveValue("");
+    await expect(platform).toContainText("原始未发货报告"); await expect(platform).toContainText("距平台截止");
+    await expect(platform.locator("time")).toHaveAttribute("datetime", expectedDeadline);
+    await expect(whole.getByRole("button", { name: "确认本件审单", exact: true })).toBeDisabled();
+    await expect(whole.locator(".oc-review-body")).toHaveCount(1);
+    for (const [name, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await basis.scrollIntoViewIfNeeded(); await expect(basis).toBeVisible(); await noOverflow(page);
+      await expect.poll(() => whole.locator(".oc-review-body").evaluateAll(elements => elements.every(element => element.scrollWidth <= element.clientWidth + 1))).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`pillow-auto-basis-${name}.png`) });
+      await platform.scrollIntoViewIfNeeded(); await expect(platform).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`pillow-platform-deadline-${name}.png`) });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await manual.locator("summary").click();
+    const specificationControl = whole.getByRole("combobox", { name: "本单产品规格", exact: true });
+    await expect(specificationControl).toHaveValue(specification.versionId);
+    await expect(whole.getByRole("combobox", { name: "本单印花版本", exact: true })).toHaveValue(artwork.versionId);
+    await specificationControl.selectOption("");
+    await whole.getByRole("textbox", { name: "制作说明", exact: true }).fill("Synthetic manual intake override Preserved pending information");
+    await expect(basis).toContainText("本单制作依据已调整 保存后生效");
+    await expect(whole.getByRole("button", { name: "刷新状态", exact: true })).toBeDisabled();
+    await expect(whole.getByRole("button", { name: "刷新整单", exact: true })).toBeDisabled();
+    const savedResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/api/order-centers/lines/${line.orderLineId}/draft` && response.request().method() === "POST");
+    await whole.getByRole("button", { name: "保存草稿", exact: true }).click();
+    const saved = OrderWorkDetailViewSchema.parse(await (await savedResponse).json());
+    expect(saved.draft).toMatchObject({ specificationVersionId: null, artworkVersionId: artwork.versionId, printProfileVersionId: null,
+      instructions: "Synthetic manual intake override Preserved pending information", dueAt: null });
+    expect(saved.catalog?.automatic?.status).toBe("preserved");
+    await expect(whole.getByRole("button", { name: "刷新状态", exact: true })).toBeEnabled();
+    const reread = page.waitForResponse(response => new URL(response.url()).pathname === `/api/order-centers/lines/${line.orderLineId}` && response.request().method() === "GET");
+    await whole.getByRole("button", { name: "刷新状态", exact: true }).click();
+    const refreshed = OrderWorkDetailViewSchema.parse(await (await reread).json());
+    expect(refreshed.draft.specificationVersionId).toBeNull();
+    await expect(specificationControl).toHaveValue(""); await expect(basis).toContainText("沿用本单固定制作版本");
+    const current = OrderWorkDetailViewSchema.parse(await api(`order-centers/lines/${line.orderLineId}`));
+    expect(current.line).toMatchObject({ preparation: "pending_review", artwork: "not_pushed", production: "not_released", editorProjectId: null, shippedQuantity: 0 });
+    expect(current.shippingTime?.platform).toEqual({ ...detail.shippingTime!.platform, sourceVersionId: deadlineSource });
+    const sourceAfter = AmazonReportDetailViewSchema.parse(await api(`orders/reports/lines/${line.id}`));
+    expect({ versionId: sourceAfter.versionId, surfaces: sourceAfter.surfaces, files: sourceAfter.files }).toEqual(immutableSource);
+    evidence.originalSourcePreserved = true; evidence.reportReviewedAfter = sourceAfter.line.reviewed;
+    expect(sourceAfter.line.reviewed).toBe(false); expect(await originalHash()).toBe(buyerSha);
+    evidence.originalBytesCheckedBeforeAndAfter = true;
+    expect(forbidden).toEqual([]); expect(errors).toEqual([]); expect(draftWrites).toBe(1); expect(summaryReads).toBeGreaterThan(0);
+    expect(apiTraffic.filter(item => item.method !== "GET" && /(?:review|render|generation|production|\/actions)/.test(item.path))).toEqual([]);
+    evidence.assertionsCompleted = true;
+  } finally {
+    page.off("request", observe); page.off("pageerror", onError);
+    await testInfo.attach("pillow-auto-basis-owned-fixtures", { contentType: "application/json", body: Buffer.from(JSON.stringify({
+      syntheticFixtureOnly: true, fixtureIds, reusedCatalog, apiTraffic, forbiddenBrowserWrites: forbidden, draftWrites, summaryReads, evidence,
+      cleanupOwner: "disposable acceptance runner database/bucket/Redis finally", noReviewRenderOrModelCallsInFixture: true,
+    })) });
+  }
 });
