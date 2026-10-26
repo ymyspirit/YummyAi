@@ -92,6 +92,8 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     await native.getByRole("combobox", { name: "知识主题", exact: true }).selectOption("operations");
     await native.getByRole("button", { name: "确定原知识范围", exact: true }).click();
     await native.getByRole("button", { name: "加入本次固定读取范围", exact: true }).click();
+    await expect(composer.locator(".anv2-bindings > ol > li")).toHaveCount(1);
+    await expect(composer.locator(".anv2-bindings code")).toHaveText(f.seed.spuId);
     const plan = await f.plan(card.id, 1), before = await f.nativeState();
     expect(plan.knowledgeEntryId).toBe(card.id); expect(plan.knowledgeVersion).toBe(1); expect(before.providerFailures).toBe(0);
     await page.goto("/ai-tasks?agentNativeV4=" + plan.runId);
@@ -220,7 +222,7 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
     await page.getByRole("button", { name: "确认停用", exact: true }).click();
     await page.goto("/knowledge?tab=chat"); chat = page.getByRole("region", { name: "知识对话", exact: true });
     await chat.getByRole("combobox", { name: "最近对话", exact: true }).selectOption(scopeId);
-    await expect(chat.getByText("原依据已变化", { exact: true })).toBeVisible();
+    await expect(chat.locator(".kb-answer > .kb-meta").first()).toHaveText(f.seed.query + " · 原依据已变化");
     await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
     await expect(chat.locator('a[href="' + href + '"]')).toHaveCount(0);
     await expect(chat.getByText("本次固定引用当前不可读", { exact: true })).toBeVisible();
