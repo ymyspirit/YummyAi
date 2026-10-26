@@ -5,7 +5,8 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { authorize, Permission } from "@yummyai/authz";
+import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
+import { catalogOwnerFilter } from "@yummyai/catalog-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   KnowledgeGovernanceViewSchema,
@@ -47,6 +48,11 @@ import { z } from "zod";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { KnowledgeService } from "./knowledge.service.js";
 import { recordKnowledgeGovernanceEvent } from "./knowledge-import.service.js";
+import {
+  assertKnowledgeAccountScope, assertKnowledgeScope, currentKnowledgeContext,
+  knowledgeAccountScopeFilter, knowledgeEntryIdsScopeFilter, knowledgeProductScopeFilter,
+  knowledgeSearchScopeFilter, knowledgeVersionScopeFilter,
+} from "./knowledge-scope.js";
 
 @Injectable()
 export class KnowledgeGovernanceService {
@@ -56,11 +62,10 @@ export class KnowledgeGovernanceService {
   ) {}
   async workspace(context: TenantContext) {
     authorize(context, Permission.WorkflowRead);
-    const cards = await this.knowledge.workspace(context);
-    const canReadAccount =
-      context.permissions.includes(Permission.FinanceRead) &&
-      context.permissions.includes(Permission.StoreRead);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowRead);
+      const cards = await this.knowledge.workspaceInTransaction(tx, context);
+      const canReadAccount = context.permissions.includes(Permission.FinanceRead) && context.permissions.includes(Permission.StoreRead);
       const docs = await tx
         .select()
         .from(documents)
@@ -68,12 +73,8 @@ export class KnowledgeGovernanceService {
           and(
             sql`${documents.state}<>'archived'`,
             canReadAccount ? undefined : eq(documents.kind, "reference"),
-            context.dataScope === "self"
-              ? or(eq(documents.kind, "reference"), eq(documents.createdBy, context.userId))
-              : undefined,
-            context.permissions.includes(Permission.ProductRead)
-              ? undefined
-              : sql`${documents.fields}->>'spuId' IS NULL`,
+            or(eq(documents.kind, "reference"), knowledgeAccountScopeFilter(context, documents.createdBy, documents.storeId)),
+            knowledgeProductScopeFilter(context, sql`${documents.fields}->>'spuId'`),
           ),
         )
         .orderBy(desc(documents.createdAt))
@@ -87,6 +88,7 @@ export class KnowledgeGovernanceService {
       const reviewRows = await tx
         .select()
         .from(reviews)
+        .where(knowledgeEntryIdsScopeFilter(context, reviews.entryIds))
         .orderBy(desc(reviews.createdAt))
         .limit(100);
       const snapIds = [
@@ -104,6 +106,7 @@ export class KnowledgeGovernanceService {
       const conflictRows = await tx
         .select()
         .from(conflicts)
+        .where(and(knowledgeVersionScopeFilter(context, conflicts.leftVersionId), knowledgeVersionScopeFilter(context, conflicts.rightVersionId)))
         .orderBy(desc(conflicts.createdAt))
         .limit(500);
       const conflictVersionIds = [
@@ -140,7 +143,7 @@ export class KnowledgeGovernanceService {
       const requirements = await tx
         .select()
         .from(needs)
-        .where(isNull(needs.archivedAt))
+        .where(and(isNull(needs.archivedAt), knowledgeSearchScopeFilter(context, needs.searchScope), knowledgeEntryIdsScopeFilter(context, needs.entryIds)))
         .orderBy(desc(needs.createdAt))
         .limit(500);
       const coverage = [];
@@ -260,14 +263,16 @@ export class KnowledgeGovernanceService {
       const cases = await tx
         .select()
         .from(evaluations)
-        .where(and(isNull(evaluations.archivedAt), isNull(evaluations.benchmarkVersionId)))
+        .where(and(isNull(evaluations.archivedAt), isNull(evaluations.benchmarkVersionId),
+          knowledgeSearchScopeFilter(context, sql`${evaluations.fields}->'search'`),
+          knowledgeEntryIdsScopeFilter(context, sql`${evaluations.fields}->'requiredEntryIds'`)))
         .orderBy(desc(evaluations.createdAt))
         .limit(200);
       const accounts = canReadAccount
         ? await tx
             .select()
             .from(stores)
-            .where(context.dataScope === "self" ? eq(stores.createdBy, context.userId) : undefined)
+            .where(and(catalogOwnerFilter(context, Permission.StoreRead, stores.createdBy), catalogOwnerFilter(context, Permission.FinanceRead, stores.createdBy)))
             .orderBy(stores.displayName)
         : [];
       return KnowledgeGovernanceViewSchema.parse({
@@ -318,6 +323,7 @@ export class KnowledgeGovernanceService {
       throw new BadRequestException(e instanceof Error ? e.message : "来源地址无效");
     }
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${"knowledge-source:" + context.tenantId},0))`,
       );
@@ -351,17 +357,26 @@ export class KnowledgeGovernanceService {
   async checkSource(context: TenantContext, id: string) {
     authorize(context, Permission.WorkflowManage);
     try {
-      return await checkKnowledgeSource(this.database, context, id);
+      return await checkKnowledgeSource(this.database, context, id, undefined, async tx =>
+        context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage));
     } catch (e) {
+      // Preserve permission errors; only the original public-source diagnostics
+      // are represented as a source-check conflict.
+      if (e instanceof ForbiddenError) throw e;
       throw new ConflictException(e instanceof Error ? e.message : "来源检查未完成");
     }
   }
   async reviewDetail(context: TenantContext, id: string) {
     authorize(context, Permission.WorkflowRead);
-    const view = await this.workspace(context),
-      row = view.sourceReviews.find((r) => r.id === id);
-    if (!row) throw new NotFoundException("来源变更不存在");
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowRead);
+      const [selected] = await tx.select({ review: reviews, sourceLabel: sources.label })
+        .from(reviews).innerJoin(sources, eq(sources.id, reviews.sourceId))
+        .where(and(eq(reviews.id, id), isNull(sources.archivedAt), knowledgeEntryIdsScopeFilter(context, reviews.entryIds)))
+        .for("share", { of: [reviews, sources] });
+      if (!selected) throw new NotFoundException("来源变更不存在或不可访问");
+      const row = selected.review;
+      await assertKnowledgeScope(tx, context, { entryIds: row.entryIds });
       const data = await tx
         .select()
         .from(snapshots)
@@ -373,6 +388,8 @@ export class KnowledgeGovernanceService {
         );
       return {
         ...row,
+        sourceLabel: selected.sourceLabel,
+        createdAt: row.createdAt.toISOString(),
         beforeText: data.find((s) => s.id === row.beforeSnapshotId)?.body ?? "",
         afterText: data.find((s) => s.id === row.afterSnapshotId)?.body ?? "",
       };
@@ -390,6 +407,7 @@ export class KnowledgeGovernanceService {
       .strict()
       .parse(raw);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       const [row] = await tx.select().from(sources).where(eq(sources.id, id)).for("update");
       if (!row) throw new NotFoundException("来源不存在");
       if (row.revision !== input.expectedRevision) throw new ConflictException("来源配置已变化");
@@ -418,8 +436,10 @@ export class KnowledgeGovernanceService {
     authorize(context, Permission.WorkflowApprove);
     const input = ReviewKnowledgeSourceSchema.parse(raw);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowApprove);
       const [row] = await tx.select().from(reviews).where(eq(reviews.id, id)).for("update");
       if (!row) throw new NotFoundException("来源变更不存在");
+      await assertKnowledgeScope(tx, context, { entryIds: row.entryIds });
       if (row.revision !== input.expectedRevision) throw new ConflictException("来源变更已被处理");
       await this.requireEntries(tx, context, input.entryIds);
       if (input.decision === "completed") {
@@ -459,21 +479,15 @@ export class KnowledgeGovernanceService {
     });
   }
   private async requireEntries(tx: TenantTransaction, context: TenantContext, ids: string[]) {
-    for (const id of ids) {
-      const rows = await tx
-        .select({ fields: versions.fields })
-        .from(versions)
-        .innerJoin(entries, eq(entries.id, versions.entryId))
-        .where(and(eq(entries.id, id), isNull(entries.archivedAt)));
-      if (!rows.length) throw new NotFoundException("关联知识卡不存在");
-      if (rows.some((r) => r.fields.spuId)) authorize(context, Permission.ProductRead);
-    }
+    await assertKnowledgeScope(tx, context, { entryIds: ids }, true);
   }
   async saveNeed(context: TenantContext, id: string | null, raw: unknown) {
     authorize(context, Permission.WorkflowManage);
     const input = SaveKnowledgeNeedSchema.parse(raw);
     if (input.scope.spuIds.length) authorize(context, Permission.ProductRead);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
+      await assertKnowledgeScope(tx, context, { spuIds: input.scope.spuIds });
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${"knowledge-need:" + context.tenantId},0))`,
       );
@@ -482,7 +496,7 @@ export class KnowledgeGovernanceService {
       if (id) {
         const [row] = await tx.select().from(needs).where(eq(needs.id, id)).for("update");
         if (!row) throw new NotFoundException("需求不存在");
-        if (row.searchScope.spuIds.length) authorize(context, Permission.ProductRead);
+        await assertKnowledgeScope(tx, context, { spuIds: row.searchScope.spuIds, entryIds: row.entryIds });
         if (row.revision !== input.expectedRevision) throw new ConflictException("需求已变化");
         await tx
           .update(needs)
@@ -498,6 +512,7 @@ export class KnowledgeGovernanceService {
         if (input.expectedRevision !== 0) throw new ConflictException("新需求不能带修订号");
         const [prior] = await tx.select().from(needs).where(eq(needs.requestId, input.requestId));
         if (prior) {
+          await assertKnowledgeScope(tx, context, { spuIds: prior.searchScope.spuIds, entryIds: prior.entryIds });
           if (
             knowledgeChecksum([prior.question, prior.owner, prior.searchScope, prior.entryIds]) !==
             knowledgeChecksum([input.question, input.owner, input.scope, input.entryIds])
@@ -535,6 +550,7 @@ export class KnowledgeGovernanceService {
     authorize(context, Permission.WorkflowApprove);
     const input = ResolveKnowledgeConflictSchema.parse(raw);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowApprove);
       const [row] = await tx.select().from(conflicts).where(eq(conflicts.id, id)).for("update");
       if (!row) throw new NotFoundException("冲突不存在");
       if (row.revision !== input.expectedRevision) throw new ConflictException("冲突已经处理");
@@ -543,7 +559,7 @@ export class KnowledgeGovernanceService {
         .from(versions)
         .innerJoin(entries, eq(entries.id, versions.entryId))
         .where(inArray(versions.id, [row.leftVersionId, row.rightVersionId]));
-      if (rows.some((r) => r.version.fields.spuId)) authorize(context, Permission.ProductRead);
+      await assertKnowledgeScope(tx, context, { entryIds: rows.map(value => value.entry.id) });
       const claims = rows.map((r) =>
         r.version.fields.claims?.find((c) => c.key.toLowerCase() === row.key.toLowerCase()),
       );
@@ -586,7 +602,8 @@ export class KnowledgeGovernanceService {
     if (input.fields.search.spuIds.length) authorize(context, Permission.ProductRead);
     return withTenant(this.database.db, context, async (tx) => {
       context = await currentEvaluationContext(tx, context, "manage");
-      if (input.fields.search.spuIds.length) authorize(context, Permission.ProductRead);
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
+      await assertKnowledgeScope(tx, context, { spuIds: input.fields.search.spuIds });
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${"knowledge-evaluation:" + context.tenantId},0))`,
       );
@@ -600,7 +617,7 @@ export class KnowledgeGovernanceService {
           .for("update");
         if (!row) throw new NotFoundException("评测问题不存在");
         if (row.benchmarkVersionId) throw new ConflictException("发布样本不可编辑，请建立新的数据集修订");
-        if (row.fields.search.spuIds.length) authorize(context, Permission.ProductRead);
+        await assertKnowledgeScope(tx, context, { spuIds: row.fields.search.spuIds, entryIds: row.fields.requiredEntryIds });
         if (row.revision !== input.expectedRevision) throw new ConflictException("评测问题已变化");
         await tx
           .update(evaluations)
@@ -612,6 +629,7 @@ export class KnowledgeGovernanceService {
           .from(evaluations)
           .where(eq(evaluations.requestId, input.requestId));
         if (prior) {
+          await assertKnowledgeScope(tx, context, { spuIds: prior.fields.search.spuIds, entryIds: prior.fields.requiredEntryIds });
           if (knowledgeChecksum(prior.fields) !== knowledgeChecksum(input.fields))
             throw new ConflictException("同一评测请求已变化");
           return { id: prior.id };
@@ -653,14 +671,13 @@ export class KnowledgeGovernanceService {
     const table = kind === "source" ? sources : kind === "need" ? needs : evaluations;
     return withTenant(this.database.db, context, async (tx) => {
       if (kind === "evaluation") context = await currentEvaluationContext(tx, context, "manage");
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       const [row] = await tx.select().from(table).where(eq(table.id, id)).for("update");
       if (!row) throw new NotFoundException("记录不存在");
       if ("benchmarkVersionId" in row && row.benchmarkVersionId) throw new ConflictException("发布样本不可归档，请保留原发布版本");
       if (row.revision !== input.expectedRevision) throw new ConflictException("记录已变化");
-      if ("searchScope" in row && row.searchScope.spuIds.length)
-        authorize(context, Permission.ProductRead);
-      if ("fields" in row && row.fields.search.spuIds.length)
-        authorize(context, Permission.ProductRead);
+      if ("searchScope" in row) await assertKnowledgeScope(tx, context, { spuIds: row.searchScope.spuIds, entryIds: row.entryIds });
+      if ("fields" in row) await assertKnowledgeScope(tx, context, { spuIds: row.fields.search.spuIds, entryIds: row.fields.requiredEntryIds });
       await tx
         .update(table)
         .set({ archivedAt: new Date(), revision: row.revision + 1 })
@@ -673,39 +690,31 @@ export class KnowledgeGovernanceService {
     authorize(context, Permission.WorkflowRead);
     authorize(context, Permission.WorkflowApprove);
     return withTenant(this.database.db, context, async (tx) => {
-      const [doc] = await tx.select().from(documents).where(eq(documents.id, id));
-      const [source] = await tx.select().from(sources).where(eq(sources.id, id));
-      const [review] = await tx.select().from(reviews).where(eq(reviews.id, id));
-      const [need] = await tx.select().from(needs).where(eq(needs.id, id));
-      const [evaluation] = await tx.select().from(evaluations).where(eq(evaluations.id, id));
-      const [conflict] = await tx.select().from(conflicts).where(eq(conflicts.id, id));
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowRead);
+      authorize(context, Permission.WorkflowApprove);
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, id)).for("share");
+      const [source] = await tx.select().from(sources).where(eq(sources.id, id)).for("share");
+      const [review] = await tx.select().from(reviews).where(eq(reviews.id, id)).for("share");
+      const [need] = await tx.select().from(needs).where(eq(needs.id, id)).for("share");
+      const [evaluation] = await tx.select().from(evaluations).where(eq(evaluations.id, id)).for("share");
+      const [conflict] = await tx.select().from(conflicts).where(eq(conflicts.id, id)).for("share");
       if (!doc && !source && !review && !need && !evaluation && !conflict)
         throw new NotFoundException("记录不可访问");
-      if (
-        doc?.fields.spuId ||
-        need?.searchScope.spuIds.length ||
-        evaluation?.fields.search.spuIds.length
-      )
-        authorize(context, Permission.ProductRead);
+      if (doc?.fields.spuId) await assertKnowledgeScope(tx, context, { spuIds: [doc.fields.spuId] });
+      if (need) await assertKnowledgeScope(tx, context, { spuIds: need.searchScope.spuIds, entryIds: need.entryIds });
+      if (evaluation) await assertKnowledgeScope(tx, context, { spuIds: evaluation.fields.search.spuIds, entryIds: evaluation.fields.requiredEntryIds });
+      if (review) await assertKnowledgeScope(tx, context, { entryIds: review.entryIds });
       if (doc?.kind === "account") {
-        authorize(context, Permission.FinanceRead);
-        authorize(context, Permission.StoreRead);
-        const [store] = await tx.select().from(stores).where(eq(stores.id, doc.storeId!));
-        if (
-          !store ||
-          (context.dataScope === "self" &&
-            (doc.createdBy !== context.userId || store.createdBy !== context.userId))
-        )
-          throw new NotFoundException("记录不可访问");
+        await assertKnowledgeAccountScope(tx, context, doc.createdBy, doc.storeId);
       }
       if (conflict) {
         const claims = await tx
           .select()
           .from(versions)
           .where(inArray(versions.id, [conflict.leftVersionId, conflict.rightVersionId]));
-        if (claims.some((claim) => claim.fields.spuId)) authorize(context, Permission.ProductRead);
+        await assertKnowledgeScope(tx, context, { entryIds: claims.map(value => value.entryId) });
       }
-      return tx
+      const history = await tx
         .select({
           id: events.id,
           action: events.action,
@@ -716,6 +725,14 @@ export class KnowledgeGovernanceService {
         .from(events)
         .where(eq(events.resourceId, id))
         .orderBy(desc(events.createdAt));
+      // A later revision may remove a product reference. The immutable event
+      // still contains its original IDs and must not become a history bypass.
+      const historicalIds = history.flatMap(event => [
+        ...(Array.isArray(event.detail.entryIds) ? event.detail.entryIds.filter((value): value is string => typeof value === "string") : []),
+        ...(typeof event.detail.entryId === "string" ? [event.detail.entryId] : []),
+      ]);
+      await assertKnowledgeScope(tx, context, { entryIds: historicalIds });
+      return history;
     });
   }
 }

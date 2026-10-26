@@ -86,9 +86,10 @@ async function inspection(actor: TenantContext) {
   return result.id;
 }
 
-describe.sequential("independent Agent native reads with real owners and unchanged174 history", () => {
+describe.sequential("independent Agent native reads with real owners and unchanged current history", () => {
   beforeAll(async () => {
-    journal = await readFile(journalPath, "utf8"); expect(JSON.parse(journal).entries).toHaveLength(174);
+    journal = await readFile(journalPath, "utf8");
+    expect((await readMigrationEvidence(database)).actualRows).toEqual((await readMigrationEvidence(database)).canonicalRows);
     await assertDatabaseMigrationsCurrent(database); await original.initialize(); await base.initialize(); await facts.initialize();
     context = await original.base.current(); peer = await original.actor(); scene = await original.scene({ quantities: [1, 1, 1] });
     query = "Synthetic native tools " + letters();
@@ -107,7 +108,7 @@ describe.sequential("independent Agent native reads with real owners and unchang
   afterEach(async () => { vi.restoreAllMocks(); await original.base.grant(); });
   afterAll(async () => {
     const errors: unknown[] = [];
-    try { expect(await readFile(journalPath, "utf8")).toBe(journal); expect((await readMigrationEvidence(database)).actualRows).toHaveLength(174); } catch (error) { errors.push(error); }
+    try { expect(await readFile(journalPath, "utf8")).toBe(journal); const evidence = await readMigrationEvidence(database); expect(evidence.actualRows).toEqual(evidence.canonicalRows); } catch (error) { errors.push(error); }
     try { facts.close(); original.dispose(); base.close(); } catch (error) { errors.push(error); }
     try { await database.client.end(); } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, "Native tool fixture validation or teardown failed");

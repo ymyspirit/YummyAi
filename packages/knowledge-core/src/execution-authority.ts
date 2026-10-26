@@ -1,5 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Permission, authorize } from "@yummyai/authz";
+import { catalogOwnerFilter } from "@yummyai/catalog-core";
 import type { AgentMethodDefinition } from "@yummyai/contracts/harness/methods";
 import type { TenantContext } from "@yummyai/contracts";
 import type { AssistInputAuthority } from "@yummyai/contracts/ai/assist";
@@ -15,6 +16,7 @@ import {
 } from "@yummyai/database";
 import { knowledgeChecksum, knowledgeDay } from "./documents.js";
 import { knowledgeEvidenceIssues, knowledgeBlockingConflicts } from "./governance.js";
+import { knowledgeProductsVisible } from "./knowledge-search-owner.js";
 
 /** A method's bibliography is provenance, not additional task fact citations. */
 export async function assertMethodKnowledge(tx: TenantTransaction, context: TenantContext, definition: AgentMethodDefinition | null, options: { lock?: boolean } = {}) {
@@ -41,15 +43,22 @@ export async function knowledgeExecutionAuthority(
     let usable = false;
     let evidence: unknown = null;
     if (reference.sourceId.startsWith("account:")) {
+      const allowed = context.permissions.includes(Permission.StoreRead) && context.permissions.includes(Permission.FinanceRead);
       const [document] = await tx
         .select()
         .from(knowledgeDocuments)
-        .where(eq(knowledgeDocuments.id, reference.versionId));
+        .where(and(eq(knowledgeDocuments.id, reference.versionId), allowed ? and(
+          catalogOwnerFilter(context, Permission.StoreRead, knowledgeDocuments.createdBy),
+          catalogOwnerFilter(context, Permission.FinanceRead, knowledgeDocuments.createdBy),
+        ) : sql`false`));
       const [store] = storeId
         ? await tx
             .select({ id: marketplaceAccounts.id, deletedAt: marketplaceAccounts.deletedAt })
             .from(marketplaceAccounts)
-            .where(eq(marketplaceAccounts.id, storeId))
+            .where(and(eq(marketplaceAccounts.id, storeId), allowed ? and(
+              catalogOwnerFilter(context, Permission.StoreRead, marketplaceAccounts.createdBy),
+              catalogOwnerFilter(context, Permission.FinanceRead, marketplaceAccounts.createdBy),
+            ) : sql`false`))
         : [];
       usable = !!(
         document &&
@@ -57,7 +66,7 @@ export async function knowledgeExecutionAuthority(
         !store.deletedAt &&
         context.permissions.includes(Permission.FinanceRead) &&
         context.permissions.includes(Permission.WorkflowRead) &&
-        (context.dataScope === "tenant" || document.createdBy === context.userId) &&
+        await knowledgeProductsVisible(tx, context, document.fields.spuId ? [document.fields.spuId] : []) &&
         document.kind === "account" &&
         document.state === "confirmed" &&
         document.storeId === storeId &&
@@ -109,7 +118,7 @@ export async function knowledgeExecutionAuthority(
         publication &&
         row.version.checksum === reference.checksum &&
         context.permissions.includes(Permission.WorkflowRead) &&
-        (!row.version.scopeSpuId || context.permissions.includes(Permission.ProductRead)) &&
+        await knowledgeProductsVisible(tx, context, row.version.scopeSpuId ? [row.version.scopeSpuId] : []) &&
         !issues.length &&
         !conflicts.length
       );

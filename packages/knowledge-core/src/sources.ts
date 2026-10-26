@@ -13,6 +13,7 @@ import {
   knowledgeDocuments as documents,
   withTenant,
   type DatabaseConnection,
+  type TenantTransaction,
 } from "@yummyai/database";
 import { knowledgeChecksum, redactKnowledgeText } from "./documents.js";
 
@@ -179,9 +180,11 @@ export async function checkKnowledgeSource(
   context: TenantContext,
   id: string,
   reader = readKnowledgeOfficialSource,
+  currentAuthority?: (tx: TenantTransaction) => Promise<TenantContext>,
 ) {
   const started = new Date();
   const source = await withTenant(database.db, context, async (tx) => {
+    if (currentAuthority) context = await currentAuthority(tx);
     const [row] = await tx
       .select()
       .from(sources)
@@ -210,6 +213,7 @@ export async function checkKnowledgeSource(
         : "官方来源读取或解析失败；原有效证据和核对时间未变更";
   }
   return withTenant(database.db, context, async (tx) => {
+    if (currentAuthority) context = await currentAuthority(tx);
     const [current] = await tx.select().from(sources).where(eq(sources.id, id)).for("update");
     if (!current || current.lastCheckedAt?.getTime() !== started.getTime())
       return { changed: false, diagnostic: "来源检查已被后续任务取代" };

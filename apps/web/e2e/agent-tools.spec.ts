@@ -9,7 +9,7 @@ import { TenantContextSchema } from "@yummyai/contracts";
 import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { AGENT_TOOLS_VERSION, AgentToolCallSchema, AgentToolDefinitionRequestSchema, AgentToolDefinitionSchema, AgentToolResultSchema, AgentToolWorkspaceSchema, type AgentToolKey } from "@yummyai/contracts/ai/agent-tools";
-import { connectDatabase, withTenant } from "@yummyai/database";
+import { connectDatabase, withTenant, readMigrationEvidence } from "@yummyai/database";
 import { sql } from "drizzle-orm";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { knowledgeGovernanceFixture } from "./knowledge-governance-fixture";
@@ -89,13 +89,14 @@ class OwnerRpc {
 }
 async function fixture(leaf: string) {
   const isolated = isolate(), journalPath = resolve(root, "packages/database/migrations/meta/_journal.json"), journal = await readFile(journalPath, "utf8");
-  expect(JSON.parse(journal).entries).toHaveLength(174);
   let model: Awaited<ReturnType<typeof knowledgeGovernanceFixture>> | undefined, child: OwnerRpc | undefined, database: ReturnType<typeof connectDatabase> | undefined;
   try {
     model = await knowledgeGovernanceFixture("native-tools-" + leaf);
     const session = ErpSessionViewSchema.parse(await centerApi("identity/session")), actor = actors().operator;
     if (session.userId !== actor.userId || session.tenantId !== actor.tenantId) throw new Error("Native tool fixture requires the actual personal operator");
-    const context = TenantContextSchema.parse(session); database = connectDatabase(isolated.url); child = new OwnerRpc(isolated.nonce);
+    const context = TenantContextSchema.parse(session); database = connectDatabase(isolated.url);
+    const evidence = await readMigrationEvidence(database); expect(evidence.actualRows).toEqual(evidence.canonicalRows);
+    child = new OwnerRpc(isolated.nonce);
     await child.request({ operation: "initialize", context });
     const source = await child.request({ operation: "source", role: "sku_package", complete: true });
     if (!source || typeof source !== "object" || !("ids" in source) || !source.ids || typeof source.ids !== "object" || !("inspectionId" in source.ids) || typeof source.ids.inspectionId !== "string") throw new Error("Actual compiled inspection ID missing");
@@ -183,7 +184,7 @@ async function finish(page: Page, info: TestInfo, owner: Awaited<ReturnType<type
   try { await page.close(); } catch (error) { cleanup.push(error); }
   try { await owner.close(); } catch (error) { cleanup.push(error); }
   Object.assign(proof, { nonce: owner.nonce, bodyCompleted: failure === undefined, cleanupFailureCount: cleanup.length, childClose: owner.childEvidence,
-    nativeWriteRequests: seen.writes, pageErrors: seen.pageErrors, consoleErrors: seen.errors, responses: seen.responses, journal174Unchanged: !cleanup.length });
+    nativeWriteRequests: seen.writes, pageErrors: seen.pageErrors, consoleErrors: seen.errors, responses: seen.responses, currentJournalUnchanged: !cleanup.length });
   const path = info.outputPath("agent-tools-proof.json"); await writeFile(path, JSON.stringify(proof, null, 2) + "\n"); await info.attach("agent-tools-proof", { path, contentType: "application/json" });
   if (failure || cleanup.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanup], "agent_tools_browser_body_or_cleanup_failed");
 }

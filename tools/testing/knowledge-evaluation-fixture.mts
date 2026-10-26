@@ -27,6 +27,12 @@ const workspace = fileURLToPath(new URL("../../", import.meta.url));
 const requireDatabase = createRequire(new URL("../../packages/database/package.json", import.meta.url));
 const { eq, sql } = requireDatabase("drizzle-orm") as typeof Drizzle;
 export const evaluationSha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+/** Human-readable synthetic text only. One hex digit maps to one a-p letter;
+ * real database/request/resource IDs remain their original UUIDs. */
+export function evaluationTextId(id = createEntityId()) {
+  if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(id)) throw new Error("evaluation_text_id_requires_uuid");
+  return id.replaceAll("-", "").replace(/[a-f0-9]/g, digit => "abcdefghijklmnop"[Number.parseInt(digit, 16)]!);
+}
 export function requireKnowledgeEvaluationEnvironment(target: "current" | "pre-0167", environment: NodeJS.ProcessEnv = process.env) {
   const url = new URL(requireDisposableIntegrationEnvironment(environment)), nonce = /^\/order_daily_e2e_([a-f0-9]{32})$/.exec(url.pathname)?.[1];
   if (!nonce || environment.E2E_KNOWLEDGE_EVALUATION_ISOLATED !== "1" || environment.E2E_LEGACY_SCHEMA_TARGET !== target ||
@@ -98,7 +104,7 @@ export function knowledgeEvaluationFixture(database: DatabaseConnection) {
     modelId = (await owner.assists.addModel(a.context, { providerConfigId: providerId, model: "synthetic-evaluation-a", label: "Synthetic evaluation A", inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })).id;
     alternateModelId = (await owner.assists.addModel(a.context, { providerConfigId: providerId, model: "synthetic-evaluation-b", label: "Synthetic evaluation B", inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })).id;
   }
-  function fields(label = `Synthetic evaluation ${createEntityId()}`): KnowledgeFields {
+  function fields(label = `Synthetic evaluation ${evaluationTextId()}`): KnowledgeFields {
     return { title: label, summary: label, body: `${label} Synthetic fixed fact`, topic: "operations", platform: "amazon", market: "US", spuId: null,
       sourceType: "team", sourceLabel: "Synthetic evaluation bibliography", sourceUrl: "", owner: "Synthetic evaluator", verifiedOn: knowledgeDay(), reviewDueOn: "2099-12-31", tags: [] };
   }

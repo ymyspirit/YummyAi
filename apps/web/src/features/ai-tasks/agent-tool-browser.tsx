@@ -14,15 +14,16 @@ import { KNOWLEDGE_TOPICS, type KnowledgeSearch } from "@yummyai/contracts/knowl
 import { useErpAccess } from "../identity/erp-access";
 import { AgentToolObjectPicker, type AgentToolCreativeScope } from "./agent-tool-object-picker";
 import { AgentToolReadResult } from "./agent-tool-read-result";
+import { KnowledgeProductPicker } from "../knowledge/knowledge-product-picker";
 import {
   AgentToolRequestError, agentToolReadDenied, agentToolSelectionKey, appendAgentToolPage,
   callAgentTool, readAgentToolDefinition, readAgentToolWorkspace,
 } from "./agent-tool-client";
 import "./agent-tool-browser.css";
 
-type Draft = { query: string; topic: KnowledgeSearch["topic"]; platform: KnowledgeSearch["platform"]; market: string;
+type Draft = { query: string; topic: KnowledgeSearch["topic"]; platform: KnowledgeSearch["platform"]; market: string; spuId: string;
   creativeScope: AgentToolCreativeScope; ownerId: string; factoryId: string; from: string; days: string; pageSize: string; status: "open" | "resolved" | "all" };
-const blank = (): Draft => ({ query: "", topic: "all", platform: "all", market: "ALL", creativeScope: "design_batch", ownerId: "", factoryId: "", from: "", days: "14", pageSize: "25", status: "open" });
+const blank = (): Draft => ({ query: "", topic: "all", platform: "all", market: "ALL", spuId: "", creativeScope: "design_batch", ownerId: "", factoryId: "", from: "", days: "14", pageSize: "25", status: "open" });
 const domainNames: Record<string, string> = { procurement: "采购", incoming: "来料", production: "生产", finance: "财务", advertising: "广告" };
 const failureText = (failure: unknown) => failure instanceof AgentToolRequestError ? failure.message : "本次读取暂时无法核对 请重新读取原资料";
 type Identity = { authority: string | null; scope: string | null };
@@ -108,7 +109,7 @@ function AgentToolBrowserContent({ identity }: { identity: RefObject<Identity> }
     if (next && !cursor) return;
     const input = selection.tool === "orders.exceptions.page" ? { pageSize: Number(draft.pageSize), status: draft.status, cursor } :
       selection.tool === "inventory.balances.page" ? { pageSize: Number(draft.pageSize), cursor } :
-        selection.tool === "knowledge.search" ? { query: draft.query, topic: draft.topic, platform: draft.platform, market: draft.market, spuIds: [] } :
+        selection.tool === "knowledge.search" ? { query: draft.query, topic: draft.topic, platform: draft.platform, market: draft.market, spuIds: draft.spuId ? [draft.spuId] : [] } :
           selection.tool === "creative.history" ? { scope: draft.creativeScope, ownerId: draft.ownerId, ...(cursor ? { after: cursor } : {}) } :
             { factoryId: draft.factoryId, query: { days: Number(draft.days), ...(draft.from ? { from: draft.from } : {}) } };
     const call = AgentToolCallSchema.safeParse({ version: AGENT_TOOLS_VERSION, executionContract: workspace.executionContract, definitionChecksum: selectedDefinition.definitionChecksum, tool: selection.tool, input });
@@ -150,7 +151,10 @@ function AgentToolBrowserContent({ identity }: { identity: RefObject<Identity> }
           {selection.tool === "knowledge.search" ? <div className="atb-fields"><label className="atb-wide">知识检索词<input required maxLength={300} aria-label="知识检索词" value={draft.query} onChange={event => changeDraft({ query: event.target.value })} /></label>
             <label>知识主题<select aria-label="知识主题" value={draft.topic} onChange={event => changeDraft({ topic: event.target.value as Draft["topic"] })}><option value="all">全部主题</option>{Object.entries(KNOWLEDGE_TOPICS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             <label>知识平台<select aria-label="知识平台" value={draft.platform} onChange={event => changeDraft({ platform: event.target.value as Draft["platform"] })}><option value="all">通用知识</option><option value="amazon">Amazon</option><option value="etsy">Etsy</option></select></label>
-            <label>知识站点<input required pattern="ALL|[A-Z]{2}" aria-label="知识站点" value={draft.market} onChange={event => changeDraft({ market: event.target.value.toUpperCase() })} /></label><p className="atb-muted">通用知识仅匹配通用平台资料 ALL 仅匹配通用站点资料 不代表跨平台或跨站点全集</p></div> :
+            <label>知识站点<input required pattern="ALL|[A-Z]{2}" aria-label="知识站点" value={draft.market} onChange={event => changeDraft({ market: event.target.value.toUpperCase() })} /></label>
+            <KnowledgeProductPicker authority={authority} value={draft.spuId} enabled={selectedDefinition.available && locallyAllowed}
+              disabled={reading} onChange={spuId => changeDraft({ spuId })} onDenied={deny} />
+            <p className="atb-muted">通用知识仅匹配通用平台资料 ALL 仅匹配通用站点资料 不代表跨平台或跨站点全集</p></div> :
             selection.tool === "creative.history" ? <><label>创意执行范围<select aria-label="创意执行范围" value={draft.creativeScope} onChange={event => changeDraft({ creativeScope: event.target.value as AgentToolCreativeScope, ownerId: "" })}><option value="design_batch">批量设计</option><option value="inspection">PSD 模板检查</option><option value="mockup_batch">批量套图</option></select></label>
               <AgentToolObjectPicker key={draft.creativeScope} kind="creative" scope={draft.creativeScope} authority={authority} value={draft.ownerId} disabled={reading} enabled={selectedDefinition.available && locallyAllowed} onChange={ownerId => changeDraft({ ownerId })} onDenied={deny} /><p className="atb-muted">工作台生成任务请从原创作项目读取 此处不以项目 ID 代替生成任务 ID</p><Link href="/creative-designs/studio/image">打开原创作工作台</Link></> :
               selection.tool === "factory.capacity" ? <><AgentToolObjectPicker kind="factory" authority={authority} value={draft.factoryId} disabled={reading} enabled={selectedDefinition.available && locallyAllowed} onChange={factoryId => changeDraft({ factoryId })} onDenied={deny} /><div className="atb-fields"><label>工厂当地起始日期<input type="date" aria-label="工厂当地起始日期" value={draft.from} onChange={event => changeDraft({ from: event.target.value })} /></label><label>产能读取天数<input type="number" required min={1} max={31} step={1} aria-label="产能读取天数" value={draft.days} onChange={event => changeDraft({ days: event.target.value })} /></label></div><p className="atb-muted">日期留空由原工厂服务确定当前当地日 不按浏览器时区猜测 本次不预留产能</p></> :

@@ -165,6 +165,7 @@ const manifest = {
   studioPaidImageBrowser: studioPaidImageBrowserSelection?.metadata ?? null,
   creativeResponseAdoptionBrowser: creativeResponseAdoptionBrowserSelection?.metadata ?? null,
   creativeOwnerResponseAdoptionBrowser: creativeOwnerResponseAdoptionBrowserSelection?.metadata ?? null,
+  p6KnowledgeAgentBrowser: process.argv.includes("--suite=p6-knowledge-agent-browser"),
 };
 // Keep this family's complete raw output in its guarded owned leaf. Historical
 // families keep their existing manifest location and evidence conventions.
@@ -281,7 +282,9 @@ const agentFulfillmentCommandIntegration = process.argv.includes("--suite=agent-
 const agentNativeV4Integration = process.argv.includes("--suite=agent-native-v4-integration");
 const agentNativeV4LateIntegration = process.argv.includes("--suite=agent-native-v4-late-integration");
 const agentNativeV4UpgradeIntegration = process.argv.includes("--suite=agent-native-v4-upgrade-integration");
-const agentNativeV4Browser = process.argv.includes("--suite=agent-native-v4-browser");
+const p6KnowledgeAgentBrowser = process.argv.includes("--suite=p6-knowledge-agent-browser");
+process.env.E2E_P6_KNOWLEDGE_AGENT_ISOLATED = p6KnowledgeAgentBrowser ? "1" : "0";
+const agentNativeV4Browser = p6KnowledgeAgentBrowser || process.argv.includes("--suite=agent-native-v4-browser");
 const shipmentCreateIntegration = process.argv.includes("--suite=shipment-create-integration");
 const shipmentCreateBrowser = process.argv.includes("--suite=shipment-create-browser");
 const studioOriginalIntegration = process.argv.includes("--suite=studio-original-integration");
@@ -1227,7 +1230,7 @@ try {
     : shipmentCreateIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.shipment-create.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]
     : agentNativeV4Browser
-    ? [require.resolve("@playwright/test/cli"), "test", "--config", "apps/web/playwright.agent-native-v4.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
+    ? [require.resolve("@playwright/test/cli"), "test", "--config", p6KnowledgeAgentBrowser ? "apps/web/playwright.p6-knowledge-agent.config.ts" : "apps/web/playwright.agent-native-v4.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
     : agentNativeV4LateIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.agent-native-v4-late.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]
     : agentNativeV4UpgradeIntegration

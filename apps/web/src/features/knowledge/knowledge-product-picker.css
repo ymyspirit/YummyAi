@@ -1,0 +1,13 @@
+.kb-product-picker { grid-column: 1 / -1; min-width: 0; padding-block: 10px; border-block: 1px solid var(--line, #dce1e7); animation: kb-product-picker-enter 150ms ease-out both; }
+.kb-product-picker-fields { display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(180px, 1fr); align-items: end; gap: 10px; }
+.kb-product-picker label { display: grid; min-width: 0; gap: 5px; overflow-wrap: anywhere; }
+.kb-product-picker label > span { display: inline-flex; align-items: center; gap: 5px; }
+.kb-product-picker :is(input, select) { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.kb-product-picker :is(button, input, select) { transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease; }
+.kb-product-picker button:hover:not(:disabled) { transform: translateY(-1px); }
+.kb-product-picker button:active:not(:disabled) { transform: scale(.98); }
+.kb-product-picker :is(button, input, select):focus-visible { outline: 2px solid var(--blue, #2262cc); outline-offset: 2px; }
+.kb-product-picker-note { color: var(--muted-ink, #687386); font-size: 12px; overflow-wrap: anywhere; margin-block: 6px 0; }
+@keyframes kb-product-picker-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 700px) { .kb-product-picker-fields { grid-template-columns: minmax(0, 1fr); } .kb-product-picker-fields button { justify-self: start; } }
+@media (prefers-reduced-motion: reduce) { .kb-product-picker, .kb-product-picker :is(button, input, select) { animation: none; transition: none; transform: none; } .kb-product-picker button:is(:hover, :active):not(:disabled) { transform: none; } }

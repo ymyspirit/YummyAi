@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import type { AssistView } from "@yummyai/contracts/ai/assist";
+import { knowledgeReferenceHref } from "./knowledge-reference";
 import {
   KNOWLEDGE_TOPICS,
   type KnowledgeFields,
@@ -276,7 +277,7 @@ export function KnowledgeAnswer({ view }: { view: AssistView }) {
       <p className="kb-meta">
         {view.request?.kind === "knowledge_answer" ? view.request.search.query : "历史问题"} ·{" "}
         {
-          {
+          view.stale ? "原依据已变化" : {
             queued: "排队中",
             running: "回答中",
             completed: "已完成",
@@ -285,12 +286,14 @@ export function KnowledgeAnswer({ view }: { view: AssistView }) {
           }[view.status]
         }
       </p>
+      {view.stale ? <p className="kb-warning" role="status">原回答的依据已变化 本次正文与固定引用已隐藏 原任务状态和费用仍保留 请按原结果核对 不自动重新付费</p>
+        : view.status === "completed" && !view.result && <p className="kb-warning" role="status">原回答正文当前不可读 原任务状态和费用仍保留 不以空白内容表示回答可用</p>}
       {view.error && (
         <p className="kb-error" role="alert">
           {view.error}
         </p>
       )}
-      {view.result && (
+      {!view.stale && view.result && (
         <>
           <p className="kb-prose">{view.result.summary}</p>
           {view.result.findings.map((f, i) => (
@@ -301,9 +304,11 @@ export function KnowledgeAnswer({ view }: { view: AssistView }) {
               <p className="kb-prose">{f.detail}</p>
               {f.evidence.map((e, n) => {
                 const ref = view.sources.find((s) => s.id === e.sourceId);
+                const pinned = view.knowledge.find(item => item.sourceId === e.sourceId);
+                const href = pinned ? knowledgeReferenceHref(pinned) : ref?.href;
                 return (
                   <p key={n} className="kb-meta">
-                    {ref?.href ? <Link href={ref.href}>{ref.label}</Link> : e.sourceId}：{e.detail}
+                    {href ? <Link href={href}>{pinned?.title ?? ref?.label ?? e.sourceId}</Link> : e.sourceId}：{e.detail}
                   </p>
                 );
               })}
@@ -316,24 +321,25 @@ export function KnowledgeAnswer({ view }: { view: AssistView }) {
           )}
         </>
       )}
-      {view.diagnostics.map((d, i) => (
+      {!view.stale && view.diagnostics.map((d, i) => (
         <p key={i} className="kb-meta">
           {d}
         </p>
       ))}
       <details>
-        <summary>本次固定引用（{view.knowledge.length}）</summary>
-        {view.knowledge.map((r) => (
-          <div key={r.sourceId} className="kb-reference">
-            <Link href={r.href}>
+        <summary>{view.stale ? "本次固定引用当前不可读" : `本次固定引用（${view.knowledge.length}）`}</summary>
+        {!view.stale && view.knowledge.map((r) => {
+          const href = knowledgeReferenceHref(r);
+          return <div key={r.sourceId} className="kb-reference">
+            {href ? <Link href={href}>
               {r.title} · V{r.version}
-            </Link>
+            </Link> : <span>{r.title} · 原知识版本身份无法核对</span>}
             <p className="kb-meta">
               {r.sourceLabel} · 核对 {r.verifiedOn} · 复查 {r.reviewDueOn}
             </p>
             <p className="kb-prose">{r.excerpt}</p>
-          </div>
-        ))}
+          </div>;
+        })}
       </details>
       <p className="kb-meta">
         模型 {view.modelLabel}（{view.model}） · 提示词 {view.promptVersion} ·{" "}

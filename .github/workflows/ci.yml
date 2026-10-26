@@ -140,7 +140,19 @@ jobs:
         run: env -u CHROME_BIN node tools/scripts/install-p2-ci-browser.mjs
       - name: Validate original creative recovery on one compiled candidate
         run: env -u CHROME_BIN node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
+      - name: Validate product knowledge and personal Agent on the same candidate
+        run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p6-knowledge-agent-browser.mjs
       - run: pnpm test:integration
+      - name: Validate current knowledge evaluation and versioned Agent owners
+        shell: bash
+        run: |
+          set -euo pipefail
+          # MCP-v2 end-to-end uses the installed Windows Codex host and CurrentUser
+          # DPAPI. Its release evidence is recorded on that host; the existing
+          # Windows job separately verifies the actual credential implementation.
+          for suite in knowledge-evaluation-execution-integration knowledge-benchmark-integration business-benchmark-integration role-benchmark-integration agent-tools-integration agent-native-v4-integration agent-native-v4-late-integration agent-delegation-integration; do
+            pnpm test:e2e:order-daily --suite="$suite"
+          done
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
       - name: Validate creative original adoption and explicit image quotations
@@ -170,6 +182,7 @@ jobs:
             apps/*/playwright-report
             apps/*/test-results
             output/p2-creative-browser
+            output/p6-knowledge-agent-browser
             tmp/order-daily-artifacts-*/acceptance-manifest.json
             tmp/order-daily-artifacts-*/browser/**/*proof.json
             tmp/order-daily-artifacts-*/playwright/**/*proof.json

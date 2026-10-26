@@ -8,6 +8,6 @@ if (!nonce || process.env.E2E_KNOWLEDGE_EVALUATION_ISOLATED !== "1" || process.e
   throw new Error("Knowledge evaluation execution requires its exact current disposable database and private bucket before loading tests");
 export default defineConfig({
   ...(process.env.YUMMYAI_TEST_CACHE_DIR ? { cacheDir: process.env.YUMMYAI_TEST_CACHE_DIR } : {}),
-  test: { include: ["src/knowledge/knowledge-evaluation-execution.integration.test.ts"], testTimeout: 120_000,
+  test: { include: ["src/knowledge/knowledge-evaluation-execution.integration.test.ts", "src/knowledge/knowledge-answer-scope.integration.test.ts", "src/knowledge/knowledge-answer-account-scope.integration.test.ts"], testTimeout: 120_000,
     hookTimeout: 180_000, maxWorkers: 1, fileParallelism: false },
 });

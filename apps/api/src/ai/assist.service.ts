@@ -614,6 +614,7 @@ export class AssistService {
       reconciliations:await readModelBillingAcknowledgments(tx,"assist",[id]),
       budgets:await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId,id)),
     }),{isolationLevel:"repeatable read",accessMode:"read only"});
+    if (input?.request.kind === "knowledge_answer") await this.contexts.assertKnowledgeReadAccess(context, input);
     if (row.benchmarkItemId) {
       await withTenant(this.database.db, context, tx => this.benchmarkReadContext(tx, context, row, input),
         { isolationLevel: "repeatable read", accessMode: "read write" });

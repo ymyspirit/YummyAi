@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Header, Inject, Param, Post, Req } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Header, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import { Permission } from "@yummyai/authz";
+import { KnowledgeProductOptionsQuerySchema } from "@yummyai/contracts/knowledge";
 import { z } from "zod";
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
@@ -11,6 +12,25 @@ const context = (request: AuthenticatedRequest) => {
 @Controller("v1/knowledge")
 export class KnowledgeController {
   constructor(@Inject(KnowledgeService) private readonly knowledge: KnowledgeService) {}
+  @Get("product-options")
+  @Header("Cache-Control", "private, no-store")
+  @RequiresPermission(Permission.WorkflowRead)
+  productOptions(
+    @Req() request: AuthenticatedRequest & { originalUrl?: string },
+    @Query() query: unknown = {},
+  ) {
+    // Check the transport as well as the parsed object: a query parser must not
+    // silently collapse duplicate keys or discard an unknown parameter.
+    if (request.originalUrl) {
+      const parameters = new URL(request.originalUrl, "http://localhost").searchParams;
+      const keys = [...parameters.keys()];
+      if (keys.some(key => key !== "q") || new Set(keys).size !== keys.length)
+        throw new BadRequestException("knowledge_product_options_query_invalid");
+    }
+    const parsed = KnowledgeProductOptionsQuerySchema.safeParse(query);
+    if (!parsed.success) throw new BadRequestException("knowledge_product_options_query_invalid");
+    return this.knowledge.productOptions(context(request), parsed.data);
+  }
   @Get("workspace")
   @Header("Cache-Control", "private, no-store")
   @RequiresPermission(Permission.WorkflowRead)

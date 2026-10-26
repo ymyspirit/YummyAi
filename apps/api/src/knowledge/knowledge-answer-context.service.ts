@@ -1,15 +1,18 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { assistUsesReviewedGuidance, type SecretVault, type AssistContext } from "@yummyai/ai-core";
 import { authorize, authorizeAssistRequest, ForbiddenError, Permission } from "@yummyai/authz";
+import { catalogOwnerFilter, currentCatalogContext } from "@yummyai/catalog-core";
 import type { TenantContext } from "@yummyai/contracts";
 import type { CreateAssist } from "@yummyai/contracts/ai/assist";
-import { aiAssistRuns, withTenant, type DatabaseConnection } from "@yummyai/database";
-import { redactKnowledgeText } from "@yummyai/knowledge-core";
+import { aiAssistRuns, knowledgeDocuments, knowledgeEvaluationRuns, marketplaceAccounts, withTenant, type DatabaseConnection } from "@yummyai/database";
+import type { KnowledgeReference } from "@yummyai/contracts/knowledge";
+import { redactKnowledgeText, knowledgeProductsVisible } from "@yummyai/knowledge-core";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { KnowledgeConversationSchema } from "@yummyai/contracts/knowledge/governance";
 import { DATABASE_CONNECTION, AI_ASSIST_VAULT } from "../platform.tokens.js";
 import { KnowledgeService } from "./knowledge.service.js";
 import { KnowledgeImportService } from "./knowledge-import.service.js";
+import { assertKnowledgeScope, authorizeKnowledgeAccount } from "./knowledge-scope.js";
 
 @Injectable()
 export class KnowledgeAnswerContextService {
@@ -19,6 +22,54 @@ export class KnowledgeAnswerContextService {
     @Inject(KnowledgeService) private readonly knowledge: KnowledgeService,
     @Inject(KnowledgeImportService) private readonly imports: KnowledgeImportService,
   ) {}
+  async currentReadContext(
+    ceiling: TenantContext, request: Extract<CreateAssist, { kind: "knowledge_answer" }>,
+    references: readonly KnowledgeReference[] = [],
+  ) {
+    return withTenant(this.database.db, ceiling, async tx => {
+      const current = await currentCatalogContext(tx, ceiling);
+      authorize(current, Permission.WorkflowRead);
+      if (!await knowledgeProductsVisible(tx, current, request.search.spuIds, { lock: true }))
+        throw new NotFoundException("原知识适用产品不存在或不可访问");
+      if (request.purpose === "evaluation") {
+        // The run snapshot is immutable. Today's editable case must never
+        // replace the original fixed bibliography when authorizing an answer.
+        const [evaluation] = await tx.select({ snapshot: knowledgeEvaluationRuns.caseSnapshot })
+          .from(knowledgeEvaluationRuns).where(and(eq(knowledgeEvaluationRuns.requestId, request.requestId),
+            eq(knowledgeEvaluationRuns.caseId, request.scopeId), eq(knowledgeEvaluationRuns.createdBy, current.userId)));
+        if (!evaluation) throw new NotFoundException("原评测记录不存在或不可访问");
+        await assertKnowledgeScope(tx, current, {
+          entryIds: evaluation.snapshot.requiredEntryIds, spuIds: evaluation.snapshot.search.spuIds,
+        });
+      }
+      const account = references.filter(reference => reference.sourceId.startsWith("account:"));
+      if (account.length && !request.evidenceStoreId) throw new NotFoundException("原账户证据不可访问");
+      if (request.evidenceStoreId) {
+        authorizeKnowledgeAccount(current);
+        const [store] = await tx.select({ id: marketplaceAccounts.id }).from(marketplaceAccounts)
+          .where(and(eq(marketplaceAccounts.id, request.evidenceStoreId),
+            catalogOwnerFilter(current, Permission.StoreRead, marketplaceAccounts.createdBy),
+            catalogOwnerFilter(current, Permission.FinanceRead, marketplaceAccounts.createdBy))).for("share");
+        if (!store) throw new NotFoundException("原账户店铺不存在或不可访问");
+        const productIds: string[] = [];
+        for (const reference of [...account].sort((a, b) => a.versionId.localeCompare(b.versionId))) {
+          const [document] = await tx.select({ id: knowledgeDocuments.id, kind: knowledgeDocuments.kind,
+            storeId: knowledgeDocuments.storeId, spuId: sql<string | null>`${knowledgeDocuments.fields}->>'spuId'` })
+            .from(knowledgeDocuments).where(and(eq(knowledgeDocuments.id, reference.versionId),
+              catalogOwnerFilter(current, Permission.StoreRead, knowledgeDocuments.createdBy),
+              catalogOwnerFilter(current, Permission.FinanceRead, knowledgeDocuments.createdBy))).for("share");
+          if (!document || document.kind !== "account" || document.storeId !== store.id ||
+            document.id.toLowerCase() !== reference.entryId.toLowerCase() ||
+            reference.sourceId.toLowerCase() !== `account:${document.id}:r${reference.version}`)
+            throw new NotFoundException("原账户证据不存在或不可访问");
+          if (document.spuId) productIds.push(document.spuId);
+        }
+        if (!await knowledgeProductsVisible(tx, current, productIds, { lock: true }))
+          throw new NotFoundException("原账户证据适用产品不存在或不可访问");
+      }
+      return current;
+    });
+  }
   async conversations(context: TenantContext) {
     authorize(context, Permission.WorkflowRead);
     const rows = await withTenant(this.database.db, context, (tx) =>
@@ -48,12 +99,13 @@ export class KnowledgeAnswerContextService {
         continue;
       seen.add(row.scope);
       try {
-        authorizeAssistRequest(context, input.request, "read", {
+        const current = await this.currentReadContext(context, input.request, input.knowledge ?? []);
+        authorizeAssistRequest(current, input.request, "read", {
           hasKnowledge: assistUsesReviewedGuidance(input),
           pinnedDataScope: input.accessPolicy?.dataScope ?? "tenant",
         });
       } catch (error) {
-        if (error instanceof ForbiddenError) continue;
+        if (error instanceof ForbiddenError || error instanceof NotFoundException) continue;
         throw error;
       }
       result.push(
