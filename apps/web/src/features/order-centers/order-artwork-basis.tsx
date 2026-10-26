@@ -13,7 +13,7 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
   children?: ReactNode;
 }) {
   const [selectedSpu, setSelectedSpu] = useState({ lineId: detail.line.id, id: "" });
-  const [manualOpen, setManualOpen] = useState(!detail.catalog?.automatic);
+  const [manualOpen, setManualOpen] = useState(!detail.catalog?.automatic?.applied && detail.catalog?.automatic?.status !== "preserved");
   const catalog = detail.catalog;
   if (!catalog) return <><p className="oc-hint oc-full-field" role="status">本单制作依据暂不可读取 请保留原需求并刷新核对</p>{children}</>;
   const view = orderAutomaticBasisView(detail, draft), { recipe, specification } = view;

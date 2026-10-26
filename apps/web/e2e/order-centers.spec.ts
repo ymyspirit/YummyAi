@@ -233,7 +233,7 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/orders?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
-    await page.getByText("平台发货截止：待核对", { exact: true }).click();
+    await page.locator("details.oc-platform-editor > summary").click();
     await page.getByLabel("平台最晚发货时间").fill(await currentLocalMinute(2 * 86_400_000));
     await page.getByLabel("平台交期核对依据").fill("Synthetic Seller Central ship-by verification");
     await page.getByRole("button", { name: "保存平台交期核对" }).click();
