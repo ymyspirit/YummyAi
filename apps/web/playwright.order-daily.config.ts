@@ -9,8 +9,8 @@ if (process.env.E2E_ISOLATED_DAILY !== "1" || !fixtureToken || process.env.S3_PR
 const servers = Array.isArray(base.webServer) ? base.webServer : [];
 export default defineConfig({
   ...base,
-  testMatch: ["order-centers.spec.ts", "amazon-report-workspace.spec.ts", "amazon-report-unpriced.spec.ts"],
-  grep: /six centers|finance and advertising|manual report UI imports/,
+  testMatch: ["order-centers.spec.ts", "amazon-report-workspace.spec.ts", "amazon-report-unpriced.spec.ts", "order-intake.spec.ts"],
+  grep: /six centers|finance and advertising|manual report UI imports|controlled order intake pillow/,
   workers: 1,
   outputDir: "../../tmp/order-daily-e2e",
   webServer: servers.map((server) => ({ ...server, env: {

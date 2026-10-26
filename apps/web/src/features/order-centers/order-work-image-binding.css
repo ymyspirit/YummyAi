@@ -1,0 +1,13 @@
+.oc-work-image-binding {
+  display: block;
+  min-width: 0;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 140ms ease, transform 140ms ease, display 140ms allow-discrete;
+}
+.oc-work-image-binding[hidden] { display: none; opacity: 0; transform: translateY(-3px); }
+.oc-work-image-binding :is(input, select) { width: 100%; min-width: 0; box-sizing: border-box; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.oc-work-image-binding :is(input, select):focus-visible { outline: 2px solid var(--blue, #2262cc); outline-offset: 2px; }
+.oc-work-image-binding small { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+@starting-style { .oc-work-image-binding:not([hidden]) { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .oc-work-image-binding, .oc-work-image-binding :is(input, select) { transition: none; transform: none; } }

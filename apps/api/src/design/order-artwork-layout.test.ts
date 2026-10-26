@@ -98,6 +98,17 @@ describe("private order template layout", () => {
     ambiguous.fields.push({ ...ambiguous.fields[0]! });
     expect(() => assertAutomaticArtwork(pillowCustomization, [], ambiguous, "shaped_pillow", true)).toThrow("不唯一");
   });
+  it("explains unsupported buyer requirements without deleting them or changing the executor", () => {
+    const input = pillowDraft();
+    input.fields.push({ key: "customer_notes", label: "顾客备注", kind: "text", value: "Keep the entire collar" });
+    const before = JSON.stringify(input);
+    expect(() => assertAutomaticArtwork(pillowCustomization, [], input, "shaped_pillow", true)).toThrow("顾客特殊要求");
+    expect(JSON.stringify(input)).toBe(before);
+    const extra = pillowDraft();
+    extra.fields.push({ key: "source-font", label: "Font", kind: "text", value: "Synthetic Font" });
+    expect(() => assertAutomaticArtwork(pillowCustomization, [], extra, "shaped_pillow", true)).toThrow("尚未配置自动制图规则：Font");
+    expect(extra.fields.at(-1)?.value).toBe("Synthetic Font");
+  });
   it.each(["Half Body", "half_body", "half-body", "半身", "上半身"])("recognizes explicit half-body controls without silently promoting them to whole body: %s", crop => {
     const input = pillowDraft(); input.fields[0]!.value = crop;
     expect(orderPillowPhotoPlan("shaped_pillow", pillowCustomization, [], input)).toEqual({ subject: "half_body", sideMode: "double" });

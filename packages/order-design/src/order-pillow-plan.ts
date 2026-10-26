@@ -24,10 +24,17 @@ export function orderPillowPhotoPlan(
 
   if (draft.instructions.trim()) throw new ConflictException("自由文字制作说明需要美工核对，或先配置为明确的定制字段和区域");
   const keys = new Set(["buyer_photo", "crop_scope", "print_sides", "customer_notes"]);
-  if (fields.some((f) => !keys.has(f.key) || f.visibleWhen) ||
-      draft.fields.some((f) => !keys.has(f.key) || f.font || f.color) ||
-      draft.images.length !== 1 || draft.images[0]?.usage !== "buyer_photo")
+  if (draft.images.length !== 1 || draft.images[0]?.usage !== "buyer_photo")
     throw new ConflictException("来图抱枕 Agent 需要一张明确绑定的顾客原图和标准裁切、印刷面数参数");
+  if (fields.some((f) => !keys.has(f.key) || f.visibleWhen))
+    throw new ConflictException("当前印花包含自动制图尚不支持的定制字段或条件规则，请由美工核对");
+  if (draft.fields.some((f) => f.key === "customer_notes" && f.value.trim()))
+    throw new ConflictException("顾客特殊要求需要核对后才能自动制图");
+  if (draft.fields.some((f) => f.font || f.color))
+    throw new ConflictException("本单包含字体或颜色要求，请由美工核对，或配置对应的自动制图规则");
+  const unmapped = draft.fields.filter((f) => !keys.has(f.key));
+  if (unmapped.length)
+    throw new ConflictException(`以下定制内容尚未配置自动制图规则：${[...new Set(unmapped.map((f) => f.label))].join("、")}`);
   for (const field of fields) {
     if (field.key === "buyer_photo") continue;
     const values = draft.fields.filter((f) => f.key === field.key);

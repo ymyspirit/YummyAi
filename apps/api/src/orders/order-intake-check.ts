@@ -4,6 +4,7 @@ import {
   customizationFieldCandidates,
   customizationFieldVisible,
   mapOrderCustomization,
+  type OrderCustomizationMappingOptions,
 } from "./order-customization-mapper.js";
 
 /** Deterministic review only: no guessing aliases, file fetching, model or approval. */
@@ -11,14 +12,15 @@ export function checkOrderIntakeFields(
   schema: CustomizationDefinition,
   draft: OrderWorkDraft,
   strict: boolean,
+  options: OrderCustomizationMappingOptions = {},
 ) {
   const issues: OrderIntakeCheck["issues"] = [];
   const normalizedDraft = structuredClone(draft);
   const matches = draft.fields.map((source) =>
-    customizationFieldCandidates(schema.fields, source.key, source.label),
+    customizationFieldCandidates(schema.fields, source.key, source.label, options),
   );
   const imageMatches = draft.images.map((source) =>
-    customizationFieldCandidates(schema.fields, source.usage, source.usage),
+    customizationFieldCandidates(schema.fields, source.usage, source.usage, options),
   );
   const add = (code: string, fieldKey: string | null, message: string, action: string) =>
     issues.push({ code, fieldKey, message, action });
@@ -38,26 +40,17 @@ export function checkOrderIntakeFields(
         `定制字段尚未匹配：${source.label}`,
         "匹配到已封存字段；额外要求交由美工核对，并保留原始资料",
       );
-    } else if (candidates.length === 1) {
-      const field = candidates[0]!;
-      // Two provider entries must not be collapsed into one accepted value.
-      if (
-        matches.filter((list) => list.length === 1 && list[0]!.key === field.key).length === 1 &&
-        !draft.fields.some((other, otherIndex) => otherIndex !== index && other.key === field.key)
-      ) {
-        normalizedDraft.fields[index] = { ...source, key: field.key, label: field.label };
-      }
     }
   }
   for (const [index, source] of draft.images.entries()) {
     const candidates = imageMatches[index]!;
     if (candidates.length !== 1 || candidates[0]!.type !== "image") {
-      if (strict || candidates.length > 0)
+      if (strict || candidates.length > 0 || schema.fields.some(field => field.type === "image"))
         add(
           candidates.length > 1 ? "ambiguous_image" : "unmapped_image",
           null,
           `买家原图用途${candidates.length > 1 ? "有歧义" : "未匹配"}：${source.usage}`,
-          "在图片用途中填写唯一的图片字段编码",
+          "核对所选原图，并在图片用途中明确填写本单唯一的图片字段编码",
         );
     } else normalizedDraft.images[index]!.usage = candidates[0]!.key;
   }
@@ -67,7 +60,26 @@ export function checkOrderIntakeFields(
       return [];
     return [{ key: field.key, label: field.label, type: "text" as const, value: source.value }];
   });
-  const mapped = mapOrderCustomization(schema, sourceValues);
+  const mapped = mapOrderCustomization(schema, sourceValues, options);
+  for (const [index, source] of draft.fields.entries()) {
+    const candidates = matches[index]!;
+    if (candidates.length !== 1) continue;
+    const field = candidates[0]!;
+    // Invalid, duplicate and ambiguous entries remain fully editable. Never
+    // replace multiple provider entries with one accepted canonical value.
+    if (matches.filter(list => list.length === 1 && list[0]!.key === field.key).length !== 1 ||
+      draft.fields.some((other, otherIndex) => otherIndex !== index && other.key === field.key)) continue;
+    // A report's upload filename is only an editable source marker. Canonical
+    // identity does not make it a selected or authorized buyer image.
+    if (field.type === "image" && source.kind === "image") {
+      normalizedDraft.fields[index] = { ...source, key: field.key, label: field.label };
+      continue;
+    }
+    if (!mapped.mappedFieldKeys.includes(field.key)) continue;
+    const value = mapped.values[field.key];
+    normalizedDraft.fields[index] = { ...source, key: field.key, label: field.label,
+      value: typeof value === "string" ? value : source.value };
+  }
   const fields: OrderIntakeCheck["fields"] = schema.fields.map(
     (field): OrderIntakeCheck["fields"][number] => {
       const sources = draft.fields.filter(
@@ -90,7 +102,7 @@ export function checkOrderIntakeFields(
         );
       const duplicate =
         sources.filter((source) => source.value.trim()).length > 1 ||
-        (field.type === "image" && images.length > (field.validation?.maxFiles ?? 1));
+        (field.type === "image" && images.length > (options.photoOnlyPillow && field.key === "buyer_photo" ? 1 : field.validation?.maxFiles ?? 1));
       if (invalid)
         add(
           "invalid_value",

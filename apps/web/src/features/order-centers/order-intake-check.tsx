@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   OrderIntakeCheckViewSchema,
   type OrderIntakeCheck,
@@ -7,6 +7,8 @@ import {
   type OrderWorkDraft,
 } from "@yummyai/contracts/order/workspace";
 import { centerRequest, dateTime } from "./order-center-model";
+import { orderImageSelectionProblem, orderIntakeReceiptMatches, orderIntakeResultCurrent,
+  orderIntakeSnapshot, type OrderIntakeSnapshot } from "./order-work-input-model";
 
 const fieldStatus = {
   mapped: "已匹配",
@@ -28,31 +30,52 @@ export function OrderIntakeCheckPanel({
   editable: boolean;
   onChange: (draft: OrderWorkDraft) => void;
 }) {
-  const [result, setResult] = useState<{ check: OrderIntakeCheck; input: string } | null>(null);
+  const [result, setResult] = useState<{ check: OrderIntakeCheck; snapshot: OrderIntakeSnapshot } | null>(null);
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const input = JSON.stringify({
-    expectedRevision: detail.line.revision,
-    expectedSourceVersionId: detail.report?.versionId ?? null,
-    draft,
-  });
-  const stale = !!result && (result.input !== input || disabled);
+    [error, setError] = useState<{ snapshot: OrderIntakeSnapshot; message: string } | null>(null);
+  const snapshot = orderIntakeSnapshot(detail, draft);
+  const live = useRef({ snapshot, disabled, editable });
+  live.current = { snapshot, disabled, editable };
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => { pending.current?.abort(); }, []);
+  const sameInput = (expected: OrderIntakeSnapshot) => expected.orderLineId === live.current.snapshot.orderLineId &&
+    expected.input === live.current.snapshot.input;
+  const stale = !!result && (!orderIntakeResultCurrent(result, snapshot) || disabled);
+  const visibleError = error && sameInput(error.snapshot) ? error.message : null;
   async function check() {
-    const checkedInput = input;
+    if (disabled || busy) return;
+    const checked = snapshot;
+    const fields = detail.catalog?.artworks.find(art => art.id === draft.artworkVersionId)?.customization.fields ?? [];
+    const imageProblem = orderImageSelectionProblem(fields, draft.images);
+    if (imageProblem) { setResult(null); setError({ snapshot: checked, message: imageProblem }); return; }
+    pending.current?.abort();
+    const abort = new AbortController();
+    pending.current = abort;
     setBusy(true);
-    setError("");
+    setError(null);
     setResult(null);
     try {
       const data = await centerRequest(
-        `lines/${detail.line.id}/intake-check`,
-        JSON.parse(checkedInput),
+        `lines/${checked.orderLineId}/intake-check`,
+        JSON.parse(checked.input),
+        abort.signal,
       );
-      setResult({ check: OrderIntakeCheckViewSchema.parse(data), input: checkedInput });
+      if (abort.signal.aborted || pending.current !== abort || !sameInput(checked)) return;
+      const check = OrderIntakeCheckViewSchema.parse(data);
+      if (!orderIntakeReceiptMatches(check, checked))
+        throw new Error("核对结果与本单需求或来源版本不一致，请重新核对；填写内容仍保留。");
+      setResult({ check, snapshot: checked });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "承接核对失败，请重试");
+      if (!abort.signal.aborted && pending.current === abort && sameInput(checked))
+        setError({ snapshot: checked, message: cause instanceof Error ? cause.message : "承接核对失败，请重试" });
     } finally {
-      setBusy(false);
+      if (pending.current === abort) { pending.current = null; if (!abort.signal.aborted) setBusy(false); }
     }
+  }
+  function apply() {
+    if (!result || busy || live.current.disabled || !live.current.editable ||
+      !orderIntakeResultCurrent(result, live.current.snapshot)) return;
+    onChange(structuredClone(result.check.normalizedDraft));
   }
   const data = !stale ? result?.check : null;
   return (
@@ -71,7 +94,7 @@ export function OrderIntakeCheckPanel({
       <p className="oc-hint">
         核对封存配置、SKU 制作版本和买家字段。可先检查未保存的修改；保存审单和派单时服务端再次检查。
       </p>
-      {error && <p role="alert">{error}</p>}
+      {visibleError && <p role="alert">{visibleError}</p>}
       {stale && <p role="status">需求或订单状态已变化，请重新核对。</p>}
       {data && (
         <>
@@ -105,7 +128,7 @@ export function OrderIntakeCheckPanel({
                     <strong>{field.label}</strong>
                     <small>
                       {field.required ? "本单必填" : "选填或条件字段"}
-                      {field.type === "image" ? ` · 已选 ${field.imageCount} 张原图` : ""}
+                      {field.type === "image" ? ` · 已绑定 ${field.imageCount} 张原图` : ""}
                     </small>
                   </span>
                   <span
@@ -122,7 +145,7 @@ export function OrderIntakeCheckPanel({
               type="button"
               className="oc-button"
               disabled={disabled || busy}
-              onClick={() => onChange(data.normalizedDraft)}
+              onClick={apply}
             >
               应用唯一字段匹配
             </button>
