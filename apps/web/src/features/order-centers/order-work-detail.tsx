@@ -28,6 +28,8 @@ import { adoptOrderMatch } from "../ai-assist/assist-adoption";
 import { OrderArtworkBasis, OrderArtworkMaterials } from "./order-artwork-basis";
 import { OrderTemplatePlanPanel } from "./order-template-plan";
 import { OrderIntakeCheckPanel } from "./order-intake-check";
+import { OrderWorkImageBinding } from "./order-work-image-binding";
+import { defaultOrderImageUsage, orderImageBindingField, orderImageSelectionProblem, orderSingleChoiceOptions } from "./order-work-input-model";
 import { OrderArtworkProgress } from "./order-artwork-progress";
 import { OrderArtworkReview } from "./order-artwork-review";
 import { artworkPreviewPending } from "./order-artwork-review-model";
@@ -231,6 +233,8 @@ export function OrderWorkDetailPanel({
   ) {
     if (!detail || !draft || navigationBusy || loading) return;
     if (deadlineState.dirty) { setError("请先保存平台交期核对，再保存制作需求。"); return; }
+    const imageProblem = orderImageSelectionProblem(customizationFields, draft.images);
+    if (imageProblem) { setError(imageProblem); return; }
     setBusy(true);
     setError("");
     setNotice("");
@@ -373,7 +377,7 @@ export function OrderWorkDetailPanel({
           }),
         ),
       );
-      setNotice("图片已上传，请选中它并填写制作用途，然后保存。");
+      setNotice("图片已上传，请选中它并核对对应图片字段或制作用途，然后保存。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "上传失败");
     } finally {
@@ -804,7 +808,9 @@ export function OrderWorkDetailPanel({
             </p>
           )}
           <div className="oc-custom-fields">
-            {draft.fields.map((field, index) => (
+            {draft.fields.map((field, index) => {
+              const choiceOptions = orderSingleChoiceOptions(customizationFields, field);
+              return (
               <fieldset key={field.key} disabled={!editable || navigationBusy} className="oc-custom-field">
                 {field.kind !== "image" && textCustomizationFields.length > 0 ? <label>
                   对应定制字段
@@ -815,7 +821,7 @@ export function OrderWorkDetailPanel({
                     {!textCustomizationFields.some(item => item.key === field.key) &&
                       <option value={field.key}>待匹配 · {field.label}</option>}
                     {textCustomizationFields.map(item =>
-                      <option key={item.key} value={item.key} disabled={draft.fields.some((other, i) => i !== index && other.key === item.key)}>{item.label} · {item.key}</option>)}
+                      <option key={item.key} value={item.key} disabled={draft.fields.some((other, i) => i !== index && other.key === item.key)}>{item.label} · {item.key}{draft.fields.some((other, i) => i !== index && other.key === item.key && !other.value.trim()) ? " · 已有空白填写项，请先核对" : ""}</option>)}
                   </select>
                 </label> : null}
                 <label>
@@ -836,7 +842,11 @@ export function OrderWorkDetailPanel({
                 </label>
                 <label>
                   定制内容
-                  <textarea
+                  {choiceOptions ? <select aria-label="定制内容" value={field.value}
+                    onChange={event => setDraft({ ...draft, fields: draft.fields.map((value, i) =>
+                      i === index ? { ...value, value: event.target.value } : value) })}>
+                    {choiceOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select> : <textarea
                     aria-label="定制内容"
                     rows={2}
                     value={field.value}
@@ -848,7 +858,7 @@ export function OrderWorkDetailPanel({
                         ),
                       })
                     }
-                  />
+                  />}
                 </label>
                 {field.font !== undefined && (
                   <label>
@@ -893,7 +903,8 @@ export function OrderWorkDetailPanel({
                   <X size={16} />
                 </button>
               </fieldset>
-            ))}
+              );
+            })}
           </div>
           {editable && (
             <button
@@ -931,6 +942,8 @@ export function OrderWorkDetailPanel({
           </label>
           <div className="oc-section-heading">
             <h3>订单图片与用途</h3>
+            <small>{draft.images.length} 张已选{customizationFields.some(field => field.type === "image")
+              ? ` · ${draft.images.filter(image => orderImageBindingField(customizationFields, image.usage)).length} 张已绑定字段` : ""}</small>
             {editable && (
               <button
                 className="oc-button"
@@ -977,7 +990,7 @@ export function OrderWorkDetailPanel({
                           images: event.target.checked
                             ? [
                                 ...draft.images,
-                                { origin: image.origin, key: image.key, usage: "正面" },
+                                { origin: image.origin, key: image.key, usage: defaultOrderImageUsage(customizationFields) },
                               ]
                             : draft.images.filter(
                                 (value) =>
@@ -988,25 +1001,9 @@ export function OrderWorkDetailPanel({
                     />
                     <span>{image.name}</span>
                   </label>
-                  {selected && (
-                    <label>
-                      制作用途
-                      <input
-                        disabled={!editable || navigationBusy}
-                        value={selected.usage}
-                        list="order-image-usages"
-                        placeholder="正面 / 背面 / 人像位置"
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            images: draft.images.map((value) =>
-                              value === selected ? { ...value, usage: event.target.value } : value,
-                            ),
-                          })
-                        }
-                      />
-                    </label>
-                  )}
+                  <OrderWorkImageBinding fields={customizationFields} usage={selected?.usage}
+                    disabled={!editable || navigationBusy} onChange={usage => setDraft({ ...draft,
+                      images: draft.images.map(value => value === selected ? { ...value, usage } : value) })} />
                 </div>
               );
             })}

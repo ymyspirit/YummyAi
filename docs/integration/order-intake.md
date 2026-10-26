@@ -51,6 +51,38 @@ Web BFF 限定路由和同源 JSON 请求，不接收调用方选定的租户、
 
 ## 隔离验收
 
+### 2026-10-26 原图与审单一致性修复
+
+已下载图片不等于已绑定定制字段。勾选图片时，若当前印花只有一个图片字段，直接使用
+该字段编码；多个图片字段必须明确选择。界面显示「已绑定」，旧的未知用途保留可见，
+不能将平台预览或其他订单图片作为顾客原图。
+
+只有已验证的异形抱枕来图印花启用平台选项白名单：Pillow Shape、Style 和
+Order Notes for Seller 对应裁切、印刷面数和顾客备注。旧「正面」仅在唯一买家原图
+字段的无冲突场景归一；单双面选项写入真实枚举值。原始报告不改写，未映射内容、字体、
+颜色、特殊备注不删除，也不会自动将 Agent 改成人工。
+
+直接匹配的 `CUSTOM-SHAPED-PILLOW` 订单中，唯一明确的尺寸选项须与固定规格完全一致，
+才作为制作控制参数单独传递；原尺寸字段仍保存于需求及原始报告。多值、错尺寸、附带
+字体颜色或与真实定制字段冲突时不隐藏该字段，必须核对。已有封存配置继续使用其原映射。
+人工裁切短文本按固定字段的原长度规则保留，自动制图另检查是否支持该裁切。
+
+「核对当前需求」、确认审单和制图计划使用相同归一化结果。预检同时执行所选制图方式
+的保存门禁；自动制图不支持的要求返回 `automatic_artwork_not_ready` 和处理动作。
+保存待补资料仍可保留这些要求，操作者明确选择人工后可按人工审单。核对通过仅表示
+当前输入可确认审单，不表示已经派单、调用模型或批准生产。
+
+新增回归通过个人 OIDC 和隔离数据库，验证默认 Agent 的简单来图审单，以及特殊要求的
+阻断、保留和明确人工选择。它们进入默认 daily CI；定向运行：
+
+```powershell
+pnpm test:e2e:order-daily --suite=order-daily order-intake.spec.ts --grep="controlled order intake pillow" --workers=1 --retries=0
+```
+
+新用例输出位于运行器本次独立输出目录，验收后保留简明结论并清理临时图和日志。
+旧 `--suite=order-intake` 是 local-service 历史路径，不可用其结果证明本人 OIDC 或默认
+Agent 审单通过。
+
 ```powershell
 pnpm test:e2e:order-daily --suite=order-intake-integration
 pnpm test:e2e:order-daily --suite=order-intake

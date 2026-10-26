@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { expect, test } from "@playwright/test";
+import { dirname } from "node:path";
+import { expect, test, type Page, type Request, type TestInfo } from "@playwright/test";
 import {
   type AmazonReportBatchView,
   type AmazonReportWorkspaceView,
@@ -8,6 +9,7 @@ import {
 } from "@yummyai/contracts";
 import {
   OrderIntakeCheckViewSchema,
+  OrderWorkDetailViewSchema,
   type OrderIntakeCheck,
   type OrderWorkDetail,
   type OrderWorkDraft,
@@ -18,6 +20,9 @@ import { salesLaunchFixture } from "./sales-plan-launch-fixture";
 import { centerApi } from "./order-centers-fixture";
 import { syntheticProductionPng } from "./production-editor-fixture";
 import { apiFetch } from "../src/server-api";
+import { loginErp } from "./erp-identity-fixture";
+import { orderIntakePillowFixture, type OrderIntakePillowFixture } from "./order-intake-pillow-fixture";
+import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 
 test("controlled order intake preserves sealed configuration, blocks mismatches and resumes corrected orders", async ({
   page,
@@ -512,3 +517,261 @@ test("controlled order intake preserves legacy field rules and retains the upstr
     await fixture.close();
   }
 });
+
+test.describe("controlled order intake pillow personal regressions", () => {
+  test.beforeEach(async ({ page }) => {
+    requireDisposableIntegrationEnvironment();
+    expect(process.env.WEB_AUTH_MODE).toBe("personal");
+    await loginErp(page);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  test("controlled order intake pillow saves the default Agent after selecting the original without internal field names", async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    let fixture: OrderIntakePillowFixture | undefined;
+    let completed = false;
+    const audit = watchPillowIntake(page, () => fixture?.lineId);
+    try {
+      fixture = await orderIntakePillowFixture(false);
+      const whole = await openPillowIntake(page, fixture);
+      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
+      await expect(image).toHaveCount(1);
+      await image.getByRole("checkbox").check();
+      const check = await previewPillowIntake(page, fixture);
+      expect(check.ready, JSON.stringify(check.issues)).toBe(true);
+      expect(check.normalizedDraft.designExecutor).toBe("agent");
+      expect(check.normalizedDraft.images).toEqual([
+        { origin: "report", key: fixture.buyer.key, usage: "buyer_photo" },
+      ]);
+      expect(check.normalizedDraft.fields.find(field => field.key === "crop_scope")?.value)
+        .toBe("head");
+      expect(check.normalizedDraft.fields.find(field => field.key === "print_sides")?.value)
+        .toBe("double_sided");
+      assertPillowSizePreserved(check.normalizedDraft);
+      await applyOfferedPillowMatch(page);
+      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      const response = await savePillowIntake(page, fixture, "确认本件审单");
+      expect(response.ok()).toBe(true);
+      const request = response.request().postDataJSON() as {
+        status: string; draft: OrderWorkDraft;
+      };
+      expect(request.status).toBe("ready_to_push");
+      expect(request.draft.designExecutor).toBe("agent");
+      const saved = OrderWorkDetailViewSchema.parse(await response.json());
+      expect(saved.line.revision).toBe(fixture.initial.line.revision + 1);
+      expect(saved.line).toMatchObject({
+        preparation: "ready_to_push", artwork: "not_pushed",
+        production: "not_released", editorProjectId: null, shippedQuantity: 0,
+      });
+      expect(saved.draft).toMatchObject({
+        designExecutor: "agent", specificationVersionId: fixture.specificationVersionId,
+        printProfileVersionId: fixture.profileVersionId, artworkVersionId: fixture.artworkVersionId,
+        images: [{ origin: "report", key: fixture.buyer.key, usage: "buyer_photo" }],
+      });
+      expect(saved.draft.fields.find(field => field.key === "crop_scope")?.value).toBe("head");
+      expect(saved.draft.fields.find(field => field.key === "print_sides")?.value).toBe("double_sided");
+      assertPillowSizePreserved(saved.draft);
+      expect(saved.draft.fields).toHaveLength(fixture.initial.draft.fields.length);
+      expect((await fixture.readDetail()).draft).toEqual(saved.draft);
+      await fixture.assertOriginalPreserved();
+      expect(audit.forbiddenMutations).toEqual([]);
+      expect(audit.pageErrors).toEqual([]);
+      completed = true;
+      await page.screenshot({ path: testInfo.outputPath("default-agent-review-saved-not-dispatched.png") });
+    } finally {
+      audit.stop();
+      writePillowIntakeProof(testInfo, fixture, completed, "default_agent", audit);
+    }
+  });
+
+  test("controlled order intake pillow preserves special requirements and changes to human only after an explicit choice", async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    let fixture: OrderIntakePillowFixture | undefined;
+    let completed = false;
+    const audit = watchPillowIntake(page, () => fixture?.lineId);
+    try {
+      fixture = await orderIntakePillowFixture(true);
+      let whole = await openPillowIntake(page, fixture);
+      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
+      await expect(image).toHaveCount(1);
+      await image.getByRole("checkbox").check();
+      const blocked = await previewPillowIntake(page, fixture);
+      expect(blocked.ready).toBe(false);
+      const automatic = blocked.issues.find(issue => issue.code === "automatic_artwork_not_ready");
+      expect(automatic).toBeDefined();
+      expect(automatic!.message).toMatch(/顾客特殊要求|标准裁切|字体/);
+      expect(automatic!.action).toMatch(/人工|美工/);
+      expect(blocked.normalizedDraft.designExecutor).toBe("agent");
+      assertSpecialPillowRequirements(blocked.normalizedDraft);
+      assertPillowSizePreserved(blocked.normalizedDraft);
+      await applyOfferedPillowMatch(page);
+      const rejected = await savePillowIntake(page, fixture, "确认本件审单");
+      expect(rejected.status()).toBe(409);
+      expect((await rejected.json() as { message: string }).message).toBe(automatic!.message);
+      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      const unchanged = await fixture.readDetail();
+      expect(unchanged.line.revision).toBe(fixture.initial.line.revision);
+      expect(unchanged.draft).toEqual(fixture.initial.draft);
+      await page.screenshot({ path: testInfo.outputPath("special-requirements-agent-explicitly-blocked.png") });
+      const pendingResponse = await savePillowIntake(page, fixture, "记录待补资料");
+      expect(pendingResponse.ok()).toBe(true);
+      const pending = OrderWorkDetailViewSchema.parse(await pendingResponse.json());
+      expect(pending.line.preparation).toBe("needs_information");
+      expect(pending.draft.designExecutor).toBe("agent");
+      assertSpecialPillowRequirements(pending.draft);
+      assertPillowSizePreserved(pending.draft);
+
+      whole = await openPillowIntake(page, fixture);
+      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      await whole.getByLabel("设计执行方式", { exact: true }).selectOption("human");
+      const manualCrop = "Custom manual crop retaining ears";
+      const cropRow = whole.locator(".oc-custom-field").filter({
+        has: page.locator('select[aria-label="对应定制字段"] option[value="crop_scope"]:checked'),
+      });
+      await expect(cropRow).toHaveCount(1);
+      await cropRow.getByLabel("定制内容", { exact: true }).fill(manualCrop);
+      const human = await previewPillowIntake(page, fixture);
+      expect(human.ready, JSON.stringify(human.issues)).toBe(true);
+      expect(human.normalizedDraft.designExecutor).toBe("human");
+      expect(human.normalizedDraft.fields.find(field => field.key === "crop_scope")?.value)
+        .toBe(manualCrop);
+      assertSpecialPillowRequirements(human.normalizedDraft);
+      assertPillowSizePreserved(human.normalizedDraft);
+      await applyOfferedPillowMatch(page);
+      const finalResponse = await savePillowIntake(page, fixture, "确认本件审单");
+      expect(finalResponse.ok()).toBe(true);
+      const final = OrderWorkDetailViewSchema.parse(await finalResponse.json());
+      expect(final.line.revision).toBe(fixture.initial.line.revision + 2);
+      expect(final.line).toMatchObject({
+        preparation: "ready_to_push", artwork: "not_pushed",
+        production: "not_released", editorProjectId: null, shippedQuantity: 0,
+      });
+      expect(final.draft.designExecutor).toBe("human");
+      expect(final.draft.fields.find(field => field.key === "crop_scope")?.value).toBe(manualCrop);
+      assertSpecialPillowRequirements(final.draft);
+      assertPillowSizePreserved(final.draft);
+      expect(final.draft.fields).toHaveLength(fixture.initial.draft.fields.length);
+      expect((await fixture.readDetail()).draft).toEqual(final.draft);
+      await fixture.assertOriginalPreserved();
+      const { AmazonReportDetailViewSchema } = await import("@yummyai/contracts/order/report");
+      const originalReport = AmazonReportDetailViewSchema.parse(
+        await centerApi("orders/reports/lines/" + fixture.reportLineId),
+      );
+      expect(originalReport.surfaces.flatMap(surface => surface.fields)
+        .filter(field => field.label === "Pillow Shape").map(field => field.value))
+        .toEqual(["Only Face"]);
+      expect(originalReport.surfaces.flatMap(surface => surface.fields)
+        .filter(field => field.label === "Size (Most customers choose 12/16/18/24 inch)")
+        .map(field => field.value)).toEqual(["10 inch-Mini Keepsake"]);
+      expect(audit.forbiddenMutations).toEqual([]);
+      expect(audit.pageErrors).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath("explicit-human-review-saved-requirements-preserved.png") });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(whole).toBeVisible();
+      await expect(cropRow.getByLabel("定制内容", { exact: true })).toHaveValue(manualCrop);
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+        .toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("explicit-human-manual-crop-390.png") });
+      completed = true;
+    } finally {
+      audit.stop();
+      writePillowIntakeProof(testInfo, fixture, completed, "explicit_human_after_block", audit);
+    }
+  });
+});
+
+function watchPillowIntake(page: Page, lineId: () => string | undefined) {
+  const forbiddenMutations: string[] = [], pageErrors: string[] = [];
+  const request = (value: Request) => {
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(value.method())) return;
+    const pathname = new URL(value.url()).pathname;
+    if (!pathname.startsWith("/api/")) return;
+    if (value.method() === "POST" && (
+      pathname === "/api/order-centers/summaries" ||
+      pathname === "/api/order-centers/lines/" + lineId() + "/intake-check" ||
+      pathname === "/api/order-centers/lines/" + lineId() + "/draft"
+    )) return;
+    forbiddenMutations.push(value.method() + " " + pathname);
+  };
+  const error = (value: Error) => pageErrors.push(value.message);
+  page.on("request", request); page.on("pageerror", error);
+  return {
+    forbiddenMutations, pageErrors,
+    stop: () => { page.off("request", request); page.off("pageerror", error); },
+  };
+}
+
+async function openPillowIntake(page: Page, fixture: OrderIntakePillowFixture) {
+  await page.goto(fixture.url);
+  const whole = page.getByRole("region", { name: "整单详情", exact: true });
+  await expect(whole).toBeVisible();
+  await expect(whole.getByRole("region", { name: "本单制作依据匹配", exact: true }))
+    .toContainText("Synthetic intake 10 inch");
+  return whole;
+}
+
+async function previewPillowIntake(page: Page, fixture: OrderIntakePillowFixture) {
+  const result = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/order-centers/lines/" + fixture.lineId + "/intake-check"
+    && response.request().method() === "POST",
+  );
+  const panel = page.getByRole("region", { name: "定制订单承接核对", exact: true });
+  await panel.getByRole("button", { name: "核对当前需求", exact: true }).click();
+  const response = await result;
+  expect(response.ok()).toBe(true);
+  const check = OrderIntakeCheckViewSchema.parse(await response.json());
+  await expect(panel).toContainText(
+    check.ready ? "字段与版本核对通过" : "存在待补资料或待确认项",
+  );
+  return check;
+}
+
+async function applyOfferedPillowMatch(page: Page) {
+  const apply = page.getByRole("region", { name: "定制订单承接核对", exact: true })
+    .getByRole("button", { name: "应用唯一字段匹配", exact: true });
+  if (await apply.isVisible()) await apply.click();
+}
+
+async function savePillowIntake(page: Page, fixture: OrderIntakePillowFixture, button: string) {
+  const result = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/order-centers/lines/" + fixture.lineId + "/draft"
+    && response.request().method() === "POST",
+  );
+  await page.getByRole("region", { name: "整单详情", exact: true })
+    .getByRole("button", { name: button, exact: true }).click();
+  return result;
+}
+
+function assertSpecialPillowRequirements(draft: OrderWorkDraft) {
+  expect(draft.fields.find(field => field.key === "customer_notes")?.value)
+    .toBe("Keep the entire synthetic head and ears");
+  expect(draft.fields.find(field => field.label === "Font")?.value).toBe("Luckiest Guy");
+  expect(draft.fields.find(field => field.label === "Font Color")?.value).toBe("CustomColor");
+}
+
+function assertPillowSizePreserved(draft: OrderWorkDraft) {
+  expect(draft.fields
+    .filter(field => field.label === "Size (Most customers choose 12/16/18/24 inch)")
+    .map(field => field.value)).toEqual(["10 inch-Mini Keepsake"]);
+}
+
+function writePillowIntakeProof(
+  testInfo: TestInfo, fixture: OrderIntakePillowFixture | undefined, completed: boolean,
+  scenario: string, audit: ReturnType<typeof watchPillowIntake>,
+) {
+  const output = testInfo.outputPath("pillow-intake-proof.json");
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, JSON.stringify({
+    version: 1, scenario, completed, syntheticFixtureOnly: true,
+    nonce: fixture?.nonce ?? null, orderLineId: fixture?.lineId ?? null,
+    reportLineId: fixture?.reportLineId ?? null, sourceVersionId: fixture?.sourceVersionId ?? null,
+    buyerSha256: fixture?.buyerSha256 ?? null,
+    forbiddenMutations: audit.forbiddenMutations, pageErrors: audit.pageErrors,
+    transport: "native report ZIP upload and parsed private original; not external download qualification",
+    cleanupOwner: "native disposable runner database bucket Redis personal identity and Web sandbox finally",
+    fixtureStartsProductionWorker: false, designDispatchRequested: false,
+    noPersistentAttachmentAssumed: true,
+  }, null, 2));
+}

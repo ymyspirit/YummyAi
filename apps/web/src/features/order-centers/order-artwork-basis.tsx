@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronDown, Layers3, Settings2 } from "lucide-react";
 import type { OrderWorkDetail, OrderWorkDraft } from "@yummyai/contracts/order/workspace";
 import { orderDesignExecutor } from "@yummyai/contracts/order/workspace";
 import { orderAutomaticBasisView, orderCatalogSpus } from "./order-auto-basis-model";
+import { orderDraftWithArtwork } from "./order-work-input-model";
 
 export function OrderArtworkBasis({ detail, draft, onChange, children }: {
   detail: OrderWorkDetail;
@@ -22,11 +23,7 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
   const spus = orderCatalogSpus(catalog);
   const spu = view.spu ?? spus.find(value => value.id === spuId);
   function artwork(id: string) {
-    const art = catalog!.artworks.find(value => value.id === id);
-    const added = art?.customization.fields.filter(field => field.type !== "image" && !draft.fields.some(value => value.key === field.key || value.label === field.label))
-      .map(field => ({ key: field.key, label: field.label, kind: "text" as const, value: "" })) ?? [];
-    onChange({ ...draft, artworkVersionId: id || null, fields: [...draft.fields, ...added],
-      ...(id !== recipe?.artworkVersionId ? { salesRecipeVersionId: null, salesPackageId: null } : {}) });
+    onChange(orderDraftWithArtwork(draft, id, recipe?.artworkVersionId));
   }
   return <>
     <section className={`oc-basis-summary ${view.tone}`} aria-label="本单制作依据匹配">
@@ -135,16 +132,9 @@ export function OrderArtworkMaterials({
           {art.customization.fields
             .map((f) => `${f.label}${f.required ? "（必填）" : ""}`)
             .join("、")}
-          。选中买家图片时，用途填写对应的图片字段名称。
+          。选中买家图片后，请核对它对应的图片字段；平台预览不能代替顾客原图。
         </p>
       )}
-      <datalist id="order-image-usages">
-        {art.customization.fields
-          .filter((f) => f.type === "image")
-          .map((f) => (
-            <option key={f.key} value={f.label} />
-          ))}
-      </datalist>
       <Link href="/print-library">查看印花库</Link>
     </section>
   );

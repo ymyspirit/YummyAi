@@ -20,6 +20,8 @@ import type { TenantContext } from "@yummyai/contracts";
 import { Permission } from "@yummyai/authz";
 import { catalogOwnerFilter, catalogPlanFilter, catalogRecipeReadFilter } from "@yummyai/catalog-core";
 import { pillowSpecificationSize } from "./order-pillow-matching.js";
+import { resolveOrderPillowIntakeControls } from "./order-pillow-intake-controls.js";
+import { isPhotoOnlyPillowArtwork } from "../design/order-pillow-plan.js";
 import { isDeepStrictEqual } from "node:util";
 import { matchesCustomChoice } from "@yummyai/contracts/catalog/composition";
 import { OrderSalesDeliverySnapshotSchema } from "@yummyai/contracts/catalog/sales-plan-delivery";
@@ -277,8 +279,12 @@ export async function validateOrderSalesBasis(
   const pinned = delivery?.success ? delivery.data : null;
   // Choice values route the order; they are not production content. Strip only
   // the exact, immutable choice for this SKU and reject duplicates/mismatches.
-  const productionDraft = structuredClone(draft);
-  const routingFields: OrderWorkDraft["fields"] = [];
+  const pillowControls = !pinned && isPhotoOnlyPillowArtwork(artwork)
+    ? resolveOrderPillowIntakeControls(draft, specification, artwork.customization)
+    : null;
+  const productionDraft = pillowControls?.productionDraft ?? structuredClone(draft);
+  const routingFields: OrderWorkDraft["fields"] = pillowControls?.routingFields ?? [];
+  deliveryIssues.push(...(pillowControls?.issues ?? []));
   if (pinned?.patternChoices && recipe) {
     const choice = pinned.patternChoices;
     const option = choice.options.find((o) => o.skuId === recipe.skuId);

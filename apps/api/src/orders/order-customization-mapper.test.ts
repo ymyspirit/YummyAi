@@ -63,6 +63,92 @@ describe("order customization mapper", () => {
   });
 });
 
+describe("explicit photo-only pillow field aliases", () => {
+  it("requires opt-in and existing schema targets", () => {
+    const source: OrderCustomizationValue[] = [
+      { key: "provider-shape", label: "Pillow Shape", type: "text", value: "Whole Body" },
+      { key: "provider-style", label: "Style", type: "text", value: "Double-Sided Print — Same Photo on Back" },
+      { key: "provider-notes", label: "Order Notes for Seller", type: "text", value: "Synthetic review note" },
+    ];
+    expect(mapOrderCustomization(pillowSchema(), source).values).toEqual({});
+    expect(mapOrderCustomization(pillowSchema(), source, { photoOnlyPillow: true }).values)
+      .toEqual({ crop_scope: "body", print_sides: "double_sided", customer_notes: "Synthetic review note" });
+    expect(mapOrderCustomization({ version: 1, fields: [] }, source, { photoOnlyPillow: true }).mappedFieldKeys).toEqual([]);
+  });
+
+  it("keeps contradictory canonical keys and provider aliases ambiguous", () => {
+    expect(customizationFieldCandidates(pillowSchema().fields, "crop_scope", "Style", { photoOnlyPillow: true }).map(field => field.key))
+      .toEqual(["crop_scope", "print_sides"]);
+    const result = mapOrderCustomization(pillowSchema(), [{ key: "crop_scope", label: "Style", type: "text", value: "Only Face" }], { photoOnlyPillow: true });
+    expect(result.diagnostics).toEqual([{ code: "ambiguous_field", fieldKey: null }]);
+    expect(result.values).toEqual({});
+  });
+
+  it("never steals a schema's explicit image target for the legacy front alias", () => {
+    const definition = pillowSchema();
+    definition.fields.push({ key: "front_reference", label: "正面", type: "image", required: false,
+      validation: { maxFiles: 1, maxBytes: 1_000_000, allowedMediaTypes: ["image/png"] } });
+    expect(customizationFieldCandidates(definition.fields, "provider-image", "正面", { photoOnlyPillow: true }).map(field => field.key))
+      .toEqual(["front_reference"]);
+    expect(customizationFieldCandidates(definition.fields, "provider-image", "Upload One Clear Photo", { photoOnlyPillow: true })).toEqual([]);
+  });
+
+  it("rejects missing or semantically ambiguous allowed print-side options", () => {
+    const definition = pillowSchema(), field = definition.fields.find(value => value.key === "print_sides");
+    if (field?.type !== "single_choice") throw new Error("Synthetic print side field expected");
+    const source: OrderCustomizationValue[] = [{ key: "provider-style", label: "Style", type: "text", value: "Double-Sided Print — Same Photo on Back" }];
+    field.options = [{ value: "single_sided", label: "Single sided printing" }];
+    expect(mapOrderCustomization(definition, source, { photoOnlyPillow: true }).values).toEqual({});
+    field.options = [{ value: "double_sided", label: "Double sided printing" }, { value: "another", label: "Double-Sided Print — Same Photo on Back" }];
+    const result = mapOrderCustomization(definition, [{ key: "provider-style", label: "Style", type: "text", value: "双面印刷" }], { photoOnlyPillow: true });
+    expect(result.values).toEqual({});
+    expect(result.diagnostics).toContainEqual({ code: "invalid_value", fieldKey: "print_sides" });
+  });
+
+  it.each([
+    { label: "单面", value: "single_sided" },
+    { label: "双面", value: "double_sided" },
+  ])("accepts the unique configured $label label for its canonical option", ({ label, value }) => {
+    const definition = pillowSchema(), field = definition.fields.find(candidate => candidate.key === "print_sides");
+    if (field?.type !== "single_choice") throw new Error("Synthetic print side field expected");
+    field.options = [{ value, label }];
+    const result = mapOrderCustomization(definition, [{ key: "provider-style", label: "Style", type: "text", value: label }], { photoOnlyPillow: true });
+    expect(result.values).toEqual({ print_sides: value });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("rejects contradictory exact labels and duplicate exact option matches", () => {
+    const definition = pillowSchema(), field = definition.fields.find(candidate => candidate.key === "print_sides");
+    if (field?.type !== "single_choice") throw new Error("Synthetic print side field expected");
+    const source: OrderCustomizationValue[] = [{ key: "provider-style", label: "Style", type: "text", value: "Double sided printing" }];
+    field.options = [{ value: "single_sided", label: "Double sided printing" }];
+    expect(mapOrderCustomization(definition, source, { photoOnlyPillow: true }).values).toEqual({});
+    field.options = [{ value: "double_sided", label: "Double sided printing" }, { value: "alternate", label: "Double sided printing" }];
+    expect(mapOrderCustomization(definition, source, { photoOnlyPillow: true }).values).toEqual({});
+    field.options = [{ value: "unsupported", label: "Different images" }];
+    expect(mapOrderCustomization(definition, [{ key: "provider-style", label: "Style", type: "text", value: "Different images" }], { photoOnlyPillow: true }).values).toEqual({});
+  });
+
+  it("does not mutate source choice arrays while normalizing a manufacturing control", () => {
+    const source: OrderCustomizationValue[] = [{ key: "provider-shape", label: "Pillow Shape", type: "choice", values: ["Half Body"] }];
+    const before = structuredClone(source);
+    expect(mapOrderCustomization(pillowSchema(), source, { photoOnlyPillow: true }).values).toEqual({ crop_scope: "half_body" });
+    expect(source).toEqual(before);
+  });
+});
+
+function pillowSchema(): CustomizationDefinition {
+  return { version: 1, fields: [
+    { key: "buyer_photo", label: "Buyer photo", type: "image", required: true,
+      validation: { maxFiles: 1, maxBytes: 1_000_000, allowedMediaTypes: ["image/png"] } },
+    { key: "crop_scope", label: "Crop scope", type: "short_text", required: true },
+    { key: "print_sides", label: "Print sides", type: "single_choice", required: true, options: [
+      { value: "single_sided", label: "Single sided printing" }, { value: "double_sided", label: "Double sided printing" },
+    ] },
+    { key: "customer_notes", label: "Customer notes", type: "short_text", required: false },
+  ] };
+}
+
 function schema(): CustomizationDefinition {
   return {
     version: 3,

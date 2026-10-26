@@ -1061,7 +1061,7 @@ export class OrderWorkspaceService {
       issues: [],
       normalizedDraft: input.draft,
       notes: [
-        "核对只检查字段、原图归属与固定版本，不创建制作任务或调用模型。",
+        "核对本单字段、原图归属、固定版本与所选制图方式能否通过审单保存，不创建制作任务或调用模型。",
         "买家原始资料与历史需求保留；清晰度、图案、工艺与生产放行继续按原审核流程检查。",
       ],
     };
@@ -1085,13 +1085,17 @@ export class OrderWorkspaceService {
         return validateOrderSalesBasis(
           tx,
           input.draft,
-          true,
+          false,
           id,
           detail.line.revision ? detail.draft.salesPackageId : null,
           !detail.line.revision || input.draft.specificationVersionId !== detail.draft.specificationVersionId || input.draft.salesRecipeVersionId !== detail.draft.salesRecipeVersionId,
         );
       });
       if (!basis) throw new ConflictException("请先匹配本单印花、规格与制作版本");
+      const profile = input.draft.printProfileVersionId
+        ? await this.profile(context, input.draft.printProfileVersionId)
+        : null;
+      if (!profile) throw new UnprocessableEntityException("请先选择印花与工艺版本");
       result.basis = basis.delivery ? "sealed" : basis.package ? "legacy_package" : "manual";
       result.package = basis.package;
       result.issues.push(...basis.deliveryIssues);
@@ -1099,6 +1103,7 @@ export class OrderWorkspaceService {
         basis.artwork.customization,
         basis.productionDraft,
         !!basis.delivery,
+        { photoOnlyPillow: profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork) },
       );
       Object.assign(result, {
         fields: fields.fields,
@@ -1108,6 +1113,25 @@ export class OrderWorkspaceService {
         },
       });
       result.issues.push(...fields.issues);
+      if (!fields.issues.length && orderDesignExecutor(input.draft) === "agent") {
+        try {
+          assertAutomaticArtwork(
+            basis.artwork.customization,
+            basis.artwork.layout,
+            fields.normalizedDraft,
+            profile.productType,
+            isPhotoOnlyPillowArtwork(basis.artwork),
+          );
+        } catch (error) {
+          if (!(error instanceof ConflictException)) throw error;
+          result.issues.push({
+            code: "automatic_artwork_not_ready",
+            fieldKey: null,
+            message: error.message,
+            action: "保留并核对顾客的全部要求，明确选择人工制图，或补齐对应的自动制图规则后重新核对",
+          });
+        }
+      }
       if (basis.recipe?.designVersionId && !basis.recipe.editorVersionId)
         result.notes.push(
           "已审核视觉图稿不代替订单生产稿。本单使用固定规格所绑定的已审核通用底稿，生成私有制作版本后继续运营审核与生产检查。",
@@ -1180,6 +1204,7 @@ export class OrderWorkspaceService {
         basis.artwork.customization,
         basis.productionDraft,
         !!basis.delivery,
+        { photoOnlyPillow: detail.profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork) },
       );
       const intakeIssues = [...basis.deliveryIssues, ...intake.issues];
       if (intakeIssues.length) throw new ConflictException(intakeIssues[0]!.message);
@@ -1194,8 +1219,8 @@ export class OrderWorkspaceService {
           type: field.type,
           value:
             field.type === "image"
-              ? `${detail.draft.images.filter((i) => i.usage === field.key || i.usage === field.label).length} 张买家原图`
-              : (detail.draft.fields.find((f) => f.key === field.key || f.label === field.label)
+              ? `${intake.normalizedDraft.images.filter((i) => i.usage === field.key || i.usage === field.label).length} 张买家原图`
+              : (intake.normalizedDraft.fields.find((f) => f.key === field.key || f.label === field.label)
                   ?.value ?? ""),
           region: region
             ? `${region.xPercent}%, ${region.yPercent}% · ${region.widthPercent}% × ${region.heightPercent}%`
@@ -1205,7 +1230,7 @@ export class OrderWorkspaceService {
       assertAutomaticArtwork(
         basis.artwork.customization,
         basis.artwork.layout,
-        basis.productionDraft,
+        intake.normalizedDraft,
         detail.profile.productType,
         isPhotoOnlyPillowArtwork(basis.artwork),
       );
@@ -1222,8 +1247,8 @@ export class OrderWorkspaceService {
         template.version.document,
         basis.artwork.layout,
         basis.artwork.customization,
-        basis.productionDraft,
-        detail.draft.images.map((image) => ({
+        intake.normalizedDraft,
+        intake.normalizedDraft.images.map((image) => ({
           usage: image.usage,
           id: createEntityId(),
           version: 1,
@@ -1340,6 +1365,7 @@ export class OrderWorkspaceService {
           salesBasis.artwork.customization,
           salesBasis.productionDraft,
           !!salesBasis.delivery,
+          { photoOnlyPillow: profile?.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(salesBasis.artwork) },
         );
         const issues = [...salesBasis.deliveryIssues, ...intake.issues];
         if (issues.length) throw new ConflictException(issues[0]!.message);
@@ -1653,6 +1679,7 @@ export class OrderWorkspaceService {
                 basis.artwork.customization,
                 basis.productionDraft,
                 !!basis.delivery,
+                { photoOnlyPillow: detail.profile?.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork) },
               );
               const issues = [...basis.deliveryIssues, ...intake.issues];
               if (issues.length) throw new ConflictException(issues[0]!.message);

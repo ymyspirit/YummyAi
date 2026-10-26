@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AmazonReportDetailView, AmazonReportFieldView } from "./report.js";
-import { orderProductionRequirements } from "./production-requirements.js";
+import { orderProductionRequirements, pillowCropSubject, pillowPrintSide } from "./production-requirements.js";
 
 type Field = Pick<AmazonReportFieldView, "label" | "value"> & Partial<Pick<AmazonReportFieldView, "kind">>;
 function report(fields: Field[]): Pick<AmazonReportDetailView, "surfaces"> {
@@ -10,6 +10,20 @@ function report(fields: Field[]): Pick<AmazonReportDetailView, "surfaces"> {
 const size = (value: string) => ({ label: "Pillow Size", value });
 
 describe("explicit order production requirements", () => {
+  it("recognizes explicit Pillow Shape and same-photo print choices without interpreting buyer prose", () => {
+    const source = report([{ label: "Pillow Shape", value: "Only Face" },
+      { label: "Style", value: "Double-Sided Print — Same Photo on Back" }]);
+    const before = JSON.stringify(source);
+    expect(orderProductionRequirements(source)).toMatchObject({ subject: "head", sideMode: "double" });
+    expect(JSON.stringify(source)).toBe(before);
+    expect(pillowCropSubject("Whole Body")).toBe("body");
+    expect(pillowCropSubject("Half Body")).toBe("half_body");
+    expect(pillowPrintSide("Single-Sided Printing")).toBe("single");
+    expect(pillowPrintSide("单面")).toBe("single");
+    expect(pillowPrintSide("双面")).toBe("double");
+    expect(pillowPrintSide("Double-Sided Print — Different Photo on Back")).toBeNull();
+    expect(pillowCropSubject("I want the whole head if possible")).toBeNull();
+  });
   it.each([10, 12, 14, 16, 18, 20, 22, 24])("recognizes the explicit %s inch size without reading product-title numbers", inches => {
     expect(orderProductionRequirements(report([size(`${inches} inches`),
       { label: "Product title", value: "Custom photo shaped pillow 10–24 inches" }])).sizeInches).toBe(inches);
