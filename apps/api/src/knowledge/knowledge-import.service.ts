@@ -21,7 +21,6 @@ import {
   knowledgeVersions as versions,
   knowledgeEntries as entries,
   knowledgeGovernanceEvents as events,
-  marketplaceAccounts as stores,
   withTenant,
   type DatabaseConnection,
   type TenantTransaction,
@@ -43,11 +42,12 @@ import {
 } from "../platform.tokens.js";
 import { KnowledgeService } from "./knowledge.service.js";
 import { knowledgeExcerpt, scoreKnowledge } from "./knowledge-retriever.js";
-
-export function authorizeKnowledgeAccount(context: TenantContext, ownerId?: string) {
-  authorize(context, Permission.StoreRead, ownerId ? { ownerId } : undefined);
-  authorize(context, Permission.FinanceRead, ownerId ? { ownerId } : undefined);
-}
+import {
+  assertKnowledgeAccountScope, assertKnowledgeScope, assertKnowledgeSpuScope,
+  authorizeKnowledgeAccount, currentKnowledgeContext, knowledgeAccountScopeFilter,
+  knowledgeEntryIdsScopeFilter, knowledgeEntryScopeFilter, knowledgeProductScopeFilter,
+} from "./knowledge-scope.js";
+export { authorizeKnowledgeAccount } from "./knowledge-scope.js";
 export async function recordKnowledgeGovernanceEvent(
   tx: TenantTransaction,
   context: TenantContext,
@@ -80,11 +80,6 @@ export class KnowledgeImportService {
     authorize(context, Permission.WorkflowManage);
     const input = ImportKnowledgeSchema.parse(raw),
       digest = knowledgeChecksum(input);
-    if (input.fields.spuId) {
-      authorize(context, Permission.ProductRead);
-      if (!(await this.knowledge.workspace(context)).spus.some((s) => s.id === input.fields.spuId))
-        throw new NotFoundException("资料适用产品不存在或已归档");
-    }
     const metadataText = [input.fields.title, input.fields.summary, input.fields.sourceLabel].join(
       "\n",
     );
@@ -92,19 +87,18 @@ export class KnowledgeImportService {
       throw new BadRequestException("资料标题、摘要或来源名称含身份或凭证字段，请先移除");
     if (input.account) {
       authorizeKnowledgeAccount(context);
-      await withTenant(this.database.db, context, async (tx) => {
-        const [store] = await tx.select().from(stores).where(eq(stores.id, input.account!.storeId));
-        if (!store) throw new NotFoundException("店铺不存在");
-        authorizeKnowledgeAccount(context, store.createdBy ?? undefined);
-        if (input.fields.platform !== store.platform || input.fields.market === "ALL")
-          throw new BadRequestException("账户证据须指定所属店铺平台和具体站点");
-      });
       if (input.account.periodUntil > knowledgeDay())
         throw new BadRequestException("账户证据报告期间不能在未来");
     }
-    const [prior] = await withTenant(this.database.db, context, (tx) =>
-      tx.select().from(documents).where(eq(documents.requestId, input.requestId)),
-    );
+    const admission = await withTenant(this.database.db, context, async tx => {
+      const current = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
+      await this.authorizeImport(tx, current, input);
+      const [prior] = await tx.select().from(documents).where(eq(documents.requestId, input.requestId));
+      if (prior) await this.authorizeDocument(tx, current, prior, true);
+      return { current, prior };
+    });
+    context = admission.current;
+    const prior = admission.prior;
     if (prior) {
       if (prior.requestChecksum !== digest) throw new ConflictException("同一导入请求的资料已变化");
       return { id: prior.id };
@@ -148,6 +142,8 @@ export class KnowledgeImportService {
       parsed && !input.account ? knowledgeCandidatesFromText(redacted.text, input.fields) : [];
     try {
       return await withTenant(this.database.db, context, async (tx) => {
+        context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
+        await this.authorizeImport(tx, context, input);
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtextextended(${`knowledge-import:${context.tenantId}`},0))`,
         );
@@ -156,6 +152,7 @@ export class KnowledgeImportService {
           .from(documents)
           .where(eq(documents.requestId, input.requestId));
         if (existing) {
+          await this.authorizeDocument(tx, context, existing, true);
           if (existing.requestChecksum !== digest) throw new ConflictException("导入请求冲突");
           return { id: existing.id };
         }
@@ -220,24 +217,39 @@ export class KnowledgeImportService {
       bytes.fill(0);
     }
   }
-  private authorizeDocument(
+  private async authorizeImport(
+    tx: TenantTransaction, context: TenantContext, input: ReturnType<typeof ImportKnowledgeSchema.parse>,
+  ) {
+    if (input.fields.spuId) await assertKnowledgeSpuScope(tx, context, input.fields.spuId, true);
+    if (input.account) {
+      authorizeKnowledgeAccount(context);
+      const store = await assertKnowledgeAccountScope(tx, context, context.userId, input.account.storeId);
+      if (input.fields.platform !== store.platform || input.fields.market === "ALL")
+        throw new BadRequestException("账户证据须指定所属店铺平台和具体站点");
+    }
+  }
+  private async authorizeDocument(
+    tx: TenantTransaction,
     context: TenantContext,
     row: typeof documents.$inferSelect,
     write = false,
   ) {
     authorize(context, write ? Permission.WorkflowManage : Permission.WorkflowRead);
-    if (row.kind === "account") authorizeKnowledgeAccount(context, row.createdBy);
-    if (row.fields.spuId) authorize(context, Permission.ProductRead);
+    if (row.kind === "account") await assertKnowledgeAccountScope(tx, context, row.createdBy, row.storeId);
+    if (row.fields.spuId) await assertKnowledgeSpuScope(tx, context, row.fields.spuId);
   }
   async document(context: TenantContext, id: string) {
     return withTenant(this.database.db, context, async (tx) => {
-      const [row] = await tx.select().from(documents).where(eq(documents.id, id));
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowRead);
+      const [row] = await tx.select().from(documents).where(eq(documents.id, id)).for("share");
       if (!row) throw new NotFoundException("资料不存在");
-      this.authorizeDocument(context, row);
+      await this.authorizeDocument(tx, context, row);
       const cards = await tx
         .select()
         .from(candidates)
-        .where(eq(candidates.documentId, id))
+        .where(and(eq(candidates.documentId, id),
+          knowledgeProductScopeFilter(context, sql`${candidates.fields}->>'spuId'`),
+          knowledgeEntryIdsScopeFilter(context, sql`case when ${candidates.entryId} is null then '[]'::jsonb else jsonb_build_array(${candidates.entryId}::text) end`)))
         .orderBy(candidates.createdAt, candidates.id);
       const known = await tx
         .select({ id: entries.id, fields: versions.fields })
@@ -246,7 +258,7 @@ export class KnowledgeImportService {
           versions,
           and(eq(versions.entryId, entries.id), eq(versions.version, entries.latestVersion)),
         )
-        .where(isNull(entries.archivedAt));
+        .where(and(isNull(entries.archivedAt), knowledgeEntryScopeFilter(context)));
       let safeText = row.safeText;
       if (
         row.kind === "account" &&
@@ -281,9 +293,10 @@ export class KnowledgeImportService {
   async confirmAccount(context: TenantContext, id: string, raw: unknown) {
     const input = ConfirmKnowledgeRedactionSchema.parse(raw);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       const [row] = await tx.select().from(documents).where(eq(documents.id, id)).for("update");
       if (!row) throw new NotFoundException("资料不存在");
-      this.authorizeDocument(context, row, true);
+      await this.authorizeDocument(tx, context, row, true);
       if (
         row.kind !== "account" ||
         row.state !== "preview" ||
@@ -314,11 +327,13 @@ export class KnowledgeImportService {
     const input = DecideKnowledgeCandidateSchema.parse(raw),
       digest = knowledgeChecksum(input);
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       const [row] = await tx.select().from(candidates).where(eq(candidates.id, id)).for("update");
       if (!row) throw new NotFoundException("候选卡不存在");
-      const [doc] = await tx.select().from(documents).where(eq(documents.id, row.documentId));
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, row.documentId)).for("share");
       if (!doc) throw new NotFoundException("原资料不存在");
-      this.authorizeDocument(context, doc, true);
+      await this.authorizeDocument(tx, context, doc, true);
+      await assertKnowledgeScope(tx, context, { spuIds: row.fields.spuId ? [row.fields.spuId] : [], entryIds: row.entryId ? [row.entryId] : [] });
       if (row.requestId === input.requestId) {
         if (row.requestChecksum !== digest) throw new ConflictException("确认请求内容已变化");
         return { id: row.entryId };
@@ -370,9 +385,10 @@ export class KnowledgeImportService {
   }
   async dispose(context: TenantContext, id: string, action: "purge" | "archive") {
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowManage);
       const [row] = await tx.select().from(documents).where(eq(documents.id, id)).for("update");
       if (!row) throw new NotFoundException("资料不存在");
-      this.authorizeDocument(context, row, true);
+      await this.authorizeDocument(tx, context, row, true);
       await tx
         .update(documents)
         .set({
@@ -397,9 +413,10 @@ export class KnowledgeImportService {
   async original(context: TenantContext, id: string) {
     authorize(context, Permission.WorkflowApprove);
     return withTenant(this.database.db, context, async (tx) => {
-      const [row] = await tx.select().from(documents).where(eq(documents.id, id));
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowApprove);
+      const [row] = await tx.select().from(documents).where(eq(documents.id, id)).for("share");
       if (!row) throw new NotFoundException("资料不存在");
-      this.authorizeDocument(context, row, true);
+      await this.authorizeDocument(tx, context, row, true);
       if (row.createdBy !== context.userId) throw new NotFoundException("原件仅供导入人核对");
       if (!row.encryptedOriginal || row.rawExpiresAt <= new Date())
         throw new NotFoundException("原件已到保留期或已删除");
@@ -425,9 +442,10 @@ export class KnowledgeImportService {
     authorizeKnowledgeAccount(context);
     const scope = KnowledgeSearchSchema.parse(raw);
     return withTenant(this.database.db, context, async (tx) => {
-      const [store] = await tx.select().from(stores).where(eq(stores.id, storeId));
-      if (!store) throw new NotFoundException("店铺不存在");
-      authorizeKnowledgeAccount(context, store.createdBy ?? undefined);
+      context = await currentKnowledgeContext(tx, context, Permission.WorkflowRead);
+      authorizeKnowledgeAccount(context);
+      await assertKnowledgeScope(tx, context, { spuIds: scope.spuIds });
+      const store = await assertKnowledgeAccountScope(tx, context, context.userId, storeId);
       const rows = await tx
         .select()
         .from(documents)
@@ -436,6 +454,8 @@ export class KnowledgeImportService {
             eq(documents.kind, "account"),
             eq(documents.storeId, storeId),
             eq(documents.state, "confirmed"),
+            knowledgeProductScopeFilter(context, sql`${documents.fields}->>'spuId'`),
+            knowledgeAccountScopeFilter(context, documents.createdBy, documents.storeId),
           ),
         )
         .orderBy(desc(documents.createdAt))
@@ -443,7 +463,6 @@ export class KnowledgeImportService {
       return rows
         .filter(
           (row) =>
-            (context.dataScope !== "self" || row.createdBy === context.userId) &&
             knowledgeScopeMatches(row.fields, scope) &&
             row.fields.verifiedOn <= knowledgeDay() &&
             row.fields.reviewDueOn >= knowledgeDay(),

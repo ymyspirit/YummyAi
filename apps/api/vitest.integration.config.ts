@@ -65,7 +65,7 @@ export default defineConfig({
       ...(process.env.E2E_BUSINESS_BENCHMARK_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "pre-0169" ? [] : ["src/knowledge/business-benchmark-upgrade.integration.test.ts"]),
       ...(process.env.E2E_KNOWLEDGE_BENCHMARK_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "current" ? [] : ["src/knowledge/knowledge-benchmark.integration.test.ts"]),
       ...(process.env.E2E_KNOWLEDGE_BENCHMARK_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "pre-0168" ? [] : ["src/knowledge/knowledge-benchmark-upgrade.integration.test.ts"]),
-      ...(process.env.E2E_KNOWLEDGE_EVALUATION_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "current" ? [] : ["src/knowledge/knowledge-evaluation-execution.integration.test.ts"]),
+      ...(process.env.E2E_KNOWLEDGE_EVALUATION_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "current" ? [] : ["src/knowledge/knowledge-evaluation-execution.integration.test.ts", "src/knowledge/knowledge-answer-scope.integration.test.ts", "src/knowledge/knowledge-answer-account-scope.integration.test.ts"]),
       ...(process.env.E2E_KNOWLEDGE_EVALUATION_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "pre-0167" ? [] : ["src/knowledge/knowledge-evaluation-execution-upgrade.integration.test.ts"]),
       ...(process.env.E2E_FACTORY_ERP_VOID_REVIEW_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "current" ? [] : ["src/orders/factory-erp-void-reviews.integration.test.ts"]),
       ...(process.env.E2E_FACTORY_ERP_VOID_REVIEW_ISOLATED === "1" && process.env.E2E_LEGACY_SCHEMA_TARGET === "pre-0166" ? [] : ["src/orders/factory-erp-void-reviews-upgrade.integration.test.ts"]),

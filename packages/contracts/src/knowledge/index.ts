@@ -142,6 +142,24 @@ export const KnowledgeWorkspaceSchema = z.object({
   canPublish: z.boolean(),
 });
 export type KnowledgeWorkspace = z.infer<typeof KnowledgeWorkspaceSchema>;
+/** Read-only product candidates for an explicit knowledge scope. This is a
+ * bounded search, not an assertion that all authorized products were read. */
+export const KnowledgeProductOptionsQuerySchema = z.object({
+  q: z.string().trim().max(200).default(""),
+}).strict();
+export const KnowledgeProductOptionsSchema = z.object({
+  contextAuthority: z.string().min(1).max(65_536),
+  items: z.array(KnowledgeWorkspaceSchema.shape.spus.element).max(40),
+  hasMore: z.boolean(),
+  limit: z.literal(40),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.items.map(item => item.id.toLowerCase())).size !== value.items.length)
+    context.addIssue({ code: "custom", message: "Product candidates must be unique" });
+  if (value.hasMore && value.items.length !== value.limit)
+    context.addIssue({ code: "custom", message: "A bounded result with more candidates must fill its limit" });
+});
+export type KnowledgeProductOptionsQuery = z.infer<typeof KnowledgeProductOptionsQuerySchema>;
+export type KnowledgeProductOptions = z.infer<typeof KnowledgeProductOptionsSchema>;
 export const KnowledgeHistorySchema = z.object({
   versions: z.array(KnowledgeVersionSchema),
   events: z.array(

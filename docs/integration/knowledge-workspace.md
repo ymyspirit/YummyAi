@@ -62,6 +62,45 @@ external messages or automatic publication are sent.
 
 ## Retrieval and knowledge dialogue
 
+The Agent reader and native v2/v3/v4 binding editor default to general knowledge.
+Operators may select one actual authorized SPU to include its published knowledge.
+`GET /v1/knowledge/product-options?q=` (personal Web BFF
+`GET /api/knowledge/product-options?q=`) returns at most 40 ID/code/name candidates,
+`hasMore`, a fixed `limit:40` and the current `contextAuthority`. Search treats `%`,
+`_` and backslash literally, accepts no caller tenant/scope/limit and rejects
+duplicate parameters. Both WorkflowRead and ProductRead apply through current
+membership intersected with the original session and the catalog object's scope.
+The BFF requires and returns `x-yummyai-context-authority`, checks it again before
+returning, uses private no-store, and bounds the complete UTF-8 JSON to 128 KiB.
+Changing search or selection clears prior results and unsubmitted bindings;
+already pinned bindings are not silently rewritten. No-product mode never means
+all products. Archived SPUs/plans are omitted from new product candidates.
+
+The same current object scope applies to cards and their entire version history,
+imported originals, extraction candidates, governance references, needs and fixed
+evaluation cases. Account evidence checks StoreRead and FinanceRead separately
+against both document author and store owner; a broader WorkflowRead grant must
+not turn a self-scoped finance grant into tenant access. Source monitoring checks
+current authority inside each original transaction before and after the network
+read; it never holds an outer transaction while awaiting that read.
+
+An operator's unchanged self/team permission rank is insufficient when the
+original SPU moves outside that scope. Original answers and evaluation reports
+recheck current product ownership, recent conversations hide the inaccessible
+scope, and report/review paths cannot expose the old case snapshot. Immutable
+pins, results and ledger amounts are retained; read failures do not run a model,
+rewrite history or manufacture a refund.
+This includes evaluation cases with an empty SPU search but product-scoped
+required references: start, replay and reads check the original case snapshot's
+references. Account questions similarly recheck the original store and document
+owners; a stale result is not a substitute for denying lost object access.
+
+Citation links use the returned entry ID and immutable version, not a free-form
+external href. `/knowledge?entry=<id>&version=<n>` displays that exact authorized
+history version and never falls back to the latest. When an original answer is
+stale, the UI hides its body, findings and references, explains the changed
+evidence and retains original cost metadata. It does not resubmit a model job.
+
 Keyword retrieval uses Unicode-aware Chinese/Latin ranking after tenant, scope,
 active publication, dates, evidence and conflict filtering. Topic all spans topics;
 platform all / market ALL / no SPU retrieve general knowledge. Up to six immutable

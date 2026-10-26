@@ -7,11 +7,18 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { authorize, Permission } from "@yummyai/authz";
+import {
+  catalogContextAuthority,
+  catalogPlanFilter,
+  currentCatalogContext,
+} from "@yummyai/catalog-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   ChangeKnowledgeSchema,
   KnowledgeFieldsSchema,
   KnowledgeHistorySchema,
+  KnowledgeProductOptionsQuerySchema,
+  KnowledgeProductOptionsSchema,
   KnowledgeVersionSchema,
   KnowledgeWorkspaceSchema,
   SaveKnowledgeSchema,
@@ -30,7 +37,7 @@ import {
   withTenant,
   type DatabaseConnection,
 } from "@yummyai/database";
-import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -43,6 +50,7 @@ import {
   KnowledgeSearchOwnerError,
 } from "@yummyai/knowledge-core";
 import { knowledgeToday } from "./knowledge-retriever.js";
+import { assertKnowledgeSpuScope, knowledgeEntryScopeFilter, knowledgeScopedEntry } from "./knowledge-scope.js";
 
 const checksum = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -64,13 +72,44 @@ export class KnowledgeService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
+  async productOptions(context: TenantContext, raw: unknown) {
+    authorize(context, Permission.WorkflowRead);
+    authorize(context, Permission.ProductRead);
+    const parsed = KnowledgeProductOptionsQuerySchema.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException("knowledge_product_options_query_invalid");
+    return withTenant(this.database.db, context, async (tx) => {
+      const current = await currentCatalogContext(tx, context);
+      authorize(current, Permission.WorkflowRead);
+      authorize(current, Permission.ProductRead);
+      const pattern = `%${parsed.data.q.replace(/[\\%_]/g, "\\$&")}%`;
+      const rows = await tx
+        .select({ id: spus.id, code: spus.code, name: spus.name })
+        .from(spus)
+        .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
+        .where(and(
+          ne(spus.status, "archived"),
+          ne(productPlans.status, "archived"),
+          catalogPlanFilter(current, Permission.ProductRead),
+          parsed.data.q ? or(ilike(spus.code, pattern), ilike(spus.name, pattern)) : undefined,
+        ))
+        .orderBy(asc(spus.code), asc(spus.id))
+        .limit(41);
+      return KnowledgeProductOptionsSchema.parse({
+        contextAuthority: catalogContextAuthority(current),
+        items: rows.slice(0, 40),
+        hasMore: rows.length > 40,
+        limit: 40,
+      });
+    });
+  }
+
   async workspace(context: TenantContext) {
     authorize(context, Permission.WorkflowRead);
-    return withTenant(this.database.db, context, async (tx) => {
-      const visible = context.permissions.includes(Permission.ProductRead)
-        ? undefined
-        : sql`NOT EXISTS (
-        SELECT 1 FROM ${versions} WHERE ${versions.entryId}=${entries.id} AND ${versions.scopeSpuId} IS NOT NULL)`;
+    return withTenant(this.database.db, context, tx => this.workspaceInTransaction(tx, context));
+  }
+  async workspaceInTransaction(tx: TenantTransaction, context: TenantContext) {
+      context = await currentCatalogContext(tx, context);
+      authorize(context, Permission.WorkflowRead);
       const latest = alias(versions, "knowledge_latest");
       const active = alias(versions, "knowledge_active");
       const rows = await tx
@@ -84,7 +123,7 @@ export class KnowledgeService {
           active,
           and(eq(active.entryId, entries.id), eq(active.version, entries.activeVersion)),
         )
-        .where(and(isNull(entries.archivedAt), visible))
+        .where(and(isNull(entries.archivedAt), knowledgeEntryScopeFilter(context)))
         .orderBy(desc(entries.updatedAt), desc(entries.id))
         .limit(501);
       if (rows.length > 500)
@@ -94,8 +133,9 @@ export class KnowledgeService {
             .select({ id: spus.id, code: spus.code, name: spus.name })
             .from(spus)
             .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
-            .where(and(sql`${spus.status}<>'archived'`, sql`${productPlans.status}<>'archived'`))
-            .orderBy(asc(spus.code))
+            .where(and(ne(spus.status, "archived"), ne(productPlans.status, "archived"),
+              catalogPlanFilter(context, Permission.ProductRead)))
+            .orderBy(asc(spus.code), asc(spus.id))
         : [];
       return KnowledgeWorkspaceSchema.parse({
         entries: rows.map(({ entry, latest: latestVersion, active: activeVersion }) => ({
@@ -109,19 +149,18 @@ export class KnowledgeService {
         canManage: context.permissions.includes(Permission.WorkflowManage),
         canPublish: context.permissions.includes(Permission.WorkflowApprove),
       });
-    });
   }
   async history(context: TenantContext, id: string) {
     authorize(context, Permission.WorkflowRead);
     return withTenant(this.database.db, context, async (tx) => {
-      if (!(await tx.select({ id: entries.id }).from(entries).where(eq(entries.id, id)))[0])
-        throw new NotFoundException("知识不存在");
+      context = await currentCatalogContext(tx, context);
+      authorize(context, Permission.WorkflowRead);
+      await knowledgeScopedEntry(tx, context, id, "share");
       const history = await tx
         .select()
         .from(versions)
         .where(eq(versions.entryId, id))
         .orderBy(desc(versions.version));
-      if (history.some((version) => version.scopeSpuId)) authorize(context, Permission.ProductRead);
       const changes = await tx
         .select()
         .from(events)
@@ -145,6 +184,8 @@ export class KnowledgeService {
     raw: unknown,
   ) {
     authorize(context, Permission.WorkflowManage);
+    context = await currentCatalogContext(tx, context);
+    authorize(context, Permission.WorkflowManage);
     const input = SaveKnowledgeSchema.parse(raw),
       digest = checksum({ id, input });
     const text = [input.fields.title, input.fields.summary, input.fields.body].join("\n");
@@ -161,6 +202,7 @@ export class KnowledgeService {
         .from(versions)
         .where(eq(versions.requestId, input.requestId));
       if (prior) {
+        await knowledgeScopedEntry(tx, context, prior.entryId, "share");
         if (prior.requestChecksum !== digest)
           throw new ConflictException("同一保存请求的内容已变化，请重新保存");
         return { id: prior.entryId, version: prior.version };
@@ -174,25 +216,7 @@ export class KnowledgeService {
         )[0]
       )
         throw new ConflictException("该请求标识已用于其他知识操作");
-      if (input.fields.spuId) {
-        authorize(context, Permission.ProductRead);
-        if (
-          !(
-            await tx
-              .select({ id: spus.id })
-              .from(spus)
-              .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
-              .where(
-                and(
-                  eq(spus.id, input.fields.spuId),
-                  sql`${spus.status}<>'archived'`,
-                  sql`${productPlans.status}<>'archived'`,
-                ),
-              )
-          )[0]
-        )
-          throw new NotFoundException("适用 SPU 不存在或已归档");
-      }
+      const proposedSpus = new Set<string>(input.fields.spuId ? [input.fields.spuId] : []);
       for (const documentId of input.fields.documentIds ?? []) {
         const [document] = await tx
           .select()
@@ -200,7 +224,7 @@ export class KnowledgeService {
           .where(eq(knowledgeDocuments.id, documentId));
         if (!document || document.kind !== "reference" || document.state !== "confirmed")
           throw new BadRequestException("仅可关联本租户已确认的参考资料，账户证据有独立入口");
-        if (document.fields.spuId) authorize(context, Permission.ProductRead);
+        if (document.fields.spuId) proposedSpus.add(document.fields.spuId);
       }
       for (const snapshotId of input.fields.sourceSnapshotIds ?? []) {
         if (
@@ -216,19 +240,8 @@ export class KnowledgeService {
       const entryId = id ?? createEntityId();
       let version = 1;
       if (id) {
-        const [current] = await tx.select().from(entries).where(eq(entries.id, id)).for("update");
-        if (!current || current.archivedAt) throw new NotFoundException("知识不存在或已归档");
-        if (
-          !context.permissions.includes(Permission.ProductRead) &&
-          (
-            await tx
-              .select({ id: versions.id })
-              .from(versions)
-              .where(and(eq(versions.entryId, id), isNotNull(versions.scopeSpuId)))
-              .limit(1)
-          )[0]
-        )
-          authorize(context, Permission.ProductRead);
+        const current = await knowledgeScopedEntry(tx, context, id, "update", [...proposedSpus], input.fields.spuId);
+        if (current.archivedAt) throw new NotFoundException("知识不存在或已归档");
         if (current.revision !== input.expectedRevision)
           throw new ConflictException("知识已更新，请刷新后重新编辑");
         version = current.latestVersion + 1;
@@ -242,6 +255,8 @@ export class KnowledgeService {
           })
           .where(eq(entries.id, id));
       } else {
+        for (const spuId of [...proposedSpus].sort())
+          await assertKnowledgeSpuScope(tx, context, spuId, spuId === input.fields.spuId);
         if (input.expectedRevision !== 0) throw new ConflictException("新知识不能带历史修订号");
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtextextended(${`knowledge-cap:${context.tenantId}`},0))`,
@@ -321,37 +336,27 @@ export class KnowledgeService {
     action: Exclude<KnowledgeAction, "create" | "revise">,
     raw: unknown,
   ) {
-    authorize(
-      context,
-      action === "submit" || action === "archive"
-        ? Permission.WorkflowManage
-        : Permission.WorkflowApprove,
-    );
+    const permission = action === "submit" || action === "archive"
+      ? Permission.WorkflowManage : Permission.WorkflowApprove;
+    authorize(context, permission);
     const input = ChangeKnowledgeSchema.parse(raw),
       digest = checksum({ id, action, input });
     return withTenant(this.database.db, context, async (tx) => {
+      context = await currentCatalogContext(tx, context);
+      authorize(context, permission);
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`knowledge:${context.tenantId}:${input.requestId}`},0))`,
       );
       const [prior] = await tx.select().from(events).where(eq(events.requestId, input.requestId));
       if (prior) {
+        const entry = await knowledgeScopedEntry(tx, context, id, "share");
+        if (action === "archive" && entry.activeVersion) authorize(context, Permission.WorkflowApprove);
         if (prior.requestChecksum !== digest)
           throw new ConflictException("同一操作请求的内容已变化");
         return { id };
       }
-      const [current] = await tx.select().from(entries).where(eq(entries.id, id)).for("update");
-      if (!current || current.archivedAt) throw new NotFoundException("知识不存在或已归档");
-      if (
-        !context.permissions.includes(Permission.ProductRead) &&
-        (
-          await tx
-            .select({ id: versions.id })
-            .from(versions)
-            .where(and(eq(versions.entryId, id), isNotNull(versions.scopeSpuId)))
-            .limit(1)
-        )[0]
-      )
-        authorize(context, Permission.ProductRead);
+      const current = await knowledgeScopedEntry(tx, context, id, "update");
+      if (current.archivedAt) throw new NotFoundException("知识不存在或已归档");
       if (
         current.revision !== input.expectedRevision ||
         (action === "disable" ? current.activeVersion : current.latestVersion) !== input.version

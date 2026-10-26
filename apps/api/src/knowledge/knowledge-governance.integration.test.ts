@@ -14,6 +14,7 @@ import {
   knowledgeEvidenceLinks,
   knowledgeVersions,
   aiBudgetLedger,
+  aiAssistRuns,
   aiAssistExecutions,
   roles,
   type DatabaseConnection,
@@ -973,12 +974,18 @@ describe.skipIf(!disposable)(
       let withdrawn = false;
       try {
         const task = await assists.create(a, { kind: "knowledge_answer", scopeId: randomUUID(), search, evidenceStoreId: null, previousRunId: null, modelId, requestId: randomUUID() });
+        expect(task.knowledge.find(r => r.entryId === card.id)?.version).toBe(1);
+        const [original] = await withTenant(db.db, a, tx => tx.select({ input: aiAssistRuns.encryptedInput }).from(aiAssistRuns).where(eq(aiAssistRuns.id, task.id)));
+        expect(original?.input).toBeTruthy();
         const calls = modelRequests.length;
         await deactivate(card.id); withdrawn = true;
         await processRun(task.id);
         const failed = await assists.get(a, task.id);
         expect(failed).toMatchObject({ status: "failed", result: null, costUsd: null, inputAuthority: task.inputAuthority });
-        expect(failed.knowledge.find(r => r.entryId === card.id)?.version).toBe(1);
+        expect(failed.stale).toBe(true);
+        expect(failed.knowledge).toEqual([]);
+        const [retained] = await withTenant(db.db, a, tx => tx.select({ input: aiAssistRuns.encryptedInput }).from(aiAssistRuns).where(eq(aiAssistRuns.id, task.id)));
+        expect(retained?.input).toBe(original!.input);
         expect(failed.diagnostics.join(" ")).toContain("知识");
         expect(modelRequests).toHaveLength(calls);
         const [ledger] = await withTenant(db.db, a, tx => tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, task.id)));

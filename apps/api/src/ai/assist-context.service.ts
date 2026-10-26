@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
 import { assistFingerprint, assistTaskFingerprint, orderAssistChecks, assistHarness, isBenchmarkAssist, assistUsesReviewedGuidance, HarnessContractError, type AssistContext } from "@yummyai/ai-core";
-import { authorize, Permission, requiredAssistPermissions, requiredAssistRequestPermissions, ASSIST_ACCESS_POLICY_VERSION } from "@yummyai/authz";
+import { authorize, authorizeAssistRequest, Permission, requiredAssistPermissions, requiredAssistRequestPermissions, ASSIST_ACCESS_POLICY_VERSION } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 import type { CreateAssist } from "@yummyai/contracts/ai/assist";
 import { captureSnapshots, creativeDesignBatches, creativeDesignBatchItems, knowledgeEntries, withTenant, captureAssistInputAuthority, assertAssistInputAuthority, captureBusinessBenchmarkResources, assertBusinessBenchmarkResources, AssistInputChangedError, assistAuthorityResourceLabel, selectAgentMethod, assertAgentMethodSelection, AgentMethodAuthorityError, type BusinessTask, type TenantTransaction, type DatabaseConnection } from "@yummyai/database";
@@ -43,7 +43,8 @@ export async function isPinnedAssistGuidanceCurrentInTransaction(tx: TenantTrans
     for (const entryId of [...new Set((input.knowledge ?? []).map(reference => reference.entryId))].sort())
       await tx.select({ id: knowledgeEntries.id }).from(knowledgeEntries).where(eq(knowledgeEntries.id, entryId)).for("share");
   }
-  return (await knowledgeExecutionAuthority(tx, context, input.knowledge)).every(resource => resource.count === 1);
+  return (await knowledgeExecutionAuthority(tx, context, input.knowledge,
+    input.request.kind === "knowledge_answer" ? input.request.evidenceStoreId : null)).every(resource => resource.count === 1);
 }
 
 @Injectable()
@@ -548,6 +549,15 @@ export class AssistContextService {
     });
   }
 
+  async assertKnowledgeReadAccess(context: TenantContext, snapshot: AssistContext) {
+    if (snapshot.request.kind !== "knowledge_answer") return context;
+    if (!this.knowledge) throw new BadRequestException("知识对话服务未配置");
+    const current = await this.knowledge.currentReadContext(context, snapshot.request, snapshot.knowledge ?? []);
+    authorizeAssistRequest(current, snapshot.request, "read", {
+      hasKnowledge: assistUsesReviewedGuidance(snapshot), pinnedDataScope: snapshot.accessPolicy?.dataScope ?? "tenant",
+    });
+    return current;
+  }
   async stale(
     context: TenantContext,
     input: CreateAssist,
@@ -559,7 +569,12 @@ export class AssistContextService {
         if (current.fingerprint !== snapshot?.data.salesPlanFingerprint) return true;
       } catch { return true; }
     }
-    if (input.kind === "knowledge_answer") return false;
+    if (input.kind === "knowledge_answer") {
+      if (!snapshot) return true;
+      const current = await this.assertKnowledgeReadAccess(context, snapshot);
+      return !await withTenant(this.database.db, current,
+        tx => isPinnedAssistGuidanceCurrentInTransaction(tx, current, snapshot));
+    }
     if ("expectedFingerprint" in input) return this.business.stale(context, input);
     if (input.kind === "template_config" || input.kind === "sku_package")
       return !snapshot || this.catalog.stale(context, snapshot);

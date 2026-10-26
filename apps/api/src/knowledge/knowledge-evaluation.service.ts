@@ -8,10 +8,12 @@ import { knowledgeEvaluationBasis, knowledgeEvaluationChecksum, knowledgeEvaluat
 import type { KnowledgeBenchmarkCase } from "@yummyai/contracts/knowledge/benchmark";
 import { aiAssistRuns, knowledgeEvaluationCases as cases, knowledgeEvaluationRuns as runs, knowledgeEvaluationProtocols as protocols, knowledgeGovernanceEvents as events, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { currentEvaluationContext, assertEvaluationScope, evaluationDataScope, loadKnowledgeEvaluationExecution } from "@yummyai/knowledge-core";
+import type { KnowledgeEvaluationCase } from "@yummyai/contracts/knowledge/evaluation-case";
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { AssistService } from "../ai/assist.service.js";
 import { recordKnowledgeGovernanceEvent } from "./knowledge-import.service.js";
+import { assertKnowledgeScope } from "./knowledge-scope.js";
 
 export type BenchmarkEvaluationAdmission = {
   prepared: AssistContext;
@@ -27,7 +29,11 @@ export class KnowledgeEvaluationService {
     @Inject(AssistService) private readonly assists: AssistService,
   ) {}
   async prepareBenchmarkItem(ceiling: TenantContext, caseId: string, fields: KnowledgeBenchmarkCase, expiresAt: Date) {
-    const current = await withTenant(this.database.db, ceiling, tx => currentEvaluationContext(tx, ceiling, "run"));
+    const current = await withTenant(this.database.db, ceiling, async tx => {
+      const current = await currentEvaluationContext(tx, ceiling, "run");
+      await this.assertCaseScope(tx, current, fields.evaluation);
+      return current;
+    });
     const scopes = [evaluationDataScope(current, !!fields.evaluation.search.spuIds.length), ceiling.dataScope];
     const pinnedScope: TenantContext["dataScope"] = scopes.includes("self") ? "self" : scopes.includes("team") ? "team" : "tenant";
     const context = { ...current, dataScope: pinnedScope };
@@ -64,6 +70,7 @@ export class KnowledgeEvaluationService {
       if (!row || row.archivedAt) throw new NotFoundException("评测问题不存在");
       if (row.benchmarkVersionId && !owner) throw new ConflictException("发布样本必须从原实验明确启动尝试");
       if (row.fields.search.spuIds.length) authorize(current, Permission.ProductRead);
+      await this.assertCaseScope(tx, current, row.fields);
       return { current, prior: null, snapshot: row.fields, revision: row.revision };
     });
     if (initial.prior && (initial.prior.native.status !== "queued" || initial.prior.native.expiresAt <= new Date())) return { id: initial.prior.run.id };
@@ -91,6 +98,7 @@ export class KnowledgeEvaluationService {
             knowledgeEvaluationChecksum(row.fields) !== knowledgeEvaluationChecksum(initial.snapshot))
             throw new ConflictException("评测问题已变化，请重新读取后开始新的尝试");
           assertEvaluationScope(current, context.dataScope, "run", !!row.fields.search.spuIds.length);
+          await this.assertCaseScope(tx, current, row.fields);
           if (owner) await this.assertBenchmarkItemInTransaction(tx, current, owner.prepared);
         }
       },
@@ -105,6 +113,7 @@ export class KnowledgeEvaluationService {
         const current = await currentEvaluationContext(tx, ceiling, "run");
         if (prepared.accessPolicy?.dataScope !== context.dataScope) throw new ConflictException("原评测权限范围不一致");
         assertEvaluationScope(current, context.dataScope, "run", !!initial.snapshot.search.spuIds.length);
+        await this.assertCaseScope(tx, current, initial.snapshot);
         const id = createEntityId();
         const [evaluation] = await tx.insert(runs).values({ id, tenantId: context.tenantId, caseId, assistRunId: native.id,
           caseSnapshot: initial.snapshot, requestId: input.requestId, createdBy: context.userId }).returning();
@@ -139,6 +148,7 @@ export class KnowledgeEvaluationService {
       throw new ConflictException("同一评测请求已用于其他操作者、问题或模型");
     this.assists.authenticateEvaluation(receipt);
     assertEvaluationScope(current, receipt.protocolView?.dataScope ?? current.dataScope, "run", !!receipt.run.caseSnapshot.search.spuIds.length);
+    await this.assertCaseScope(tx, current, receipt.run.caseSnapshot);
     return receipt;
   }
   async report(ceiling: TenantContext, id: string) {
@@ -148,6 +158,7 @@ export class KnowledgeEvaluationService {
       if (!receipt || receipt.run.createdBy !== current.userId) throw new NotFoundException("评测记录不存在");
       this.assists.authenticateEvaluation(receipt);
       assertEvaluationScope(current, receipt.protocolView?.dataScope ?? current.dataScope, "read", !!receipt.run.caseSnapshot.search.spuIds.length);
+      await this.assertCaseScope(tx, current, receipt.run.caseSnapshot);
       const reviewRows = await tx.select().from(events).where(and(eq(events.resourceId, id), eq(events.action, "evaluation.review"))).orderBy(desc(events.createdAt), desc(events.id));
       return { current, receipt, reviewRows };
     });
@@ -169,10 +180,14 @@ export class KnowledgeEvaluationService {
     return report;
   }
   async list(context: TenantContext, caseId: string) { return (await this.page(context, caseId)).items; }
+  private async assertCaseScope(tx: TenantTransaction, context: TenantContext, fields: KnowledgeEvaluationCase) {
+    await assertKnowledgeScope(tx, context, { entryIds: fields.requiredEntryIds, spuIds: fields.search.spuIds });
+  }
   private async assertReportsCurrent(ceiling: TenantContext, reports: KnowledgeEvaluationReport[]) {
     await withTenant(this.database.db, ceiling, async tx => {
       const current = await currentEvaluationContext(tx, ceiling);
       for (const report of reports) {
+        await this.assertCaseScope(tx, current, report.caseSnapshot);
         assertEvaluationScope(current, report.protocol?.dataScope ?? report.answer.accessPolicy?.dataScope ?? current.dataScope,
           "read", !!report.caseSnapshot.search.spuIds.length);
         const [native] = await tx.select({ owner: aiAssistRuns.ownerId, expiresAt: aiAssistRuns.expiresAt,
@@ -223,6 +238,7 @@ export class KnowledgeEvaluationService {
     await withTenant(this.database.db, ceiling, async tx => {
       const current = await currentEvaluationContext(tx, ceiling, "review");
       assertEvaluationScope(current, report.protocol?.dataScope ?? report.answer.accessPolicy?.dataScope ?? current.dataScope, "review", !!report.caseSnapshot.search.spuIds.length);
+      await this.assertCaseScope(tx, current, report.caseSnapshot);
       await recordKnowledgeGovernanceEvent(tx, current, id, "evaluation.review", input.reason, { result: input.result });
     });
     return { id };

@@ -9,6 +9,7 @@ import type { FactoryCapacityWorkspace } from "@yummyai/contracts/suppliers/fact
 import { AgentBalanceRows, AgentExceptionRows } from "./agent-read-tools";
 import { MethodEvidence } from "../ai-assist/method-evidence";
 import { capacityLocalInstant, capacityReason, capacityUnitName } from "../order-centers/production-capacity-api";
+import { knowledgeReferenceHref } from "../knowledge/knowledge-reference";
 
 const phases: Record<CreativeExecutionView["phase"], string> = {
   pending: "等待派发", preparing: "处理中", submitted: "已记录提交", response_staging: "保存原响应",
@@ -57,13 +58,15 @@ export function KnowledgeToolResult({ data }: { data: KnowledgeSearchResult }) {
     {!!data.diagnostics.length && <ul className="atb-diagnostics">{data.diagnostics.map((text, index) => <li key={index}>{text}</li>)}</ul>}
     <ol className="atb-rows">{data.references.map(reference => {
       const href = sourceLink(reference.sourceUrl);
+      const fixedHref = knowledgeReferenceHref(reference);
       return <li key={reference.sourceId + ":" + reference.versionId}><h4>{reference.title} <span className="atb-badge">原版本 {reference.version}</span></h4>
         <p className="atb-prose">{reference.excerpt}</p><dl className="atb-pairs">
           <Pair label="来源">{reference.sourceLabel || "未提供"}</Pair><Pair label="核对日 / 复查日">{reference.verifiedOn} / {reference.reviewDueOn}</Pair>
           <Pair label="原知识条目"><code>{reference.entryId}</code></Pair><Pair label="原版本 ID"><code>{reference.versionId}</code></Pair>
           <Pair label="来源引用"><code>{reference.sourceId}</code></Pair><Pair label="原校验值"><code>{reference.checksum}</code></Pair>
           <Pair label="原排序分数">{reference.score}</Pair>
-        </dl>{href ? <a href={href} target="_blank" rel="noreferrer noopener">打开原来源</a> : <p className="atb-muted">未提供可打开的原来源地址</p>}</li>;
+        </dl>{fixedHref ? <Link href={fixedHref}>核对原知识 V{reference.version}</Link> : <p className="atb-muted">原知识版本身份无法核对 未改用当前版本</p>}
+        {href ? <a href={href} target="_blank" rel="noreferrer noopener">打开原来源</a> : <p className="atb-muted">未提供可打开的原来源地址</p>}</li>;
     })}</ol>{!data.references.length && <p>没有符合当前范围的知识候选 请核对关键词 主题 平台和站点</p>}
     <Link href="/knowledge">进入知识原工作区核对</Link>
   </section>;

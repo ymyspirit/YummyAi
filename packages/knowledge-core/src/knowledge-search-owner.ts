@@ -4,7 +4,7 @@ import type { TenantContext } from "@yummyai/contracts";
 import { KnowledgeSearchSchema, KnowledgeSearchResultSchema } from "@yummyai/contracts/knowledge";
 import {
   knowledgeEntries as entries, knowledgeVersions as versions, spus, productPlans, withTenant,
-  type DatabaseConnection,
+  type DatabaseConnection, type TenantTransaction,
 } from "@yummyai/database";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { knowledgeEvidenceIssues, knowledgeBlockingConflicts } from "./governance.js";
@@ -18,6 +18,20 @@ export class KnowledgeSearchOwnerError extends Error {
     super(body);
     this.name = "KnowledgeSearchOwnerError";
   }
+}
+
+/** Current object access, independent of an immutable answer's historical pins. */
+export async function knowledgeProductsVisible(
+  tx: TenantTransaction, context: TenantContext, ids: readonly string[], options: { lock?: boolean } = {},
+) {
+  if (!ids.length) return true;
+  if (!context.permissions.includes(Permission.ProductRead)) return false;
+  const selected = [...new Set(ids.map(id => id.toLowerCase()))];
+  const query = tx.select({ id: spus.id }).from(spus)
+    .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
+    .where(and(inArray(spus.id, selected), catalogPlanFilter(context, Permission.ProductRead)));
+  const visible = await (options.lock ? query.for("share", { of: [spus, productPlans] }) : query);
+  return visible.length === selected.length;
 }
 
 /** The original published-knowledge owner; it performs no model or write operation. */
@@ -34,12 +48,8 @@ export class KnowledgeSearchOwner {
       authorize(current, Permission.WorkflowRead);
       if (input.spuIds.length) {
         authorize(current, Permission.ProductRead);
-        const selected = [...new Set(input.spuIds)];
-        const visible = await tx.select({ id: spus.id }).from(spus)
-          .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
-          .where(and(inArray(spus.id, selected), catalogPlanFilter(current, Permission.ProductRead)))
-          .for("share", { of: [spus, productPlans] });
-        if (visible.length !== selected.length) throw new KnowledgeSearchOwnerError("适用 SPU 不存在或不可访问");
+        if (!await knowledgeProductsVisible(tx, current, input.spuIds, { lock: true }))
+          throw new KnowledgeSearchOwnerError("适用 SPU 不存在或不可访问");
       }
       const rows = await tx
         .select({ entry: entries, version: versions })

@@ -519,9 +519,32 @@ describe.sequential("six original native roles use fixed real source owners and 
     const [clock] = await database.client.unsafe<{ database: string; definition: string }[]>("select current_database() as database,pg_get_functiondef('knowledge_benchmark_now()'::regprocedure) as definition");
     expect(clock?.database).toBe(`order_daily_e2e_${nonce}`); if (!clock?.definition) throw new Error("Original benchmark clock required");
     let operationError: unknown, restoreError: unknown, restored = false;
+    let retentionEvidence: { initialDue: number; initialTargetDue: number; limit: number;
+      batches: Array<{ before: number; expired: number; remaining: number }> } | null = null;
     try {
       await database.client.unsafe("create or replace function knowledge_benchmark_now() returns timestamptz language sql volatile set search_path=pg_catalog,public as $$ select clock_timestamp()+interval '31 days' $$");
-      await f.grant(f.a, []); const expired = await expireKnowledgeBenchmarkBodiesInTenant(database, f.a.tenantId); expect(expired.failed).toBe(0); expect(expired.expired).toBeGreaterThanOrEqual(4);
+      const due = async () => (await withTenant(database.db, f.seed(f.a), tx => tx.execute<{ count: number; target: number }>(sql`select count(*)::int as count,
+        count(*)filter(where resource_id in(select id from knowledge_benchmark_items where version_id=${scene.version.id}::uuid)
+          or resource_id in(select g.id from knowledge_benchmark_assessments g join knowledge_benchmark_attempts a on a.id=g.attempt_id
+            where a.experiment_id=${scene.created.id}::uuid and a.arm='baseline'))::int as target
+        from knowledge_benchmark_retention_jobs where state='pending' and expires_at<=knowledge_benchmark_now()`)))[0]!;
+      const initialDue = await due(); expect(initialDue.target).toBe(4); expect(initialDue.count).toBeGreaterThanOrEqual(4);
+      retentionEvidence = { initialDue: initialDue.count, initialTargetDue: initialDue.target, limit: 100, batches: [] };
+      await f.grant(f.a, []);
+      // Earlier cases share this tenant and leave valid immutable history. The
+      // native owner intentionally handles only 100 oldest due jobs per call.
+      const maximumBatches = Math.ceil(initialDue.count / 100);
+      let remaining = initialDue.count, totalExpired = 0;
+      for (let batch = 0; remaining > 0; batch++) {
+        expect(batch).toBeLessThan(maximumBatches);
+        const expired = await expireKnowledgeBenchmarkBodiesInTenant(database, f.a.tenantId);
+        expect(expired.failed).toBe(0); expect(expired.expired).toBe(Math.min(100, remaining));
+        totalExpired += expired.expired;
+        const after = await due(); expect(after.count).toBe(remaining - expired.expired);
+        retentionEvidence.batches.push({ before: remaining, expired: expired.expired, remaining: after.count });
+        expect(after.count).toBeLessThan(remaining); remaining = after.count;
+      }
+      expect(totalExpired).toBe(initialDue.count); expect((await due()).target).toBe(0);
       const [actual] = await withTenant(database.db, f.seed(f.a), tx => tx.execute<{ basis: number; baseline: number; completed: number }>(sql`select
         (select count(*)::int from knowledge_benchmark_items where version_id=${scene.version.id}::uuid and encrypted_basis is not null) as basis,
         (select count(*)::int from knowledge_benchmark_assessments g join knowledge_benchmark_attempts a on a.id=g.attempt_id where a.experiment_id=${scene.created.id}::uuid and a.arm='baseline' and g.encrypted_output is not null) as baseline,
@@ -534,7 +557,8 @@ describe.sequential("six original native roles use fixed real source owners and 
       try { await database.client.unsafe(clock.definition); restored = (await database.client.unsafe<{ definition: string }[]>("select pg_get_functiondef('knowledge_benchmark_now()'::regprocedure) as definition"))[0]?.definition === clock.definition;
         if (!restored) restoreError = new Error("Original benchmark clock restoration differs"); } catch (error) { restoreError = error; }
       try { await f.grant(); const owned = resolve(workspace, "tmp/role-benchmark-20261021-b84f6d29/qa"); await mkdir(owned, { recursive: true });
-        await writeFile(resolve(owned, `retention-clock-${nonce}.json`), JSON.stringify({ nonce, restored, originalDefinitionSha256: roleBenchmarkSha(clock.definition), orderClockChanged: false, tenantRowsTimeChanged: false }, null, 2) + "\n");
+        await writeFile(resolve(owned, `retention-clock-${nonce}.json`), JSON.stringify({ nonce, restored, originalDefinitionSha256: roleBenchmarkSha(clock.definition),
+          orderClockChanged: false, tenantRowsTimeChanged: false, retentionEvidence }, null, 2) + "\n");
       } catch (error) { restoreError = restoreError ? new AggregateError([restoreError, error], "Synthetic restoration evidence failed") : error; }
     }
     if (operationError && restoreError) throw new AggregateError([operationError, restoreError], "Synthetic six-role retention and restoration failed");
