@@ -6,9 +6,9 @@ import { z } from "zod";
 import { TenantContextSchema, type TenantContext } from "@yummyai/contracts";
 import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
-import { ASSIST_INTENT_PREFIX } from "@yummyai/contracts/ai/assist-recovery";
+import { ASSIST_INTENT_CLEAR_EVENT, ASSIST_INTENT_PREFIX } from "@yummyai/contracts/ai/assist-recovery";
 import { ConfigurationRpcSchema, ConfigurationSnapshotSchema } from "@yummyai/contracts/ai/model-configuration";
-import { StudioPersonalInvokeSchema, StudioPersonalReplySchema, StudioWorkspaceSchema } from "@yummyai/contracts/pod/studio-personal";
+import { STUDIO_PERSONAL_CLEAR_EVENT, StudioPersonalInvokeSchema, StudioPersonalReplySchema, StudioWorkspaceSchema } from "@yummyai/contracts/pod/studio-personal";
 import { StudioPaidImageInputSchema, StudioPaidImageRequestSchema, StudioImagePricingSchema } from "@yummyai/contracts/pod/studio-paid-image";
 import { StudioImageBudgetWorkspaceSchema } from "@yummyai/contracts/pod/studio-image-budget";
 import { STUDIO_IMAGE_DRAFT_KEY } from "@yummyai/contracts/pod/studio-document-transfer";
@@ -46,6 +46,121 @@ const Cleanup = z.object({ role: z.literal("yummyai_app"), cancelledPreparations
   retainedUntilDisposableRemoval: z.literal("immutable requests executions budgets revisions private originals and fixture-created budget policies") }).strict();
 type Fact = z.infer<typeof Facts>;
 type Seen = Awaited<ReturnType<typeof observeTransfer>>;
+type WorkspaceNativeRead = { id: number; document: number; start: number; scope: string; method: string; authorityHash: string;
+  responseAuthorityHash: string; status: number | null; headersAt: number | null; reads: number; bytes: number; eofAt: number | null; jsonDone: boolean;
+  signalPresent: boolean; signalAbortAt: number | null; signalReason: string | null; abortStack: string | null; fetchStack: string | null;
+  error: string | null; readerError: string | null };
+type WorkspaceDocument = { document: number; pendingHashes: number; rows: WorkspaceNativeRead[];
+  events: Array<{ at: number; type: string; origin?: string; visibility?: string }> };
+type WorkspaceWindow = Window & { __paidWorkspaceAudit?: WorkspaceDocument };
+async function observeWorkspaceReads(page: Page) {
+  const documents = new Map<number, WorkspaceDocument>(), barriers: unknown[] = [];
+  const host: Array<{ request: Request; response?: Awaited<ReturnType<Request["response"]>>; finished: boolean; failed: string | null;
+    startedObservedAt: number; finishedAt: number | null; failedAt: number | null; bodyBytes?: number; bodySha256?: string; completionError?: string | null }> = [];
+  await page.exposeBinding("__paidWorkspaceCapture", ({ frame }, value: WorkspaceDocument) => { if (frame === page.mainFrame()) documents.set(value.document, value); });
+  await page.addInitScript(({ clearNames }) => {
+    if (window !== window.top) return;
+    const state: WorkspaceDocument = { document: performance.timeOrigin, pendingHashes: 0, rows: [], events: [] };
+    (window as WorkspaceWindow).__paidWorkspaceAudit = state;
+    const now = () => performance.timeOrigin + performance.now();
+    const name = (value: unknown) => value && typeof value === "object" && "name" in value ? String(value.name) : "UnknownError";
+    const capture = () => { const emit = (window as unknown as { __paidWorkspaceCapture?: (value: WorkspaceDocument) => Promise<void> }).__paidWorkspaceCapture;
+      if (emit) void emit({ ...state, rows: state.rows.map(row => ({ ...row })), events: state.events.map(event => ({ ...event })) }).then(() => {}, () => {}); };
+    const hash = (row: WorkspaceNativeRead, field: "authorityHash" | "responseAuthorityHash", value: string) => {
+      state.pendingHashes++; void crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)).then(bytes => {
+        row[field] = Array.from(new Uint8Array(bytes), part => part.toString(16).padStart(2, "0")).join(""); state.pendingHashes--; capture();
+      }, () => { row.error = "HashError"; state.pendingHashes--; capture(); });
+    };
+    const event = (type: string, origin?: string) => { state.events.push({ at: now(), type, ...(origin ? { origin } : {}), visibility: document.visibilityState }); capture(); };
+    for (const type of [...clearNames, "focus", "pagehide", "beforeunload"]) window.addEventListener(type, () => event(type));
+    document.addEventListener("visibilitychange", () => event("visibilitychange"));
+    window.addEventListener("message", value => {
+      const iframe = document.querySelector<HTMLIFrameElement>("[data-studio-session] iframe[title]");
+      const data: unknown = value.data;
+      if (value.source !== iframe?.contentWindow || !data || typeof data !== "object" || !("type" in data) || typeof data.type !== "string") return;
+      if (["studio.ready", "studio.loaded", "studio.route", "studio.navigate", "studio.cancel"].includes(data.type)) event(data.type, value.origin);
+    });
+    const responses = new WeakMap<Response, WorkspaceNativeRead>(), streams = new WeakMap<ReadableStream, WorkspaceNativeRead>(), readers = new WeakMap<object, WorkspaceNativeRead>();
+    const fetchOriginal = window.fetch, jsonOriginal = Response.prototype.json;
+    window.fetch = function(input, init) {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (url.origin !== location.origin || url.pathname !== "/api/creative-studio/workspace") return fetchOriginal.call(this, input, init);
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
+      const row: WorkspaceNativeRead = { id: state.rows.length + 1, document: state.document, start: now(), scope: url.searchParams.get("scope") ?? "unassigned",
+        method: init?.method ?? (input instanceof Request ? input.method : "GET"), authorityHash: "", responseAuthorityHash: "", status: null, headersAt: null,
+        reads: 0, bytes: 0, eofAt: null, jsonDone: false, signalPresent: !!signal, signalAbortAt: null, signalReason: null,
+        abortStack: null, fetchStack: new Error().stack?.slice(0, 4096) ?? null, error: null, readerError: null };
+      state.rows.push(row); hash(row, "authorityHash", new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get("x-yummyai-context-authority") ?? "");
+      const aborted = () => { row.signalAbortAt = now(); row.signalReason = name(signal?.reason); row.abortStack = new Error().stack?.slice(0, 4096) ?? null; capture(); };
+      if (signal?.aborted) aborted(); else signal?.addEventListener("abort", aborted, { once: true });
+      const pending = fetchOriginal.call(this, input, init);
+      void pending.then(response => { row.status = response.status; row.headersAt = now(); responses.set(response, row); if (response.body) streams.set(response.body, row);
+        hash(row, "responseAuthorityHash", response.headers.get("x-yummyai-context-authority") ?? ""); capture(); }, cause => { row.error = name(cause); capture(); });
+      return pending;
+    };
+    Response.prototype.json = function() { const row = responses.get(this), pending = jsonOriginal.call(this);
+      if (row) void pending.then(() => { row.jsonDone = true; capture(); }, cause => { row.readerError = name(cause); capture(); }); return pending; };
+    const getReaderOriginal = ReadableStream.prototype.getReader;
+    function reader(this: ReadableStream, options: { mode: "byob" }): ReadableStreamBYOBReader;
+    function reader(this: ReadableStream): ReadableStreamDefaultReader<unknown>;
+    function reader(this: ReadableStream, options?: ReadableStreamGetReaderOptions): ReadableStreamReader<unknown>;
+    function reader(this: ReadableStream, options?: ReadableStreamGetReaderOptions): ReadableStreamReader<unknown> {
+      const value = getReaderOriginal.call(this, options), row = streams.get(this); if (row) readers.set(value, row); return value;
+    }
+    ReadableStream.prototype.getReader = reader;
+    const readOriginal = ReadableStreamDefaultReader.prototype.read;
+    ReadableStreamDefaultReader.prototype.read = function() { const row = readers.get(this), pending = readOriginal.call(this);
+      if (row) void pending.then(part => { row.reads++; if (part.done) row.eofAt = now(); else if (part.value instanceof Uint8Array) row.bytes += part.value.byteLength; capture(); },
+        cause => { row.readerError = name(cause); capture(); }); return pending; };
+  }, { clearNames: [ASSIST_INTENT_CLEAR_EVENT, STUDIO_PERSONAL_CLEAR_EVENT] });
+  const recorded = (request: Request) => new URL(request.url()).pathname === "/api/creative-studio/workspace";
+  const started = (request: Request) => { if (recorded(request)) host.push({ request, finished: false, failed: null, startedObservedAt: Date.now(), finishedAt: null, failedAt: null }); };
+  const finished = (request: Request) => { const row = host.find(value => value.request === request); if (row) { row.finished = true; row.finishedAt = Date.now(); } };
+  const failed = (request: Request) => { const row = host.find(value => value.request === request); if (row) { row.failed = request.failure()?.errorText ?? "unknown"; row.failedAt = Date.now(); } };
+  const response = (value: Awaited<ReturnType<Request["response"]>>) => { if (value) { const row = host.find(item => item.request === value.request()); if (row) row.response = value; } };
+  page.on("request", started); page.on("requestfinished", finished); page.on("requestfailed", failed); page.on("response", response);
+  const snapshot = async () => { const value = await page.evaluate(() => (window as WorkspaceWindow).__paidWorkspaceAudit); if (value) documents.set(value.document, value); return value; };
+  const complete = async (label: string, boundary: number, scope: string, authority: string) => {
+    let previous = "", stable = 0;
+    await expect.poll(async () => {
+      const value = await snapshot(), rows = host.slice(boundary);
+      const terminal = value && !value.pendingHashes && value.rows.length >= 2 && rows.length === value.rows.length
+        && rows.every(row => row.finished || row.failed) && value.rows.every(row => row.eofAt !== null || row.error || row.readerError || row.signalAbortAt !== null);
+      const signature = JSON.stringify({ value, host: rows.map(row => [row.finished, row.failed]) });
+      stable = terminal ? signature === previous ? stable + 1 : 1 : 0; previous = signature; return stable;
+    }, { intervals: [100, 200, 500] }).toBeGreaterThanOrEqual(2);
+    const value = (await snapshot())!, rows = host.slice(boundary), authorityHash = originalSha(authority);
+    barriers.push({ label, boundary, document: value.document, nativeCount: value.rows.length, hostCount: rows.length });
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]!, native = value.rows[index]!, url = new URL(row.request.url());
+      expect(row.request.method()).toBe("GET"); expect(row.request.frame()).toBe(page.mainFrame());
+      expect(url.origin).toBe(new URL(page.url()).origin); expect(url.searchParams.get("scope")).toBe(scope);
+      expect(originalSha(row.request.headers()["x-yummyai-context-authority"] ?? "")).toBe(authorityHash);
+      const result = row.response ?? await row.request.response(); expect(result).not.toBeNull();
+      if (!result) throw new Error("paid_workspace_original_response_missing");
+      row.completionError = (await result.finished())?.message ?? null;
+      expect(row.completionError).toBeNull(); expect(row.finished).toBe(true); expect(row.failed).toBeNull(); expect(result.status()).toBe(200);
+      expect(result.headers()["x-yummyai-context-authority"]).toBe(authority);
+      expect(result.headers()["content-type"]?.split(";")[0]?.trim()).toBe("application/json");
+      const body = await result.body(); row.bodyBytes = body.byteLength; row.bodySha256 = originalSha(body);
+      const workspace = StudioWorkspaceSchema.parse(JSON.parse(body.toString("utf8")));
+      expect(workspace.scope).toBe(scope); expect(workspace.contextAuthority).toBe(authority); expect(workspace.capabilities.read).toBe(true);
+      expect(workspace.paidImageVersion).toBe(1); expect(workspace.generation).toEqual({ enabled: false, code: "operator_paused" });
+      expect(native).toMatchObject({ id: index + 1, document: value.document, scope, method: "GET", authorityHash, responseAuthorityHash: authorityHash,
+        status: 200, signalPresent: true, error: null, readerError: null, bytes: body.byteLength });
+      expect(native.eofAt).not.toBeNull();
+      // Normal later unmount may abort an already-consumed context. Only an
+      // abort after its observed EOF is compatible with a successful read.
+      expect(native.signalAbortAt === null || native.eofAt !== null && native.signalAbortAt > native.eofAt).toBe(true);
+    }
+  };
+  return { boundary: () => host.length, complete, async save(proof: Record<string, unknown>) {
+    try { await snapshot(); } catch { proof.workspaceNativeSnapshotIncomplete = true; }
+    proof.workspaceNative = [...documents.values()]; proof.workspaceBarriers = barriers;
+    proof.workspaceNetwork = host.map(({ request, response: _response, ...row }) => { void _response; const url = new URL(request.url());
+      return { ...row, scope: url.searchParams.get("scope"), method: request.method(), status: host.find(value => value.request === request)?.response?.status() ?? null }; });
+  }, stop() { page.off("request", started); page.off("requestfinished", finished); page.off("requestfailed", failed); page.off("response", response); } };
+}
 const frameRoot = (page: Page) => page.locator("[data-studio-session] iframe[title]");
 const frameFor = (page: Page) => page.frameLocator("[data-studio-session] iframe[title]");
 const panel = (page: Page) => page.getByRole("region", { name: "单张生图与费用", exact: true });
@@ -224,6 +339,7 @@ test.beforeEach(async ({ browser }, info) => {
 });
 
 test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_and_original_bytes_with_synthetic_processing", async ({ page }, info) => {
+  let workspaceAudit: Awaited<ReturnType<typeof observeWorkspaceReads>> | undefined;
   const environment = requireStudioPaidImageEnvironment(process.env, true), seen = await observeTransfer(page), child = childFor(environment.nonce);
   const allowed = new Set<Request>(), proof: Record<string, unknown> = { nonce: environment.nonce, realPaidCalls: 0, ordinaryWorkerStarted: false,
     gateway: "injected fetch only loopback 127.0.0.1:9 No real socket or provider" };
@@ -235,6 +351,8 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     const seed = Seed.parse(await child.rpc("seed", TenantContextSchema.strict().parse(TenantContextSchema.parse(session)))); expect(seed.nonce).toBe(environment.nonce);
     const authority = erpSessionAuthority(session); expect(seed.authorityHash).toBe(originalSha(authority));
     proof.modelSettings = await readModelSettings(page, seen, child, seed, authority);
+    const workspaceReads = await observeWorkspaceReads(page), initialWorkspaceBoundary = workspaceReads.boundary();
+    workspaceAudit = workspaceReads;
     const workspaceResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/creative-studio/workspace"
       && new URL(response.url()).searchParams.get("scope") === seed.scope);
     await seen.markPhase("paid-image.open-original"); await page.goto(`/creative-designs/studio/image?brief=${seed.scope}`);
@@ -242,6 +360,7 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     const workspace = StudioWorkspaceSchema.parse(await response.json()); expect(workspace.contextAuthority).toBe(authority);
     expect(workspace.paidImageVersion).toBe(1); expect(workspace.generation).toEqual({ enabled: false, code: "operator_paused" });
     await expect(frameFor(page).locator(".studio-workbench main textarea").first()).toHaveValue(seed.prompt);
+    await workspaceReads.complete("initial-workspace-ready", initialWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
     proof.imagePanelMount = await page.locator(".studio-paid-image-toggle").evaluateAll(toggles => ({ count: toggles.length,
       mounts: toggles.map((toggle, index) => {
         const section = toggle.closest("section"), parents: Array<{ tag: string; className: string; hidden: boolean }> = [];
@@ -356,7 +475,11 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
       const keys = Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index)).filter((key): key is string => !!key?.startsWith(prefix));
       for (const key of keys) sessionStorage.removeItem(key); return keys.length;
     }, markerPrefix); expect(removed).toBe(1);
-    const recoveryStart = seen.rows.length; await page.reload(); await seen.markPhase("paid-image.after-reload-server-original-recovery"); await openPanel(page);
+    const recoveryStart = seen.rows.length, recoveryWorkspaceBoundary = workspaceReads.boundary();
+    await page.reload(); await seen.markPhase("paid-image.after-reload-server-original-recovery");
+    await expect(frameFor(page).locator(".studio-workbench main textarea").first()).toHaveValue(seed.prompt);
+    await workspaceReads.complete("reloaded-workspace-ready", recoveryWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
+    await openPanel(page);
     await expect(original(page, requestId)).toHaveAttribute("data-studio-image-status", "queued"); await seen.settle();
     const recovery = seen.rows.slice(recoveryStart); expect(recovery.filter(row => row.operation === "paid.image.requests").length).toBeGreaterThan(0);
     expect(recovery.filter(row => row.operation === "paid.image.lookup").length).toBeGreaterThan(0); expect(recovery.filter(row => mutating.has(row.operation ?? ""))).toEqual([]);
@@ -414,6 +537,7 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     proof.finalTables = final.tables; proof.originalReservationUsd = seed.pricing.reservationUsd; proof.finalBudget = final.budget;
     proof.syntheticGatewayCalls = final.gatewayCalls.length; proof.syntheticActualCostUsd = result.execution.costUsd; proof.actualImageRightsStatus = result.result!.rightsStatus;
     proof.candidatesCreated = final.tables.creative_design_candidates!.count; proof.approvedVersionsCreated = final.tables.creative_design_versions!.count;
+    await workspaceReads.complete("all-workspace-reads-before-logout", recoveryWorkspaceBoundary, seed.scope, authority);
     await seen.beforeReload("paid-image.before-logout-clear");
     await page.getByRole("button", { name: "退出登录", exact: true }).click();
     await expect(page.getByRole("heading", { name: "登录运营工作台", exact: true })).toBeVisible(); await expect(frameRoot(page)).toHaveCount(0); await expect(panel(page)).toHaveCount(0);
@@ -423,6 +547,10 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
   } catch (error) {
     primary = error; try { await page.screenshot({ path: info.outputPath("primary-failure.png"), timeout: 5_000 }); proof.failureScreenshot = true; } catch { proof.failureScreenshotFailed = true; }
   } finally {
+    if (workspaceAudit) {
+      try { await workspaceAudit.save(proof); } catch (error) { proof.workspaceAuditSaveFailed = true; primary ??= error; }
+      finally { try { workspaceAudit.stop(); } catch (error) { proof.workspaceAuditStopFailed = true; primary ??= error; } }
+    }
     if (handler) try { await page.unroute(invokePattern, handler); } catch (error) { primary ??= error; }
     primary = await finish(child, seen, info, proof, primary, allowed);
   }
