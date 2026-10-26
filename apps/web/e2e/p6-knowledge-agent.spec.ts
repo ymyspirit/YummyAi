@@ -1,4 +1,4 @@
-import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Page, type Request, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { Permission } from "@yummyai/authz";
@@ -81,6 +81,8 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     await expect(native).toHaveCount(1);
     const composer = native.locator("details.an-composer");
     if (!await composer.evaluate(element => (element as HTMLDetailsElement).open)) await composer.locator(":scope > summary").click();
+    const paidStart = composer.getByRole("button", { name: "启动新的付费原生工具任务", exact: true });
+    await expect(paidStart).toBeDisabled();
     await native.getByRole("combobox", { name: "选择本次读取工具", exact: true }).selectOption("knowledge.search");
     const picker = native.getByRole("region", { name: "知识产品选择", exact: true });
     await expect(picker.getByRole("combobox", { name: "知识产品范围", exact: true })).toHaveValue("");
@@ -94,6 +96,8 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
     await native.getByRole("button", { name: "加入本次固定读取范围", exact: true }).click();
     await expect(composer.locator(".anv2-bindings > ol > li")).toHaveCount(1);
     await expect(composer.locator(".anv2-bindings code")).toHaveText(f.seed.spuId);
+    await expect(paidStart).toBeDisabled(); expect(posts).toEqual([]);
+    Object.assign(proof, { configurationUiPosts: [...posts], paidStartDisabledBeforeAndAfterBinding: true });
     const plan = await f.plan(card.id, 1), before = await f.nativeState();
     expect(plan.knowledgeEntryId).toBe(card.id); expect(plan.knowledgeVersion).toBe(1); expect(before.providerFailures).toBe(0);
     await page.goto("/ai-tasks?agentNativeV4=" + plan.runId);
@@ -159,6 +163,7 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
   await page.clock.install();
   const f = await p6KnowledgeAgentFixture("knowledge-version");
   let entryId: string | undefined, releaseLate: () => void = () => {};
+  let heldRouteStarted = false, lateRouteSettled: Promise<void> | undefined;
   const proof: Record<string, unknown> = { nonce: f.nonce, realPaidProviderCalls: 0, ordinaryWorkerStarted: false };
   let answerPosts = 0;
   page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/ai-assists/runs") answerPosts++; });
@@ -186,22 +191,46 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
     await expect(chat.locator('.kb-reference a[href="' + href + '"]')).toHaveText(card.title + " · V1");
     const completed = AssistViewSchema.parse(await centerApi("ai-assists/runs/" + run.id));
     const calls = f.model.modelCalls(); expect(calls).toBe(1);
-    let captured: () => void = () => {};
-    const capturedResponse = new Promise<void>(accept => { captured = accept; });
+    let captured: () => void = () => {}, captureFailed: (failure: unknown) => void = () => {};
+    const capturedResponse = new Promise<void>((accept, reject) => { captured = accept; captureFailed = reject; });
     const pendingResponse = new Promise<void>(accept => { releaseLate = accept; });
+    let heldRequest: Request | undefined, originalBrowserStatus: number | null = null, requestFailure: string | null = null;
+    let cancelled: (failure: string) => void = () => {}, settleLate: () => void = () => {};
+    const originalCancelled = new Promise<string>(accept => { cancelled = accept; });
+    lateRouteSettled = new Promise<void>(accept => { settleLate = accept; });
+    let lateFulfillAttempted = false, lateRouteFailure: unknown;
+    page.on("requestfailed", request => { if (request === heldRequest) {
+      requestFailure = request.failure()?.errorText ?? "unknown"; cancelled(requestFailure);
+    } });
+    page.on("response", response => { if (response.request() === heldRequest) originalBrowserStatus = response.status(); });
     await page.route("**/api/ai-assists/runs/" + run.id, async route => {
-      const response = await route.fetch(); expect(response.status()).toBe(200); captured(); await pendingResponse; await route.fulfill({ response });
+      heldRouteStarted = true; heldRequest = route.request();
+      try {
+        expect(heldRequest.method()).toBe("GET");
+        const response = await route.fetch(); expect(response.status()).toBe(200);
+        const buffered = AssistViewSchema.parse(await response.json());
+        expect(buffered.id).toBe(run.id); expect(buffered.result).toEqual(completed.result);
+        captured(); await pendingResponse; lateFulfillAttempted = true;
+        await route.fulfill({ response }); await response.dispose();
+      } catch (failure) { lateRouteFailure = failure; captureFailed(failure); }
+      finally { settleLate(); }
     }, { times: 1 });
     await page.evaluate(() => window.dispatchEvent(new Event("focus"))); await capturedResponse;
     await f.removeWorkflowRead();
     const denied = page.waitForResponse(value => value.request().method() === "GET" && new URL(value.url()).pathname === "/api/ai-assists/runs/" + run.id && value.status() === 403);
     await page.clock.fastForward(31_000); await denied;
+    expect(await originalCancelled).toBe("net::ERR_ABORTED");
     await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
-    await expect(chat.getByRole("textbox", { name: "问题或追问", exact: true })).toHaveValue("");
-    const late = page.waitForResponse(value => new URL(value.url()).pathname === "/api/ai-assists/runs/" + run.id && value.status() === 200);
-    releaseLate(); await (await late).finished(); await page.clock.runFor(100);
+    await expect(chat.getByRole("textbox", { name: "问题或追问", exact: true })).toHaveCount(0);
+    await expect(chat.getByRole("status")).toHaveText("当前知识读取权限已变化 原回答 范围和填写已隐藏 同一账号的纯 ID 标识保留供后续核对");
+    releaseLate(); await lateRouteSettled; expect(lateRouteFailure).toBeUndefined();
+    expect(lateFulfillAttempted).toBe(true); expect(originalBrowserStatus).toBeNull();
+    await page.clock.runFor(100);
     await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
     await expect(chat.locator('a[href="' + href + '"]')).toHaveCount(0);
+    Object.assign(proof, { lateOriginalRead: { upstreamStatus: 200, originalRequestFailure: requestFailure,
+      browserResponseStatus: originalBrowserStatus, lateFulfillAttempted, handlerSettled: true,
+      interpretation: "original_GET_cancelled_before_late_delivery_no_successful_page_200_claimed" } });
     await f.restore();
     await page.goto(href);
     await expect(detail(page).getByRole("combobox", { name: "查看版本", exact: true })).toHaveValue("1");
@@ -237,6 +266,7 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
       originalStatus: completed.status, finalStatus: stale.status, costPreserved: true });
   } finally {
     releaseLate();
+    if (heldRouteStarted && lateRouteSettled) await lateRouteSettled;
     try { await archive(f, entryId); } finally { await f.close(); }
     await writeFile(info.outputPath("p6-fixed-knowledge-proof.json"), JSON.stringify(proof, null, 2), { flag: "wx" });
   }
