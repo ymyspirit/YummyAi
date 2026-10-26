@@ -11,7 +11,36 @@ The manual intake workspace is `/orders/import`, linked from **订单履约 → 
 
 Intake supports the priced order report and the unpriced unshipped report identified by `quantity-shipped`, `quantity-to-ship` and `promise-date`. Both require order/item identity, purchase date, SKU, title and purchased quantity. The priced form requires both `currency` and `item-price`; a partly missing financial header set or invalid financial value remains an explicit rejection. The unpriced form keeps currency, item, shipping and tax amounts unknown. It never supplies zero or a marketplace-derived currency. Unknown values are shown explicitly in the report UI and the core order view.
 
-Intake records `report_imported` as its source status, leaves unmapped values absent, and does not infer FBA or shipment eligibility. Extra source columns, including the unshipped report's promised date and shipping quantities, remain in the encrypted raw report; this adapter does not reinterpret them as ERP shipment/production events or a verified ship-by deadline. FBA replenishment/shipping plans and additional report families require separate adapters; they are not ordinary customer orders.
+Intake records `report_imported` as its source status, leaves unmapped values absent, and does not infer FBA or shipment eligibility. Shipping quantities remain raw evidence and do not create ERP shipment or production events. The unshipped report's complete, timezone-qualified `promise-date` is now preserved as platform shipping evidence as described below. FBA replenishment/shipping plans and additional report families require separate adapters; they are not ordinary customer orders.
+
+### Platform shipping deadline evidence (2026-10-26)
+
+Amazon's [unshipped-report field definitions](https://sellercentral.amazon.sa/help/hub/reference/external/G200133720?locale=zh-CN)
+define `promise-date` as the promised shipping date. Only the recognized unpriced
+unshipped family promotes a complete, valid ISO timestamp with a timezone to
+`platformShipByAtByLine`. Date-only, timezone-free, invalid or missing values stay
+unknown; no end-of-day, 48-hour or working-day assumption is added. Priced report
+extras do not acquire this meaning.
+
+Each immutable source records the original batch ID/checksum, source field and
+exact order-item identities. Lists verify the batch/account/order evidence and
+use each line's own timestamp. The latest original batch wins over a later
+refresh of an older batch. Manual records, including an explicit clearing of an
+unknown cutoff, take precedence; a current official API shipping window has
+priority over report evidence. Source labels distinguish report import, API
+sync and an operator record. An API observation does not acquire a human
+verification time.
+
+`AmazonOrderReportService.refreshPlatformDeadlines(context, batchId)` is the
+bounded native recovery operation for an existing completed batch. It rechecks
+current authenticated membership, tenant authority, account, retention, original
+encrypted bytes/checksum and line identities. It appends only immutable source
+siblings and an audit record, and replays by the original batch/order key. It
+does not re-import addresses, change order state, rewrite work/attachment versions,
+review artwork or enqueue work. New unshipped imports carry this evidence directly.
+
+External-factory operations use the actual platform cutoff for reminders. The
+legacy internal plan remains optional and never replaces a missing platform date.
 
 ## Operator flow and limits
 

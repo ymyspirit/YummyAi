@@ -3,6 +3,7 @@ import { FactoryProductionPinSchema } from "@yummyai/contracts/suppliers/factory
 import { ProductionCapacityPlanSchema } from "@yummyai/contracts/suppliers/factory-capacity";
 import { ShiposShipmentSourceSchema } from "@yummyai/contracts/suppliers/shipos";
 import { z } from "zod";
+import { OrderAutomaticBasisSchema, OrderShippingTimeSchema } from "@yummyai/contracts/order/automatic-basis";
 import { ProductionManufacturingSelectionSchema, ProductionManufacturingPinSchema } from "@yummyai/contracts/order/production-manufacturing";
 import { QualityAssessmentSchema } from "@yummyai/contracts/order/quality-assessment";
 import { FactoryErpStatusViewSchema } from "@yummyai/contracts/order/factory-erp-import";
@@ -317,6 +318,8 @@ export const OrderWorkListItemSchema = z
     dueAt: z.iso.datetime().nullable(),
     platformShipByAt: z.iso.datetime().nullable().optional(),
     platformDeadlineVerifiedAt: z.iso.datetime().nullable().optional(),
+    platformDeadlineSource: z.enum(["verified_record", "marketplace_api", "report_import", "missing"]).optional(),
+    platformDeadlineSourceVersionId: Id.nullable().optional(),
     platformConfirmationPending: z.boolean().optional(),
     proofVersionCurrent: z.boolean().optional(),
     updatedAt: z.iso.datetime(),
@@ -387,6 +390,8 @@ export const OrderWorkDetailViewSchema = z
     catalog: z
       .object({
         status: z.enum(["matched", "unmatched", "ambiguous", "pinned"]),
+        spus: z.array(z.object({ id: Id, code: z.string(), name: z.string() }).strict()).optional(),
+        automatic: OrderAutomaticBasisSchema.optional(),
         site: OrderSalesSiteResolutionSchema.optional(),
         packageId: Id.nullable(),
         channelPackageId: Id.nullable().optional(),
@@ -426,14 +431,19 @@ export const OrderWorkDetailViewSchema = z
             spuName: z.string(),
             name: z.string(),
             version: z.int(),
-            processProfileVersionId: Id,
+            processProfileVersionId: Id.nullable(),
             processName: z.string(),
             dimensions: z.string(),
+            code: z.string().optional(),
+            sizeInches: z.number().positive().nullable().optional(),
+            productionReady: z.boolean().optional(),
+            issues: z.array(z.string()).optional(),
           }),
         ),
       })
       .optional(),
     line: OrderWorkListItemSchema,
+    shippingTime: OrderShippingTimeSchema.optional(),
     draft: OrderWorkDraftSchema,
     report: AmazonReportDetailViewSchema.nullable(),
     sourceReport: AmazonReportDetailViewSchema.nullable().optional(),

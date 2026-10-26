@@ -4,6 +4,40 @@ Current per-permission scope, private-file I/O, command replay and parent follow
 authority are specified in [order authority](order-authority.md). Operational
 assignment does not establish personal/team ownership of an order.
 
+## Shaped-pillow intake matching (2026-10-26)
+
+The order catalog lists active, authorized SPUs independently from manufacturing
+readiness. Incomplete specifications remain visible with their actual missing
+facts and process binding; visibility never grants production admission.
+
+An unassigned draft for an explicitly identified shaped-pillow product uses the
+buyer's exact structured size option to select the unique current
+`CUSTOM-SHAPED-PILLOW` specification and its bound process version. Title ranges,
+packaging dimensions, conflicting declarations and nearest-size guesses never
+select a size. The existing `ART-CUSTOM-SHAPED-PILLOW` common customer-image
+definition can be carried in when its latest version is eligible; an ineligible
+latest version cannot silently fall back to old artwork. Matching prepares only
+an editable draft and reports its immutable source version and blockers.
+
+A selected option such as `10 inch-Mini Keepsake` retains its original text while
+matching the explicit 10-inch size. A descriptive suffix may contain words and
+hyphens; additional numbers, units or competing-choice words remain unresolved.
+
+Saved order pins and local manual edits remain in control. Controlled channel
+packages retain their original mapping boundary. A pending-information draft may
+save incomplete authorized catalog choices; `ready_to_push`, template approval,
+manufacturing facts, customer material checks and production release retain their
+strict gates. An unreviewed V4 template is not registered or approved by matching.
+
+The primary shipping time is the actual platform cutoff, with countdown and its
+report/API/manual source. Original unshipped report evidence is described in
+[report intake](amazon-order-reports.md). Amazon 2026 sync requests `FULFILLMENT`
+and reads `fulfillment.shipByWindow.latestDateTime`, following the
+[official migration mapping](https://developer-docs.amazon.com/sp-api/docs/orders-api-migration-guide).
+Latest provider update time orders API evidence, and invalid timestamps do not
+reach PostgreSQL casts. Optional manual internal dates do not drive platform risk
+counts or replace missing promises. Closed/shipped orders stop active reminders.
+
 ## Whole-order daily workflow (2026-10-07)
 
 Production, shipment and after-sales workspaces request `grouping=orders`.

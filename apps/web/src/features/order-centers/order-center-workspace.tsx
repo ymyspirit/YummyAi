@@ -381,7 +381,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
                 <th>订单状态 / 当前任务</th>
                 <th>数量 / 发货</th>
                 <th>平台发货截止</th>
-                <th>内部计划时间</th>
+                <th>人工计划（可选）</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -430,10 +430,10 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
                     </small>
                   </td>
                   <td data-label="平台发货截止">
-                    <OrderDeadlineSummary row={{ ...row, dueAt: null }} />
+                    <OrderDeadlineSummary row={row} includeInternal={false} />
                   </td>
-                  <td data-label="内部计划时间">
-                    {row.dueAt ? dateTime(row.dueAt) : "未设置"}
+                  <td data-label="人工计划（可选）">
+                    {row.dueAt ? <details className="oc-internal-time"><summary>查看人工计划</summary><time dateTime={row.dueAt}>{dateTime(row.dueAt)}</time><small>不替代平台截止</small></details> : <span className="oc-muted">可不填</span>}
                     <small>更新：{dateTime(row.updatedAt)}</small>
                   </td>
                   <td>

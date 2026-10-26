@@ -22,7 +22,13 @@ describe("authorized order HTTP adapters", () => {
     const url = new URL(String(request.mock.calls[1]![0]));
     expect(url.pathname).toBe("/orders/2026-01-01/orders");
     expect(url.searchParams.get("paginationToken")).toBe("page-2");
-    expect(url.searchParams.get("includedData")).toBe("BUYER,RECIPIENT,PROCEEDS,CANCELLATION");
+    expect(url.searchParams.get("includedData")).toBe("BUYER,RECIPIENT,PROCEEDS,CANCELLATION,FULFILLMENT");
+    expect(result.records[0]?.order.redactedSource).toMatchObject({
+      platformShipByAt: "2026-07-24T23:59:59.000Z",
+      platformShipBySource: "amazon_orders_2026_fulfillment_ship_by_window",
+      platformShipByField: "fulfillment.shipByWindow.latestDateTime",
+    });
+    expect(result.records[0]?.order.redactedSource).not.toHaveProperty("platformDeadlineVerifiedAt");
     expect(JSON.stringify(result.records[0]?.order.redactedSource)).not.toContain("buyer@example.test");
   });
 
@@ -82,9 +88,10 @@ function json(value: unknown) {
 function amazonOrder() {
   return {
     orderId: "111-2222222-3333333", createdTime: "2026-07-22T09:00:00.000Z", lastUpdatedTime: "2026-07-22T11:30:00.000Z",
-    fulfillmentStatus: "UNSHIPPED", salesChannel: { marketplaceId: "ATVPDKIKX0DER" },
-    orderTotal: { amount: "25.00", currencyCode: "USD" },
-    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug" }, quantityOrdered: 1, unitPrice: { amount: "25.00", currencyCode: "USD" } }],
+    fulfillment: { fulfillmentStatus: "UNSHIPPED", shipByWindow: { latestDateTime: "2026-07-24T23:59:59Z" } },
+    salesChannel: { marketplaceId: "ATVPDKIKX0DER" },
+    proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
+    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } } }, quantityOrdered: 1 }],
     buyer: { name: "Buyer", email: "buyer@example.test" },
     recipient: { name: "Buyer", addressLines: ["Secret street"], city: "Seattle", stateOrRegion: "WA", postalCode: "98101", countryCode: "US" },
   };

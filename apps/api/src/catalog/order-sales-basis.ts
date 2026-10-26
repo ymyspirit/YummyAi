@@ -11,12 +11,15 @@ import {
   salesRecipeVersions,
   artworkMasterVersions,
   artworkMasters,
+  spus,
+  productPlans,
   type TenantTransaction,
 } from "@yummyai/database";
-import { and, desc, eq, lte, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, lte, isNull, ne, or, sql } from "drizzle-orm";
 import type { TenantContext } from "@yummyai/contracts";
 import { Permission } from "@yummyai/authz";
-import { catalogOwnerFilter, catalogRecipeReadFilter } from "@yummyai/catalog-core";
+import { catalogOwnerFilter, catalogPlanFilter, catalogRecipeReadFilter } from "@yummyai/catalog-core";
+import { pillowSpecificationSize } from "./order-pillow-matching.js";
 import { isDeepStrictEqual } from "node:util";
 import { matchesCustomChoice } from "@yummyai/contracts/catalog/composition";
 import { OrderSalesDeliverySnapshotSchema } from "@yummyai/contracts/catalog/sales-plan-delivery";
@@ -209,6 +212,15 @@ export async function validateOrderSalesBasis(
   if (!specificationId || !artworkId)
     throw new ConflictException("请为本单匹配印花 SKU、产品 SPU 和具体规格");
   const specification = await readSpecification(tx, specificationId);
+  if (allowPartial && !recipe && !draft.salesPackageId &&
+      (!specification.processProfileVersionId || !specificationProductionFactsReady(specification.facts))) {
+    await readArtwork(tx, artworkId);
+    if (draft.printProfileVersionId && draft.printProfileVersionId !== specification.processProfileVersionId)
+      throw new ConflictException("订单工艺应与所选产品规格保持一致");
+    // Unconfirmed catalog choices can be saved as an intake draft. The strict
+    // ready_to_push path below still requires the complete manufacturing basis.
+    return null;
+  }
   assertSpecificationProcess(specification);
   if (recipe && recipe.specification.versionId !== specificationId)
     throw new ConflictException("所选规格与销售 SKU 制作版本不一致，请重新匹配");
@@ -453,7 +465,15 @@ export async function orderSalesChoices(
   const specifications = await Promise.all(
     [...specificationIds].map((id) => readSpecification(tx, id)),
   );
+  const products = context.permissions.includes(Permission.ProductRead) ? await tx
+    .select({ id: spus.id, code: spus.code, name: spus.name })
+    .from(spus)
+    .innerJoin(productPlans, eq(productPlans.id, spus.productPlanId))
+    .where(and(ne(spus.status, "archived"), ne(productPlans.status, "archived"),
+      catalogPlanFilter(context, Permission.ProductRead)))
+    .orderBy(spus.code) : [];
   return {
+    spus: products,
     recipes: recipes.map((r) => ({
       id: r.id,
       skuId: r.skuId,
@@ -477,12 +497,9 @@ export async function orderSalesChoices(
       layout: a.layout,
       instructions: a.instructions,
     })),
-    specifications: specifications
-      .filter(
-        (s): s is typeof s & { processProfileVersionId: string } =>
-          !!s.processProfileVersionId && (specificationProductionFactsReady(s.facts) || (s.versionId === pinnedSpecificationId && s.facts.factsConfirmed)),
-      )
-      .map((s) => ({
+    // Catalog visibility and production readiness are separate. The save/push
+    // boundary still validates confirmed manufacturing facts and process pins.
+    specifications: specifications.map((s) => ({
         id: s.versionId,
         spuId: s.spuId,
         spuCode: s.spuCode,
@@ -492,6 +509,13 @@ export async function orderSalesChoices(
         processProfileVersionId: s.processProfileVersionId,
         processName: s.processName,
         dimensions: s.facts.dimensions,
+        code: s.code,
+        sizeInches: s.spuCode === "CUSTOM-SHAPED-PILLOW" ? pillowSpecificationSize(s.code, s.attributes) : null,
+        productionReady: !!s.processProfileVersionId && specificationProductionFactsReady(s.facts),
+        issues: [
+          ...(!s.processProfileVersionId ? ["该规格尚未绑定已审核通用工艺底稿"] : []),
+          ...(!specificationProductionFactsReady(s.facts) ? ["规格生产事实尚未完成核对"] : []),
+        ],
       })),
   };
 }

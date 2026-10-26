@@ -1145,10 +1145,12 @@ try {
   const factoryDirectory = forwarded.includes("--suite=factory-directory");
   const databaseUpgrade = forwarded.includes("--suite=database-upgrade");
   const databaseIntegration = forwarded.includes("--suite=database-integration");
+  const apiIntegration = forwarded.includes("--suite=api-integration");
   const specificationProductionIntegration = specificationProductionIntegrationRequested;
   const orderSiteIntegration = orderSiteIntegrationRequested;
   const orderOperationsIntegration = orderOperationsIntegrationRequested;
   const integration =
+    apiIntegration ||
     studioPersonalIntegration ||
     shipmentCreateIntegration ||
     agentNativeV4Integration || agentNativeV4LateIntegration || agentNativeV4UpgradeIntegration ||
@@ -1468,6 +1470,8 @@ try {
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/orders/order-site-source.integration.test.ts"]
     : orderOperationsIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", "src/orders/order-operations-counts.integration.test.ts"]
+    : apiIntegration
+    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]
     : databaseIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", ...extra]
     : backupRestore

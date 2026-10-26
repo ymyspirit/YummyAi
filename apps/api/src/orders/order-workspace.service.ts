@@ -1,6 +1,8 @@
 import { sealWork as sharedSealWork, openWork as sharedOpenWork } from "@yummyai/order-core";
 import { readOrderSalesSite, resolveOrderSalesBasis, validateOrderSalesBasis, orderSalesChoices } from "../catalog/order-sales-basis.js";
 import { orderSalesSiteIssue } from "../catalog/order-sales-site.js";
+import { resolvePillowOrderBasis } from "../catalog/order-pillow-matching.js";
+import { resolveOrderShippingTime } from "./order-shipping-time.js";
 import { ArchiveRecordInputSchema } from "@yummyai/contracts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readArtwork, readSpecification } from "../catalog/development-data.js";
@@ -294,7 +296,7 @@ export class OrderWorkspaceService {
         const grouped = await tx.execute(sql`with v as (${workProjection})
         select "queueStage" as stage, count(*)::int as count, sum(quantity)::int as quantity,
         count(*) filter(where held or "sideState"='on_hold')::int as held,
-        count(*) filter(where "dueAt"<now() and "shippedQuantity"<quantity and "sideState" is distinct from 'cancelled')::int as overdue,
+        count(*) filter(where "platformShipByAt"<now() and "shippedQuantity"<quantity and "sideState" is distinct from 'cancelled')::int as overdue,
         count(*) filter(where "sourceChanged")::int as changed,
         count(*) filter(where "labelStatus" in ('missing','partial'))::int as missing
         from v where ${workFilter({ ...query, stage: undefined, workView: undefined, orderStatus: undefined })} group by "queueStage"`);
@@ -933,6 +935,7 @@ export class OrderWorkspaceService {
           ? OrderWorkDraftSchema.parse(openWork(key, state.versions[0].encryptedDraft))
           : defaultDraft(report);
       const catalog = await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead], async (tx) => {
+        const catalogContext = await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead]);
         const resolved = await resolveOrderSalesBasis(
           tx,
           id,
@@ -947,7 +950,7 @@ export class OrderWorkspaceService {
         }
         const choices = await orderSalesChoices(
           tx,
-          context,
+          catalogContext,
           draft.specificationVersionId,
           draft.artworkVersionId,
           draft.salesRecipeVersionId,
@@ -956,7 +959,23 @@ export class OrderWorkspaceService {
           draft.specificationVersionId = choices.recipes.find(
             (r) => r.id === draft.salesRecipeVersionId,
           )?.specificationVersionId;
+        const automatic = resolvePillowOrderBasis({
+          report: sourceReport ?? report,
+          productTitle: state.line.title,
+          sourceVersionId: sourceVersionId ?? report?.versionId ?? null,
+          draft,
+          preserve: state.versions.length > 0,
+          controlledDelivery: resolved.controlledDelivery,
+          specifications: choices.specifications,
+          artworks: choices.artworks,
+        });
+        if (automatic.applied) {
+          draft.specificationVersionId = automatic.specificationVersionId;
+          draft.printProfileVersionId = automatic.processProfileVersionId;
+          draft.artworkVersionId = automatic.artworkVersionId ?? null;
+        }
         return {
+          automatic,
           status:
             draft.salesRecipeVersionId || (draft.artworkVersionId && draft.specificationVersionId)
               ? state.versions.length
@@ -977,6 +996,16 @@ export class OrderWorkspaceService {
       return {
         catalog,
         line: state.line,
+        shippingTime: resolveOrderShippingTime({
+          now: new Date(), placedAt: state.line.placedAt,
+          platformShipByAt: state.line.platformShipByAt ?? null,
+          platformDeadlineVerifiedAt: state.line.platformDeadlineVerifiedAt ?? null,
+          platformSource: state.line.platformDeadlineSource,
+          platformSourceVersionId: state.line.platformDeadlineSourceVersionId ?? null,
+          dueAt: state.line.dueAt,
+          remainingQuantity: Math.max(0, state.line.quantity - state.line.shippedQuantity),
+          closed: state.line.sideState === "cancelled" || !!state.line.archivedAt,
+        }),
         draft,
         report,
         sourceReport,

@@ -1,13 +1,28 @@
-import type { OrderWorkListItem } from "@yummyai/contracts/order/workspace";
-import { orderDeadline } from "./order-operator-view";
+"use client";
+import { useEffect, useState } from "react";
+import type { OrderWorkDetail, OrderWorkListItem } from "@yummyai/contracts/order/workspace";
 import { dateTime } from "./order-center-model";
+import { orderPlatformShippingView } from "./order-auto-basis-model";
 
-export function OrderDeadlineSummary({ row }: { row: OrderWorkListItem }) {
-  const deadline = orderDeadline(row);
+export function OrderDeadlineSummary({ row, shippingTime, includeInternal = true }: {
+  row: OrderWorkListItem;
+  shippingTime?: OrderWorkDetail["shippingTime"];
+  includeInternal?: boolean;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const deadline = orderPlatformShippingView(row, shippingTime, now);
+  useEffect(() => {
+    if (!deadline.active || !deadline.at) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [deadline.active, deadline.at]);
   return <div className={`oc-task-deadline ${deadline.tone}`}>
     <strong>{deadline.text}</strong>
-    {row.platformShipByAt && <time dateTime={row.platformShipByAt}>{dateTime(row.platformShipByAt)}</time>}
-    {row.platformShipByAt && <small>{row.platformDeadlineVerifiedAt ? "人工核对记录" : "核对依据待确认"}</small>}
-    {row.dueAt && <small>内部计划：{dateTime(row.dueAt)}</small>}
+    {deadline.at && <time dateTime={deadline.at}>{dateTime(deadline.at)}</time>}
+    <small>{deadline.sourceLabel}</small>
+    {includeInternal && row.dueAt && <details className="oc-internal-time"><summary>人工计划 可选</summary>
+      <time dateTime={row.dueAt}>{dateTime(row.dueAt)}</time>
+      <small>不替代平台截止</small>
+    </details>}
   </div>;
 }

@@ -1451,6 +1451,11 @@
     display: block;
     width: 100%;
   }
+  .oc-fulfillment-list > caption {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
   .oc-table thead {
     display: none;
   }
@@ -1670,4 +1675,84 @@
 @media (prefers-reduced-motion: reduce) {
   .oc-quality-groups-panel::details-content, .oc-group-chevron { transition: none; }
   .oc-quality-groups-panel[open] > .oc-quality-groups-body, .oc-quality-physical-group, .oc-group-defect { animation: none; }
+}
+
+.oc-basis-summary, .oc-basis-manual, .oc-optional-internal-plan { grid-column: 1 / -1; min-width: 0; }
+.oc-basis-summary { border-left: 2px solid var(--action, #2264d1); padding: 4px 0 4px 12px; animation: oc-basis-enter 180ms ease both; }
+.oc-basis-summary.warning { border-left-color: var(--warning-ink, #8d5916); }
+.oc-basis-summary header, .oc-basis-summary header > span, .oc-platform-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.oc-basis-summary header { justify-content: space-between; }
+.oc-basis-summary header > span { flex: 1 1 220px; align-items: flex-start; }
+.oc-basis-summary header svg { flex: 0 0 auto; margin-top: 2px; }
+.oc-basis-summary header strong { flex: 1 1 160px; font-size: 13px; }
+.oc-basis-summary small, .oc-basis-summary dt, .oc-basis-note, .oc-platform-heading small, .oc-muted { color: var(--muted-ink, #687386); }
+.oc-basis-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; margin: 14px 0 8px; }
+.oc-basis-summary dl > div { min-width: 0; }
+.oc-basis-summary dt { font-size: 11px; margin-bottom: 3px; }
+.oc-basis-summary dd { margin: 0; font-size: 12px; }
+.oc-basis-summary dd small { display: block; margin-top: 3px; }
+.oc-basis-summary :is(strong, small, p, li, dd), .oc-platform-deadline p { overflow-wrap: anywhere; }
+.oc-basis-issues { margin: 10px 0; padding-left: 18px; font-size: 12px; line-height: 1.65; }
+.oc-basis-note { margin: 10px 0 0; font-size: 11px; line-height: 1.65; }
+.oc-basis-link { display: inline-flex; max-width: 100%; margin-top: 9px; color: var(--action, #2264d1); font-size: 12px; overflow-wrap: anywhere; transition: color 140ms ease, transform 140ms ease; }
+.oc-basis-link:hover { color: var(--ink, #14181e); transform: translateY(-1px); }
+.oc-basis-link:active { transform: translateY(0); }
+.oc-basis-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 12px 0 4px; }
+.oc-basis-fields > label { min-width: 0; }
+.oc-basis-fields :is(select, input, button) { max-width: 100%; }
+.oc-basis-fields small { overflow-wrap: anywhere; line-height: 1.6; }
+:is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time) > summary { cursor: pointer; font-size: 12px; transition: color 140ms ease, background-color 140ms ease; }
+:is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time) > summary:hover { color: var(--action, #2264d1); }
+:is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time) > summary:focus-visible, .oc-basis-link:focus-visible { outline: 2px solid var(--action, #2264d1); outline-offset: 3px; border-radius: 2px; }
+.oc-basis-manual > summary { display: flex; align-items: center; gap: 7px; list-style: none; padding: 9px 0; border-block: 1px solid var(--line, #dce1e7); }
+.oc-basis-manual > summary::-webkit-details-marker { display: none; }
+.oc-basis-manual > summary svg:last-child { margin-left: auto; transition: transform 180ms ease; }
+.oc-basis-manual[open] > summary svg:last-child { transform: rotate(180deg); }
+.oc-basis-evidence { margin-top: 8px; color: var(--muted-ink, #687386); }
+.oc-basis-evidence :is(p, ul) { font-size: 11px; margin-block: 8px; }
+.oc-basis-evidence ul { padding-left: 18px; }
+.oc-platform-heading { margin-bottom: 10px; }
+.oc-platform-heading strong { font-size: 14px; }
+.oc-platform-heading small { font-size: 11px; }
+.oc-platform-deadline .oc-task-deadline { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.oc-platform-deadline .oc-task-deadline > strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+.oc-platform-deadline .oc-task-deadline > time { font-size: 14px; font-variant-numeric: tabular-nums; }
+.oc-platform-deadline .oc-task-deadline > small { font-size: 11px; color: var(--muted-ink, #687386); }
+.oc-platform-deadline .oc-task-deadline.warning > strong { color: var(--warning-ink, #8d5916); }
+.oc-platform-deadline .oc-task-deadline.danger > strong { color: var(--danger, #b53a38); }
+.oc-platform-editor { border-top: 1px solid var(--line, #dce1e7); padding-top: 10px; margin-top: 14px; min-width: 0; }
+.oc-platform-editor > summary, .oc-optional-internal-plan > summary { overflow-wrap: anywhere; }
+.oc-platform-editor > summary small, .oc-optional-internal-plan > summary small { margin-left: 8px; color: var(--muted-ink, #687386); font-size: 11px; }
+.oc-platform-editor .oc-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.oc-platform-editor .oc-form-grid :is(p, button) { grid-column: 1 / -1; }
+.oc-platform-editor .oc-form-grid p { margin: 0; color: var(--muted-ink, #687386); font-size: 11px; }
+.oc-platform-editor .oc-form-grid button { justify-self: start; max-width: 100%; transition: transform 140ms ease, background-color 140ms ease; }
+.oc-platform-editor .oc-form-grid button:hover:not(:disabled), .oc-basis-fields .oc-button:hover:not(:disabled) { transform: translateY(-1px); }
+.oc-platform-editor .oc-form-grid button:active:not(:disabled), .oc-basis-fields .oc-button:active:not(:disabled) { transform: scale(.985); }
+.oc-optional-internal-plan { border-top: 1px solid var(--line, #dce1e7); padding-top: 10px; }
+.oc-optional-internal-plan > div { max-width: 520px; padding-top: 8px; }
+.oc-optional-internal-plan p, .oc-optional-internal-plan small { color: var(--muted-ink, #687386); font-size: 11px; overflow-wrap: anywhere; line-height: 1.65; }
+.oc-internal-time { color: var(--muted-ink, #687386); font-size: 11px; min-width: 0; }
+.oc-internal-time :is(time, small) { display: block; margin-top: 5px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+:is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time)[open] > :not(summary) { animation: oc-basis-enter 180ms ease both; }
+@keyframes oc-basis-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@supports (interpolate-size: allow-keywords) {
+  :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time) { interpolate-size: allow-keywords; }
+  :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time)::details-content { block-size: 0; overflow: clip; transition: block-size 180ms ease, opacity 180ms ease, content-visibility 180ms allow-discrete; opacity: 0; }
+  :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time)[open]::details-content { block-size: auto; opacity: 1; }
+}
+@container order-review (max-width: 700px) {
+  .oc-basis-summary dl, .oc-basis-fields, .oc-platform-editor .oc-form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .oc-basis-summary dl, .oc-basis-fields, .oc-platform-editor .oc-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .oc-basis-summary header { align-items: flex-start; }
+  .oc-platform-heading small { flex: 1 1 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oc-basis-summary, :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time)[open] > :not(summary) { animation: none; }
+  :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time)::details-content,
+  :is(.oc-basis-manual, .oc-basis-evidence, .oc-platform-editor, .oc-optional-internal-plan, .oc-internal-time) > summary,
+  .oc-basis-manual > summary svg:last-child, .oc-basis-link, .oc-platform-editor .oc-form-grid button { transition: none; }
+  .oc-basis-link:hover, .oc-basis-link:active, .oc-platform-editor .oc-form-grid button:is(:hover, :active):not(:disabled), .oc-basis-fields .oc-button:is(:hover, :active):not(:disabled) { transform: none; }
 }

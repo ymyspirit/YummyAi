@@ -60,6 +60,7 @@ import {
 import { AmazonReportRetentionEnqueuer } from "./redis-amazon-report-retention-enqueuer.js";
 import { AmazonReportProcessingEnqueuer } from "./redis-amazon-report-processing-enqueuer.js";
 import { orderSummaryAvailability, orderSummaryUnavailableReason } from "./order-summary-source.js";
+import { amazonReportDeadlineEvidence, refreshAmazonReportPlatformDeadlines } from "./order-report-shipping.js";
 
 type ReportLine = typeof reportLines.$inferSelect;
 export type OrderSummaryReportSelection = { id: string; versionId: string | null; pinned: boolean };
@@ -83,6 +84,11 @@ export class AmazonOrderReportService {
     private readonly retention: AmazonReportRetentionEnqueuer,
     @Inject(AmazonReportProcessingEnqueuer) private readonly processing: AmazonReportProcessingEnqueuer,
   ) {}
+
+  /** Native, authorized source refresh; no order, PII, work or queue is rewritten. */
+  refreshPlatformDeadlines(context: TenantContext, batchId: string) {
+    return refreshAmazonReportPlatformDeadlines({ database: this.database, vault: this.vault, audit: this.audit }, context, batchId);
+  }
 
   async importReport(
     context: TenantContext,
@@ -148,7 +154,7 @@ export class AmazonOrderReportService {
     const batchId = createEntityId();
     const reportChecksum = checksum(input.content.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n"));
     const expiresAt = new Date(Date.now() + 30 * 86_400_000);
-    await withTenant(this.database.db, context, (tx) =>
+    const [createdBatch] = await withTenant(this.database.db, context, (tx) =>
       tx.insert(batches).values({
         id: batchId,
         tenantId: context.tenantId,
@@ -166,8 +172,9 @@ export class AmazonOrderReportService {
         orderCount: parsed.orders.length,
         createdBy: context.userId,
         expiresAt,
-      }),
+      }).returning({ createdAt: batches.createdAt }),
     );
+    if (!createdBatch) throw new ConflictException("订单报告批次未创建");
     try {
       await this.retention.schedule(context, batchId, expiresAt);
       await this.processing.schedule(context, batchId);
@@ -209,7 +216,9 @@ export class AmazonOrderReportService {
         });
         const result = await this.orderService.materializeNormalized(
           context,
-          normalize(input.accountId, input.marketplaceId, source, parsed.reportType),
+          normalize(input.accountId, input.marketplaceId, source, parsed.reportType, {
+            batchId, reportChecksum, reportCreatedAt: createdBatch.createdAt.toISOString(),
+          }),
           { manualReport: true, protectedExpiresAt: expiresAt },
         );
         targetOrderId = result.order.id;
@@ -992,12 +1001,15 @@ function normalize(
   marketplaceId: string,
   source: ParsedAmazonReportOrder,
   reportType: "priced" | "unshipped",
+  basis: { batchId: string; reportChecksum: string; reportCreatedAt: string },
 ): NormalizeOrderInput {
   const money = reportOrderMoney(source.lines);
   return {
     accountId,
     platform: "amazon",
-    externalEventId: `report:${marketplaceId}:${checksum(JSON.stringify(source))}`,
+    externalEventId: reportType === "unshipped"
+      ? `report-deadline-aware:${basis.batchId}:${checksum(JSON.stringify(source))}`
+      : `report:${marketplaceId}:${checksum(JSON.stringify(source))}`,
     externalOrderId: source.externalOrderId,
     providerStatus: "report_imported",
     placedAt: source.placedAt,
@@ -1020,6 +1032,7 @@ function normalize(
       reportType,
       marketplaceId,
       lineCount: source.lines.length,
+      ...amazonReportDeadlineEvidence(source, reportType, { ...basis, marketplaceId }),
     },
   };
 }

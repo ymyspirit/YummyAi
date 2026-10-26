@@ -63,7 +63,15 @@ const baseProjection = sql`
     coalesce(w.artwork, 'not_pushed') as artwork, coalesce(w.proof, 'not_required') as proof,
     coalesce(w.revision, 0) as revision, coalesce(w.projection_version, 0) as "projectionVersion",
     coalesce(w.held, false) as held, w.print_sku as "printSku", w.due_at as "dueAt", w.editor_project_id as "editorProjectId",
-    w.platform_ship_by_at as "platformShipByAt", w.platform_deadline_verified_at as "platformDeadlineVerifiedAt",
+    case when w.platform_ship_by_at is not null or w.platform_deadline_verified_at is not null
+      then w.platform_ship_by_at else coalesce(platform_deadline.at, report_deadline.at) end as "platformShipByAt",
+    w.platform_deadline_verified_at as "platformDeadlineVerifiedAt",
+    case when w.platform_ship_by_at is not null or w.platform_deadline_verified_at is not null then 'verified_record'
+      when platform_deadline.at is not null then 'marketplace_api'
+      when report_deadline.at is not null then 'report_import' else 'missing' end as "platformDeadlineSource",
+    case when w.platform_ship_by_at is null and w.platform_deadline_verified_at is null
+      then case when platform_deadline.at is not null then platform_source.id
+        when report_deadline.at is not null then report_source.id end else null end as "platformDeadlineSourceVersionId",
     coalesce(w.proof_editor_version_id=w.approved_editor_version_id and w.proof_editor_version_id=(select current_version_id from production_editor_projects where id=w.editor_project_id), false) as "proofVersionCurrent",
     exists(select 1 from shipment_package_lines pl join shipments s on s.id=pl.shipment_id
       join shipment_versions sv on sv.id=pl.shipment_version_id
@@ -101,6 +109,54 @@ const baseProjection = sql`
   left join product_specification_versions psv on psv.id=w.search_specification_version_id
   left join product_specifications ps on ps.id=psv.specification_id
   left join spus spu on spu.id=ps.spu_id
+  left join lateral (
+    select source.id, source.redacted_payload as payload
+    from order_source_snapshots source
+    where o.platform='amazon' and source.tenant_id=o.tenant_id
+      and source.normalized_order_id=o.id and source.account_id=o.account_id
+      and source.platform=o.platform and source.external_order_id=o.external_order_id
+      and source.redacted_payload->>'apiVersion'='2026-01-01'
+      and source.redacted_payload->>'orderId'=o.external_order_id
+    order by case when source.redacted_payload->>'lastUpdatedTime' ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+      and pg_input_is_valid(source.redacted_payload->>'lastUpdatedTime', 'timestamp with time zone')
+      then (source.redacted_payload->>'lastUpdatedTime')::timestamptz end desc nulls last,
+      source.received_at desc, source.id desc limit 1
+  ) platform_source on true
+  left join lateral (
+    select case when platform_source.payload->>'lastUpdatedTime' ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+      and pg_input_is_valid(platform_source.payload->>'lastUpdatedTime', 'timestamp with time zone')
+      and platform_source.payload->>'platformShipBySource'='amazon_orders_2026_fulfillment_ship_by_window'
+      and platform_source.payload->>'platformShipByField'='fulfillment.shipByWindow.latestDateTime'
+      and platform_source.payload->>'platformShipByAt' ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+      and pg_input_is_valid(platform_source.payload->>'platformShipByAt', 'timestamp with time zone')
+      then (platform_source.payload->>'platformShipByAt')::timestamptz end as at
+  ) platform_deadline on true
+  left join lateral (
+    select source.id, source.redacted_payload as payload
+    from order_source_snapshots source
+    join amazon_order_report_batches report_batch
+      on report_batch.tenant_id=source.tenant_id and report_batch.id::text=source.redacted_payload->>'batchId'
+      and report_batch.account_id=o.account_id and report_batch.report_checksum=source.redacted_payload->>'reportChecksum'
+    where o.platform='amazon' and source.tenant_id=o.tenant_id
+      and source.normalized_order_id=o.id and source.account_id=o.account_id
+      and source.platform=o.platform and source.external_order_id=o.external_order_id
+      and source.redacted_payload->>'source'='amazon_manual_report'
+      and source.redacted_payload->>'orderId'=o.external_order_id
+      and source.redacted_payload->>'marketplaceId'=report_batch.marketplace_id
+      and source.redacted_payload->>'reportType'='unshipped'
+      and source.redacted_payload->>'platformShipBySource'='amazon_unshipped_report_promise_date'
+      and source.redacted_payload->>'platformShipByField'='promise-date'
+      and exists(select 1 from amazon_order_report_batch_items report_item
+        where report_item.tenant_id=source.tenant_id and report_item.batch_id=report_batch.id
+          and report_item.order_id=o.id and report_item.external_order_id=o.external_order_id
+          and report_item.status in ('imported','duplicate'))
+    order by report_batch.created_at desc, source.received_at desc, source.id desc limit 1
+  ) report_source on true
+  left join lateral (
+    select case when report_source.payload->'platformShipByAtByLine'->>ol.external_line_id ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+      and pg_input_is_valid(report_source.payload->'platformShipByAtByLine'->>ol.external_line_id, 'timestamp with time zone')
+      then (report_source.payload->'platformShipByAtByLine'->>ol.external_line_id)::timestamptz end as at
+  ) report_deadline on true
   left join lateral (select coalesce(sum(${productionReadyQuantity(sql`ready_order.id`)}),0)::int as quantity from production_orders ready_order where ready_order.order_line_id=ol.id) quality_ready on true
   left join lateral (
     select count(*)::int as total, count(*) filter(where p.label_asset_id is not null or nullif(trim(p.external_label_id),'') is not null)::int as labeled
@@ -154,7 +210,7 @@ const lineWorkProjection = sql`select t.*,
   coalesce(("operatorTaskKey" not in ('archived','cancelled') and (
     "operatorTaskKey" in ('held','verify_source','design_attention','production_attention','customer_changes','complete_information','confirm_shipment','after_sales')
     or "shippedQuantity"<quantity and (platform='amazon' and "platformShipByAt" is null
-      or "platformShipByAt"<now() or "dueAt"<now()))),false) as "operatorException",
+      or "platformShipByAt"<now()))),false) as "operatorException",
   case when "operatorTaskKey" in ('archived','cancelled','complete') then 5
     when "shippedQuantity"<quantity and "platformShipByAt"<now() then 0
     when "operatorTaskKey" in ('held','verify_source','design_attention','production_attention','customer_changes','confirm_shipment','after_sales') then 1
@@ -236,7 +292,7 @@ export function workFilter(q: OrderWorkQuery): SQL {
   if (q.attention === "held") filters.push(sql`held or "sideState"='on_hold'`);
   if (q.attention === "overdue")
     filters.push(
-      sql`"dueAt" < now() and "shippedQuantity" < quantity and "sideState" is distinct from 'cancelled'`,
+      sql`"platformShipByAt" < now() and "shippedQuantity" < quantity and "sideState" is distinct from 'cancelled'`,
     );
   if (q.attention === "source_changed") filters.push(sql`"sourceChanged"`);
   if (q.attention === "platform_deadline_missing")
