@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page, type Request, type Route, type TestInfo } from "@playwright/test";
 import { z } from "zod";
 import { TenantContextSchema, type TenantContext } from "@yummyai/contracts";
+import { CanvasBriefSchema } from "@yummyai/contracts/pod/canvas-bridge";
 import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { ASSIST_INTENT_CLEAR_EVENT, ASSIST_INTENT_PREFIX } from "@yummyai/contracts/ai/assist-recovery";
@@ -46,19 +47,19 @@ const Cleanup = z.object({ role: z.literal("yummyai_app"), cancelledPreparations
   retainedUntilDisposableRemoval: z.literal("immutable requests executions budgets revisions private originals and fixture-created budget policies") }).strict();
 type Fact = z.infer<typeof Facts>;
 type Seen = Awaited<ReturnType<typeof observeTransfer>>;
-type WorkspaceNativeRead = { id: number; document: number; start: number; scope: string; method: string; authorityHash: string;
+type WorkspaceNativeRead = { id: number; document: number; start: number; path: string; scope: string; method: string; authorityHash: string;
   responseAuthorityHash: string; status: number | null; headersAt: number | null; reads: number; bytes: number; eofAt: number | null; jsonDone: boolean;
   signalPresent: boolean; signalAbortAt: number | null; signalReason: string | null; abortStack: string | null; fetchStack: string | null;
   error: string | null; readerError: string | null };
 type WorkspaceDocument = { document: number; pendingHashes: number; rows: WorkspaceNativeRead[];
   events: Array<{ at: number; type: string; origin?: string; visibility?: string }> };
 type WorkspaceWindow = Window & { __paidWorkspaceAudit?: WorkspaceDocument };
-async function observeWorkspaceReads(page: Page) {
+async function observeWorkspaceReads(page: Page, scope: string) {
   const documents = new Map<number, WorkspaceDocument>(), barriers: unknown[] = [];
   const host: Array<{ request: Request; response?: Awaited<ReturnType<Request["response"]>>; finished: boolean; failed: string | null;
     startedObservedAt: number; finishedAt: number | null; failedAt: number | null; bodyBytes?: number; bodySha256?: string; completionError?: string | null }> = [];
   await page.exposeBinding("__paidWorkspaceCapture", ({ frame }, value: WorkspaceDocument) => { if (frame === page.mainFrame()) documents.set(value.document, value); });
-  await page.addInitScript(({ clearNames }) => {
+  await page.addInitScript(({ clearNames, scope }) => {
     if (window !== window.top) return;
     const state: WorkspaceDocument = { document: performance.timeOrigin, pendingHashes: 0, rows: [], events: [] };
     (window as WorkspaceWindow).__paidWorkspaceAudit = state;
@@ -84,9 +85,10 @@ async function observeWorkspaceReads(page: Page) {
     const fetchOriginal = window.fetch, jsonOriginal = Response.prototype.json;
     window.fetch = function(input, init) {
       const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-      if (url.origin !== location.origin || url.pathname !== "/api/creative-studio/workspace") return fetchOriginal.call(this, input, init);
+      if (url.origin !== location.origin || url.pathname !== "/api/creative-studio/workspace" && url.pathname !== "/api/canvas-bridge/briefs/" + scope) return fetchOriginal.call(this, input, init);
       const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
-      const row: WorkspaceNativeRead = { id: state.rows.length + 1, document: state.document, start: now(), scope: url.searchParams.get("scope") ?? "unassigned",
+      const row: WorkspaceNativeRead = { id: state.rows.length + 1, document: state.document, start: now(), path: url.pathname,
+        scope: url.pathname === "/api/creative-studio/workspace" ? url.searchParams.get("scope") ?? "unassigned" : scope,
         method: init?.method ?? (input instanceof Request ? input.method : "GET"), authorityHash: "", responseAuthorityHash: "", status: null, headersAt: null,
         reads: 0, bytes: 0, eofAt: null, jsonDone: false, signalPresent: !!signal, signalAbortAt: null, signalReason: null,
         abortStack: null, fetchStack: new Error().stack?.slice(0, 4096) ?? null, error: null, readerError: null };
@@ -112,29 +114,33 @@ async function observeWorkspaceReads(page: Page) {
     ReadableStreamDefaultReader.prototype.read = function() { const row = readers.get(this), pending = readOriginal.call(this);
       if (row) void pending.then(part => { row.reads++; if (part.done) row.eofAt = now(); else if (part.value instanceof Uint8Array) row.bytes += part.value.byteLength; capture(); },
         cause => { row.readerError = name(cause); capture(); }); return pending; };
-  }, { clearNames: [ASSIST_INTENT_CLEAR_EVENT, STUDIO_PERSONAL_CLEAR_EVENT] });
-  const recorded = (request: Request) => new URL(request.url()).pathname === "/api/creative-studio/workspace";
+  }, { clearNames: [ASSIST_INTENT_CLEAR_EVENT, STUDIO_PERSONAL_CLEAR_EVENT], scope });
+  const recorded = (request: Request) => ["/api/creative-studio/workspace", "/api/canvas-bridge/briefs/" + scope].includes(new URL(request.url()).pathname);
   const started = (request: Request) => { if (recorded(request)) host.push({ request, finished: false, failed: null, startedObservedAt: Date.now(), finishedAt: null, failedAt: null }); };
   const finished = (request: Request) => { const row = host.find(value => value.request === request); if (row) { row.finished = true; row.finishedAt = Date.now(); } };
   const failed = (request: Request) => { const row = host.find(value => value.request === request); if (row) { row.failed = request.failure()?.errorText ?? "unknown"; row.failedAt = Date.now(); } };
   const response = (value: Awaited<ReturnType<Request["response"]>>) => { if (value) { const row = host.find(item => item.request === value.request()); if (row) row.response = value; } };
   page.on("request", started); page.on("requestfinished", finished); page.on("requestfailed", failed); page.on("response", response);
   const snapshot = async () => { const value = await page.evaluate(() => (window as WorkspaceWindow).__paidWorkspaceAudit); if (value) documents.set(value.document, value); return value; };
-  const complete = async (label: string, boundary: number, scope: string, authority: string) => {
+  const complete = async (label: string, boundary: number, scope: string, authority: string, kind: "workspace" | "brief" = "workspace") => {
+    const path = kind === "workspace" ? "/api/creative-studio/workspace" : "/api/canvas-bridge/briefs/" + scope, minimum = kind === "workspace" ? 2 : 1;
     let previous = "", stable = 0;
     await expect.poll(async () => {
-      const value = await snapshot(), rows = host.slice(boundary);
-      const terminal = value && !value.pendingHashes && value.rows.length >= 2 && rows.length === value.rows.length
-        && rows.every(row => row.finished || row.failed) && value.rows.every(row => row.eofAt !== null || row.error || row.readerError || row.signalAbortAt !== null);
+      const value = await snapshot(), rows = host.slice(boundary).filter(row => new URL(row.request.url()).pathname === path),
+        native = value?.rows.filter(row => row.path === path) ?? [];
+      const terminal = value && !value.pendingHashes && native.length >= minimum && rows.length === native.length
+        && rows.every(row => row.finished || row.failed) && native.every(row => row.eofAt !== null || row.error || row.readerError || row.signalAbortAt !== null);
       const signature = JSON.stringify({ value, host: rows.map(row => [row.finished, row.failed]) });
       stable = terminal ? signature === previous ? stable + 1 : 1 : 0; previous = signature; return stable;
     }, { intervals: [100, 200, 500] }).toBeGreaterThanOrEqual(2);
-    const value = (await snapshot())!, rows = host.slice(boundary), authorityHash = originalSha(authority);
-    barriers.push({ label, boundary, document: value.document, nativeCount: value.rows.length, hostCount: rows.length });
+    const value = (await snapshot())!, rows = host.slice(boundary).filter(row => new URL(row.request.url()).pathname === path),
+      nativeRows = value.rows.filter(row => row.path === path), authorityHash = originalSha(authority);
+    barriers.push({ label, kind, path, boundary, document: value.document, nativeCount: nativeRows.length, hostCount: rows.length });
     for (let index = 0; index < rows.length; index++) {
-      const row = rows[index]!, native = value.rows[index]!, url = new URL(row.request.url());
+      const row = rows[index]!, native = nativeRows[index]!, url = new URL(row.request.url());
       expect(row.request.method()).toBe("GET"); expect(row.request.frame()).toBe(page.mainFrame());
-      expect(url.origin).toBe(new URL(page.url()).origin); expect(url.searchParams.get("scope")).toBe(scope);
+      expect(url.origin).toBe(new URL(page.url()).origin); expect(url.pathname).toBe(path);
+      if (kind === "workspace") expect(url.searchParams.get("scope")).toBe(scope); else expect(url.search).toBe("");
       expect(originalSha(row.request.headers()["x-yummyai-context-authority"] ?? "")).toBe(authorityHash);
       const result = row.response ?? await row.request.response(); expect(result).not.toBeNull();
       if (!result) throw new Error("paid_workspace_original_response_missing");
@@ -143,10 +149,13 @@ async function observeWorkspaceReads(page: Page) {
       expect(result.headers()["x-yummyai-context-authority"]).toBe(authority);
       expect(result.headers()["content-type"]?.split(";")[0]?.trim()).toBe("application/json");
       const body = await result.body(); row.bodyBytes = body.byteLength; row.bodySha256 = originalSha(body);
-      const workspace = StudioWorkspaceSchema.parse(JSON.parse(body.toString("utf8")));
-      expect(workspace.scope).toBe(scope); expect(workspace.contextAuthority).toBe(authority); expect(workspace.capabilities.read).toBe(true);
-      expect(workspace.paidImageVersion).toBe(1); expect(workspace.generation).toEqual({ enabled: false, code: "operator_paused" });
-      expect(native).toMatchObject({ id: index + 1, document: value.document, scope, method: "GET", authorityHash, responseAuthorityHash: authorityHash,
+      const parsed: unknown = JSON.parse(body.toString("utf8"));
+      if (kind === "workspace") {
+        const workspace = StudioWorkspaceSchema.parse(parsed);
+        expect(workspace.scope).toBe(scope); expect(workspace.contextAuthority).toBe(authority); expect(workspace.capabilities.read).toBe(true);
+        expect(workspace.paidImageVersion).toBe(1); expect(workspace.generation).toEqual({ enabled: false, code: "operator_paused" });
+      } else expect(CanvasBriefSchema.parse(parsed).id).toBe(scope);
+      expect(native).toMatchObject({ path, document: value.document, scope, method: "GET", authorityHash, responseAuthorityHash: authorityHash,
         status: 200, signalPresent: true, error: null, readerError: null, bytes: body.byteLength });
       expect(native.eofAt).not.toBeNull();
       // Normal later unmount may abort an already-consumed context. Only an
@@ -154,11 +163,14 @@ async function observeWorkspaceReads(page: Page) {
       expect(native.signalAbortAt === null || native.eofAt !== null && native.signalAbortAt > native.eofAt).toBe(true);
     }
   };
-  return { boundary: () => host.length, complete, async save(proof: Record<string, unknown>) {
+  return { boundary: () => host.length, complete,
+    completeBrief: (label: string, boundary: number, scope: string, authority: string) => complete(label, boundary, scope, authority, "brief"),
+    async save(proof: Record<string, unknown>) {
     try { await snapshot(); } catch { proof.workspaceNativeSnapshotIncomplete = true; }
+    proof.studioReadAuditPaths = ["/api/creative-studio/workspace", "/api/canvas-bridge/briefs/" + scope];
     proof.workspaceNative = [...documents.values()]; proof.workspaceBarriers = barriers;
     proof.workspaceNetwork = host.map(({ request, response: _response, ...row }) => { void _response; const url = new URL(request.url());
-      return { ...row, scope: url.searchParams.get("scope"), method: request.method(), status: host.find(value => value.request === request)?.response?.status() ?? null }; });
+      return { ...row, path: url.pathname, scope: url.pathname === "/api/creative-studio/workspace" ? url.searchParams.get("scope") : scope, method: request.method(), status: host.find(value => value.request === request)?.response?.status() ?? null }; });
   }, stop() { page.off("request", started); page.off("requestfinished", finished); page.off("requestfailed", failed); page.off("response", response); } };
 }
 const frameRoot = (page: Page) => page.locator("[data-studio-session] iframe[title]");
@@ -324,13 +336,13 @@ test.beforeEach(async ({ browser }, info) => {
     expectedProduct = "HeadlessChrome/157.0.8103.6";
   } else {
     expect(process.platform).toBe("linux"); expect(process.env.CI).toBe("true");
-    expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v1");
-    expect(actualVersion).toBe("149.0.7827.55"); expect(pin?.browserVersion).toBe("149.0.7827.55");
-    expect(pin?.driverVersion).toBe("1.61.1"); expect(pin?.sourcePackageVersion).toBe("1.61.1"); expect(pin?.revision).toBe("1228");
+    expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v2");
+    expect(actualVersion).toBe("157.0.8103.6"); expect(pin?.browserVersion).toBe("157.0.8103.6");
+    expect(pin?.driverVersion).toBe("1.61.1"); expect(pin?.sourcePackageVersion).toBe("1.65.0-alpha-2026-10-23"); expect(pin?.revision).toBe("1251");
     expect(pin?.registrySha256).toBe(P2_CI_BROWSER_REGISTRY_SHA256);
     const observed = requireP2BrowserLock();
     expect(observed.metadata).toEqual(pin); expect(observed.executableSha256).toBe(pin?.executableSha256);
-    expectedProduct = "HeadlessChrome/149.0.7827.55";
+    expectedProduct = "HeadlessChrome/157.0.8103.6";
   }
   const cdp = await browser.newBrowserCDPSession();
   try { const { product, revision } = await cdp.send("Browser.getVersion"); expect(product).toBe(expectedProduct); expect(revision).toMatch(/^@[a-f0-9]{40}$/);
@@ -351,7 +363,7 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     const seed = Seed.parse(await child.rpc("seed", TenantContextSchema.strict().parse(TenantContextSchema.parse(session)))); expect(seed.nonce).toBe(environment.nonce);
     const authority = erpSessionAuthority(session); expect(seed.authorityHash).toBe(originalSha(authority));
     proof.modelSettings = await readModelSettings(page, seen, child, seed, authority);
-    const workspaceReads = await observeWorkspaceReads(page), initialWorkspaceBoundary = workspaceReads.boundary();
+    const workspaceReads = await observeWorkspaceReads(page, seed.scope), initialWorkspaceBoundary = workspaceReads.boundary();
     workspaceAudit = workspaceReads;
     const workspaceResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/creative-studio/workspace"
       && new URL(response.url()).searchParams.get("scope") === seed.scope);
@@ -360,7 +372,8 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     const workspace = StudioWorkspaceSchema.parse(await response.json()); expect(workspace.contextAuthority).toBe(authority);
     expect(workspace.paidImageVersion).toBe(1); expect(workspace.generation).toEqual({ enabled: false, code: "operator_paused" });
     await expect(frameFor(page).locator(".studio-workbench main textarea").first()).toHaveValue(seed.prompt);
-    await workspaceReads.complete("initial-workspace-ready", initialWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
+    await workspaceReads.complete("initial-workspace-ready", initialWorkspaceBoundary, seed.scope, authority);
+    await workspaceReads.completeBrief("initial-brief-ready", initialWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
     proof.imagePanelMount = await page.locator(".studio-paid-image-toggle").evaluateAll(toggles => ({ count: toggles.length,
       mounts: toggles.map((toggle, index) => {
         const section = toggle.closest("section"), parents: Array<{ tag: string; className: string; hidden: boolean }> = [];
@@ -470,6 +483,8 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
       hostIndex: attempt.index, bodyHash: attempt.bodyHash, authorityHash: native[0]!.authorityHash, upstreamStatus: 200, originalStatus: null, bytes: 0, reads: 0,
       upstreamFetchIsSeparateFromOriginalRead: true };
     const queuedFacts = await facts(child); sameDraft(initial, queuedFacts);
+    await workspaceReads.complete("all-workspace-reads-before-reload", initialWorkspaceBoundary, seed.scope, authority);
+    await workspaceReads.completeBrief("all-brief-reads-before-reload", initialWorkspaceBoundary, seed.scope, authority);
     await seen.beforeReload("paid-image.before-cleared-marker-reload");
     const removed = await page.evaluate(prefix => {
       const keys = Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index)).filter((key): key is string => !!key?.startsWith(prefix));
@@ -478,7 +493,8 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     const recoveryStart = seen.rows.length, recoveryWorkspaceBoundary = workspaceReads.boundary();
     await page.reload(); await seen.markPhase("paid-image.after-reload-server-original-recovery");
     await expect(frameFor(page).locator(".studio-workbench main textarea").first()).toHaveValue(seed.prompt);
-    await workspaceReads.complete("reloaded-workspace-ready", recoveryWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
+    await workspaceReads.complete("reloaded-workspace-ready", recoveryWorkspaceBoundary, seed.scope, authority);
+    await workspaceReads.completeBrief("reloaded-brief-ready", recoveryWorkspaceBoundary, seed.scope, authority); verifyTransferNetwork(seen, allowed);
     await openPanel(page);
     await expect(original(page, requestId)).toHaveAttribute("data-studio-image-status", "queued"); await seen.settle();
     const recovery = seen.rows.slice(recoveryStart); expect(recovery.filter(row => row.operation === "paid.image.requests").length).toBeGreaterThan(0);
@@ -538,6 +554,7 @@ test("73e2c9b1_actual_single_image_quote_lost_commit_receipt_recovers_same_key_a
     proof.syntheticGatewayCalls = final.gatewayCalls.length; proof.syntheticActualCostUsd = result.execution.costUsd; proof.actualImageRightsStatus = result.result!.rightsStatus;
     proof.candidatesCreated = final.tables.creative_design_candidates!.count; proof.approvedVersionsCreated = final.tables.creative_design_versions!.count;
     await workspaceReads.complete("all-workspace-reads-before-logout", recoveryWorkspaceBoundary, seed.scope, authority);
+    await workspaceReads.completeBrief("all-brief-reads-before-logout", recoveryWorkspaceBoundary, seed.scope, authority);
     await seen.beforeReload("paid-image.before-logout-clear");
     await page.getByRole("button", { name: "退出登录", exact: true }).click();
     await expect(page.getByRole("heading", { name: "登录运营工作台", exact: true })).toBeVisible(); await expect(frameRoot(page)).toHaveCount(0); await expect(panel(page)).toHaveCount(0);

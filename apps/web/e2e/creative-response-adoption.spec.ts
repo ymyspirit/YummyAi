@@ -283,13 +283,13 @@ test.beforeEach(async ({ browser }, info) => {
     expectedProduct = "HeadlessChrome/157.0.8103.6";
   } else {
     expect(process.platform).toBe("linux"); expect(process.env.CI).toBe("true");
-    expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v1");
-    expect(actualVersion).toBe("149.0.7827.55"); expect(pin?.browserVersion).toBe("149.0.7827.55");
-    expect(pin?.driverVersion).toBe("1.61.1"); expect(pin?.sourcePackageVersion).toBe("1.61.1"); expect(pin?.revision).toBe("1228");
+    expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v2");
+    expect(actualVersion).toBe("157.0.8103.6"); expect(pin?.browserVersion).toBe("157.0.8103.6");
+    expect(pin?.driverVersion).toBe("1.61.1"); expect(pin?.sourcePackageVersion).toBe("1.65.0-alpha-2026-10-23"); expect(pin?.revision).toBe("1251");
     expect(pin?.registrySha256).toBe(P2_CI_BROWSER_REGISTRY_SHA256);
     const observed = requireP2BrowserLock();
     expect(observed.metadata).toEqual(pin); expect(observed.executableSha256).toBe(pin?.executableSha256);
-    expectedProduct = "HeadlessChrome/149.0.7827.55";
+    expectedProduct = "HeadlessChrome/157.0.8103.6";
   }
   const cdp = await browser.newBrowserCDPSession();
   try { const { product, revision } = await cdp.send("Browser.getVersion"); expect(product).toBe(expectedProduct); expect(revision).toMatch(/^@[a-f0-9]{40}$/);

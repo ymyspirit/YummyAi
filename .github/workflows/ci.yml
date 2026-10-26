@@ -136,6 +136,8 @@ jobs:
         run: node --import tsx src/bootstrap-local.ts
       - run: pnpm --filter @yummyai/database exec drizzle-kit check
       - run: pnpm exec playwright install --with-deps chromium
+      - name: Install fixed P2 CI browser
+        run: env -u CHROME_BIN node tools/scripts/install-p2-ci-browser.mjs
       - name: Validate original creative recovery on one compiled candidate
         run: env -u CHROME_BIN node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - run: pnpm test:integration

@@ -122,11 +122,11 @@ test.beforeEach(async ({ browser }, info) => {
     expect(pin?.executableSha256).toBe("c86303c78d1333c725f2f57cca3d89a3bbe1d6a0aa4f51c2a3e0ce6c8637322d");
     expect(pin?.payloadReceiptSha256).toBe("5485a838933494f27ca1b542870406e838a93d49ff1f359e42b5cf8017cc14dc"); product = "HeadlessChrome/157.0.8103.6";
   } else {
-    expect(process.platform).toBe("linux"); expect(process.env.CI).toBe("true"); expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v1");
-    expect(version).toBe("149.0.7827.55"); expect(pin?.browserVersion).toBe("149.0.7827.55"); expect(pin?.driverVersion).toBe("1.61.1");
-    expect(pin?.sourcePackageVersion).toBe("1.61.1"); expect(pin?.revision).toBe("1228"); expect(pin?.registrySha256).toBe(P2_CI_BROWSER_REGISTRY_SHA256);
+    expect(process.platform).toBe("linux"); expect(process.env.CI).toBe("true"); expect(pin?.family).toBe("p2_linux_ci_official_headless_shell_v2");
+    expect(version).toBe("157.0.8103.6"); expect(pin?.browserVersion).toBe("157.0.8103.6"); expect(pin?.driverVersion).toBe("1.61.1");
+    expect(pin?.sourcePackageVersion).toBe("1.65.0-alpha-2026-10-23"); expect(pin?.revision).toBe("1251"); expect(pin?.registrySha256).toBe(P2_CI_BROWSER_REGISTRY_SHA256);
     const actual = requireP2BrowserLock(); expect(actual.metadata).toEqual(pin); expect(actual.executableSha256).toBe(pin?.executableSha256);
-    product = "HeadlessChrome/149.0.7827.55";
+    product = "HeadlessChrome/157.0.8103.6";
   }
   const cdp = await browser.newBrowserCDPSession();
   try { const value = await cdp.send("Browser.getVersion"); expect(value.product).toBe(product); expect(value.revision).toMatch(/^@[a-f0-9]{40}$/);
@@ -158,12 +158,22 @@ test("real adaptation owner preview recovers its original lost ACK by read only 
     expect(value.nonce).toBe(environment.nonce); expect(value.authorityHash).toBe(originalSha(erpSessionAuthority(session)));
     const before = await facts(child), writeStart = rows.length, workspaceReads: z.infer<typeof CreativeOwnerResponseAdoptionWorkspaceSchema>[] = [];
     const workspacePath = `/api/creative-executions/${value.executionId}/owner-response-adoption`;
-    const workspaceObserver = async (answer: PlaywrightResponse) => {
-      if (new URL(answer.url()).pathname === workspacePath && answer.ok()) workspaceReads.push(CreativeOwnerResponseAdoptionWorkspaceSchema.parse(await answer.json()));
+    const workspaceTransport: Array<{ phase: string; status: number; authoritySha256: string; bodySha256: string; bytes: number; finished: true }> = [];
+    const readWorkspace = async (answer: PlaywrightResponse, phase: string) => {
+      expect(answer.request().method()).toBe("GET"); expect(new URL(answer.url()).pathname).toBe(workspacePath);
+      expect(answer.status()).toBe(200); expect(await answer.finished()).toBeNull();
+      expect(originalSha(answer.headers()["x-yummyai-context-authority"] ?? "")).toBe(value.authorityHash);
+      expect(answer.headers()["content-type"]?.split(";")[0]?.trim()).toBe("application/json");
+      const bytes = await answer.body(), workspace = CreativeOwnerResponseAdoptionWorkspaceSchema.parse(JSON.parse(bytes.toString("utf8")));
+      expect(workspace).toMatchObject({ ownerId: value.ownerId, parentId: value.batchId, parentExecutionId: null,
+        kind: "creative_adaptation", stepKey: value.stepKey, source: { inputFingerprint: value.inputFingerprint } });
+      workspaceReads.push(workspace); workspaceTransport.push({ phase, status: answer.status(), authoritySha256: value.authorityHash,
+        bodySha256: originalSha(bytes), bytes: bytes.byteLength, finished: true });
     };
-    page.on("response", workspaceObserver);
+    const originalWorkspace = page.waitForResponse(answer => new URL(answer.url()).pathname === workspacePath);
+    void originalWorkspace.catch(() => {}); // Still awaited below; an earlier primary failure must not leak a teardown rejection.
     const panel = await openPanel(page, value);
-    await expect.poll(() => workspaceReads.length).toBeGreaterThan(0);
+    await readWorkspace(await originalWorkspace, "initial-before-preview-or-interception");
     expect(workspaceReads[0]).toMatchObject({ ownerId: value.ownerId, parentId: value.batchId, parentExecutionId: null,
       kind: "creative_adaptation", stepKey: value.stepKey, source: { inputFingerprint: value.inputFingerprint } });
     const previewResponse = page.waitForResponse(answer => new URL(answer.url()).pathname === workspacePath + "/preview");
@@ -214,11 +224,14 @@ test("real adaptation owner preview recovers its original lost ACK by read only 
       if (sessionStorage.getItem(key) !== null) throw new Error("original_owner_request_marker_not_removed"); return result;
     }, { prefix: CREATIVE_OWNER_RESPONSE_ADOPTION_INTENT_PREFIX, executionId: value.executionId, identityStamp: value.identityStamp });
     expect(marker).toEqual({ executionId: value.executionId, identityStamp: value.identityStamp, command: original.command });
+    const recoveredWorkspace = page.waitForResponse(answer => new URL(answer.url()).pathname === workspacePath);
+    void recoveredWorkspace.catch(() => {}); // Still awaited below; an earlier primary failure must not leak a teardown rejection.
     await page.reload();
     const history = page.getByRole("region", { name: "创作执行依据与恢复", exact: true });
     await history.getByRole("button", { name: "执行依据与恢复", exact: true }).click();
     await panel.getByRole("button", { name: "查看原业务归档响应", exact: true }).click();
     await expect(panel).toHaveAttribute("data-state", "committed");
+    await readWorkspace(await recoveredWorkspace, "reloaded-original-recovery");
     const receipt = panel.getByRole("region", { name: "原业务响应恢复回执", exact: true });
     await expect(receipt.getByText("原产物已登记 · 权利未核对 · 仍需业务审核 · 未送审 · 未批准生产", { exact: true })).toBeVisible();
     await expect(receipt.getByText(original.committed.receipt!.id, { exact: true })).toBeVisible();
@@ -249,7 +262,7 @@ test("real adaptation owner preview recovers its original lost ACK by read only 
     proof.originalCommand = original.command; proof.receipt = original.committed.receipt; proof.originalFacts = before.original;
     proof.finalFacts = final; proof.recoveryMutationCount = 0; proof.originalTerminalAndFeeExact = true;
     proof.businessParentId = value.batchId; proof.parentExecutionId = null; proof.lostAckUpstreamStatus = 200;
-    page.off("response", workspaceObserver);
+    proof.workspaceTransport = workspaceTransport;
     await page.goto("/navigation");
   } catch (cause) {
     primary = cause; try { await page.screenshot({ path: info.outputPath("primary-failure.png"), timeout: 5000 }); proof.failureScreenshot = true; } catch { proof.failureScreenshotFailed = true; }

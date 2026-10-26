@@ -1,6 +1,9 @@
 # P2 创意制作与图片生成进度及收口
 
-2026-10-26 · 进行中，尚未完成或上线本批候选
+2026-10-26 · 候选实现与验收范围
+
+本文件在候选冻结时记录实现与门禁。实际完整 CI、备份恢复、采用和清理结果，
+由对应 GitHub Release 的发版回执以及日用工作区 PROJECT_STATUS.md 记录。
 
 范围以现行 PHASE_RELEASE_PLAN.md 的P2为准。开发与验收保持真实付费关闭，不改动真实订单、审核、生产或发货。继续使用 Infinite Canvas v0.20.0、自有Studio adapter、PostgreSQL/Drizzle、BullMQ和现有Creative Execution Harness，不引入新执行框架。
 
@@ -22,7 +25,7 @@
 
 新迁移为0190_creative_response_adoption、0191_studio_paid_image及0192_creative_owner_response_adoption；旧0—189包括已上线生产用途迁移保持原字节。192已在一次性库实际应用，日用库仍189，尚未执行上线升级。
 
-本批v1通过6组13文件323个纯单元、单张图片23/候选采用24/保留历史30个不同API场景。新增协议改动后，仅重跑受影响的Storage73、Worker29、Web52项，全部通过；隔离guard及新CI浏览器锁也有定向纯测试。前端19个文件已冻结，Web非增量类型及窄lint通过。新四类owner使用真实Processor、原生ImageMagick和安全扫描进行隔离验收，保留原执行与账本；不使用真实付费模型。固定编译候选的三组页面共五项在Windows通过，Linux官方CI的C06三项和通用owner一项通过，单图启动时的workspace GET仍有中止，完整CI拒绝发布。
+本批v1通过6组13文件323个纯单元、单张图片23/候选采用24/保留历史30个不同API场景。新增协议改动后，仅重跑受影响的Storage73、Worker29、Web52项，全部通过；隔离guard及新CI浏览器锁也有定向纯测试。前端19个文件已冻结，Web非增量类型及窄lint通过。新四类owner使用真实Processor、原生ImageMagick和安全扫描进行隔离验收，保留原执行与账本；不使用真实付费模型。Windows固定编译页面五项通过；Linux149曾报告已完整读取的响应中止，现已用同源合成实验复现，并验证Linux157与Windows157正常，按固定157继续真实编译页面及完整CI。具体依据和安装边界见[浏览器验收说明](../operations/p2-browser-acceptance.md)。
 
 首次新迁移的CASE表达式语法、不可变表错误FOR SHARE权限、不同审核员读取不可变事实的RLS锁读问题，均在隔离环境定位并修复，不新增UPDATE权限。明确模板确认的正向与撤权、变来源、错指纹拒绝已实测通过。受控套图8个不同场景及前端恢复协议12项纯单元已通过，归档清理后的审核交接另1项通过。当前集中解决Linux单图初始化读取，并要求三组全部通过后继续完整CI、新鲜备份、完整恢复演练及日用配对发布。
 

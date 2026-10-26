@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { URL } from "node:url";
 import test from "node:test";
-import { createP2CiBrowserLockGuard, p2PinnedBrowserUse, P2_CI_BROWSER_REGISTRY_SHA256 } from "../testing/require-p2-browser-lock.mjs";
+import { createP2CiBrowserLockGuard, p2PinnedBrowserUse, P2_CI_BROWSER_REGISTRY_SHA256, P2_CI_DRIVER_REGISTRY_SHA256 } from "../testing/require-p2-browser-lock.mjs";
 
 // The installed official registry is read once. All following packages, paths,
 // executable bytes and version probes live in memory: no browser is executed,
@@ -14,6 +15,7 @@ const require = createRequire(import.meta.url), driver = require.resolve("@playw
 const playwright = createRequire(driver).resolve("playwright/package.json");
 const core = createRequire(playwright).resolve("playwright-core/package.json");
 const registryBytes = fs.readFileSync(path.join(path.dirname(core), "browsers.json"));
+const sourceRegistryBytes = fs.readFileSync(new URL("../testing/fixtures/p2-ci-browser-source-browsers.json", import.meta.url));
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = code => new RegExp(`^P2_BROWSER_LOCK_${code}$`);
 const rejects = (fn, code) => assert.throws(fn, error => fail(code).test(error.message));
@@ -22,8 +24,9 @@ function fixture() {
   const home = "/home/runner", root = "/repo/node_modules", nodes = new Map(), handles = new Map(), calls = { probes: [], reads: 0 };
   const driverPath = `${root}/driver/package.json`, playwrightPath = `${root}/playwright/package.json`, corePath = `${root}/core/package.json`;
   const registry = `${root}/core/browsers.json`;
-  const executable = `${home}/.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell`;
-  let ino = 1, counter = 1, probe = () => ({ status: 0, signal: null, stdout: "Chromium 149.0.7827.55\n", stderr: "" }), onRead;
+  const sourcePath = "/repo/.artifacts/toolchains/p2-linux-browser-157/source-package/package.json", sourceRegistry = path.posix.join(path.posix.dirname(sourcePath), "browsers.json");
+  const executable = `${home}/.cache/ms-playwright/chromium_headless_shell-1251/chrome-headless-shell-linux64/chrome-headless-shell`;
+  let ino = 1, counter = 1, probe = () => ({ status: 0, signal: null, stdout: "Chromium 157.0.8103.6\n", stderr: "" }), onRead;
   function directory(at) {
     if (nodes.has(at)) return;
     if (at !== "/") directory(path.posix.dirname(at));
@@ -56,24 +59,31 @@ function fixture() {
   write(playwrightPath, JSON.stringify({ name: "playwright", version: "1.61.1", dependencies: { "playwright-core": "1.61.1" } }));
   write(corePath, JSON.stringify({ name: "playwright-core", version: "1.61.1" }));
   write(registry, registryBytes);
+  write(sourcePath, JSON.stringify({ name: "playwright-core", version: "1.65.0-alpha-2026-10-23" }));
+  write(sourceRegistry, sourceRegistryBytes);
   const elf = Buffer.alloc(1024 * 1024 + 29, 0x61);
   Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf); elf.writeUInt16LE(62, 18);
   write(executable, elf, 0o100755);
   const parameters = { filesystem: io, platform: "linux", architecture: "x64", userHome: home,
-    driverPackagePath: driverPath, playwrightPackagePath: playwrightPath, corePackagePath: corePath,
+    driverPackagePath: driverPath, playwrightPackagePath: playwrightPath, corePackagePath: corePath, sourcePackagePath: sourcePath,
+    expectedExecutableSha256: hash(elf), expectedExecutableBytes: elf.byteLength,
     probeVersion(at, args, options) { calls.probes.push({ at, args, options }); return probe(at, args, options); } };
-  return { home, root, driverPath, playwrightPath, corePath, registry, executable, nodes, node, write, calls, handles,
+  return { home, root, driverPath, playwrightPath, corePath, registry, sourcePath, sourceRegistry, executable, nodes, node, write, calls, handles,
     setProbe(fn) { probe = fn; }, onRead(fn) { onRead = fn; },
     run(environment = { CI: "true", HOME: home }, overrides = {}) { return createP2CiBrowserLockGuard({ ...parameters, ...overrides })(environment); } };
 }
 
-test("Linux CI selects only official registry 1.61.1 / revision1228 at the exact default headless path and records actual bytes", () => {
-  assert.equal(hash(registryBytes), P2_CI_BROWSER_REGISTRY_SHA256);
+test("Linux CI retains driver1.61.1 and selects fixed official157 / revision1251 with two independent registries", () => {
+  assert.equal(hash(registryBytes), P2_CI_DRIVER_REGISTRY_SHA256);
+  assert.equal(hash(sourceRegistryBytes), P2_CI_BROWSER_REGISTRY_SHA256);
   const f = fixture(), selected = f.run();
-  assert.equal(selected.executablePath, f.executable); assert.equal(selected.browserVersion, "149.0.7827.55");
-  assert.equal(selected.revision, "1228"); assert.equal(selected.executableSha256, hash(f.node(f.executable).content));
-  assert.equal(selected.metadata.family, "p2_linux_ci_official_headless_shell_v1");
-  assert.equal(selected.metadata.binaryDigestKind, "observed_at_admission"); assert.equal(selected.lockSha256, undefined);
+  assert.equal(selected.executablePath, f.executable); assert.equal(selected.browserVersion, "157.0.8103.6");
+  assert.equal(selected.revision, "1251"); assert.equal(selected.executableSha256, hash(f.node(f.executable).content));
+  assert.equal(selected.metadata.family, "p2_linux_ci_official_headless_shell_v2");
+  assert.equal(selected.metadata.binaryDigestKind, "pinned_official_archive_v2"); assert.equal(selected.lockSha256, undefined);
+  assert.equal(selected.metadata.driverRegistrySha256, P2_CI_DRIVER_REGISTRY_SHA256);
+  assert.equal(selected.metadata.sourcePackageVersion, "1.65.0-alpha-2026-10-23");
+  assert.equal(selected.metadata.registrySha256, P2_CI_BROWSER_REGISTRY_SHA256);
   assert.ok(Object.isFrozen(selected)); assert.ok(Object.isFrozen(selected.metadata)); assert.equal(f.handles.size, 0);
   assert.equal(f.calls.probes.length, 1); assert.deepEqual(f.calls.probes[0].args, ["--version"]);
   assert.deepEqual(f.calls.probes[0].options.env, { HOME: f.home, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" });
@@ -111,8 +121,29 @@ test("driver version/dependency and raw official registry bytes cannot drift", (
   rejects(() => changed.run(), "REGISTRY_CHANGED"); assert.equal(changed.calls.probes.length, 0);
 });
 
+test("the independent browser source package and raw registry cannot impersonate the unchanged driver", () => {
+  for (const field of ["name", "version"]) {
+    const f = fixture(), pkg = JSON.parse(f.node(f.sourcePath).content); pkg[field] = "SYNTHETIC_OTHER_SOURCE";
+    f.write(f.sourcePath, JSON.stringify(pkg)); rejects(() => f.run(), "SOURCE_CHANGED"); assert.equal(f.calls.probes.length, 0);
+  }
+  const raw = fixture(); raw.write(raw.sourceRegistry, Buffer.concat([sourceRegistryBytes, Buffer.from("\n")]));
+  rejects(() => raw.run(), "REGISTRY_CHANGED"); assert.equal(raw.calls.probes.length, 0);
+  const late = fixture(); late.setProbe(() => {
+    late.write(late.sourcePath, JSON.stringify({ name: "playwright-core", version: "1.65.0-alpha-2026-10-22" }));
+    return { status: 0, stdout: "Chromium 157.0.8103.6" };
+  });
+  rejects(() => late.run(), "SOURCE_CHANGED");
+});
+
+test("a valid ELF and claimed browser version still require the reviewed binary bytes and size", () => {
+  const changed = fixture(); changed.node(changed.executable).content[30] ^= 1;
+  rejects(() => changed.run(), "EXECUTABLE_CHANGED"); assert.equal(changed.calls.probes.length, 0);
+  const size = fixture(); rejects(() => size.run(undefined, { expectedExecutableBytes: size.node(size.executable).content.length + 1 }), "EXECUTABLE_CHANGED");
+  const missing = fixture(); rejects(() => missing.run(undefined, { expectedExecutableSha256: null }), "PIN_CHANGED");
+});
+
 test("every ancestor and the exact executable reject links, redirections, non-regular files and non-executable payloads", () => {
-  for (const select of [f => f.home, f => `${f.home}/.cache`, f => path.posix.dirname(f.executable), f => f.executable, f => f.registry]) {
+  for (const select of [f => f.home, f => `${f.home}/.cache`, f => path.posix.dirname(f.executable), f => f.executable, f => f.registry, f => f.sourceRegistry, f => f.sourcePath]) {
     const f = fixture(); f.node(select(f)).kind = "link"; rejects(() => f.run(), "LINK_REJECTED"); assert.equal(f.handles.size, 0);
   }
   const escape = fixture(); escape.node(escape.home).realpath = "/elsewhere"; rejects(() => escape.run(), "REALPATH_CHANGED");
@@ -125,8 +156,8 @@ test("the actual executable must be a 64-bit x86 ELF and report the pinned Chrom
   for (const mutate of [bytes => { bytes[0] = 0; }, bytes => { bytes[4] = 1; }, bytes => bytes.writeUInt16LE(183, 18)]) {
     const f = fixture(); mutate(f.node(f.executable).content); rejects(() => f.run(), "EXECUTABLE_REJECTED"); assert.equal(f.calls.probes.length, 0);
   }
-  for (const output of [{ status: 1, stdout: "Chromium 149.0.7827.55" }, { status: 0, stdout: "Chromium 149.0.7827.56" },
-    { status: 0, stdout: "Firefox 149.0.7827.55" }, { status: 0, stdout: "Chromium 149.0.7827.55\nEXTRA" },
+  for (const output of [{ status: 1, stdout: "Chromium 157.0.8103.6" }, { status: 0, stdout: "Chromium 157.0.8103.7" },
+    { status: 0, stdout: "Firefox 157.0.8103.6" }, { status: 0, stdout: "Chromium 157.0.8103.6\nEXTRA" },
     { status: null, error: new Error("SYNTHETIC_TIMEOUT"), stdout: "" }]) {
     const f = fixture(); f.setProbe(() => output); rejects(() => f.run(), "VERSION_CHANGED"); assert.equal(f.handles.size, 0);
   }
@@ -135,7 +166,7 @@ test("the actual executable must be a 64-bit x86 ELF and report the pinned Chrom
 test("bytes changed during hashing or the version probe cannot acquire or retain admission", () => {
   const during = fixture(); during.onRead((at, count) => { if (at === during.executable && count) { during.onRead(undefined); during.node(at).time++; } });
   rejects(() => during.run(), "FILE_CHANGED"); assert.equal(during.handles.size, 0);
-  const probe = fixture(); probe.setProbe(() => { probe.node(probe.executable).content[30] ^= 1; return { status: 0, stdout: "Chromium 149.0.7827.55" }; });
+  const probe = fixture(); probe.setProbe(() => { probe.node(probe.executable).content[30] ^= 1; return { status: 0, stdout: "Chromium 157.0.8103.6" }; });
   rejects(() => probe.run(), "EXECUTABLE_CHANGED");
   const late = fixture(), selected = late.run(); late.node(late.executable).content[30] ^= 1;
   rejects(() => p2PinnedBrowserUse(selected), "EXECUTABLE_CHANGED");
