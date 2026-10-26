@@ -55,9 +55,11 @@ describe("explicit order production requirements", () => {
   });
 
   it.each([
-    ["10 inch-Mini Keepsake", 10], ["12 inch-Small Travel", 12],
-    ["16 inch–Everyday Hug", 16], ["18 inch — Large Cuddle", 18],
-    ["24 inch-XX-Large", 24],
+    ["10 inch-Mini Keepsake", 10], ["12 inch - Fun Couch Accent", 12],
+    ["14 inch - Cute Home Décor", 14], ["16 inch - Most Popular", 16],
+    ["14 inch - Cute Home De\u0301cor", 14],
+    ["20 inch - Perfect for Lounging", 20], ["22 inch - Snuggle-Sized Comfort", 22],
+    ["18 inch — Large Cuddle", 18], ["24 inch-XX-Large", 24],
   ])("recognizes an explicitly selected size with a nonnumeric descriptive name: %s", (value, inches) => {
     const source = report([size(String(value))]);
     expect(orderProductionRequirements(source)).toMatchObject({ sizeInches: inches, warnings: [] });
@@ -65,7 +67,8 @@ describe("explicit order production requirements", () => {
   });
 
   it.each(["10 inch-Mini Keepsake 12", "10 inch-Mini Keepsake / Large", "10 inch-Small or Large",
-    "10 inch-Small to Large", "10 inch-Small and Large", "10 inch-twelve inches"])("rejects competing choices in a descriptive suffix: %s", value => {
+    "10 inch-Small to Large", "10 inch-Small and Large", "10 inch-twelve inches",
+    "14 inch-Cute Home Décor 16", "14 inch-Cute Home Décor / 16 inch"])("rejects competing choices in a descriptive suffix: %s", value => {
     const actual = orderProductionRequirements(report([size(value)]));
     expect(actual.sizeInches).toBeNull();
     expect(actual.warnings).toContain("尺寸选项无法唯一识别，请对照原文填写。");

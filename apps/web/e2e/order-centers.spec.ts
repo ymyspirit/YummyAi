@@ -553,11 +553,11 @@ test("six centers automatically match shaped-pillow intake while keeping origina
       code: "CUSTOM-SHAPED-PILLOW", name: "Synthetic custom shaped pillow", idempotencyKey: createEntityId(),
     })).spu;
     fixtureIds.spuId = spu.id;
-    const existingSpecifications = initial.specifications.filter(specification => specification.spuId === spu.id && specification.code === "SIZE-10IN");
+    const existingSpecifications = initial.specifications.filter(specification => specification.spuId === spu.id && specification.code === "SIZE-14IN");
     expect(existingSpecifications.length).toBeLessThanOrEqual(1);
     reusedCatalog.specification = !!existingSpecifications[0];
     const specification = existingSpecifications[0] ?? (await api<{ specification: SpecificationView }>("product-development/specifications", {
-      spuId: spu.id, code: "SIZE-10IN", name: "Synthetic 10 inch pillow pending production facts", attributes: { size: "10 inch" },
+      spuId: spu.id, code: "SIZE-14IN", name: "Synthetic 14 inch pillow pending production facts", attributes: { size: "14 inch" },
       facts: { formatVersion: 2, material: "", structure: "", dimensions: "", physicalDimensions: null,
         packageContents: "", packageQuantity: null, weightGrams: null, packagedWeightGrams: null, packageMeasurements: null,
         factsConfirmed: false, productionConfirmed: false, verificationReference: "Synthetic unconfirmed acceptance fixture" },
@@ -605,7 +605,7 @@ test("six centers automatically match shaped-pillow intake while keeping origina
     zip.file("order.json", JSON.stringify({ orderId: externalId, orderItemId: externalLineId,
       customizationData: { type: "PageContainerCustomization", snapshot: { imageName: "preview.png" }, children: [
         { type: "ImageCustomization", label: "Customer image", image: { imageName: "buyer.png", buyerFilename: "synthetic-buyer.png" } },
-        ...[["Size (12/16/18/24 inch)", "10 inch-Mini Keepsake"], ["Pillow Shape", "Only Face"], ["Style", "Single-sided Printing"]]
+        ...[["Size (12/16/18/24 inch)", "14 inch - Cute Home Décor"], ["Pillow Shape", "Only Face"], ["Style", "Single-sided Printing"]]
           .map(([label, name]) => ({ type: "OptionCustomization", label, optionSelection: { name } })),
       ] } }));
     zip.file("preview.png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aOd8AAAAASUVORK5CYII=", "base64"));
@@ -629,7 +629,7 @@ test("six centers automatically match shaped-pillow intake while keeping origina
     expect(await originalHash()).toBe(buyerSha);
     const detail = OrderWorkDetailViewSchema.parse(await api(`order-centers/lines/${line.orderLineId}`));
     expect(detail.draft).toMatchObject({ specificationVersionId: specification.versionId, artworkVersionId: artwork.versionId, printProfileVersionId: null, dueAt: null });
-    expect(detail.catalog?.automatic).toMatchObject({ status: "partial", applied: true, sizeInches: 10, specificationVersionId: specification.versionId, artworkVersionId: artwork.versionId });
+    expect(detail.catalog?.automatic).toMatchObject({ status: "partial", applied: true, sizeInches: 14, specificationVersionId: specification.versionId, artworkVersionId: artwork.versionId });
     expect(detail.shippingTime?.platform).toMatchObject({ at: expectedDeadline, source: "report_import", verifiedAt: null });
     expect(detail.shippingTime?.platform.sourceVersionId).toBeTruthy();
     const deadlineSource = detail.shippingTime!.platform.sourceVersionId;

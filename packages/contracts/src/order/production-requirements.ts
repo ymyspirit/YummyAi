@@ -13,13 +13,13 @@ export function orderProductionRequirements(report: Pick<AmazonReportDetailView,
   const warnings: string[] = [];
   let unresolvedSize = false;
   for (const field of fields) {
-    const value = field.value.trim();
+    const value = field.value.trim().normalize("NFC");
     if (/\bsize\b|尺寸|规格/i.test(field.label)) {
       // A range ending in a supported size is not a selected size. Every size
       // declaration must be unambiguous; another valid field cannot hide it.
       // Marketplace options may append a descriptive name such as Mini
       // Keepsake. It cannot contain another quantity, unit or range operator.
-      const match = value.match(/^(10|12|14|16|18|20|22|24)\s*(?:inches|inch|in\.?|英寸|["″])(?:\s*[-–—]\s*([a-z]+(?:[ -]+[a-z]+){0,7}))?$/i);
+      const match = value.match(/^(10|12|14|16|18|20|22|24)\s*(?:inches|inch|in\.?|英寸|["″])(?:\s*[-–—]\s*(\p{L}+(?:[ -]+\p{L}+){0,7}))?$/iu);
       const ambiguousSuffix = match?.[2] && /\b(?:or|to|through|and|inches?|in|cm|mm)\b/i.test(match[2]);
       if (match && !ambiguousSuffix) sizes.add(Number(match[1]));
       else if (value) {
