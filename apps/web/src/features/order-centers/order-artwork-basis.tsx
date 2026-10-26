@@ -23,7 +23,8 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
   const spus = orderCatalogSpus(catalog);
   const spu = view.spu ?? spus.find(value => value.id === spuId);
   function artwork(id: string) {
-    onChange(orderDraftWithArtwork(draft, id, recipe?.artworkVersionId));
+    const fields = catalog!.artworks.find(value => value.id === id)?.customization.fields ?? [];
+    onChange(orderDraftWithArtwork(draft, id, recipe?.artworkVersionId, fields));
   }
   return <>
     <section className={`oc-basis-summary ${view.tone}`} aria-label="本单制作依据匹配">

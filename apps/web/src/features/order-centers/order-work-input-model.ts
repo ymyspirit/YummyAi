@@ -35,9 +35,15 @@ export function orderSingleChoiceOptions(fields: readonly CustomizationField[], 
   ];
 }
 
-export function orderDraftWithArtwork(draft: OrderWorkDraft, id: string, recipeArtworkId?: string | null): OrderWorkDraft {
-  // Adding empty canonical rows here used to occupy the mapping target of the original buyer fields.
-  return { ...draft, artworkVersionId: id || null,
+export function orderDraftWithArtwork(draft: OrderWorkDraft, id: string, recipeArtworkId?: string | null,
+  customizationFields: readonly CustomizationField[] = []): OrderWorkDraft {
+  // An empty generic intake needs editable text rows. Existing buyer fields must
+  // never gain canonical placeholders that occupy their later mapping targets.
+  const fields = !draft.fields.length && id
+    ? customizationFields.filter(field => field.type !== "image")
+      .map(field => ({ key: field.key, label: field.label, kind: "text" as const, value: "" }))
+    : draft.fields;
+  return { ...draft, artworkVersionId: id || null, fields,
     ...(id !== recipeArtworkId ? { salesRecipeVersionId: null, salesPackageId: null } : {}) };
 }
 

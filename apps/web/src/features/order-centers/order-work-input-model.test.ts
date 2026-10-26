@@ -52,9 +52,23 @@ describe("order image field binding", () => {
 });
 
 describe("explicit artwork selection preserves buyer input", () => {
+  const genericFields = CustomizationSchema.parse({ version: 1, fields: [
+    { key: "pet_name", label: "Pet name", type: "short_text", required: true },
+    { ...fields[0]!, key: "pet_photo", label: "Pet photo" },
+  ] }).fields;
+
+  it("provides only empty text inputs when an empty generic intake explicitly selects artwork", () => {
+    const original = { ...draft(), fields: [], images: [] }, before = structuredClone(original);
+    const selected = orderDraftWithArtwork(original, "synthetic-generic-art", null, genericFields);
+    expect(selected.fields).toEqual([{ key: "pet_name", label: "Pet name", kind: "text", value: "" }]);
+    expect(selected.images).toEqual([]);
+    expect(selected.instructions).toBe(before.instructions);
+    expect(original).toEqual(before);
+  });
+
   it("does not create canonical empty fields that occupy the original field mapping target", () => {
     const original = draft(), before = structuredClone(original);
-    const selected = orderDraftWithArtwork(original, "synthetic-next-art", "synthetic-art");
+    const selected = orderDraftWithArtwork(original, "synthetic-next-art", "synthetic-art", fields);
     expect(selected.artworkVersionId).toBe("synthetic-next-art");
     expect(selected.salesRecipeVersionId).toBeNull();
     expect(selected.salesPackageId).toBeNull();
@@ -65,6 +79,18 @@ describe("explicit artwork selection preserves buyer input", () => {
     expect(selected.customerApprovalRequired).toBe(true);
     expect(original).toEqual(before);
     expect(orderDraftWithArtwork(original, "synthetic-art", "synthetic-art").salesPackageId).toBe("synthetic-package");
+  });
+
+  it("adds no placeholders when artwork is cleared or the catalog has no matching artwork", () => {
+    const original = { ...draft(), fields: [] }, before = structuredClone(original);
+    const cleared = orderDraftWithArtwork(original, "", null, genericFields);
+    const unknown = orderDraftWithArtwork(original, "synthetic-unknown-art");
+    expect(cleared.artworkVersionId).toBeNull();
+    expect(cleared.fields).toEqual([]);
+    expect(unknown.fields).toEqual([]);
+    expect(cleared.images).toEqual(before.images);
+    expect(unknown.instructions).toBe(before.instructions);
+    expect(original).toEqual(before);
   });
 });
 
