@@ -541,11 +541,13 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
     expect(
       (await catalog.options(a)).specifications.filter((item) => item.spuId === spu.id),
     ).toHaveLength(2);
-    expect(
-      (await withTenant(db.db, a, (tx) => orderSalesChoices(tx, a))).specifications.some(
-        (item) => item.id === draft.versionId,
-      ),
-    ).toBe(false);
+    const visibleDraft = (await withTenant(db.db, a, (tx) => orderSalesChoices(tx, a)))
+      .specifications.find((item) => item.id === draft.versionId);
+    expect(visibleDraft).toMatchObject({ id: draft.versionId, productionReady: false, processProfileVersionId: null });
+    expect(visibleDraft!.issues).toEqual([
+      "该规格尚未绑定已审核通用工艺底稿",
+      "规格生产事实尚未完成核对",
+    ]);
     await expect(
       catalog.combine(a, {
         artworkVersionId: artwork.versionId,
@@ -586,12 +588,12 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
     });
     expect(
       await withTenant(db.db, a, (tx) => readSpecification(tx, draft.versionId)),
-    ).toMatchObject({ version: 1, processProfileVersionId: null });
+    ).toMatchObject({ version: 1, processProfileVersionId: null, facts: { factsConfirmed: false } });
     expect(
-      (await withTenant(db.db, a, (tx) => orderSalesChoices(tx, a))).specifications.some(
+      (await withTenant(db.db, a, (tx) => orderSalesChoices(tx, a))).specifications.find(
         (item) => item.id === ready.specification.versionId,
       ),
-    ).toBe(true);
+    ).toMatchObject({ id: ready.specification.versionId, productionReady: true, processProfileVersionId: profileVersionId, issues: [] });
   });
 
   it("specification facts V2 persist unknown drafts and require a measured confirmation with a server actor", async () => {
@@ -651,8 +653,11 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
     const historical = await withTenant(db.db, a, tx => readSpecification(tx, versionId));
     expect(historical.facts).toEqual(legacyFacts);
     expect(historical.factVerification).toBeNull();
-    expect((await withTenant(db.db, a, tx => orderSalesChoices(tx, a))).specifications.some(row => row.id === versionId)).toBe(false);
-    expect((await withTenant(db.db, a, tx => orderSalesChoices(tx, a, versionId, artwork.versionId))).specifications.some(row => row.id === versionId)).toBe(true);
+    const visibleLegacy = (await withTenant(db.db, a, tx => orderSalesChoices(tx, a))).specifications.find(row => row.id === versionId);
+    expect(visibleLegacy).toMatchObject({ id: versionId, processProfileVersionId: profileVersionId, productionReady: false });
+    expect(visibleLegacy!.issues).toEqual(["规格生产事实尚未完成核对"]);
+    expect((await withTenant(db.db, a, tx => orderSalesChoices(tx, a, versionId, artwork.versionId))).specifications.find(row => row.id === versionId))
+      .toMatchObject({ id: versionId, processProfileVersionId: profileVersionId, productionReady: false });
     const pinnedDraft = OrderWorkDraftSchema.parse({ artworkVersionId: artwork.versionId, specificationVersionId: versionId, printProfileVersionId: profileVersionId, fields: [], images: [], instructions: "", customerApprovalRequired: false, dueAt: null });
     expect((await withTenant(db.db, a, tx => validateOrderSalesBasis(tx, pinnedDraft)))?.specification.versionId).toBe(versionId);
     await expect(withTenant(db.db, a, tx => validateOrderSalesBasis(tx, pinnedDraft, false, undefined, undefined, true))).rejects.toThrow(/新匹配/);
@@ -661,7 +666,7 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
     expect(updated.specification.version).toBe(2);
     expect(updated.specification.factVerification?.confirmedByUserId).toBe(a.userId);
     expect(await catalog.saveSpecification(a, originalRequest)).toEqual(original);
-    expect((await withTenant(db.db, a, tx => readSpecification(tx, versionId))).facts).toEqual(legacyFacts);
+    expect(await withTenant(db.db, a, tx => readSpecification(tx, versionId))).toEqual(historical);
   });
 
   it("excludes archived parents and SPUs from reusable product and specification choices while retaining history", async () => {

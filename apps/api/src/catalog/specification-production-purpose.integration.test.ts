@@ -202,15 +202,24 @@ describe.sequential("production-purpose specification facts and original rule ev
     expect(events).toHaveLength(1);
   });
 
-  it("keeps an explicit incomplete draft unavailable for new order production", async () => {
+  it("keeps an explicit incomplete draft visible while unavailable for new order production", async () => {
     const source = await basis();
     const saved = await catalog.saveSpecification(source.context, saveInput(source, facts({ productionConfirmed: false })));
+    const storedBefore = await versions(source);
     const choices = await withTenant(database.db, source.context, tx => orderSalesChoices(tx, source.context));
-    expect(choices.specifications.some(row => row.id === saved.specification.versionId)).toBe(false);
+    const visible = choices.specifications.find(row => row.id === saved.specification.versionId);
+    expect(visible).toMatchObject({ id: saved.specification.versionId, processProfileVersionId: source.profileVersionId, productionReady: false });
+    expect(visible!.issues).toEqual(["规格生产事实尚未完成核对"]);
+    expect(specificationProductionFactsReady(saved.specification.facts)).toBe(false);
     const draft = OrderWorkDraftSchema.parse({ artworkVersionId: source.artworkVersionId,
       specificationVersionId: saved.specification.versionId, printProfileVersionId: source.profileVersionId,
       fields: [], images: [], instructions: "", customerApprovalRequired: false, dueAt: null });
-    await expect(withTenant(database.db, source.context, tx => validateOrderSalesBasis(tx, draft, false, undefined, null, true))).rejects.toThrow();
+    await expect(withTenant(database.db, source.context, tx => validateOrderSalesBasis(tx, draft, false, undefined, null, true)))
+      .rejects.toThrow("产品规格生产资料尚未确认");
+    const original = { kind: "order_work_revision" as const, specificationVersionId: saved.specification.versionId, processProfileVersionId: source.profileVersionId };
+    await expect(withTenant(database.db, source.context, tx => productionFactorySource(tx, source.context, original, null)))
+      .rejects.toThrow("原产品规格的制造事实尚未完整核实");
+    expect(await versions(source)).toEqual(storedBefore);
   });
 
   it.each([
