@@ -9,10 +9,15 @@ import { QueueName } from "../../packages/jobs/src/queues.js";
 // Disposable acceptance process. It cannot consume a normal queue or call a remote provider.
 const queueName = process.env.CREATIVE_RECOVERY_PROBE_QUEUE ?? "";
 const executionId = process.env.CREATIVE_RECOVERY_PROBE_EXECUTION ?? "";
+const tenantId = process.env.CREATIVE_RECOVERY_PROBE_TENANT ?? "";
+const requestedBy = process.env.CREATIVE_RECOVERY_PROBE_ACTOR ?? "";
+const generationId = process.env.CREATIVE_RECOVERY_PROBE_GENERATION ?? "";
 const endpoint = new URL(process.env.CREATIVE_RECOVERY_PROBE_URL ?? "https://invalid.invalid");
 if (process.env.E2E_ISOLATED_DAILY !== "1"
   || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname)
   || !/^studio-generation-[a-f0-9-]{36}$/.test(queueName) || !/^[a-f0-9-]{36}$/.test(executionId)
+  || ![tenantId, requestedBy, generationId].every(value => /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value))
+  || process.env.STUDIO_PAID_IMAGE_ENABLED !== "1" || process.env.STUDIO_PAID_IMAGE_TENANT_IDS !== tenantId
   || endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !endpoint.port
   || endpoint.pathname !== "/v1" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
   throw new Error("Unsafe creative recovery acceptance process");
@@ -30,12 +35,19 @@ const holding: Storage = new Proxy(storage, { get(target, key) {
 } });
 const transport: typeof fetch = (input, options) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-  if (url.origin !== endpoint.origin || !url.pathname.startsWith("/v1/")) throw new Error("Recovery probe refused remote provider");
+  if (url.origin !== endpoint.origin || url.pathname !== "/v1/images/generations" || options?.method !== "POST")
+    throw new Error("Recovery probe refused non-fixture image submission");
   return globalThis.fetch(input, options);
 };
 const processor = new StudioGenerationProcessor(database, holding, new SecretVault(Buffer.alloc(32, 37)),
   new HttpStudioGateway(transport, 1), undefined, new SecretVault(Buffer.alloc(32, 43)));
-const worker = createWorker(queueName as typeof QueueName.StudioGeneration, envelope => processor.process(envelope));
+const worker = createWorker(queueName as typeof QueueName.StudioGeneration, envelope => {
+  const payload = envelope.payload;
+  if (envelope.tenantId !== tenantId || envelope.requestedBy !== requestedBy || !payload || typeof payload !== "object"
+    || Array.isArray(payload) || !("generationId" in payload) || payload.generationId !== generationId)
+    throw new Error("Recovery probe refused another original owner");
+  return processor.process(envelope);
+});
 for (const phase of ["completed", "failed"] as const)
   worker.on(phase, () => process.stdout.write(JSON.stringify({ phase, executionId }) + "\n"));
 await worker.waitUntilReady();

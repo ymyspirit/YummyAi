@@ -1324,6 +1324,27 @@
       "when": 1792886400000,
       "tag": "0189_specification_production_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1792972800000,
+      "tag": "0190_creative_response_adoption",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1792972800001,
+      "tag": "0191_studio_paid_image",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1792972800002,
+      "tag": "0192_creative_owner_response_adoption",
+      "breakpoints": true
     }
   ]
 }

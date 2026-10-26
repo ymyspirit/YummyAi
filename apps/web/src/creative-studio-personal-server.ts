@@ -2,6 +2,7 @@ import { authorize, ForbiddenError } from "@yummyai/authz/authorize";
 import type { Permission as PermissionValue } from "@yummyai/authz/permissions";
 import { erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { publicStudioModelSelectionError } from "@yummyai/contracts/pod/creative-studio";
+import { publicStudioPaidImageError } from "@yummyai/contracts/pod/studio-paid-image";
 import { apiFetch } from "./server-api";
 import { PersonalSessionError } from "./identity/core";
 import { assertErpIdentityCurrent, erpAuthFailure, erpRequestIdentity, type ErpRequestIdentity } from "./erp-auth/server";
@@ -62,7 +63,7 @@ export async function studioPersonalCall(request: Request, identity: ErpRequestI
       400: ["studio_transfer_invalid"], 404: ["studio_transfer_missing"], 422: ["studio_transfer_unavailable", "studio_video_directory_too_large"],
       409: ["authority_changed", "studio_paid_execution_paused", "studio_original_pin_required", "studio_transfer_changed", "studio_transfer_cancelled", "studio_video_directory_changed"],
     };
-    const selectionError = publicStudioModelSelectionError(known.code, upstream.status);
+    const selectionError = publicStudioModelSelectionError(known.code, upstream.status) ?? publicStudioPaidImageError(known.code, upstream.status);
     const code = selectionError?.code ?? (publicCodes[upstream.status]?.includes(String(known.code)) ? String(known.code) : undefined);
     // A Chinese prefix is not a redaction rule: provider diagnostics can mix
     // human text with keys or tokens. Only exact public owner messages pass.

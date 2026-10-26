@@ -125,6 +125,11 @@
 .pv-workspace .oc-notice .oc-button {
   color: var(--ink);
 }
+.pv-paid-image { margin-top: 10px; }
+.pv-paid-image .studio-paid-image-content h4 { margin: 0; font-size: 12px; }
+.pv-paid-image .studio-paid-image-content :is(button, a) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.pv-paid-image .studio-paid-image-content code { overflow-wrap: anywhere; word-break: break-word; }
+.pv-paid-image .studio-paid-image-content a { color: var(--blue); text-underline-offset: 3px; }
 @media (max-width: 700px) {
   .pv-fields,
   .pv-model-controls,

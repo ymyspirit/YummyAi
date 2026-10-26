@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { BadRequestException, ConflictException, HttpException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException, UnprocessableEntityException } from "@nestjs/common";
 import { authorize, Permission, type PermissionValue } from "@yummyai/authz";
 import { createEntityId, RightsSourceSchema, type TenantContext } from "@yummyai/contracts";
 import { CANVAS_BRIDGE } from "@yummyai/contracts/pod/canvas-bridge";
@@ -20,12 +20,26 @@ import { creativeOwnerFilter, currentCreativeWorkspaceAuthority, requireReferenc
 import { inspectStudioOriginalBytes } from "./studio-media-inspection.js";
 import { StudioDocumentTransferService } from "./studio-document-transfer.service.js";
 import { StudioVideoDirectoryService } from "./studio-video-directory.service.js";
+import { StudioPaidImageService } from "./studio-paid-image.service.js";
+import { originalOwnerOperation } from "../shared/original-owner-error.js";
+import { publicStudioPaidImageError } from "@yummyai/contracts/pod/studio-paid-image";
+import { currentDesignAuthority } from "./design-access.js";
+import { StudioImageBudgetService } from "./studio-image-budget.service.js";
 import { lockStudioScopes } from "./studio-document-scope.js";
 import { assertSameStudioAsset, assertStudioAssetPin, assertStudioIntentTransition, normalizeStudioPinnedRequest, parseStudioIntent,
   sameStudioAsset, sameStudioReceipt, sameStudioRequest, storedStudioValue, studioCanvasInput, studioOriginalPin,
   type StudioAssetRow, type StudioEntryRow } from "./studio-media-inspection-owner.js";
 
 type Address = { scope: string; namespace: string; key: string };
+async function paidImageOperation<T>(operation: () => Promise<T>) {
+  try { return await originalOwnerOperation(operation); }
+  catch (error) {
+    const value = error && typeof error === "object" ? error as { code?: unknown; status?: unknown } : {};
+    const known = typeof value.status === "number" ? publicStudioPaidImageError(value.code, value.status) : undefined;
+    if (known) throw new HttpException({ code: known.code, message: known.message }, known.status);
+    throw error;
+  }
+}
 function assertStudioPaidExecutionAllowed(input: StudioRpc) {
   if (input.operation === "generate")
     throw new ConflictException({ code: "studio_paid_execution_paused", message: "当前已暂停付费创作生成 请核对后再启用" });
@@ -41,6 +55,8 @@ export class CreativeStudioService {
     @Inject(StudioGenerationService) private readonly generations: StudioGenerationService,
     @Inject(StudioDocumentTransferService) private readonly transfers: StudioDocumentTransferService = new StudioDocumentTransferService(database, storage, audit),
     @Inject(StudioVideoDirectoryService) private readonly videoDirectory: StudioVideoDirectoryService = new StudioVideoDirectoryService(database),
+    @Optional() @Inject(StudioPaidImageService) private readonly paidImages?: StudioPaidImageService,
+    @Optional() @Inject(StudioImageBudgetService) private readonly imageBudget?: StudioImageBudgetService,
   ) {}
 
   async invoke(context: TenantContext, raw: unknown): Promise<unknown> {
@@ -48,9 +64,18 @@ export class CreativeStudioService {
     if (!parsed.success) throw new BadRequestException("创作请求格式无效");
     const input = parsed.data;
     assertStudioPaidExecutionAllowed(input);
-    const { authority } = await withTenant(this.database.db, context, tx => this.authority(tx, context, input.scope,
-      input.operation === "generate" ? [Permission.DesignWrite, Permission.AssetWrite] : []));
+    const { authority } = await withTenant(this.database.db, context, tx => input.operation === "paid.image.abandon"
+      ? currentDesignAuthority(tx, context, [Permission.DesignRead, Permission.AssetRead])
+      : this.authority(tx, context, input.scope, input.operation === "generate" ? [Permission.DesignWrite, Permission.AssetWrite] : []));
     switch (input.operation) {
+      case "paid.image.budget.get": return paidImageOperation(() => this.imageBudgetOwner().workspace(context));
+      case "paid.image.budget.save": return paidImageOperation(() => this.imageBudgetOwner().save(context, input.settings));
+      case "paid.image.prepare": return paidImageOperation(() => this.paidImageOwner().prepare(context, { scope: input.scope, input: input.input }));
+      case "paid.image.commit": return paidImageOperation(() => this.paidImageOwner().commit(context, { scope: input.scope, requestId: input.requestId, quoteHash: input.quoteHash, confirmed: input.confirmed }));
+      case "paid.image.cancel": return paidImageOperation(() => this.paidImageOwner().cancel(context, { scope: input.scope, requestId: input.requestId, quoteHash: input.quoteHash }));
+      case "paid.image.lookup": return paidImageOperation(() => this.paidImageOwner().lookup(context, { scope: input.scope, requestId: input.requestId }));
+      case "paid.image.requests": return paidImageOperation(() => this.paidImageOwner().requests(context, { scope: input.scope, cursor: input.cursor, limit: input.limit }));
+      case "paid.image.abandon": return paidImageOperation(() => this.paidImageOwner().abandon(context, { scope: input.scope, requestId: input.requestId }));
       case "video.directory": return this.videoDirectory.directory(context, input.scope);
       case "video.preflight": return this.videoDirectory.preflight(context, input.scope, input.snapshotHash);
       case "document.preview": return this.transfers.preview(context, input);
@@ -87,6 +112,14 @@ export class CreativeStudioService {
       case "result.submit.pinned": return this.submitPinned(context, input);
       case "result.lookup": return this.lookupResult(context, normalizeStudioPinnedRequest(input));
     }
+  }
+  private paidImageOwner() {
+    if (!this.paidImages) throw new ServiceUnavailableException("单张图片付费生成尚未就绪");
+    return this.paidImages;
+  }
+  private imageBudgetOwner() {
+    if (!this.imageBudget) throw new ServiceUnavailableException({ code: "studio_image_budget_unavailable" });
+    return this.imageBudget;
   }
 
   private async authority(tx: TenantTransaction, context: TenantContext, scope: string, extra: readonly PermissionValue[] = []) {

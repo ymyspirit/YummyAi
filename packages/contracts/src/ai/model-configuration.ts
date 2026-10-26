@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StudioImagePricingSchema, type StudioImagePricing } from "@yummyai/contracts/ai/studio-image-pricing";
 
 export const ModelNameSchema = z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_./:-]+$/);
 export const CreativeCapabilitySchema = z.enum(["image", "video", "text"]);
@@ -15,6 +16,8 @@ export const ChannelModelSchema = z.object({
 const Endpoint = z.url().max(2000);
 const Credential = z.string().min(1).max(8192);
 export const ConfigurationRpcSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("studio.image-pricing.save"), channelId: z.uuidv7(), modelId: z.uuidv7(),
+    revision: z.string().min(1).max(80), pricing: StudioImagePricingSchema }).strict(),
   z.object({ operation: z.literal("configuration.get") }).strict(),
   z.object({ operation: z.literal("channel.save"), id: z.uuidv7().optional(), revision: z.string().max(80).optional(),
     name: z.string().trim().min(1).max(80), baseUrl: Endpoint, apiKey: Credential.optional(),
@@ -28,7 +31,7 @@ export const ConfigurationRpcSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("defaults.save"), revision: z.int().nonnegative(), defaults: ModelDefaultsSchema }).strict(),
 ]);
 export type ConfigurationRpc = z.infer<typeof ConfigurationRpcSchema>;
-export type ConfiguredChannelModel = z.infer<typeof ChannelModelSchema> & { id: string; label: string };
+export type ConfiguredChannelModel = z.infer<typeof ChannelModelSchema> & { id: string; label: string; imagePricing?: StudioImagePricing };
 export type ConfiguredChannel = {
   id: string; name: string; baseUrl: string; provider: string; hasCredential: boolean;
   status: "enabled" | "disabled"; revision: string; models: ConfiguredChannelModel[];
@@ -48,7 +51,7 @@ export const ConfigurationSnapshotSchema = z.object({
     id: PublicModelId, name: z.string().max(500), baseUrl: z.url().max(2000), provider: z.string().max(128),
     hasCredential: z.boolean(), status: z.enum(["enabled", "disabled"]), revision: z.string().max(80),
     updatedAt: z.iso.datetime().optional(),
-    models: z.array(ChannelModelSchema.extend({ id: PublicModelId, label: z.string().max(500) }).strict()).max(1000),
+    models: z.array(ChannelModelSchema.extend({ id: PublicModelId, label: z.string().max(500), imagePricing: StudioImagePricingSchema.optional() }).strict()).max(1000),
     analysisModels: z.array(z.object({ id: PublicModelId, name: ModelNameSchema, label: z.string().max(500) }).strict()).max(1000),
     dependentRoutes: z.array(z.object({ id: PublicModelId, label: z.string().max(500) }).strict()).max(1000),
   }).strict()).max(1000),

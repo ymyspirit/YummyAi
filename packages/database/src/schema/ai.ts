@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, check, foreignKey, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import type { AnalysisReport, GeneratedImageProvenance } from "@yummyai/contracts";
+import type { StudioImagePricing } from "@yummyai/contracts/ai/studio-image-pricing";
 import { assetFiles } from "./assets.js";
 import { organizations, users } from "./identity.js";
 
@@ -10,6 +11,7 @@ export interface ModelRouteTargetRecord {
   providerModel: string;
   timeoutMs: number;
   analysisPricing?: { inputUsdPerMillion: number; outputUsdPerMillion: number; maxTaskCostUsd: number };
+  imagePricing?: StudioImagePricing;
 }
 
 export const modelProviderConfigs = pgTable(

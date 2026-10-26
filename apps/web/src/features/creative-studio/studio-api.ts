@@ -4,6 +4,7 @@ import { ErpContextAuthoritySchema } from "@yummyai/contracts/auth/session";
 import { ASSIST_INTENT_CLEAR_EVENT } from "@yummyai/contracts/ai/assist-recovery";
 import { ConfigurationRpcSchema, ConfigurationSnapshotSchema, ModelCatalogueSchema } from "@yummyai/contracts/ai/model-configuration";
 import { StudioRpcSchema, StudioScopeSchema, publicStudioModelSelectionError } from "@yummyai/contracts/pod/creative-studio";
+import { publicStudioPaidImageError } from "@yummyai/contracts/pod/studio-paid-image";
 import { CanvasBriefSchema, CanvasProjectSummarySchema } from "@yummyai/contracts/pod/canvas-bridge";
 import { STUDIO_PERSONAL_CLEAR_EVENT, STUDIO_PERSONAL_MEDIA_LIMIT, STUDIO_PERSONAL_METADATA_LIMIT, STUDIO_PERSONAL_VERSION, StudioPersonalInvokeSchema, StudioWorkspaceSchema, parseStudioPersonalReply, type StudioWorkspace } from "@yummyai/contracts/pod/studio-personal";
 import { useErpAccess } from "../identity/erp-access";
@@ -106,7 +107,8 @@ async function request(url: string, value: unknown, method: string, signal?: Abo
   }
   if (context) assertStudioCurrent(context);
   if (!successful) {
-    const selectionError = publicStudioModelSelectionError(result && typeof result === "object" && "code" in result ? result.code : undefined, response.status);
+    const errorCode = result && typeof result === "object" && "code" in result ? result.code : undefined;
+    const selectionError = publicStudioModelSelectionError(errorCode, response.status) ?? publicStudioPaidImageError(errorCode, response.status);
     if (selectionError) throw new StudioApiError(selectionError.message, response.status, selectionError.code);
     const code = result && typeof result === "object" && "code" in result && typeof result.code === "string" && ["authority_changed", "studio_video_directory_changed", "studio_video_directory_too_large", "studio_video_directory_unavailable"].includes(result.code) ? result.code : undefined;
     if (code === "authority_changed") throw contextChanged();

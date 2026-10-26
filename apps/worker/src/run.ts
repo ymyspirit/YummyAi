@@ -34,6 +34,8 @@ import { IncomingCommandRetentionScheduler } from "./processors/incoming-command
 import { ProcurementCommandRetentionScheduler } from "./processors/procurement-command-retention.scheduler.js";
 import { FactoryErpSourceRetentionScheduler } from "./processors/factory-erp-source-retention.scheduler.js";
 import { StudioGenerationProcessor } from "./processors/studio-generation.processor.js";
+import { studioImageWorkerConfigured } from "./processors/studio-image-paid-admission.js";
+import { StudioPaidImageScheduler } from "./processors/studio-image-paid-scheduler.js";
 import { CreativeExecutionScheduler } from "./processors/creative-execution.scheduler.js";
 import { AiAssistProcessor } from "./processors/ai-assist.processor.js";
 import { AiAssistScheduler } from "./processors/ai-assist.scheduler.js";
@@ -121,6 +123,7 @@ async function main(): Promise<number> {
   process.on("SIGINT", signal); process.on("SIGTERM", signal); process.on("message", parent);
   try {
     const available = runtimeQueues.filter(queue => {
+      if (queue === QueueName.StudioGeneration) return studioImageWorkerConfigured();
       if (queue === QueueName.OrderDesign) return process.env.ORDER_DESIGN_AGENT_ENABLED !== "false";
       if (queue === QueueName.OrderPersonalizationRender) return orderPersonalizationProcessorConfigured();
       if ([QueueName.CreativeDesign, QueueName.CreativeDesignAdaptation].some(name => name === queue)) return podBatchCreativeConfigured();
@@ -245,9 +248,10 @@ async function main(): Promise<number> {
       scheduler("knowledgeMaintenanceScheduler", () => new KnowledgeMaintenanceScheduler(database));
     }
     if (selected(QueueName.StudioGeneration)) {
+      if (!studioImageWorkerConfigured()) throw new Error("STUDIO_PAID_IMAGE_OPERATOR_PAUSED");
       const processor = new StudioGenerationProcessor(database, storage, createEnvironmentSecretVault("MODEL_CREDENTIAL_ENCRYPTION_KEY", "yummyai:model-config"));
       createWorker(QueueName.StudioGeneration, envelope => processor.process(envelope));
-      scheduler("studioGenerationScheduler", () => new CreativeExecutionScheduler(database, storage, "studio_generation"));
+      scheduler("studioGenerationScheduler", () => new StudioPaidImageScheduler(database));
     }
     if ([QueueName.Publication, QueueName.PublicationBatch, QueueName.PublicationReconciliation].some(selected)) {
       const repository = new DrizzlePublicationExecutionRepository(database, createMarketplaceSecretVault(), storage), gateway = new HttpMarketplaceDraftGateway();

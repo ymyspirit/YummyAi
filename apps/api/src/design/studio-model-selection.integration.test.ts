@@ -3,7 +3,7 @@ import { Permission } from "@yummyai/authz";
 import { createEntityId } from "@yummyai/contracts";
 import { StudioGenerateRequestSchema, type StudioGenerateRequest } from "@yummyai/contracts/pod/creative-studio";
 import { StudioPersonalReplySchema } from "@yummyai/contracts/pod/studio-personal";
-import { creativeDesignBatches, creativeStudioEntries, creativeStudioRevisions, modelPreferences, modelProviderConfigs, modelRoutes, withTenant } from "@yummyai/database";
+import { creativeDesignBatches, creativeStudioEntries, creativeStudioGenerations, creativeStudioRevisions, modelPreferences, modelProviderConfigs, modelRoutes, withTenant } from "@yummyai/database";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createStudioModelSelectionFixture, modelFixtureNames } from "./studio-model-selection.test-fixture.js";
@@ -24,7 +24,7 @@ function noEffects(before: Awaited<ReturnType<Fixture["facts"]>>, after: Awaited
   expect(after.providerCalls).toBe(0); expect(after.workerProcesses).toBe(0);
 }
 
-describe("c5a8f4d1 exact Studio model capability and selection revision in disposable current188", () => {
+describe("retained Studio model capability and selection revision with generic generation paused", () => {
   beforeAll(async () => { f = await createStudioModelSelectionFixture(); });
   afterAll(async () => { await f?.close(); });
 
@@ -63,30 +63,34 @@ describe("c5a8f4d1 exact Studio model capability and selection revision in dispo
     const before = await f.facts(context); expect(await f.catalogue(context)).toEqual([]); noEffects(before, await f.facts(context));
   });
 
-  it("creates exact image video and text owners and replays only their original input and queue identity", async () => {
+  it("retains exact historical image video and text owners without recreating or requeuing their original inputs", async () => {
     const { actor, context, channel, scope } = await basis(), models = await f.catalogue(context), before = await f.facts(context), ids: string[] = [], inputs: StudioGenerateRequest[] = [];
     for (const capability of ["image", "video", "text"] as const) {
       const selected = models.find(row => row.capability === capability)!, input = await f.request(context, selected.id);
-      const first = await f.generations.create(context, scope, input), replay = await f.generations.create(context, scope, input);
-      expect(replay.id).toBe(first.id); ids.push(first.id); inputs.push(input);
-      const [row] = await f.exactRows(context, [first.id]);
-      expect(row).toMatchObject({ ownerId: context.userId, scope, status: "queued", input,
+      expect(await outcome(f.generations.create(context, scope, input))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
+      const id = createEntityId(); ids.push(id); inputs.push(input);
+      // Retained pre-quotation history is fixture data, never a producer bypass.
+      await withTenant(f.database.db, context, tx => tx.insert(creativeStudioGenerations).values({ id, tenantId: context.tenantId, ownerId: context.userId,
+        scope, requestId: input.requestId, input, status: "failed", error: "studio_fixture_retained_legacy",
+        modelSnapshot: { routeId: selected.id, providerConfigId: channel.id, model: selected.model, capability }, references: [] }));
+      const [row] = await f.exactRows(context, [id]);
+      expect(row).toMatchObject({ ownerId: context.userId, scope, status: "failed", input,
         modelSnapshot: { routeId: selected.id, providerConfigId: channel.id, model: selected.model, capability } });
-      expect(await outcome(f.generations.create(context, scope, { ...input, prompt: "Changed original input" }))).toMatchObject({ status: 409 });
+      expect(await f.generations.originalInput(context, scope, input.requestId)).toEqual(input);
+      for (const raw of [input, { ...input, prompt: "Changed original input" }])
+        expect(await outcome(f.generations.create(context, scope, raw))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
     }
-    const attempts = f.queueAttempts.slice(before.queueAttempts.length); expect(attempts).toHaveLength(6);
-    for (const id of ids) expect(attempts.filter(row => row.id === id)).toEqual([{ id, tenantId: context.tenantId, userId: context.userId }, { id, tenantId: context.tenantId, userId: context.userId }]);
-    expect(new Set(attempts.map(row => row.id))).toEqual(new Set(ids)); expect(await f.exactRows(context, ids)).toHaveLength(3);
+    expect(f.queueAttempts).toEqual(before.queueAttempts); const retained = await f.exactRows(context, ids); expect(retained).toHaveLength(3);
+    expect((await f.generations.list(context, scope)).map(row => row.id).sort()).toEqual([...ids].sort());
     const after = await f.facts(context); expect(after.tables.creative_studio_generations!.count - before.tables.creative_studio_generations!.count).toBe(3);
-    expect(after.tables.creative_executions!.count - before.tables.creative_executions!.count).toBe(3);
+    expect(after.tables.creative_executions).toEqual(before.tables.creative_executions);
     expect(after.tables.ai_budget_ledger).toEqual(before.tables.ai_budget_ledger); expect(after.providerCalls).toBe(0); expect(after.workerProcesses).toBe(0);
     await f.dependent(context, channel.id);
     const original = inputs[0]!, otherScope = (await f.project(context)).id, readBefore = await f.facts(context);
     expect((await f.catalogue(context)).find(row => row.id === original.modelId)!.selectionRevision).not.toBe(original.selectionRevision);
     expect(await f.generations.originalInput(context, scope, original.requestId)).toEqual(original); noEffects(readBefore, await f.facts(context));
-    expect((await f.generations.create(context, scope, original)).id).toBe(ids[0]);
-    const replayBefore = await f.facts(context); expect(replayBefore.tables).toEqual(readBefore.tables);
-    expect(replayBefore.queueAttempts.slice(readBefore.queueAttempts.length)).toEqual([{ id: ids[0], tenantId: context.tenantId, userId: context.userId }]);
+    expect(await outcome(f.generations.create(context, scope, original))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
+    const replayBefore = await f.facts(context); noEffects(readBefore, replayBefore); expect(await f.exactRows(context, ids)).toEqual(retained);
     expect(await outcome(f.generations.originalInput(context, otherScope, original.requestId))).toMatchObject({ status: 409 });
     noEffects(replayBefore, await f.facts(context));
     await f.grant(actor, f.permissions.filter(permission => permission !== Permission.DesignWrite));
@@ -94,17 +98,18 @@ describe("c5a8f4d1 exact Studio model capability and selection revision in dispo
     await expect(f.generations.originalInput(revoked, scope, original.requestId)).rejects.toThrow(); noEffects(revokedBefore, await f.facts(revoked));
   });
 
-  it("rejects new unpinned wrong-purpose foreign and fabricated selections before any task execution or queue write", async () => {
+  it("keeps the strict input schema while every unquoted generic selection remains paused before effects", async () => {
     const { context, scope } = await basis(), selected = (await f.catalogue(context)).find(row => row.capability === "video")!, input = await f.request(context, selected.id);
     const before = await f.facts(context);
     const { capability: _capability, selectionRevision: _revision, ...legacy } = input; void _capability; void _revision;
-    for (const raw of [legacy, { ...input, capability: "audio" }, { ...input, selectionRevision: "A".repeat(64) }])
-      expect(await outcome(f.generations.create(context, scope, raw))).toEqual({ status: 400, code: "studio_model_selection_invalid" });
-    expect(await outcome(f.generations.create(context, scope, { ...input, capability: "image" }))).toEqual({ status: 400, code: "studio_model_capability_mismatch" });
-    expect(await outcome(f.generations.create(context, scope, { ...input, selectionRevision: "0".repeat(64) }))).toEqual({ status: 409, code: "studio_model_selection_changed" });
-    expect(await outcome(f.generations.create(context, scope, { ...input, modelId: createEntityId() }))).toMatchObject({ status: 400 });
+    for (const raw of [legacy, { ...input, capability: "audio" }, { ...input, selectionRevision: "A".repeat(64) }]) {
+      expect(StudioGenerateRequestSchema.safeParse(raw).success).toBe(false);
+      expect(await outcome(f.generations.create(context, scope, raw))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
+    }
+    for (const raw of [{ ...input, capability: "image" }, { ...input, selectionRevision: "0".repeat(64) }, { ...input, modelId: createEntityId() }])
+      expect(await outcome(f.generations.create(context, scope, raw))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
     const foreign = await f.actor(), foreignContext = await f.current(foreign), foreignBefore = await f.facts(foreignContext);
-    expect(await outcome(f.generations.create(foreignContext, "unassigned", input))).toMatchObject({ status: 400 });
+    expect(await outcome(f.generations.create(foreignContext, "unassigned", input))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
     noEffects(foreignBefore, await f.facts(foreignContext)); noEffects(before, await f.facts(context));
   });
 
@@ -113,16 +118,18 @@ describe("c5a8f4d1 exact Studio model capability and selection revision in dispo
     await f.changeCapability(context, channel.id, image.id, "video");
     const changed = (await f.catalogue(context)).find(row => row.id === image.id)!; expect(changed.capability).toBe("video"); expect(changed.selectionRevision).not.toBe(image.selectionRevision);
     let before = await f.facts(context);
-    expect(await outcome(f.generations.create(context, scope, original))).toEqual({ status: 400, code: "studio_model_capability_mismatch" });
-    expect(await outcome(f.generations.create(context, scope, { ...original, capability: "video" }))).toEqual({ status: 409, code: "studio_model_selection_changed" });
+    expect(await outcome(f.generations.create(context, scope, original))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
+    expect(await outcome(f.generations.create(context, scope, { ...original, capability: "video" }))).toEqual({ status: 409, code: "studio_paid_execution_paused" });
     noEffects(before, await f.facts(context));
     const beforeDependency = await f.request(context, changed.id); await f.dependent(context, channel.id); before = await f.facts(context);
     expect((await f.catalogue(context)).find(row => row.id === changed.id)!.selectionRevision).not.toBe(beforeDependency.selectionRevision);
-    expect(await outcome(f.generations.create(context, scope, beforeDependency))).toEqual({ status: 409, code: "studio_model_selection_changed" }); noEffects(before, await f.facts(context));
+    expect(await outcome(f.generations.create(context, scope, beforeDependency))).toEqual({ status: 409, code: "studio_paid_execution_paused" }); noEffects(before, await f.facts(context));
     const disabledInput = await f.request(context, changed.id); await f.status(context, channel.id, "disabled"); before = await f.facts(context);
-    expect(await outcome(f.generations.create(context, scope, disabledInput))).toMatchObject({ status: 400 }); noEffects(before, await f.facts(context));
+    expect((await f.catalogue(context)).some(row => row.id === changed.id)).toBe(false);
+    expect(await outcome(f.generations.create(context, scope, disabledInput))).toEqual({ status: 409, code: "studio_paid_execution_paused" }); noEffects(before, await f.facts(context));
     await f.status(context, channel.id, "enabled"); const removedInput = await f.request(context, changed.id); await f.remove(context, channel.id, changed.id); before = await f.facts(context);
-    expect(await outcome(f.generations.create(context, scope, removedInput))).toMatchObject({ status: 400 }); noEffects(before, await f.facts(context));
+    expect((await f.catalogue(context)).some(row => row.id === changed.id)).toBe(false);
+    expect(await outcome(f.generations.create(context, scope, removedInput))).toEqual({ status: 409, code: "studio_paid_execution_paused" }); noEffects(before, await f.facts(context));
   });
 
   it("reads retained legacy inputs without invented pins and rejects a held catalogue after current permission revocation", async () => {

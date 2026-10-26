@@ -10,6 +10,7 @@ import {
   type VisualSlotKey,
 } from "@yummyai/contracts/catalog/product-visuals";
 import { salesPlanRequest } from "./sales-plan-client";
+import { ProductVisualImageGeneration } from "./product-visual-generation-panel";
 import "./product-visual-delivery.css";
 
 const status: Record<string, string> = {
@@ -151,29 +152,6 @@ export function ProductVisualDelivery({
       setUseSampleAsMain(false);
       await read();
       setNotice("视觉需求已固定。准备和读取进度不调用模型。");
-    });
-  }
-  function generate(slotKey: VisualSlotKey) {
-    if (!project) return;
-    void run(async () => {
-      const payload = {
-        modelId: project.snapshot.modelId,
-        slotKey,
-        ...(slotKey !== "artwork" ? { artworkVersionId: artwork } : {}),
-        prompt: prompts[slotKey] ?? "",
-        size: project.snapshot.size,
-        quality: "high",
-      };
-      const action = `${project.id}:${slotKey}`;
-      await salesPlanRequest(`${plan.id}/launch/visuals/${project.id}/generate`, {
-        ...payload,
-        requestId: key(action, payload),
-      });
-      pending.current.delete(action);
-      await read();
-      setNotice(
-        `${VISUAL_SLOTS.find((s) => s.key === slotKey)!.label}已提交。刷新只读取同一任务。`,
-      );
     });
   }
   function collect() {
@@ -376,7 +354,7 @@ export function ProductVisualDelivery({
                     </select>
                   </label>
                   <label>
-                    单次预算占用（USD）
+                    本交付单次预留上限（USD）
                     <input
                       type="number"
                       min="0.000001"
@@ -405,7 +383,7 @@ export function ProductVisualDelivery({
                     checked={budgetAttested}
                     onChange={(e) => setBudgetAttested(e.target.checked)}
                   />
-                  已核对所选模型与参数的渠道费用，单次费用不超过填写的预算占用
+                  已核对本交付的单次预留上限与总预算 每张图片仍需单独核对报价并明确确认 预留不代表服务商扣款硬上限
                 </label>
                 <p className="sp-hint">
                   一次提交制作一张图；每槽位最多四次尝试。调用后实际账单未知时保留预算占用，失败不会自动重新收费。
@@ -536,23 +514,19 @@ export function ProductVisualDelivery({
                           }
                         />
                       </label>
-                      <button
-                        className="oc-button"
-                        disabled={
-                          disabled ||
-                          stale ||
-                          !data.permissions.create ||
-                          active ||
-                          tasks.length >= 4 ||
-                          project.budget.remainingUsd + 0.0000001 <
-                            project.snapshot.callCeilingUsd ||
-                          (slot.key !== "artwork" && !artwork)
-                        }
-                        onClick={() => generate(slot.key)}
-                      >
-                        {tasks.length ? "生成新候选" : "生成一张候选"} · 占用 $
-                        {project.snapshot.callCeilingUsd.toFixed(4)}
-                      </button>
+                      <ProductVisualImageGeneration
+                        planId={plan.id} project={project} slotKey={slot.key} label={slot.label}
+                        model={data.models.find(item => item.id === project.snapshot.modelId)}
+                        prompt={prompts[slot.key] ?? ""} artworkVersionId={slot.key === "artwork" ? undefined : artwork || undefined}
+                        canPrepare={!disabled && !stale && data.permissions.create && !active && tasks.length < 4
+                          && project.budget.remainingUsd + 0.0000001 >= project.snapshot.callCeilingUsd && (slot.key === "artwork" || !!artwork)}
+                        disabledReason={disabled ? disabledReason || "其他交付操作尚未完成 请稍候" : stale ? "固定商品依据已变化 原记录只读保留"
+                          : !data.permissions.create ? "当前本人没有本交付的制作权限" : active ? "本槽原任务仍在排队或执行 请先核对原请求"
+                            : tasks.length >= 4 ? "本槽已达到四次尝试 请先核对原任务" : project.budget.remainingUsd + 0.0000001 < project.snapshot.callCeilingUsd
+                              ? "本交付预算剩余不足 原任务与占用保持" : "请先审核并明确选择图稿版本"}
+                        onChanged={read}
+                        onUseOriginalInput={input => { setPrompts(values => ({ ...values, [slot.key]: input.prompt })); if (slot.key !== "artwork") setArtwork(input.artworkVersionId ?? ""); }}
+                      />
                       {!tasks.length && (
                         <p className="sp-hint">
                           尚无候选；

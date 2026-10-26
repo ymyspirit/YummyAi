@@ -7,6 +7,8 @@ import {
   type CreativeHistoryScope, type CreativeOperatorCommand,
 } from "@yummyai/contracts/harness/creative-operator";
 import { MethodEvidence } from "../ai-assist/method-evidence";
+import { CreativeResponseAdoption } from "./creative-response-adoption";
+import { CreativeOwnerResponseAdoption } from "./creative-owner-response-adoption";
 import "./creative-execution-history.css";
 
 const phases: Record<CreativeExecutionView["phase"], string> = {
@@ -131,6 +133,9 @@ function ExecutionRow({ row, refresh }: { row: CreativeExecutionView; refresh: (
     </dl>
     {!!row.artifacts.length && <ul aria-label="本次固定产物">{row.artifacts.map(file => <li key={file.assetId}><code>{file.assetId}</code> · v{file.version}<small>{file.checksumSha256}</small></li>)}</ul>}
     {row.unavailableArtifacts > 0 && <p>有 {row.unavailableArtifacts} 份原产物当前不可读取 请核对原任务</p>}
+    {row.kind === "creative_candidate" && row.stepKey === "generate" && <CreativeResponseAdoption key={`${row.id}:${row.fingerprint}`} executionId={row.id} onChanged={refresh} />}
+    {row.kind !== "creative_candidate" && <CreativeOwnerResponseAdoption key={`${row.id}:${row.fingerprint}`} executionId={row.id}
+      expected={{ kind: row.kind, stepKey: row.stepKey, parentExecutionId: row.parentId, inputFingerprint: row.inputFingerprint }} onChanged={refresh} />}
     <div className="creative-history-actions"><button type="button" disabled={busy || !row.canRequestRecovery} onClick={() => void act("request_recovery")}><RefreshCw size={13} />申请原任务续做</button><span>{row.recoveryBlockers.join("；") || "提交时会再次核对原来源、权限和方法"}</span></div>
     {row.canRecordCheck && <form onSubmit={event => { event.preventDefault(); void act("record_check"); }}>
       <label>核对结论<select value={finding} disabled={busy} onChange={event => setFinding(event.target.value as typeof finding)}>{Object.entries(findings).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>

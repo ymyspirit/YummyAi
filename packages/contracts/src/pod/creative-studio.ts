@@ -5,6 +5,7 @@ import { StudioKeySchema, StudioNamespaceSchema, StudioScopeSchema } from "@yumm
 import { StudioTransferRequestFields } from "@yummyai/contracts/pod/studio-document-transfer";
 import { StudioVideoSnapshotSchema } from "@yummyai/contracts/pod/studio-video-directory";
 import { CreativeCapabilitySchema } from "@yummyai/contracts/ai/model-configuration";
+import { StudioImageBudgetSettingsSchema } from "@yummyai/contracts/pod/studio-image-budget";
 export { StudioKeySchema, StudioNamespaceSchema, StudioScopeSchema } from "@yummyai/contracts/pod/studio-address";
 
 export const STUDIO_VERSION = "1.0.0";
@@ -45,6 +46,14 @@ export const StudioModelInputSchema = z.object({
 const Base = { scope: StudioScopeSchema.default("unassigned") };
 const Address = { namespace: StudioNamespaceSchema, key: StudioKeySchema };
 export const StudioRpcSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("paid.image.budget.get"), ...Base }).strict(),
+  z.object({ operation: z.literal("paid.image.budget.save"), ...Base, settings: StudioImageBudgetSettingsSchema }).strict(),
+  z.object({ operation: z.literal("paid.image.prepare"), ...Base, input: StudioGenerateRequestSchema }).strict(),
+  z.object({ operation: z.literal("paid.image.commit"), ...Base, requestId: z.uuid(), quoteHash: StudioSelectionRevisionSchema, confirmed: z.literal(true) }).strict(),
+  z.object({ operation: z.literal("paid.image.lookup"), ...Base, requestId: z.uuid() }).strict(),
+  z.object({ operation: z.literal("paid.image.requests"), ...Base, cursor: z.uuidv7().optional(), limit: z.int().min(1).max(40).default(20) }).strict(),
+  z.object({ operation: z.literal("paid.image.cancel"), ...Base, requestId: z.uuid(), quoteHash: StudioSelectionRevisionSchema }).strict(),
+  z.object({ operation: z.literal("paid.image.abandon"), ...Base, requestId: z.uuid() }).strict(),
   z.object({ operation: z.literal("video.directory"), ...Base }).strict(),
   z.object({ operation: z.literal("video.preflight"), ...Base, snapshotHash: StudioVideoSnapshotSchema }).strict(),
   z.object({ operation: z.literal("document.preview"), scope: StudioScopeSchema, targetScope: z.uuidv7() }).strict(),

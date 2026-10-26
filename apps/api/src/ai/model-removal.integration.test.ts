@@ -72,7 +72,9 @@ describe("model removal preserves tenant history and active tasks", () => {
     const [preferences] = await withTenant(database.db, member, tx => tx.select().from(modelPreferences));
     expect(preferences?.defaults.analysis).toBe(modelId);
     await expect(generation.create(context, "unassigned", StudioGenerateRequestSchema.parse({ requestId: createEntityId(), modelId,
-      capability: "text", selectionRevision: originalSelection.selectionRevision, prompt: "Synthetic prompt" }))).rejects.toThrow("请选择已配置");
+      capability: "text", selectionRevision: originalSelection.selectionRevision, prompt: "Synthetic prompt" }))).rejects.toMatchObject({
+        status: 409, response: { code: "studio_paid_execution_paused" },
+      });
   });
 
   it.each(["queued", "running"] as const)("protects another member's %s generation through direct removal and channel editing", async status => {

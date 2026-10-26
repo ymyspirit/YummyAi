@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { CanvasResultView } from "@yummyai/contracts/pod/canvas-bridge";
+import type { StudioImagePricing } from "@yummyai/contracts/ai/studio-image-pricing";
 
 const Id = z.uuidv7();
 const Money = z.number().positive().max(10000).multipleOf(0.000001);
@@ -135,6 +136,7 @@ export type ProductVisualProject = {
   id: string;
   name: string;
   snapshot: VisualDeliverySnapshot;
+  slots: Array<{ slotKey: VisualSlotKey; projectId: string }>;
   stale: boolean;
   adoptedRevision: number | null;
   tasks: ProductVisualTask[];
@@ -146,7 +148,7 @@ export type ProductVisualWorkspace = {
   blockers: string[];
   sourceSummary: string[];
   references: Array<{ id: string; fileName: string }>;
-  models: Array<{ id: string; label: string; providerLabel: string }>;
+  models: Array<{ id: string; label: string; providerLabel: string; selectionRevision: string; imagePricing?: StudioImagePricing }>;
   projects: ProductVisualProject[];
   permissions: { create: boolean; review: boolean; adopt: boolean; sync: boolean };
 };

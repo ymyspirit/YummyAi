@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectVersionsCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -120,6 +121,135 @@ export class Storage {
       || (kind === "response" ? parts[4] !== `${taskId}-pod-response.pe` : !new RegExp(`^${taskId}-pod-output-\\d{1,3}\\.(png|jpg|webp|tiff|svg|mp4|webm|zip|ps|txt|json|bin)$`).test(parts[4] ?? "")))
       throw new Error("Only an exact private POD execution artifact can be discarded");
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /** The adoption owner holds its database lock and proves that this cancelled
+   * request has no committed asset reference. This never removes a prefix or a
+   * neighbouring artifact, and completion means all versions are absent. */
+  async discardCreativeResponseAdoptionArtifact(context: TenantContext, adoptionId: string, key: string,
+    options: { signal?: AbortSignal } = {}): Promise<void> {
+    assertAssetAccess(context, { id: adoptionId, tenantId: context.tenantId, assetDomain: "authorized", objectKey: key }, "authorized");
+    const parts = key.split("/");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(adoptionId)
+      || parts.length !== 5 || !/^[a-f0-9]{64}$/.test(parts[3] ?? "")
+      || !new RegExp(`^${adoptionId}-pod-output-0\\.(png|jpg|webp|tiff)$`).test(parts[4] ?? "")
+      || key !== objectKey({ tenantId: context.tenantId, domain: "authorized", sha256: parts[3]!, fileName: parts[4]! }))
+      throw new Error("CREATIVE_RESPONSE_ADOPTION_ARTIFACT_INVALID");
+    return this.discardCreativeAdoptionKey(key, options);
+  }
+
+  /** Multiple files still have exact adoption-owned identities. The caller must
+   * recheck its current authority and absence of a registered asset per delete. */
+  async discardCreativeOwnerResponseAdoptionArtifact(context: TenantContext, adoptionId: string, key: string,
+    options: { signal?: AbortSignal; assertCurrent: () => Promise<void> }): Promise<void> {
+    assertAssetAccess(context, { id: adoptionId, tenantId: context.tenantId, assetDomain: "authorized", objectKey: key }, "authorized");
+    const parts = key.split("/");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(adoptionId)
+      || parts.length !== 5 || !/^[a-f0-9]{64}$/.test(parts[3] ?? "")
+      || !new RegExp(`^${adoptionId}-owner-[0-7]\\.(png|jpg|webp|tiff|json)$`).test(parts[4] ?? "")
+      || key !== objectKey({ tenantId: context.tenantId, domain: "authorized", sha256: parts[3]!, fileName: parts[4]! })
+      || typeof options.assertCurrent !== "function") throw new Error("CREATIVE_RESPONSE_ADOPTION_ARTIFACT_INVALID");
+    await options.assertCurrent();
+    return this.discardCreativeAdoptionKey(key, options);
+  }
+
+  private async discardCreativeAdoptionKey(key: string, options: { signal?: AbortSignal; assertCurrent?: () => Promise<void> }): Promise<void> {
+    const signal = options.signal;
+    let verifying = false;
+    try {
+      assertCreativeAdoptionCleanupActive(signal);
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }), { abortSignal: signal });
+      assertCreativeAdoptionCleanupActive(signal);
+      // Complete the bounded inventory before making any destructive request.
+      const versions = await this.creativeResponseAdoptionVersions(key, signal);
+      if (versions.length) {
+        // Retain delete markers until all known data versions have been removed.
+        for (const version of [...versions.filter(value => !value.marker), ...versions.filter(value => value.marker)]) {
+          assertCreativeAdoptionCleanupActive(signal);
+          await options.assertCurrent?.();
+          await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key, VersionId: version.id }), { abortSignal: signal });
+          assertCreativeAdoptionCleanupActive(signal);
+        }
+      } else {
+        let unversioned = false;
+        try {
+          const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal });
+          assertCreativeAdoptionCleanupActive(signal);
+          // A newly appeared version must not be hidden by an unversioned delete.
+          if (head.VersionId !== undefined || head.DeleteMarker === true) throw new Error("Unexpected object version");
+          unversioned = true;
+        } catch (error) {
+          assertCreativeAdoptionCleanupActive(signal);
+          if (!isCreativeAdoptionObjectMissing(error)) throw error;
+        }
+        if (unversioned) {
+          assertCreativeAdoptionCleanupActive(signal);
+          await options.assertCurrent?.();
+          await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal });
+          assertCreativeAdoptionCleanupActive(signal);
+        }
+      }
+
+      verifying = true;
+      if ((await this.creativeResponseAdoptionVersions(key, signal)).length) throw new Error("Artifact versions remain");
+      assertCreativeAdoptionCleanupActive(signal);
+      let absent = false;
+      try {
+        await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal });
+      } catch (error) {
+        assertCreativeAdoptionCleanupActive(signal);
+        if (!isCreativeAdoptionObjectMissing(error)) throw error;
+        absent = true;
+      }
+      assertCreativeAdoptionCleanupActive(signal);
+      if (!absent) throw new Error("Artifact absence is unconfirmed");
+      // NoSuchBucket is not proof that this individual object was cleaned up.
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }), { abortSignal: signal });
+      assertCreativeAdoptionCleanupActive(signal);
+    } catch {
+      assertCreativeAdoptionCleanupActive(signal);
+      throw new Error(verifying ? "CREATIVE_RESPONSE_ADOPTION_ARTIFACT_ABSENCE_UNCONFIRMED" : "CREATIVE_RESPONSE_ADOPTION_ARTIFACT_CLEANUP_FAILED");
+    }
+  }
+
+  private async creativeResponseAdoptionVersions(key: string, signal?: AbortSignal): Promise<Array<{ id: string; marker: boolean }>> {
+    const versions: Array<{ id: string; marker: boolean }> = [], identities = new Set<string>(), positions = new Set<string>();
+    let keyMarker: string | undefined, versionMarker: string | undefined, entries = 0;
+    // Both inventories are bounded independently: at most 10 pages/1,000
+    // listed entries each, and at most 1,000 exact version deletions overall.
+    for (let page = 0; page < 10; page++) {
+      assertCreativeAdoptionCleanupActive(signal);
+      const response = await this.client.send(new ListObjectVersionsCommand({ Bucket: this.bucket, Prefix: key, MaxKeys: 100,
+        ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
+        ...(versionMarker === undefined ? {} : { VersionIdMarker: versionMarker }),
+      }), { abortSignal: signal });
+      assertCreativeAdoptionCleanupActive(signal);
+      if (typeof response.IsTruncated !== "boolean" || response.Name !== undefined && response.Name !== this.bucket
+        || response.Prefix !== undefined && response.Prefix !== key || response.CommonPrefixes?.length
+        || response.CommonPrefixes !== undefined && !Array.isArray(response.CommonPrefixes)
+        || response.Versions !== undefined && !Array.isArray(response.Versions)
+        || response.DeleteMarkers !== undefined && !Array.isArray(response.DeleteMarkers)) throw new Error("Invalid version inventory");
+      const listed = [...(response.Versions ?? []).map(value => ({ ...value, marker: false })),
+        ...(response.DeleteMarkers ?? []).map(value => ({ ...value, marker: true }))];
+      entries += listed.length;
+      if (listed.length > 100 || entries > 1_000) throw new Error("Version inventory exceeds its limit");
+      for (const version of listed) {
+        if (typeof version.Key !== "string" || !version.Key.startsWith(key)) throw new Error("Invalid listed object key");
+        if (version.Key !== key) continue;
+        if (typeof version.VersionId !== "string" || !version.VersionId || version.VersionId.length > 1024
+          || identities.has(version.VersionId)) throw new Error("Invalid listed object version");
+        identities.add(version.VersionId);
+        versions.push({ id: version.VersionId, marker: version.marker });
+      }
+      if (!response.IsTruncated) return versions;
+      const nextKey = response.NextKeyMarker, nextVersion = response.NextVersionIdMarker;
+      if (typeof nextKey !== "string" || !nextKey.startsWith(key) || nextKey.length > 1024
+        || nextVersion !== undefined && (typeof nextVersion !== "string" || nextVersion.length > 1024)) throw new Error("Invalid version cursor");
+      const position = JSON.stringify([nextKey, nextVersion ?? null]);
+      if (positions.has(position) || nextKey === keyMarker && nextVersion === versionMarker) throw new Error("Repeated version cursor");
+      positions.add(position); keyMarker = nextKey; versionMarker = nextVersion;
+    }
+    throw new Error("Version inventory exceeds its page limit");
   }
 
   /** Only for a CSV that the caller verified has no committed database reference. */
@@ -288,6 +418,16 @@ function isMissing(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { name?: string; $metadata?: { httpStatusCode?: number } };
   return candidate.name === "NotFound" || candidate.name === "NoSuchKey" || candidate.$metadata?.httpStatusCode === 404;
+}
+
+function assertCreativeAdoptionCleanupActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("CREATIVE_RESPONSE_ADOPTION_ARTIFACT_CLEANUP_ABORTED");
+}
+
+function isCreativeAdoptionObjectMissing(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.$metadata?.httpStatusCode === 404 && (candidate.name === "NotFound" || candidate.name === "NoSuchKey");
 }
 
 function required(name: string): string {

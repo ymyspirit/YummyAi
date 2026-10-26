@@ -1,23 +1,35 @@
-# 单张图片付费生成开发契约
+# 单张图片报价与原请求恢复
 
-2026-10-24 · 73e2c9b1 · 开发中 尚未启用真实付费
+当前发布范围为单张图片，真实付费默认关闭。图片报价是运营填写的预估与预算预留，不代表服务商实际账单或扣款硬上限。视频、多图与旧直接生成入口继续关闭。
 
-本片复用 Infinite Canvas v0.20.0、自有 Studio adapter、原 Studio generation owner 和 Creative Execution Harness。保留上游文件原字节、原生一至四张入口及旧视频恢复暂停。ERP 图片页新增单张图片费用面板，支持文字生图和已审核参考图编辑。真实付费默认关闭，日用188及其固定配对不在本片修改。
+## 用户操作
 
-报价是操作员配置的每张图片预估与预留金额，币种 USD。它不是渠道实际账单或强制渠道扣款上限。文本默认每百万 token 一美元及显式无限任务额度继续属于文本计价；不得复制成图片价格。实际费用缺失时保留 null 和预算预留；渠道确认费用超额时留证并阻断后续同模型调用。
+在生图工作台打开“单张生图与费用”。管理员可读取并明确保存组织月预算、默认任务预留上限及图片任务上限；在模型配置中维护每张预估美元金额、预留金额和报价依据。没有有效报价与预算时页面解释缺项，不自动填零或无限额度。
 
-`studio.image-pricing.save` 由 ModelConfigure 配置单个 image route 的 `imagePricing`：`estimatedUsd` 为八位小数字符串，`reservationUsd` 为六位正小数字符串，`reference` 为报价依据。估价不得大于预留，修改报价更新 selectionRevision，历史固定报价不改。
+编辑图片输入并准备报价后，服务器保存不可变的本人原请求与五分钟报价。准备不预留预算、不排队、不调用模型。逐项核对参数与金额并明确勾选后才允许提交。暂停期间可以保留和取消准备，提交由API与Worker分别拒绝。
 
-`paid.image.budget.get/save` 提供组织预算的正式入口。当前 ModelConfigure 必须具有 tenant 范围；月预算由全部 AI 共享，默认任务预留上限影响未单配任务，单张图片上限仅覆盖 studio_image。三个金额必须由操作者显式填写，读取及保存按完整原 policy 的版本核对，保留其他任务设置与所有既有费用/占用。已占用额来自 UTC 当月原 ledger 的 reserved/committed，低于占用的预算设置只阻断新任务，不释放或改写占用。配置保存不会开启真实付费。
+提交同时固定生成任务、预算账本和Creative Execution。网络中断后只读取原编号；刷新页面从服务器本人索引及本地原编号恢复。输入、模型选型、权限或参考图变化使原报价不能提交。取消只作用于尚未提交的准备；未知提交不能靠换编号或自动重试解决。
 
-本人原 RPC 增加 `paid.image.prepare`、`paid.image.commit`、`paid.image.lookup`、`paid.image.requests`、`paid.image.cancel`。prepare 持久保存精确本人原请求和五分钟固定报价，不预留费用、不排队、不调用模型；同 requestId 不得改 scope 或输入。commit 只接受原 requestId 和 quoteHash，必须重新核对当前权限、项目、参考图版本、模型/报价 revision、组织任务与月预算以及服务端准入。同一事务创建 generation、预算预留、执行意图及原准备的提交回执。重放只返回原结果，不再次排队。队列回执丢失不释放原预算，恢复只按原键 lookup。
+生成结果以私有原字节及资产版本登记，默认未审核。原件检查、权利审核、提交项目方案、业务审核及生产编辑分别执行。采用原响应的任务还显示独立采用回执，原执行的失败或待核对状态、费用与预算历史继续保留。
 
-lookup/requests 是纯读取，绝不调用旧 `generation.get` 的自动送审分支、创建新候选或恢复历史任务。产物保持未审核，显式送审继续使用既有固定原件流程。cancel 仅能取消尚未 commit 的准备；已外部提交结果未知不能取消后换键当作未收费。prepare 失回执且查无记录也不是取消证明；本人可明确执行 `paid.image.abandon`，服务端在同锁下写不可变取消键，阻断迟到 prepare。有 generation 的原键不能 abandon。失 abandon 回执只能本人明确重复同一取消，不自动发送；取消小回执不返回旧私有输入，因此当前具备本人写权限时可结束已取消或归档父项目中的未提交准备。
+## 契约和边界
 
-API 与 Worker 统一要求 `STUDIO_PAID_IMAGE_ENABLED=1` 且租户在 `STUDIO_PAID_IMAGE_TENANT_IDS` 中；默认均关闭，不写入日用环境。Worker 只接受有本片固定准备/费用证据的 image generation，不接管旧无报价记录、视频或文字任务。执行前仍经原当前权限、方法、来源与模型 pin 检查。现有普通 `create` 调用不得绕过暂停门。
+- `pod/studio-paid-image`、`pod/studio-image-budget`和`ai/studio-image-pricing`是共享契约。金额分别按8位预估与6位预留精度校验。
+- 本人Studio RPC提供`paid.image.prepare/commit/lookup/requests/cancel/abandon`及预算`get/save`，全部经当前OIDC会话及context authority核对；错误、迟到正文和私有预览都再次核对当前身份。
+- `creative_studio_image_requests`保存原输入、标准化输入、报价及生成关联；`creative_studio_image_cancellations`是不可变的原键取消事实。相同本人原编号只能对应同一份输入。
+- API和Worker都要求`STUDIO_PAID_IMAGE_ENABLED=1`且租户出现在精确`STUDIO_PAID_IMAGE_TENANT_IDS`中；空值和通配符不构成准入。当前日用值保持关闭，不能用开发验收替代真实付费启用授权。
+- Worker核对数据库中的完整报价、双侧身份、原输入、模型路由、参考图和账本预留。UTC月份变化在实际提交前再核对预算，未知费用继续保留占用。
 
-新预留使用数据库实际时钟记账，不能把等待预算锁后的预留写进事务开始时的旧月份。首次外部提交在原预算锁事务内再次核对原预留属于数据库当前 UTC 月；跨月尚未提交的旧预留必须结束后重新核对，不挪动历史记账日期。该守卫只约束首次提交，既有已提交回执、费用和归档响应恢复继续走原流程。旧 JSON 图片上限按数据库原数值文本精确读取，超出六位小数的有效数值必须明确修正，不能被 JavaScript 舍入后当作合法上限。
+## 受控套图
 
-主控拥有共享 contracts/schema/0190、generation service、原 RPC 接入、配置 service、文档、整合、资源生命周期及串行验收。前端 lane 只拥有新单张面板/client/CSS与 workspace 窄挂载；后端 lane 只拥有独立报价预算 helper、Worker 的新准入 helper及 processor/run 接入；测试审查 lane 只拥有新 API fixture/integration/browser 测试。三 lane 不启动资源或执行测试。主控串行验证和清理本片精确自有目录，不触碰历史896冻结边界、并行计费临时目录、33业务备份及原日用进程。
+销售方案的视觉交付保留四槽：图稿、场景、细节、定制说明。每槽使用同一单张报价与原键恢复机制。固定槽项目映射、商品方案版本、真实非AI样品、模型、尺寸、质量、背景、单次上限和整组预算；其余三槽额外固定同组已经人工审核的唯一图稿。
 
-验收必须覆盖关闭零执行、报价缺失和过期、同键并发和失回执、未知外部结果不重发、当前撤权/跨人跨租户/参考变化、真实私有产物及费用保留；浏览器覆盖本人表单、原键恢复和桌面/窄屏。外部模型只用明确隔离传输，不能将模拟调用计为真实付费验收。完整平台和其他四类 C06 恢复继续，单片通过不代表项目、CI或正式发布完成。
+新增REST入口位于`v1/sales-plans/:id/launch/visuals/:groupId`：`POST images/prepare|commit|cancel|abandon`，`GET images`，`GET images/by-request/:requestId`及只读的`POST prepare-original`。共享请求在`catalog/product-visual-generation`。成功回执带当前context authority，个人恢复索引只返回本人原记录。
+
+套图报价包含完整`visualDelivery`，输入指纹覆盖`{input, visualDelivery}`。提交重新核对来源与额度，Worker也核对真实槽项目及已审图稿。每槽最多四个真实尝试，每人最多四个排队或运行的图片任务；预算按原账本的实际预留和记账累计，不能用单次上限伪装实际费用。
+
+原件检查只读取实际原资产和技术信息。页面可直达该槽的“素材与审核”，由运营明确送审；收集结果不会替付费任务自动提交方案或批准图稿。
+
+隔离API套件为`studio-paid-image-integration`、`studio-visual-paid-image-integration`及保留历史的`studio-paid-image-legacy-regression`。浏览器套件`studio-paid-image-browser`使用固定编译候选和一次性OIDC/数据库/存储/Redis，注入的受控模型不产生真实付费。
+
+旧创作权限和进程恢复可通过`pnpm test:e2e:order-daily --suite=creative-owner-legacy-regression --cache=false`定向检查两个原集成文件，完整CI仍覆盖它们。图片进程恢复必须由真实报价和明确确认创建原任务，再使用仅限本地端点的合成服务验证未知回执、原费用、真实进程中断和撤权。图片准入不能使旧视频恢复轮询；已提交的旧视频保留原任务、回执和账本不变。

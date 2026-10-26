@@ -1,49 +1,35 @@
-# 创作原响应安全采用
+# 原响应的独立本地采用
 
-2026-10-24 · PRD1.1.126 · a71c9e42 · R01/R08/R13/R18/R39 · B18/B28/B32 · C06
+原执行已经收到并保存可信响应，后续本地保存失败时，运营可在任务历史中核对原归档并明确采用。此流程读取原任务的加密响应，不再次调用模型，不改写原任务的终态、服务商回执、费用或预算账本。
 
-首个拥有者已通过24项真实采用API检查、23项既有素材回归与3个编译个人页面场景，候选缩略图实际字节已验，本批自有输出清理及独立查无通过，尚未采用到日用。当前日用仍是已验证的1.1.125、schema188、4052源630fdef0/Web052e/Studio adapter2.7.0，普通Worker与真实付费关闭。继续复用 Infinite Canvas、PostgreSQL/Drizzle、既有加密vault、私有对象存储、Sharp和ClamAV，不增加执行框架或外部依赖。
+## 覆盖范围
 
-## 完整目标与首个拥有者
+| 原业务任务 | 实际采用结果 | 后续仍须完成 |
+| --- | --- | --- |
+| 创意候选 | 原图片及真实候选关联 | 权利与方案审核 |
+| 规格适配 | 原画幅文件及对应规格关联 | 制作检查和人工审核 |
+| 扩图子任务 | 原扩图文件及派生关系 | 父任务的本地裁切适配，不冒认为父任务完成 |
+| 模板编译 | 实际背景、前景、预览、清单及可选蒙版 | 明确人工确认及资产审核，之后才能进入模板包 |
+| 效果图 | 原套图文件及真实输出关联 | 人工审核后再使用 |
+| Studio图片 | 原图片、个人素材条目与修订 | 明确原件送审和业务审核；文本及视频采用不在本次范围 |
 
-C06最终须覆盖模型超时、响应存储失败、原响应导入和人工接管，且五类creative execution各由真实业务拥有者验收。首片先接通creative_candidate/generate的已登记加密原响应，形成generated且unverified的候选，继续原选稿、规格适配及人工审核。原执行failed/uncertain、费用、预算、原提交、attempt/dispatch、归档和历史均不重写。不自动选稿、批准或放行生产。
+所有新登记资产在采用时均为`unverified`，独立回执明确`review_required`。来源授权、许可到期及派生关系从原输入继承，不能统一改成自有或纯AI资产。模板确认仅在明确的DesignReview人工动作中，对当前原始PSD、完整编译证据、SSIM、清单、固定审核指纹及每项AssetWrite核对后，原子批准这组编译文件并写确认记录；普通渲染和模板包入口继续要求已批准文件。
 
-其他四类拥有者、仅有receipt或渠道原文而缺可信归档的导入、外部原请求查询及跨申请人接管仍是明确后续缺口。客户端任意CreativeResponse、proofChecksum、补造HTTP200/deployment/maxOutputBytes都不是可信响应。未实现类型明确拒绝，不以回调替身或候选正例代替全部C06。
+## 读写流程
 
-## 共享接口
+1. 读取当前会员及原捕获权限，按真实业务父对象锁定并固定原输入、规则和方法、原响应地址、加密及明文校验、原回执和微秒时间。
+2. 在私有quarantine域有界读取，核对加密SHA、原租户/任务/输入，使用原加密域解密；严格解析实际响应、完整解码文件并逐份安全扫描。
+3. 保存不可变的本人原请求、有限本地处理租约、实际产物计划与上传意图，再写入私有authorized域。每份原字节读回校验后，在同一个租户事务中重新核对来源和租约、登记资产、更新真实业务owner并写独立采用回执。
+4. 失回执先按原编号查询；未知PUT保留原处理归属，不能仅凭租约过期推断远端已经停止。已明确静止的失败准备可以有限重试或取消，取消只清理其精确未登记产物及所有对象版本，不删除原归档或业务资产。
 
-契约位于`@yummyai/contracts/harness/creative-response-adoption`。同源BFF沿`/api/creative-executions`转发原个人身份，不接收tenant或凭据。
+`creative_response_adoptions`保留候选v1协议；`creative_owner_response_adoptions`为其余四类owner保存独立事实，两个协议不混写。数据库强制RLS、原键唯一、有限状态转换、不可变来源及意图、同事务资产出生和真实owner/角色绑定。采用事实在租户内可供已有资源权限下的后续审核核对；个人恢复API额外限制原申请人。
 
-| 接口 | 行为 |
-| --- | --- |
-| GET `/:executionId/response-adoption` | 当前原候选与归档元数据、固定basis、采用阻断原因、本人原请求索引；无写入 |
-| GET `/:executionId/response-adoption/preview?basis=…` | 有界读取原图 实际解码扫描并复核权限 返回basis 原响应摘要与实际图片字节摘要；无写入 |
-| POST `/:executionId/response-adoptions` | 严格正文requestId、expectedBasis、acknowledgeReviewRequired=true；明确请求原响应采用 |
-| GET `/:executionId/response-adoptions/by-request/:requestId` | 只读找回原采用请求、状态和原回执；missing不能证明未派发，不自动POST或换键 |
-| POST `/:executionId/response-adoptions/:adoptionId/cancel` | 明确放弃未提交的本地处理；活跃处理不抢占，已提交回执不撤销 |
+## API与页面
 
-每个execution只能对应一个独立采用事实，同租户同申请人requestId唯一。重复同键同正文复用；换人、换执行、换完整正文冲突。跨刷新先读服务端本人索引和精确原键，成功回执不依赖归档永久保留。
+候选入口为`v1/creative-executions/:id/response-adoption`和`response-adoptions`。其余owner入口为同级`owner-response-adoption`和`owner-response-adoptions`。均提供工作区、`preview?basis=`、明确采用、`by-request/:requestId`只读恢复及`:adoptionId/cancel`。新owner取消需要完整原command；候选v1取消保持兼容。
 
-候选图读取复用现有AssetsController，并在原`/assets`之外提供`/v1/assets`明确别名。个人页面只调用`POST /v1/assets/:id/read-url`，仍要求AssetRead、当前资产拥有范围、authorized域及短期签名；原控制器权限、RLS和审计完全复用。不能为兼容旧地址放宽个人传输的`/v1/`边界。每份素材失败独立呈现固定原因，图片过期或加载失败可只读重取，不清空整批或以正常占位图掩盖缺图。
+预览只返回有界图片原字节，并带basis、原响应及实际图片SHA头；API与Web BFF均验证本人OIDC/context authority并使用private no-store。退出、CLEAR或当前身份变化后，迟到私有内容不进入页面；未知结果不自动重POST。采用后任务历史仍可核对原执行与独立结果，当前列表刷新显示真实owner产物。
 
-## 三层与并发
+已提交的采用凭证在原归档按保留期清理后仍可验证。长期证据绑定不可变的原提交字段、独立回执、当前来源和实际资产，不能把允许更新的归档清理时间当作永久业务指纹。过期或已清理的归档不能开始新的采用。
 
-数据层拟新增0189独立采用表，强制RLS及非owner应用角色，保存原请求、basis、原source/receipt/密文与正文摘要、有限本地尝试、租约和不可变回执。旧0188及更早迁移字节不改，升级只在一次性188副本先验证；日用不得连接未配对189开发源。
-
-Harness层把采用作为不调用模型的本地受控命令：准备原请求、bounded归档读取、密文校验和解密、完整原envelope/receipt匹配、严格POD解码、实际图片解码与扫描、固定产物上传/回读、最终owner事务和独立回执。原归档意图不证明对象存在，任何失败均不能伪装成功。I/O前后及最终提交复核原权限上限和当前逐权限范围、原来源版本/权利、原方法、原候选未采用以及父取消/归档。原执行锁→实际父项→条目/候选→资产，避免与现operator和取消反向锁。
-
-Agent层只呈现证据与明确操作，不自动重发、切换模型、增加预算或制造批准。页内关闭、刷新、重登及请求回执丢失优先只读恢复；过期、缺失、撤权和暂时失败分别显示。HTTP成功后仍校验完整契约、原execution/request/basis，不能只看status。
-
-本地处理有有限尝试和数据库时钟租约；失效旧处理器不得提交。失败产物使用本采用ID专属内容寻址位置并保留准确manifest，已登记业务资产与孤立中间物区分；正式清理只能处理本采用精确未登记对象，保留原归档和已提交结果。
-
-租约过期不证明旧上传已经停止。首片只允许明确释放的prepared原请求继续本地有限尝试；processing即使过期仍只读核对，不盲目重领或取消。已派发PUT发生传输错误时，须以实际对象回读确证原字节；不能确证则保留processing及原错误，不能把一次HEAD404当作上传终止。跨进程崩溃或远端写入长期不明的安全接管和自动孤物过期维护仍是C06后续缺口。取消后精确清理失败保留pending，恢复当前写权限后可按同一取消请求再核对和清理。
-
-## 文件分工与验收
-
-主控独占共享contracts、DB/schema/迁移、主service/controller、BFF接线、共享codec与进度聚合、runner注册、状态和PRD、构建、服务与资源生命周期。前端负责共用执行历史内的采用面板/client/intent/CSS；后端子Agent仅负责独立原归档验证helper及其纯测试；QA负责独立integration/fixture、guard、client竞态与编译个人页面。
-
-验证必须使用真实候选拥有者、PostgreSQL/RLS、私有存储及ClamAV。failed/uncertain、原字节和费用保持、损坏/过期/清除、跨租户/撤权/换源、I/O中取消、并发幂等、真实提交后失ACK只读恢复、失败产物归属和真正188升级分别留证。模型调用计数器任何调用即失败；不启动普通Worker。不重复无变化的旧全量套件。
-
-页面按1440/390核对真实原响应和独立回执、待审核语义、刷新恢复与退出后的迟到正文。检查后删除本片raw日志、截图、trace、测试下载及可识别缓存和隔离资源，保留源码、简明结论、业务备份和恢复记录。896历史冻结边界和并行AI计费任务路径均不重试。
-
-当前执行状态见[本片进度](../project-control/CREATIVE_RESPONSE_ADOPTION_PROGRESS_20261024.md)和[state.json](../project-control/state.json)。
+隔离API分别使用`creative-response-adoption-integration`与`creative-owner-response-adoption-integration`；正常、未知、撤权、来源变化、扫描失败及SQL负例只在专用一次性资源上运行。编译页面使用`creative-response-adoption-browser`，真实付费和普通Worker始终关闭。

@@ -8,6 +8,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { DATABASE_CONNECTION, MODEL_SECRET_VAULT } from "../platform.tokens.js";
 import { discoverProviderModels, modelEndpoint } from "./model-catalogue.js";
 import { configuredAssistModels } from "./configured-assist-models.js";
+import { currentDesignAuthority } from "../design/design-access.js";
 import { modelConfigurationRevision } from "./model-configuration-revision.js";
 
 const studioTypes = ["studio_image", "studio_video", "studio_text"];
@@ -29,6 +30,18 @@ export class ModelConfigurationService {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`model-configuration:${context.tenantId}`}, 0))`);
       if (input.operation === "channel.save") await this.saveChannel(tx, context, input);
       else if (input.operation === "channel.remove") await this.removeChannel(tx, context, input);
+      else if (input.operation === "studio.image-pricing.save") {
+        await currentDesignAuthority(tx, context, [Permission.ModelConfigure]);
+        const current = (await this.snapshot(tx, context)).channels.find(channel => channel.id === input.channelId);
+        if (!current || current.status !== "enabled") throw new NotFoundException("模型渠道不存在或已停用");
+        if (current.revision !== input.revision) throw new ConflictException("模型配置已被修改，请刷新配置后重试");
+        const [route] = await tx.select().from(modelRoutes).where(and(eq(modelRoutes.id, input.modelId),
+          eq(modelRoutes.taskType, "studio_image"), eq(modelRoutes.status, "enabled")));
+        if (!route || route.targets.length !== 1 || route.targets[0]!.providerConfigId !== current.id)
+          throw new NotFoundException("此渠道中没有可配置的图片模型");
+        await tx.update(modelRoutes).set({ targets: [{ ...route.targets[0]!, imagePricing: input.pricing }], updatedAt: sql`clock_timestamp()` })
+          .where(eq(modelRoutes.id, route.id));
+      }
       else if (input.operation === "model.remove") {
         const current = (await this.snapshot(tx, context)).channels.find(channel => channel.id === input.channelId);
         if (!current) throw new NotFoundException("模型渠道不存在");
@@ -66,7 +79,8 @@ export class ModelConfigurationService {
       const owned = related.filter(route => route.targets.length === 1 && route.status === "enabled");
       return { ...provider, baseUrl: provider.baseUrl ?? "https://api.openai.com/v1", status: provider.status as "enabled" | "disabled", hasCredential: true,
         revision: modelConfigurationRevision(provider, routes),
-        models: owned.filter(route => studioTypes.includes(route.taskType)).map(route => ({ id: route.id, label: route.modelKey, name: route.targets[0]!.providerModel, capability: route.taskType.slice(7) as "image" | "video" | "text" })),
+        models: owned.filter(route => studioTypes.includes(route.taskType)).map(route => ({ id: route.id, label: route.modelKey, name: route.targets[0]!.providerModel, capability: route.taskType.slice(7) as "image" | "video" | "text",
+          ...(route.taskType === "studio_image" && route.targets[0]!.imagePricing ? { imagePricing: route.targets[0]!.imagePricing } : {}) })),
         analysisModels: owned.filter(route => route.taskType === "studio_analysis").map(route => ({ id: route.id, label: route.modelKey, name: route.targets[0]!.providerModel })),
         dependentRoutes: related.filter(route => route.status === "enabled" && (route.targets.length !== 1 || ![...studioTypes, "studio_analysis"].includes(route.taskType))).map(route => ({ id: route.id, label: route.modelKey })),
       };

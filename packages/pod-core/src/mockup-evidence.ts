@@ -1,5 +1,6 @@
 import type { TenantContext } from "@yummyai/contracts";
-import { creativeExecutions, creativeExecutionChecksum, mockupBatchItems, mockupBatches, mockupTemplateSlots, type mockupBatchOutputs, type TenantTransaction } from "@yummyai/database";
+import { assetFiles, creativeExecutions, creativeExecutionChecksum, creativeOwnerResponseAdoptions, mockupBatchItems, mockupBatches, mockupTemplateSlots, type mockupBatchOutputs, type TenantTransaction } from "@yummyai/database";
+import { CreativeOwnerResponseAdoptionReceiptSchema } from "@yummyai/contracts/harness/creative-owner-response-adoption";
 import { requireMockupAsset } from "@yummyai/catalog-core";
 import { and, eq } from "drizzle-orm";
 import { readCreativeExecutionSource, type CreativeOperation } from "./creative-execution-input.js";
@@ -14,7 +15,39 @@ export async function requireMockupCompletionEvidence(tx: TenantTransaction, aut
     eq(owner, operation.ownerId), eq(creativeExecutions.stepKey, operation.stepKey))).for("share");
   if (!execution && allowLegacy && operation.kind === "template_compile") return "legacy_compilation" as const;
   const stop = () => new PodOwnerError("MOCKUP_ORIGINAL_COMPLETION_REQUIRED", 409, "缺少当前原执行的完整交接证据 请驳回旧结果后重新渲染");
-  if (!execution || execution.phase !== "completed" || !execution.completionEvidence || !execution.completionChecksum) throw stop();
+  if (!execution) throw stop();
+  if (["failed", "uncertain"].includes(execution.phase)) {
+    const [adoption] = await tx.select().from(creativeOwnerResponseAdoptions).where(and(
+      eq(creativeOwnerResponseAdoptions.executionId, execution.id), eq(creativeOwnerResponseAdoptions.status, "committed")));
+    const parsed = CreativeOwnerResponseAdoptionReceiptSchema.safeParse(adoption?.receipt);
+    const checksum = (value: unknown) => creativeExecutionChecksum(JSON.parse(JSON.stringify(value)));
+    if (!adoption || !parsed.success || !adoption.ownerReceipt || !adoption.artifactIntents || !adoption.planPin
+      || execution.completionEvidence || execution.completionChecksum || adoption.requestedBy !== execution.requestedBy
+      || adoption.sourcePin.executionChecksum !== checksum({ ...execution, updatedAt: null, responsePurgedAt: null }) || adoption.expectedBasis !== checksum(adoption.sourcePin)
+      || adoption.requestChecksum !== checksum(adoption.request)) throw stop();
+    const receipt = parsed.data, { checksum: ownerChecksum, ...owner } = adoption.ownerReceipt;
+    if (ownerChecksum !== checksum(owner) || ownerChecksum !== receipt.ownerReceiptChecksum || receipt.id !== adoption.id
+      || receipt.executionId !== execution.id || receipt.kind !== operation.kind || receipt.ownerId !== operation.ownerId
+      || receipt.stepKey !== operation.stepKey || receipt.originalPhase !== execution.phase
+      || receipt.inputFingerprint !== execution.inputFingerprint || receipt.responseChecksum !== execution.responseChecksum
+      || receipt.encryptedChecksum !== execution.encryptedChecksum || receipt.basis !== adoption.expectedBasis
+      || owner.basisChecksum !== adoption.planPin.checksum || receipt.artifacts.length !== adoption.artifactIntents.length) throw stop();
+    const source = await readCreativeExecutionSource(tx, authority, operation);
+    if (creativeOriginalFingerprint(operation, source, execution) !== execution.inputFingerprint) throw stop();
+    for (const artifact of receipt.artifacts) {
+      const intent = adoption.artifactIntents.find(value => value.role === artifact.role);
+      const [file] = await tx.select().from(assetFiles).where(eq(assetFiles.id, artifact.assetId)).for("share");
+      if (!intent || intent.assetId !== artifact.assetId || intent.checksumSha256 !== artifact.checksumSha256
+        || !file || file.deletedAt || file.version !== artifact.version || file.checksumSha256 !== artifact.checksumSha256
+        || file.objectKey !== intent.objectKey || file.mediaType !== artifact.mediaType || file.byteSize !== artifact.byteSize
+        || checksum(file.rightsMetadata.creativeResponseAdoption) !== checksum({ adoptionId: adoption.id, executionId: execution.id,
+          ownerKind: operation.kind, ownerId: operation.ownerId, basisChecksum: adoption.planPin.checksum, role: artifact.role })) throw stop();
+    }
+    if (assets.some(asset => !receipt.artifacts.some(pin => pin.assetId === asset.id && pin.version === asset.version && pin.checksumSha256 === asset.checksumSha256))
+      || operation.kind === "mockup_render" && (assets.length !== 1 || receipt.artifacts.length !== 1)) throw stop();
+    return "adopted_original_response" as const;
+  }
+  if (execution.phase !== "completed" || !execution.completionEvidence || !execution.completionChecksum) throw stop();
   const complete = execution.completionEvidence;
   if (complete.executionId !== execution.id || complete.inputFingerprint !== execution.inputFingerprint
     || creativeExecutionChecksum(complete) !== execution.completionChecksum) throw stop();

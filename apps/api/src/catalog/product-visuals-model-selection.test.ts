@@ -1,57 +1,70 @@
-import { ConflictException } from "@nestjs/common";
-import { describe, expect, it, vi } from "vitest";
-import { StudioGenerateRequestSchema, StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { ForbiddenError, Permission } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
+import { StudioGenerateRequestSchema } from "@yummyai/contracts/pod/creative-studio";
+import { describe, expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 import { ProductVisualsService } from "./product-visuals.service.js";
 
 const id = (last: string) => `019a0000-0000-7000-8000-${last.padStart(12, "0")}`;
-const projectId = id("1"), modelId = id("2"), requestId = id("3"), oldRevision = "a".repeat(64), newRevision = "b".repeat(64);
-const context = { tenantId: id("4"), userId: id("5"), permissions: [], dataScope: "self", teamIds: [] } as TenantContext;
+const modelId = id("2"), requestId = id("3"), planId = id("9"), groupId = id("10");
+const required = [Permission.ProductRead, Permission.DesignRead, Permission.AssetRead, Permission.DesignWrite] as const;
+const context: TenantContext = { tenantId: id("4"), userId: id("5"), permissions: required, dataScope: "self", teamIds: [] };
 function fixture(slotKey: "artwork" | "scene" = "artwork") {
-  const studio = { originalInput: vi.fn().mockResolvedValue(null), models: vi.fn().mockResolvedValue([
-    { id: id("6"), capability: "image", selectionRevision: "c".repeat(64) },
-    { id: modelId, capability: "image", selectionRevision: newRevision },
-  ]), create: vi.fn().mockResolvedValue({ id: id("7"), status: "queued" }) };
-  const assets = { invoke: vi.fn() }, workflow = { results: vi.fn() };
-  const service = new ProductVisualsService({} as never, {} as never, {} as never, {} as never, workflow as never, studio as never, assets as never, {} as never);
-  vi.spyOn(service as unknown as { group: (...args: unknown[]) => Promise<unknown[]> }, "group").mockResolvedValue([
-    { id: projectId, canvasWorkflow: { visualDelivery: { slotKey } } },
-  ]);
+  const databaseAccess = vi.fn(() => { throw new Error("legacy_visual_database_access_forbidden"); });
+  const database = { get db() { return databaseAccess(); }, get client() { return databaseAccess(); } };
+  const plans = { assistBasis: vi.fn() }, workflow = { results: vi.fn() }, assets = { invoke: vi.fn() };
+  const studio = { originalInput: vi.fn().mockResolvedValue(null), models: vi.fn(), create: vi.fn() };
+  const storage = { readPrivate: vi.fn(), putPrivate: vi.fn() }, audit = { record: vi.fn() };
+  const service = new ProductVisualsService(database as never, storage as never, plans as never, {} as never,
+    workflow as never, studio as never, assets as never, audit as never);
+  const group = vi.spyOn(service as unknown as { group: (...args: unknown[]) => Promise<unknown[]> }, "group");
   const input = { requestId, modelId, slotKey, ...(slotKey === "scene" ? { artworkVersionId: id("8") } : {}) };
-  return { service, studio, assets, workflow, input };
+  const sideEffects = { databaseAccess, plan: plans.assistBasis, group, originalRead: studio.originalInput, models: studio.models,
+    create: studio.create, workflow: workflow.results, assets: assets.invoke, storageRead: storage.readPrivate,
+    storageWrite: storage.putPrivate, audit: audit.record };
+  return { service, studio, input, sideEffects };
+}
+function noSideEffects(f: ReturnType<typeof fixture>) {
+  for (const [name, spy] of Object.entries(f.sideEffects)) expect(spy, name).not.toHaveBeenCalled();
 }
 
-describe("product visual generation preserves the selected model request", () => {
-  it("uses the exact image route and current revision for a new request", async () => {
-    const f = fixture(); await f.service.generate(context, id("9"), "synthetic-group", f.input);
-    expect(f.studio.originalInput).toHaveBeenCalledWith(context, projectId, requestId);
-    expect(f.studio.create).toHaveBeenCalledWith(context, projectId, expect.objectContaining({ modelId, capability: "image", selectionRevision: newRevision }));
-    expect(f.assets.invoke).not.toHaveBeenCalled();
+// Formerly "product visual generation preserves the selected model request".
+// Real quoted model pin/replay is covered by studio-visual-paid-image and
+// studio-paid-image API suites; historical originals by the paid legacy suite.
+// This file only covers the predecessor's paused boundary.
+describe("legacy product visual generation stops before quoted image admission", () => {
+  it.each([
+    { name: "a valid new artwork request", slotKey: "artwork" as const, replay: false },
+    { name: "an original-key artwork replay", slotKey: "artwork" as const, replay: true },
+    { name: "a scene replay with retained artwork references", slotKey: "scene" as const, replay: true },
+  ])("keeps $name paused without reading owners or creating work", async ({ slotKey, replay }) => {
+    const f = fixture(slotKey);
+    if (replay) f.studio.originalInput.mockResolvedValue(StudioGenerateRequestSchema.parse({ requestId, modelId,
+      prompt: "Original fixed input", capability: "image", selectionRevision: "a".repeat(64),
+      ...(slotKey === "scene" ? { referenceKeys: ["retained-reference"] } : {}) }));
+    f.studio.models.mockRejectedValue(new Error("Original catalogue must remain unread"));
+    await expect(f.service.generate(context, planId, groupId, f.input)).rejects.toMatchObject({
+      status: 409, response: { code: "studio_paid_execution_paused" },
+    });
+    noSideEffects(f);
   });
-  it("keeps the original revision on replay even when today's catalogue is unavailable", async () => {
+
+  it.each(required)("rejects missing %s before reading data or validating the request", async permission => {
+    const f = fixture("scene"), missing: TenantContext = { ...context, permissions: required.filter(value => value !== permission) };
+    for (const input of [f.input, { ...f.input, requestId: "invalid-request-id" }]) {
+      const operation = f.service.generate(missing, planId, groupId, input);
+      await expect(operation).rejects.toBeInstanceOf(ForbiddenError);
+      await expect(operation).rejects.toMatchObject({ status: 403, code: "FORBIDDEN", permission, reason: "missing_permission" });
+    }
+    noSideEffects(f);
+  });
+
+  it("rejects malformed input and quote fields on the legacy route without any side effect", async () => {
     const f = fixture();
-    f.studio.originalInput.mockResolvedValue(StudioGenerateRequestSchema.parse({ requestId, modelId, prompt: "Original fixed input", capability: "image", selectionRevision: oldRevision }));
-    f.studio.models.mockRejectedValue(new Error("Channel disabled after original admission"));
-    await f.service.generate(context, id("9"), "synthetic-group", f.input);
-    expect(f.studio.models).not.toHaveBeenCalled();
-    expect(f.studio.create).toHaveBeenCalledWith(context, projectId, expect.objectContaining({ capability: "image", selectionRevision: oldRevision }));
-  });
-  it("replays retained references without writing attachments before the owner compares a changed input", async () => {
-    const f = fixture("scene");
-    f.studio.originalInput.mockResolvedValue(StudioGenerateRequestSchema.parse({ requestId, modelId, prompt: "Original", capability: "image", selectionRevision: oldRevision, referenceKeys: ["retained-reference"] }));
-    f.studio.create.mockRejectedValue(new ConflictException("Changed original input"));
-    await expect(f.service.generate(context, id("9"), "synthetic-group", { ...f.input, prompt: "Changed" })).rejects.toThrow("Changed original input");
-    expect(f.workflow.results).not.toHaveBeenCalled(); expect(f.assets.invoke).not.toHaveBeenCalled(); expect(f.studio.models).not.toHaveBeenCalled();
-    expect(f.studio.create).toHaveBeenCalledWith(context, projectId, expect.objectContaining({ prompt: "Changed", referenceKeys: ["retained-reference"], selectionRevision: oldRevision }));
-  });
-  it("keeps a legacy request read-only rather than inventing a current pin", async () => {
-    const f = fixture(); f.studio.originalInput.mockResolvedValue(StudioGenerateSchema.parse({ requestId, modelId, prompt: "Legacy" }));
-    await expect(f.service.generate(context, id("9"), "synthetic-group", f.input)).rejects.toThrow("原任务未固定图片模型选择版本");
-    expect(f.studio.models).not.toHaveBeenCalled(); expect(f.studio.create).not.toHaveBeenCalled(); expect(f.assets.invoke).not.toHaveBeenCalled();
-  });
-  it("rejects a removed or wrong-purpose new route before any attachment or dispatch", async () => {
-    const f = fixture("scene"); f.studio.models.mockResolvedValue([{ id: modelId, capability: "video", selectionRevision: newRevision }]);
-    await expect(f.service.generate(context, id("9"), "synthetic-group", f.input)).rejects.toThrow("所选图片模型不可用");
-    expect(f.workflow.results).not.toHaveBeenCalled(); expect(f.assets.invoke).not.toHaveBeenCalled(); expect(f.studio.create).not.toHaveBeenCalled();
+    for (const input of [{ ...f.input, requestId: "invalid-request-id" },
+      { ...f.input, quoteHash: "b".repeat(64), confirmed: true }]) {
+      await expect(f.service.generate(context, planId, groupId, input)).rejects.toBeInstanceOf(ZodError);
+    }
+    noSideEffects(f);
   });
 });

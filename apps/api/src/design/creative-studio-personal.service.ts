@@ -10,6 +10,8 @@ import { withTenant, type DatabaseConnection, type TenantTransaction } from "@yu
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { currentCreativeWorkspaceAuthority } from "./canvas-workflow-access.js";
 import { CreativeStudioService } from "./creative-studio.service.js";
+import { currentDesignAuthority } from "./design-access.js";
+import { studioImageAdmission } from "@yummyai/pod-core";
 
 const stamp = (context: TenantContext) => erpSessionAuthority(erpPermissionContext(context));
 const changed = () => new ConflictException({ code: "authority_changed", message: "当前本人权限已变化 请重新核对" });
@@ -30,10 +32,11 @@ export class CreativeStudioPersonalService {
       throw new ForbiddenException({ code: "studio_personal_session_required", message: "需要有效的本人会员会话" });
   }
 
-  private async current(context: TenantContext, scope: string) {
+  private async current(context: TenantContext, scope: string, cancellationOnly = false) {
     this.personal(context);
     return withTenant(this.database.db, context, async tx =>
-      (await currentCreativeWorkspaceAuthority(tx, context, scope)).authority);
+      (await (cancellationOnly ? currentDesignAuthority(tx, context, [Permission.DesignRead, Permission.AssetRead])
+        : currentCreativeWorkspaceAuthority(tx, context, scope))).authority);
   }
 
   private async allowed(tx: TenantTransaction, context: TenantContext, scope: string, extra: readonly PermissionValue[]) {
@@ -64,6 +67,8 @@ export class CreativeStudioPersonalService {
         originalHandoffVersion: 1,
         documentTransferVersion: 1,
         videoDirectoryVersion: 1,
+        paidImageVersion: 1,
+        paidImageAdmission: studioImageAdmission(context.tenantId),
         capabilities: { read: true, save, mediaWrite, review, submit: scope !== "unassigned" && mediaWrite, configure },
         generation: { enabled: false, code: "operator_paused" },
       });
@@ -78,7 +83,8 @@ export class CreativeStudioPersonalService {
     const parsed = StudioPersonalInvokeSchema.safeParse(raw);
     if (!parsed.success) throw new BadRequestException({ code: "studio_personal_input_invalid", message: "创作请求格式无效" });
     const { request, contextAuthority } = parsed.data;
-    const authority = await this.current(context, request.scope);
+    const cancellationOnly = request.operation === "paid.image.abandon";
+    const authority = await this.current(context, request.scope, cancellationOnly);
     if (stamp(authority) !== contextAuthority) throw changed();
     if (request.operation === "result.submit")
       throw new ConflictException({ code: "studio_original_pin_required", message: "送审需要固定原稿版本 请刷新创作工作台后重试" });
@@ -92,7 +98,7 @@ export class CreativeStudioPersonalService {
       version: STUDIO_PERSONAL_VERSION, scope: request.scope, contextAuthority, operation: request.operation, data,
     });
     if (!reply.success) throw invalidReply();
-    if (stamp(await this.current(context, request.scope)) !== contextAuthority) throw changed();
+    if (stamp(await this.current(context, request.scope, cancellationOnly)) !== contextAuthority) throw changed();
     return reply.data;
   }
 }

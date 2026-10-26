@@ -4,10 +4,11 @@ import { Permission } from "@yummyai/authz";
 import { CreateCreativeDesignBatchInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
 import { CANVAS_BRIDGE } from "@yummyai/contracts/pod/canvas-bridge";
 import { StudioGenerateRequestSchema, StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
+import { StudioPaidImageInputSchema } from "@yummyai/contracts/pod/studio-paid-image";
 import type { StudioModel } from "@yummyai/contracts/pod/studio-personal";
 import { assetFiles, canvasPrintSpecVersions, connectDatabase, creativeDesignBatches, creativeDesignBatchItems, creativeDesignCandidates, creativeStudioEntries, creativeStudioGenerations, loadCurrentMembershipContext, migrateDatabase, roles, withTenant } from "@yummyai/database";
 import { createStorageFromEnvironment } from "@yummyai/storage";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
@@ -17,6 +18,7 @@ import { CreativeStudioService } from "./creative-studio.service.js";
 import { DesignService, DrizzleDesignRepository } from "./design.service.js";
 import { PodBatchWorkflowService } from "./pod-batch-workflow.service.js";
 import { StudioGenerationService } from "./studio-generation.service.js";
+import { StudioPaidImageService } from "./studio-paid-image.service.js";
 
 if (process.env.E2E_ISOLATED_DAILY !== "1" || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname) || !/^order-daily-e2e-[a-f0-9]{32}$/.test(process.env.S3_PRIVATE_BUCKET ?? ""))
   throw new Error("Run canvas workflow authority through the disposable acceptance runner");
@@ -282,13 +284,47 @@ describe("canvas workflow authority with real tenant storage", () => {
   it("checks direct generation services against current membership and project write scope", async () => {
     const input = StudioGenerateRequestSchema.parse({ ...generationInput(), modelId: imageModel.id,
       capability: imageModel.capability, selectionRevision: imageModel.selectionRevision });
+    const paidInput = StudioPaidImageInputSchema.parse(input), paid = new StudioPaidImageService(database, generationQueue, bridge);
+    const persisted = () => withTenant(database.db, base, async tx => {
+      const [identity] = await tx.execute<{ role: string }>(sql`select current_user as role`);
+      expect(identity?.role).toBe("yummyai_app");
+      const tables = await tx.execute<{ name: string }>(sql`select c.relname as name from pg_class c
+        join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid
+        where n.nspname='public' and c.relkind in ('r','p') and a.attname='tenant_id' and not a.attisdropped
+          and has_table_privilege(current_user,c.oid,'SELECT') order by c.relname`);
+      expect(tables.map(table => table.name)).toEqual(expect.arrayContaining([
+        "creative_studio_image_requests", "creative_studio_generations", "creative_executions", "ai_budget_ledger", "asset_files", "roles",
+      ]));
+      const rows = [];
+      for (const table of tables) {
+        const [value] = await tx.execute<{ count: number; sha256: string }>(sql`select count(*)::int as count,
+          encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') as sha256
+          from public.${sql.identifier(table.name)} t where t.tenant_id=${tenantId}`);
+        expect(value).toBeDefined();
+        rows.push({ table: table.name, ...value });
+      }
+      return rows;
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+    const writes = vi.spyOn(storage, "putPrivate"), scans = vi.spyOn(scanner, "scan");
     const context = await current(); await grant([]);
+    const revoked = await persisted();
     await expect(realGenerations.models(context)).rejects.toMatchObject({ status: 403 });
     await expect(realGenerations.list(context, "unassigned")).rejects.toMatchObject({ status: 403 });
-    await expect(realGenerations.create(context, "unassigned", input)).rejects.toMatchObject({ status: 403 });
+    // The supported free prepare owner still checks current membership. The
+    // retired create entry is uniformly paused before any authority or I/O.
+    await expect(paid.prepare(context, { scope: "unassigned", input: paidInput })).rejects.toMatchObject({ status: 403 });
+    await expect(realGenerations.create(context, "unassigned", input)).rejects.toMatchObject({ status: 409,
+      response: { code: "studio_paid_execution_paused" } });
+    expect(await persisted()).toEqual(revoked);
     await grant([Permission.DesignWrite, Permission.AssetWrite], "self"); await wide([Permission.DesignRead, Permission.AssetRead]);
-    await expect(realGenerations.create(await current(), otherProject, input)).rejects.toMatchObject({ status: 403 });
+    const scoped = await current(), before = await persisted();
+    await expect(paid.prepare(scoped, { scope: otherProject, input: paidInput })).rejects.toMatchObject({ status: 403 });
+    await expect(realGenerations.create(scoped, otherProject, input)).rejects.toMatchObject({ status: 409,
+      response: { code: "studio_paid_execution_paused" } });
+    expect(await persisted()).toEqual(before);
     expect(generationQueue.enqueue).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
+    expect(scans).not.toHaveBeenCalled();
   });
 
   it("does not return generated bytes after revocation during their read", async () => {
