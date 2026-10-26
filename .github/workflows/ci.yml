@@ -142,7 +142,6 @@ jobs:
         run: env -u CHROME_BIN node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - name: Validate product knowledge and personal Agent on the same candidate
         run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p6-knowledge-agent-browser.mjs
-      - run: pnpm test:integration
       - name: Validate current knowledge evaluation and versioned Agent owners
         shell: bash
         run: |
@@ -153,6 +152,7 @@ jobs:
           for suite in knowledge-evaluation-execution-integration knowledge-benchmark-integration business-benchmark-integration role-benchmark-integration agent-tools-integration agent-native-v4-integration agent-native-v4-late-integration agent-delegation-integration; do
             pnpm test:e2e:order-daily --suite="$suite"
           done
+      - run: pnpm test:integration
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration
       - name: Validate creative original adoption and explicit image quotations
