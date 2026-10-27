@@ -526,7 +526,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
   });
 
-  test("controlled order intake pillow saves the default Agent after selecting the original without internal field names", async ({ page }, testInfo) => {
+  test("controlled order intake pillow saves the default Agent with the native original selected and its configured image field", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     let fixture: OrderIntakePillowFixture | undefined;
     let completed = false;
@@ -537,7 +537,10 @@ test.describe("controlled order intake pillow personal regressions", () => {
       await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
       const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
       await expect(image).toHaveCount(1);
-      await image.getByRole("checkbox").check();
+      await expect(image.getByRole("checkbox")).toBeChecked();
+      const binding = image.getByRole("combobox", { name: "对应图片字段", exact: true });
+      await expect(binding).toHaveValue("buyer_photo");
+      await expect(binding.locator("option:checked")).toHaveText("顾客原图（必填）");
       const check = await previewPillowIntake(page, fixture);
       expect(check.ready, JSON.stringify(check.issues)).toBe(true);
       expect(check.normalizedDraft.designExecutor).toBe("agent");
@@ -596,7 +599,10 @@ test.describe("controlled order intake pillow personal regressions", () => {
       await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
       const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
       await expect(image).toHaveCount(1);
-      await image.getByRole("checkbox").check();
+      await expect(image.getByRole("checkbox")).toBeChecked();
+      const binding = image.getByRole("combobox", { name: "对应图片字段", exact: true });
+      await expect(binding).toHaveValue("buyer_photo");
+      await expect(binding.locator("option:checked")).toHaveText("顾客原图（必填）");
       const blocked = await previewPillowIntake(page, fixture);
       expect(blocked.ready).toBe(false);
       const automatic = blocked.issues.find(issue => issue.code === "automatic_artwork_not_ready");
@@ -604,6 +610,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
       expect(automatic!.message).toMatch(/顾客特殊要求|标准裁切|字体/);
       expect(automatic!.action).toMatch(/人工|美工/);
       expect(blocked.normalizedDraft.designExecutor).toBe("agent");
+      expect(blocked.normalizedDraft.images).toEqual(fixture.initial.draft.images);
       assertSpecialPillowRequirements(blocked.normalizedDraft);
       assertPillowSizePreserved(blocked.normalizedDraft);
       await applyOfferedPillowMatch(page);
@@ -649,6 +656,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
         production: "not_released", editorProjectId: null, shippedQuantity: 0,
       });
       expect(final.draft.designExecutor).toBe("human");
+      expect(final.draft.images).toEqual(fixture.initial.draft.images);
       expect(final.draft.fields.find(field => field.key === "crop_scope")?.value).toBe(manualCrop);
       assertSpecialPillowRequirements(final.draft);
       assertPillowSizePreserved(final.draft);
