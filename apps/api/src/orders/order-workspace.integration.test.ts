@@ -1,7 +1,7 @@
 import { syntheticQualityInspection, syntheticWholeQualityInspection } from "../../../../tools/testing/quality-fixtures.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { ForbiddenError, Permission } from "@yummyai/authz";
 import { SecretVault } from "@yummyai/ai-core";
 import { syntheticShipmentAllocations } from "../../../../tools/testing/shipment-fixtures.js";
@@ -18,6 +18,7 @@ import {
   OrderWorkDetailViewSchema,
   OrderWorkSummariesSchema,
   OrderBulkPreviewSchema,
+  ORDER_WORK_IMAGE_PENDING_USAGE,
   type OrderWorkDetail,
   type OrderWorkActionInput,
 } from "@yummyai/contracts/order/workspace";
@@ -29,6 +30,8 @@ import {
   orderWorkItems,
   orderWorkRevisions,
   orderWorkAssets,
+  orderWorkEvents,
+  orders,
   orderDesignAgentRuns,
   amazonOrderReportVersions,
   productionOrderVersions,
@@ -61,7 +64,7 @@ import type { StudioGateway } from "../../../worker/src/processors/studio-genera
 import { ProductionEditorRenderProcessor } from "../../../worker/src/processors/production-editor.processor.js";
 import { dispatchApprovedProductionRenders } from "../../../worker/src/processors/production-render-dispatcher.js";
 import { AuditService } from "../audit/audit.service.js";
-import { ProductionEditorService } from "../design/production-editor.service.js";
+import { ProductionEditorService, type ProductionEditorScanner } from "../design/production-editor.service.js";
 import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderWorkspaceService } from "./order-workspace.service.js";
@@ -128,6 +131,13 @@ describe("order centers explicit handoff and independent fulfillment", () => {
       if (!result) throw new Error("Synthetic blob missing");
       return result;
     },
+    discardOrderWorkUpload: async (ctx: TenantContext, imageId: string, key: string,
+      options: { assertCurrent: () => Promise<void> }) => {
+      assertAssetAccess(ctx, { id: imageId, tenantId: ctx.tenantId, assetDomain: "order", objectKey: key }, "order");
+      expect(key.split("/")[4]).toMatch(new RegExp(`^${imageId}(?:-preview)?\\.pe$`));
+      await options.assertCurrent();
+      objects.delete(key);
+    },
   } as unknown as Storage;
   const clean = async () => ({
     result: "clean" as const,
@@ -166,9 +176,8 @@ describe("order centers explicit handoff and independent fulfillment", () => {
     { enqueue },
     { scan: clean },
   );
-  const work = new OrderWorkspaceService(database, vault, storage, reports, editor, {
-    scan: clean,
-  });
+  const uploadScanner: ProductionEditorScanner = { scan: clean };
+  const work = new OrderWorkspaceService(database, vault, storage, reports, editor, uploadScanner);
   const factories = new FactoryDirectoryService(database, audit);
   const production = new OrderProductionService(
     database,
@@ -622,6 +631,101 @@ describe("order centers explicit handoff and independent fulfillment", () => {
       await orderGrant();
     }
   });
+  it("selects real buyer originals in the first unsaved detail and summary without saving a draft", async () => {
+    const source = await imported(), detail = await work.detail(context, source.lineId);
+    const originals = detail.report!.files.filter(file => file.role === "buyer_image" && file.originalFileKey && file.mediaType.startsWith("image/"));
+    expect(originals).toHaveLength(1);
+    expect(detail.line.revision).toBe(0);
+    expect(detail.draft.images).toEqual(originals.map(file => ({ origin: "report", key: file.key, usage: "待选择定制字段" })));
+    const summary = OrderWorkSummariesSchema.parse(await work.summaries(context, { ids: [source.lineId] })).items[0]!;
+    expect(summary.images.filter(image => image.kind === "buyer")).toEqual([expect.objectContaining({ selected: true })]);
+    expect(summary.images.filter(image => image.kind === "preview").every(image => !image.selected)).toBe(true);
+    expect(summary.sourceVersionId).toBe(detail.report!.versionId);
+    expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)))).toEqual([]);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("uploads before the first save, binds the private original, and preserves a saved empty selection", async () => {
+    const source = await imported(), initial = await work.detail(context, source.lineId), body = await image(37);
+    const uploaded = OrderWorkDetailViewSchema.parse(await work.upload(context, source.lineId, "fresh-original.png", body));
+    expect(uploaded.line).toMatchObject({ revision: 0, preparation: "pending_review", artwork: "not_pushed", editorProjectId: null });
+    expect(uploaded).toMatchObject({ sourceVersionId: null, sourceReport: null, versions: [], events: [] });
+    expect(uploaded.draft).toEqual(initial.draft);
+    expect(uploaded.assets).toHaveLength(1);
+    expect((await work.image(context, source.lineId, uploaded.assets[0]!.id, true)).body).toEqual(body);
+    const [container] = await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)));
+    expect(container).toMatchObject({ revision: 0, sourceVersionId: null, pushedRevisionId: null, approvedEditorVersionId: null });
+    expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkRevisions).where(eq(orderWorkRevisions.workItemId, source.lineId)))).toEqual([]);
+    const initialSummary = OrderWorkSummariesSchema.parse(await work.summaries(context, { ids: [source.lineId] })).items[0]!;
+    expect(initialSummary.sourceVersionId).toBe(initial.report!.versionId);
+    expect(initialSummary.images.some(image => image.kind === "buyer" && image.selected)).toBe(true);
+    const basis = await matchingBasis(source.lineId, true);
+    const saved = await work.save(context, source.lineId, { expectedRevision: 0, expectedProjectionVersion: uploaded.line.projectionVersion,
+      expectedSourceVersionId: uploaded.report!.versionId, draft: { ...uploaded.draft, ...basis, printProfileVersionId: profileVersionId,
+        designExecutor: "human", images: [{ origin: "upload", key: uploaded.assets[0]!.id, usage: "front_photo" }] },
+      status: "needs_information", reason: "Synthetic explicit image-field binding", idempotencyKey: randomUUID() });
+    expect(saved.draft.images).toEqual([{ origin: "upload", key: uploaded.assets[0]!.id, usage: "front_photo" }]);
+    const empty = await work.save(context, source.lineId, { expectedRevision: saved.line.revision,
+      expectedProjectionVersion: saved.line.projectionVersion, expectedSourceVersionId: saved.report!.versionId,
+      draft: { ...saved.draft, images: [] }, status: "needs_information", reason: "Synthetic explicit deselection", idempotencyKey: randomUUID() });
+    expect(empty.draft.images).toEqual([]);
+    expect((await work.detail(context, source.lineId)).draft.images).toEqual([]);
+    expect((await work.summaries(context, { ids: [source.lineId] })).items[0]!.images.filter(image => image.kind === "buyer").every(image => !image.selected)).toBe(true);
+    expect((await work.image(context, source.lineId, uploaded.assets[0]!.id, true)).body).toEqual(body);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsaved cross-tenant, missing-PII and inactive-order uploads before scanning or storage", async () => {
+    const source = await imported(), body = await image(31);
+    const put = vi.spyOn(storage, "putPrivate"), scan = vi.spyOn(uploadScanner, "scan");
+    try {
+      await expect(work.upload(other, source.lineId, "forbidden.png", body)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(work.upload({ ...context, permissions: context.permissions.filter(permission => permission !== Permission.OrderPiiRead) }, source.lineId, "forbidden.png", body)).rejects.toBeInstanceOf(ForbiddenError);
+      await withTenant(database.db, context, tx => tx.update(orders).set({ sideState: "cancelled" }).where(eq(orders.id, source.report.orderId)));
+      await expect(work.upload(context, source.lineId, "cancelled.png", body)).rejects.toBeInstanceOf(ConflictException);
+      expect(put).not.toHaveBeenCalled(); expect(scan).not.toHaveBeenCalled();
+      expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)))).toEqual([]);
+    } finally { put.mockRestore(); scan.mockRestore(); }
+  });
+
+  it.each(["held", "pushed", "archived", "expired"] as const)("rejects %s upload containers without replacing the original private asset", async state => {
+    const source = await imported(), original = await image(33), uploaded = await work.upload(context, source.lineId, "retained.png", original);
+    const [asset] = await withTenant(database.db, context, tx => tx.select().from(orderWorkAssets).where(eq(orderWorkAssets.workItemId, source.lineId)));
+    const retained = Uint8Array.from(objects.get(asset!.objectKey)!);
+    await withTenant(database.db, context, tx => tx.update(orderWorkItems).set(state === "held" ? { held: true }
+      : state === "pushed" ? { preparation: "pushed" } : state === "archived" ? { archivedAt: new Date() } : { expiresAt: new Date(0) })
+      .where(eq(orderWorkItems.id, source.lineId)));
+    const put = vi.spyOn(storage, "putPrivate"), scan = vi.spyOn(uploadScanner, "scan");
+    try {
+      await expect(work.upload(context, source.lineId, "blocked.png", await image(34))).rejects.toBeInstanceOf(state === "expired" ? NotFoundException : ConflictException);
+      expect(put).not.toHaveBeenCalled(); expect(scan).not.toHaveBeenCalled();
+      expect(objects.get(asset!.objectKey)).toEqual(retained);
+      expect(uploaded.line.revision).toBe(0);
+    } finally { put.mockRestore(); scan.mockRestore(); }
+  });
+
+  it("leaves no container on scanner rejection and cleans only a failed upload's exact private objects", async () => {
+    const source = await imported(), scan = vi.spyOn(uploadScanner, "scan").mockResolvedValueOnce({
+      result: "infected", engine: "synthetic", signatureVersion: "fixture-v1", scannedAt: new Date().toISOString(),
+    });
+    try {
+      await expect(work.upload(context, source.lineId, "unsafe.png", await image(35))).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)))).toEqual([]);
+    } finally { scan.mockRestore(); }
+    const baseline = new Set(objects.keys()), originalPut = storage.putPrivate.bind(storage), failure = new Error("Synthetic storage ACK lost");
+    const put = vi.spyOn(storage, "putPrivate").mockImplementationOnce(originalPut).mockImplementationOnce(async (actor, input) => {
+      await originalPut(actor, input); throw failure;
+    });
+    try {
+      await expect(work.upload(context, source.lineId, "not-registered.png", await image(36))).rejects.toBe(failure);
+      expect(new Set(objects.keys())).toEqual(baseline);
+      expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkAssets).where(eq(orderWorkAssets.workItemId, source.lineId)))).toEqual([]);
+      expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkRevisions).where(eq(orderWorkRevisions.workItemId, source.lineId)))).toEqual([]);
+      expect(await withTenant(database.db, context, tx => tx.select().from(orderWorkEvents).where(eq(orderWorkEvents.workItemId, source.lineId)))).toEqual([]);
+    } finally { put.mockRestore(); }
+  });
   it.each([Permission.OrderRead, Permission.OrderPiiRead])(
     "current order authority rechecks %s after private file I/O",
     async (permission) => {
@@ -956,7 +1060,9 @@ describe("order centers explicit handoff and independent fulfillment", () => {
     expect((await work.list(context, { module: "artwork", q: source.externalOrderId })).total).toBe(
       0,
     );
-    expect(detail.draft.images).toEqual([]);
+    const original = detail.report!.files.find(file => file.role === "buyer_image" && file.originalFileKey)!;
+    expect(original).toBeDefined();
+    expect(detail.draft.images).toEqual([{ origin: "report", key: original.key, usage: ORDER_WORK_IMAGE_PENDING_USAGE }]);
     detail = await save(detail);
     await expect(save({ ...detail, line: { ...detail.line, revision: 0 } })).rejects.toBeInstanceOf(
       ConflictException,
