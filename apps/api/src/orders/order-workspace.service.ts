@@ -15,7 +15,7 @@ import { createEntityId, type TenantContext, type AmazonReportDetailView } from 
 import { DEFAULT_ORDER_DESIGN_EXECUTOR, ArchiveOrderWorkInputSchema, RecordPlatformDeadlineInputSchema, orderDesignExecutor, OrderWorkActionInputSchema, OrderWorkDraftSchema, OrderWorkQuerySchema, OrderWorkSelectionInputSchema, OrderBulkPreviewInputSchema, type OrderWorkSummary, type OrderBulkPreview, PrintProfileInputSchema, SaveOrderWorkDraftInputSchema, CheckOrderIntakeInputSchema, type OrderIntakeCheck, type OrderWorkDraft, type OrderWorkDetail, type PrintProfileView, type OrderTemplatePlan } from "@yummyai/contracts/order/workspace";
 import { orderWorkItems as items, orderWorkRevisions as revisions, orderWorkAssets as assets, orderWorkEvents as events, printProfiles, artworkMasters, printProfileVersions, orderLines, orders, orderProtectedDetails, users, amazonOrderReportLines, productionOrders, productionEditorProjects, orderDesignAgentRuns, salesRecipeVersions, productSpecificationVersions, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { decryptProductionBytes, encryptProductionBytes } from "@yummyai/production-editor";
-import type { Storage } from "@yummyai/storage";
+import { objectKey, type Storage } from "@yummyai/storage";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { OrderReviewQuerySchema } from "@yummyai/contracts/order/review";
 import { AuditService } from "../audit/audit.service.js";
@@ -30,6 +30,7 @@ import { DATABASE_CONNECTION, ORDER_PII_VAULT, PRIVATE_STORAGE } from "../platfo
 import { ProductionEditorService, ProductionEditorScanner } from "../design/production-editor.service.js";
 import { AmazonOrderReportService, type OrderSummaryReportSelection } from "./amazon-order-report.service.js";
 import { hideOrderSummary, orderSummaryAvailability } from "./order-summary-source.js";
+import { defaultOrderWorkImages } from "./order-work-image-selection.js";
 import { workFilter, workProjection, operatorTodo, operatorWaiting, parseWorkLine as parseLine } from "./order-workspace-query.js";
 import { OrderQueueStageSchema, OrderLifecycleStatusSchema, type OrderQueueCounts } from "@yummyai/contracts/order/workbench";
 
@@ -489,7 +490,7 @@ export class OrderWorkspaceService {
         )})`,
       );
       // No private key or encrypted draft may escape this discovery transaction.
-      const work = await tx.select({ id: items.id, reportLineId: items.reportLineId, sourceVersionId: items.sourceVersionId,
+      const work = await tx.select({ id: items.id, revision: items.revision, reportLineId: items.reportLineId, sourceVersionId: items.sourceVersionId,
         expiresAt: items.expiresAt, archivedAt: items.archivedAt, retained: sql<boolean>`${items.encryptedDataKey} is not null` })
         .from(items).where(inArray(items.id, ids));
       const lines = rows.map(parseLine), orderIds = [...new Set(lines.map(line => line.orderId))];
@@ -605,6 +606,7 @@ export class OrderWorkspaceService {
             if (!artworks.has(draft.artworkVersionId))
               artworks.set(draft.artworkVersionId, await readArtwork(tx, draft.artworkVersionId));
             const artwork = artworks.get(draft.artworkVersionId)!;
+            if (!revision) draft.images = defaultOrderWorkImages(report?.files ?? [], artwork.customization);
             summary.printSku = artwork.code;
             if (artwork.assetId)
               summary.images.push({
@@ -992,6 +994,8 @@ export class OrderWorkspaceService {
       const profile = draft.printProfileVersionId
         ? await this.profile(context, draft.printProfileVersionId)
         : null;
+      if (!version) draft.images = defaultOrderWorkImages(report?.files ?? [],
+        catalog.artworks.find(artwork => artwork.id === draft.artworkVersionId)?.customization);
       await this.assertSourceUnchanged(context, id, state.work, version?.id);
       return {
         catalog,
@@ -2231,8 +2235,9 @@ export class OrderWorkspaceService {
     await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead], async () => undefined);
     if (!bytes.byteLength || bytes.byteLength > 32 * 1024 * 1024)
       throw new UnprocessableEntityException("图片最大 32 MiB");
-    const work = await this.work(context, id);
-    if (work.preparation === "pushed") throw new ConflictException("请先撤回任务，再替换图片");
+    await this.source(context, id);
+    const required = [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead];
+    const before = await withOrderAuthority(this.database.db, context, required, tx => this.uploadState(tx, id));
     const scan = await this.scanner.scan(bytes, name, "application/octet-stream");
     if (scan.result !== "clean" || scan.signatureVersion === "unavailable")
       throw new UnprocessableEntityException("图片未通过安全扫描");
@@ -2250,30 +2255,48 @@ export class OrderWorkspaceService {
       .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
       .png()
       .toBuffer();
+    // A private attachment container is not a saved draft or a report-version pin.
+    const work = await withOrderAuthority(this.database.db, context, required, async tx => {
+      const current = await this.uploadState(tx, id);
+      assertUploadBasis(before, current);
+      if (current.work) return current.work;
+      const secret = randomBytes(32);
+      try {
+        const [created] = await tx.insert(items).values({ id, tenantId: context.tenantId, revision: 0, sourceVersionId: null,
+          reportLineId: current.report?.id, encryptedDataKey: this.vault.encrypt(secret.toString("base64")),
+          expiresAt: current.expiresAt }).returning();
+        return created!;
+      } finally { secret.fill(0); }
+    });
     const imageId = createEntityId(),
       key = this.key(work),
       rotated = (info.orientation ?? 0) >= 5;
+    const attempted: string[] = [];
     try {
+      const originalBody = encryptProductionBytes(key, bytes), previewBody = encryptProductionBytes(key, preview);
+      const originalKey = objectKey({ tenantId: context.tenantId, domain: "order", sha256: hash(originalBody), fileName: `${imageId}.pe` });
+      const previewKey = objectKey({ tenantId: context.tenantId, domain: "order", sha256: hash(previewBody), fileName: `${imageId}-preview.pe` });
       await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead], async () => undefined);
+      attempted.push(originalKey);
       const original = await this.storage.putPrivate(context, {
         domain: "order",
-        body: encryptProductionBytes(key, bytes),
+        body: originalBody,
         fileName: `${imageId}.pe`,
         mediaType: "application/octet-stream",
       });
+      if (original.objectKey !== originalKey) throw new ConflictException("图片存储位置校验失败");
       await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead], async () => undefined);
+      attempted.push(previewKey);
       const thumbnail = await this.storage.putPrivate(context, {
         domain: "order",
-        body: encryptProductionBytes(key, preview),
+        body: previewBody,
         fileName: `${imageId}-preview.pe`,
         mediaType: "application/octet-stream",
       });
+      if (thumbnail.objectKey !== previewKey) throw new ConflictException("图片存储位置校验失败");
       await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead], async (tx) => {
-        await lock(tx, id);
-        await assertActive(tx, id);
-        const [current] = await tx.select().from(items).where(eq(items.id, id));
-        if (!current?.encryptedDataKey || current.preparation === "pushed")
-          throw new ConflictException("订单已推送，请刷新");
+        const current = await this.uploadState(tx, id);
+        assertUploadBasis({ ...before, work }, current);
         await tx.insert(assets).values({
           id: imageId,
           tenantId: context.tenantId,
@@ -2289,10 +2312,52 @@ export class OrderWorkspaceService {
           }),
         });
       });
+    } catch (error) {
+      let cleanupFailed = false;
+      for (const objectKey of attempted) {
+        try {
+          await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead], async tx => {
+            await lock(tx, id);
+            const assertUnreferenced = async () => {
+              await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead]);
+              const [reference] = await tx.select({ id: assets.id }).from(assets)
+                .where(or(eq(assets.objectKey, objectKey), eq(assets.previewObjectKey, objectKey))).limit(1);
+              return !reference;
+            };
+            // A commit acknowledgement may be lost. Preserve every registered asset.
+            if (!await assertUnreferenced()) return;
+            await this.storage.discardOrderWorkUpload(context, imageId, objectKey, { assertCurrent: async () => {
+              if (!await assertUnreferenced()) throw new ConflictException("图片已登记，不可清理");
+            } });
+          });
+        } catch { cleanupFailed = true; }
+      }
+      if (cleanupFailed) throw new UnprocessableEntityException({ code: "order_work_upload_cleanup_failed", message: "上传结果暂无法确认，临时附件清理未完成，请联系管理员核查，勿重复上传" });
+      throw error;
     } finally {
       key.fill(0);
     }
     return this.detail(context, id);
+  }
+  private async uploadState(tx: TenantTransaction, id: string) {
+    await lock(tx, id);
+    // Match retention's parent -> private source -> work lock direction.
+    const [parent] = await tx.select({ id: orders.id }).from(orderLines)
+      .innerJoin(orders, eq(orders.id, orderLines.orderId)).where(eq(orderLines.id, id)).for("share", { of: orders });
+    if (!parent) throw new NotFoundException("订单商品不存在");
+    const [privacy] = await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, parent.id)).for("share");
+    const [report] = await tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.orderLineId, id)).for("share");
+    const [work] = await tx.select().from(items).where(eq(items.id, id)).for("update");
+    await assertActive(tx, id);
+    const [clock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
+    const now = new Date(clock!.now);
+    if (privacy && (privacy.status === "anonymized" || !privacy.encryptedEnvelope || privacy.retentionExpiresAt <= now)
+      || report && (report.state === "expired" || report.expiresAt <= now)
+      || work && (!work.encryptedDataKey || work.expiresAt <= now)) throw new NotFoundException("订单资料已到保存期限");
+    if (work?.held) throw new ConflictException("订单已暂停，请先解除暂停");
+    if (work?.preparation === "pushed") throw new ConflictException("请先撤回任务，再替换图片");
+    return { work, report, expiresAt: new Date(Math.min(now.getTime() + 30 * 86400000,
+      privacy?.retentionExpiresAt.getTime() ?? Infinity, report?.expiresAt.getTime() ?? Infinity)) };
   }
   async image(context: TenantContext, id: string, imageId: string, original = false) {
     authorize(context, Permission.OrderPiiRead);
@@ -2547,11 +2612,23 @@ function defaultDraft(report: AmazonReportDetailView | null): OrderWorkDraft {
           key: `surface-${surfaceIndex}-field-${index}`,
         })),
       ) ?? [],
-    images: [],
+    images: defaultOrderWorkImages(report?.files ?? []),
     instructions: "",
     customerApprovalRequired: false,
     dueAt: null,
   };
+}
+function assertUploadBasis(
+  expected: { work?: Work; report?: { id: string; currentVersionId: string | null } },
+  current: { work?: Work; report?: { id: string; currentVersionId: string | null } },
+) {
+  if (expected.report?.id !== current.report?.id || expected.report?.currentVersionId !== current.report?.currentVersionId)
+    throw new ConflictException("导入资料已变化，请刷新后重新上传");
+  const before = expected.work, after = current.work;
+  if (before ? !after || before.revision !== after.revision || before.projectionVersion !== after.projectionVersion
+    || before.encryptedDataKey !== after.encryptedDataKey || before.sourceVersionId !== after.sourceVersionId || before.reportLineId !== after.reportLineId
+    : after && (after.revision !== 0 || after.projectionVersion !== 1 || after.sourceVersionId !== null || after.reportLineId !== (current.report?.id ?? null)))
+    throw new ConflictException("订单资料已更新，请刷新后重新上传");
 }
 export async function lock(tx: TenantTransaction, id: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`order-work:${id}`}, 0))`);
@@ -2584,8 +2661,8 @@ export async function assertActive(tx: TenantTransaction, id: string) {
     throw new ConflictException("订单已暂停、取消或资料已清理");
 }
 
-function summaryReportSelection(line: { reportLineId?: string | null }, work?: Pick<Work, "reportLineId" | "sourceVersionId">): OrderSummaryReportSelection | null {
-  if (work) return work.reportLineId ? { id: work.reportLineId, versionId: work.sourceVersionId, pinned: true } : null;
+function summaryReportSelection(line: { reportLineId?: string | null }, work?: Pick<Work, "revision" | "reportLineId" | "sourceVersionId">): OrderSummaryReportSelection | null {
+  if (work && work.revision > 0) return work.reportLineId ? { id: work.reportLineId, versionId: work.sourceVersionId, pinned: true } : null;
   return line.reportLineId ? { id: line.reportLineId, versionId: null, pinned: false } : null;
 }
 function sameSummaryReportSelection(a: OrderSummaryReportSelection, b: OrderSummaryReportSelection) {

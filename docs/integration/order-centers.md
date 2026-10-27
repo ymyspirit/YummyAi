@@ -228,6 +228,27 @@ review advances to the next task's content within the same drawer; failures reta
 current record, input and idempotency key. Technical tools, other stages and history
 are secondary disclosures. Task presentation adds no write transition or external call.
 
+## Customer originals and direct image uploads
+
+Before the first saved work revision, available report files with the `buyer_image`
+role and an original file are selected by default. Platform previews are excluded.
+A single customization image field is bound by its canonical key; ambiguous image
+fields still need an operator choice. Saved selections, including an intentionally
+empty selection, remain authoritative on later reads.
+
+`POST /v1/order-centers/lines/:id/images` accepts a private image before the first
+draft save. It creates only the encrypted attachment container when needed, keeping
+revision zero and the preparation status unchanged. Scanning, current membership,
+order state, retention, tenant isolation and private encryption still apply.
+Uploading is neither a draft save nor an order review or production release.
+
+The review UI allows upload while the operator has unsaved edits. It adds the new
+asset and selects it without replacing field values, instructions, image choices
+or bindings. It rejects a changed revision/source/state instead of rebasing the
+draft silently. One draft selects at most 30 images; a full selection must be
+reduced before adding another. Each file remains limited to 32 MiB and single-page
+PNG, JPEG or TIFF.
+
 ## Whole-order lifecycle
 
 Normal shaped-pillow fulfillment produces, packs and ships every item in one order
@@ -532,6 +553,12 @@ operations; dispatch alone does not mean a production sheet has been completed.
 - `order-review.spec.ts` owns synthetic in-memory order transport on the real
   `/orders` route; it checks list preservation, stable review order, save failure
   and retry, dirty/busy guards, direct links and mobile panel controls.
+- `pnpm test:e2e:order-daily --suite=order-image-upload` runs image defaults,
+  explicit cancellations, unsaved edits, retry and stale-response cases using an
+  isolated personal session. Its native upload case scans and stores actual
+  synthetic image bytes, reads the private originals through current non-owner
+  authority, then saves and reloads the selected image without approving or
+  dispatching an order. The runner removes its database, bucket, Redis and identity.
 - The existing report importer and navigation acceptance suites cover the updated
   entry points, source ZIP recovery, editor reopening, and stable navigation.
 

@@ -104,6 +104,22 @@ export class Storage {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /** Only a fresh, unregistered work upload. The owner holds its work lock and
+   * checks for committed references before every exact object-version delete. */
+  async discardOrderWorkUpload(context: TenantContext, imageId: string, key: string,
+    options: { assertCurrent: () => Promise<void> }): Promise<void> {
+    assertAssetAccess(context, { id: imageId, tenantId: context.tenantId, assetDomain: "order", objectKey: key }, "order");
+    const parts = key.split("/");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(imageId)
+      || parts.length !== 5 || !/^[a-f0-9]{64}$/.test(parts[3] ?? "")
+      || ![`${imageId}.pe`, `${imageId}-preview.pe`].includes(parts[4] ?? "")
+      || key !== objectKey({ tenantId: context.tenantId, domain: "order", sha256: parts[3]!, fileName: parts[4]! })
+      || typeof options?.assertCurrent !== "function") throw new Error("ORDER_WORK_UPLOAD_ARTIFACT_INVALID");
+    await options.assertCurrent();
+    try { await this.discardCreativeAdoptionKey(key, options); }
+    catch { throw new Error("ORDER_WORK_UPLOAD_CLEANUP_UNCONFIRMED"); }
+  }
+
   async discardLogisticsLabel(context: TenantContext, taskId: string, key: string): Promise<void> {
     assertAssetAccess(context,{id:taskId,tenantId:context.tenantId,assetDomain:"order",objectKey:key},"order");
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(taskId)||key.split("/").length!==5||!/^[a-f0-9]{64}$/.test(key.split("/")[3]??"")||!new RegExp(`^${taskId}-label-\\d+\\.pdf$`).test(key.split("/")[4]??""))throw new Error("Only an exact private logistics label can be discarded");

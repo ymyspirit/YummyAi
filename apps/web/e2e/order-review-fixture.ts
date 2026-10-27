@@ -1,5 +1,9 @@
 import { type Page } from "@playwright/test";
 import { WholeOrderDetailViewSchema } from "@yummyai/contracts/order/whole-detail";
+import { AmazonReportDetailViewSchema } from "@yummyai/contracts/order/report";
+import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
+import { OrderExceptionOperationsQuerySchema, OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
+import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { orderQueueStage, OrderQueueStageSchema, orderOperatorTask, orderOperatorException, orderLifecycleStatus, OrderLifecycleStatusSchema } from "@yummyai/contracts/order/workbench";
 import {
   OrderWorkDetailViewSchema,
@@ -73,7 +77,7 @@ function detail(n: number): OrderWorkDetail {
     versions: [],
   });
 }
-export async function fixture(page: Page, count = 3) {
+export async function fixture(page: Page, count = 3, options: { trackVersions?: boolean; currentReadContracts?: boolean } = {}) {
   const records = Array.from({ length: count }, (_, n) => detail(n + 1));
   function refreshLifecycle() {
     const orders = new Map<string, typeof records>();
@@ -88,6 +92,7 @@ export async function fixture(page: Page, count = 3) {
   const unexpectedWrites: string[] = [];
   let workspaceReads = 0;
   let failNext = false;
+  let failureMessage = "Synthetic save conflict; retry required";
   let releaseSave: (() => void) | undefined;
   let pendingSave: Promise<void> | undefined;
   await page.route("**/api/ai-assists/**", (route) => route.fulfill({ json: [] }));
@@ -190,7 +195,7 @@ export async function fixture(page: Page, count = 3) {
             .map((record) => ({
               id: record.line.id,
               revision: record.line.revision,
-              sourceVersionId: null,
+              sourceVersionId: options.currentReadContracts ? record.report?.versionId ?? null : null,
               printSku: record.line.printSku,
               spu: null,
               specification: null,
@@ -203,6 +208,7 @@ export async function fixture(page: Page, count = 3) {
               images: [],
               blockers: [],
               error: null,
+              ...(options.currentReadContracts ? { availability: "available" as const } : {}),
             })),
         },
       });
@@ -251,10 +257,12 @@ export async function fixture(page: Page, count = 3) {
       return route.fulfill({ json: WholeOrderDetailViewSchema.parse({
         orderId: record.line.orderId,
         items: group.map(item => ({ line: item.line, summary: { data: {
-          id: item.line.id, revision: item.line.revision, sourceVersionId: null, printSku: item.line.printSku,
+          id: item.line.id, revision: item.line.revision,
+          sourceVersionId: options.currentReadContracts ? item.report?.versionId ?? null : null, printSku: item.line.printSku,
           spu: null, specification: null, designExecutor: item.draft.designExecutor ?? "agent",
           fields: item.draft.fields.map(field => ({ label: field.label, value: field.value ?? "" })),
           instructions: item.draft.instructions, images: [], blockers: [], error: null,
+          ...(options.currentReadContracts ? { availability: "available" as const } : {}),
         }, error: null }, artwork: { data: null, error: null } })),
         fulfillment: { data: {
           orderId: record.line.orderId, orderNumber: record.line.externalOrderId, orderStatus: record.line.orderStatus,
@@ -276,13 +284,16 @@ export async function fixture(page: Page, count = 3) {
         failNext = false;
         return route.fulfill({
           status: 409,
-          json: { message: "Synthetic save conflict; retry required" },
+          json: { message: failureMessage },
         });
       }
       record.draft = input.draft;
       record.line.preparation = input.status;
       record.line.revision += 1;
       record.line.projectionVersion += 1;
+      if (options.trackVersions) record.versions.push({
+        id: id(2000 + saves.length), revision: record.line.revision, createdAt: now,
+      });
       return route.fulfill({ json: record });
     }
     if (request.method() !== "GET") {
@@ -299,8 +310,9 @@ export async function fixture(page: Page, count = 3) {
     saves,
     unexpectedWrites,
     workspaceReads: () => workspaceReads,
-    failNextSave: () => {
+    failNextSave: (message = "Synthetic save conflict; retry required") => {
       failNext = true;
+      failureMessage = message;
     },
     holdSave: () => {
       pendingSave = new Promise<void>((resolve) => {
@@ -308,5 +320,124 @@ export async function fixture(page: Page, count = 3) {
       });
     },
     releaseSave: () => releaseSave?.(),
+  };
+}
+
+export const imageUploadPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6wwAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** UI transport only: backend integration owns actual defaulting and private storage. */
+export async function imageReviewFixture(page: Page, options: { multipleFields?: boolean; persistedEmpty?: boolean } = {}) {
+  const state = await fixture(page, 2, { trackVersions: true, currentReadContracts: true });
+  const session = await page.request.get("/api/erp-auth/session");
+  if (!session.ok()) throw new Error("The image fixture requires the current personal session");
+  const identity = ErpSessionViewSchema.parse(await session.json());
+  if (!identity.canUseErp) throw new Error("The current personal session cannot use the ERP");
+  const authority = erpSessionAuthority(identity);
+  const uploads: Array<{ lineId: string; name: string; contentBase64: string }> = [];
+  let uploadFailure = false;
+  let responseMismatch: "order" | "revision" | "source" | null = null;
+  let pendingUpload: Promise<void> | undefined;
+  let releaseUpload: (() => void) | undefined;
+  for (const [index, record] of state.records.entries()) {
+    const photo = (key: string, label: string) => ({ key, label, type: "image" as const, required: true,
+      validation: { allowedMediaTypes: ["image/png" as const], maxFiles: 20, maxBytes: 1000000 } });
+    record.catalog = {
+      status: "unmatched", packageId: null, recipes: [], specifications: [],
+      artworks: [{ id: id(400 + index), code: "SYNTHETIC-IMAGE-ART", name: "Synthetic upload schema",
+        version: 1, mode: "customer_image", materials: [], layout: [], instructions: "UI fixture only",
+        customization: { version: 1, fields: [photo("buyer_photo", "顾客原图"),
+          ...(options.multipleFields ? [photo("back_photo", "背面原图")] : []),
+          { key: "name", label: "Customer name", type: "short_text", required: false } ] },
+      }],
+    };
+    record.draft.artworkVersionId = id(400 + index);
+    record.draft.fields[0] = { ...record.draft.fields[0]!, font: "Synthetic Serif", color: "#336699" };
+    record.line.revision = options.persistedEmpty ? 1 : 0;
+    record.versions = options.persistedEmpty ? [{ id: id(450 + index), revision: 1, createdAt: now }] : [];
+    record.report = AmazonReportDetailViewSchema.parse({
+      line: { id: id(500 + index), orderId: record.line.orderId, orderLineId: record.line.id,
+        externalOrderId: record.line.externalOrderId, externalLineId: "1", skuCode: record.line.skuCode,
+        title: record.line.title, quantity: 1, currency: null, itemTotalMinor: null, state: "ready",
+        versionNumber: 1, reviewed: false, lastErrorCode: null, updatedAt: now, hasPreview: true },
+      versionId: id(510 + index), warnings: [],
+      surfaces: [{ key: "front", label: "正面", fields: structuredClone(record.draft.fields),
+        buyerFileKeys: ["buyer-first", "buyer-second"], previewFileKey: "platform-preview" }],
+      files: [
+        ...["first", "second"].flatMap((name) => [
+          { key: `buyer-${name}`, name: `derived-${name}.png`, role: "buyer_image", originalFileKey: `source-${name}`,
+            mediaType: "image/png", byteSize: imageUploadPng.length, width: 1, height: 1 },
+          { key: `source-${name}`, name: `original-${name}.png`, role: "source", mediaType: "image/png",
+            byteSize: imageUploadPng.length, width: 1, height: 1 },
+        ]),
+        { key: "platform-preview", name: "platform-preview.png", role: "preview", mediaType: "image/png", byteSize: imageUploadPng.length },
+        { key: "unlinked", name: "unlinked-buyer.png", role: "buyer_image", mediaType: "image/png", byteSize: imageUploadPng.length },
+      ],
+    });
+    // Mirrors the native response contract, not an alternative UI defaulting algorithm.
+    record.draft.images = options.persistedEmpty ? [] : ["buyer-first", "buyer-second"].map((key) => ({
+      origin: "report" as const, key, usage: options.multipleFields ? "待选择定制字段" : "buyer_photo",
+    }));
+    OrderWorkDetailViewSchema.parse(record);
+  }
+  await page.route("**/api/orders/reports/lines/**/files/**", (route) =>
+    route.fulfill({ contentType: "image/png", body: imageUploadPng }));
+  await page.route("**/api/order-review-fixture/images/**", (route) =>
+    route.fulfill({ contentType: "image/png", body: imageUploadPng }));
+  await page.route("**/api/order-centers/fulfillment-commands?**", (route) => {
+    const request = route.request(), orderId = new URL(request.url()).searchParams.get("orderId");
+    if (request.method() !== "GET" || !state.records.some((record) => record.line.orderId === orderId))
+      throw new Error("The image fixture only owns empty current-order recovery reads");
+    if (request.headers()["x-yummyai-context-authority"] !== authority)
+      throw new Error("Synthetic recovery request does not match the authenticated personal authority");
+    return route.fulfill({ headers: { "x-yummyai-context-authority": authority, "cache-control": "private, no-store" },
+      json: FulfillmentCommandListSchema.parse({ items: [], truncated: false }) });
+  });
+  await page.route("**/api/order-exceptions/**", (route) => {
+    const request = route.request(), url = new URL(request.url()), orderId = url.pathname.split("/")[3];
+    const record = state.records.find((item) => item.line.orderId === orderId);
+    if (request.method() !== "GET" || !record)
+      throw new Error("The image fixture only owns empty current-order exception reads");
+    const query = OrderExceptionOperationsQuerySchema.parse(Object.fromEntries(url.searchParams));
+    return route.fulfill({ json: OrderExceptionOperationsViewSchema.parse({
+      orderId, lineId: null, label: record.line.externalOrderId, orderSequence: 1,
+      sourceChecksum: "b".repeat(64), asOf: now, canCreate: false, query,
+      total: 0, page: query.page, pageSize: query.pageSize,
+      summary: { open: 0, resolved: 0, missingEvent: 0 }, items: [],
+    }) });
+  });
+  await page.route("**/api/order-centers/lines/*/images", async (route) => {
+    const request = route.request(), lineId = new URL(request.url()).pathname.split("/")[4]!;
+    if (request.method() !== "POST") throw new Error("Upload fixture only owns the exact image POST");
+    const input = request.postDataJSON() as { name: string; contentBase64: string };
+    if (Object.keys(input).sort().join(",") !== "contentBase64,name" ||
+      typeof input.name !== "string" || input.contentBase64 !== imageUploadPng.toString("base64"))
+      throw new Error("Unexpected synthetic upload bytes or contract");
+    uploads.push({ lineId, ...input });
+    await pendingUpload;
+    pendingUpload = undefined;
+    if (uploadFailure) {
+      uploadFailure = false;
+      return route.fulfill({ status: 503, json: { message: "Synthetic upload unavailable; retry the original file" } });
+    }
+    const record = state.records.find((item) => item.line.id === lineId);
+    if (!record) throw new Error("Unknown synthetic upload order");
+    record.assets.push({ id: id(600 + uploads.length), name: input.name, mediaType: "image/png", width: 1, height: 1,
+      checksum: "a".repeat(64), path: `/api/order-review-fixture/images/${id(600 + uploads.length)}` });
+    const response = structuredClone(record);
+    if (responseMismatch === "order") response.line.id = state.records[1]!.line.id;
+    if (responseMismatch === "revision") { response.line.revision += 1; response.line.projectionVersion += 1; }
+    if (responseMismatch === "source") response.report!.versionId = id(999);
+    responseMismatch = null;
+    return route.fulfill({ json: OrderWorkDetailViewSchema.parse(response) });
+  });
+  return {
+    ...state, uploads,
+    failNextUpload: () => { uploadFailure = true; },
+    mismatchNextUpload: (kind: "order" | "revision" | "source") => { responseMismatch = kind; },
+    holdNextUpload: () => { pendingUpload = new Promise<void>((resolve) => { releaseUpload = resolve; }); },
+    releaseUpload: () => releaseUpload?.(),
   };
 }

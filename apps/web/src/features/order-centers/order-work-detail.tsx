@@ -29,7 +29,9 @@ import { OrderArtworkBasis, OrderArtworkMaterials } from "./order-artwork-basis"
 import { OrderTemplatePlanPanel } from "./order-template-plan";
 import { OrderIntakeCheckPanel } from "./order-intake-check";
 import { OrderWorkImageBinding } from "./order-work-image-binding";
-import { defaultOrderImageUsage, orderImageBindingField, orderImageSelectionProblem, orderSingleChoiceOptions } from "./order-work-input-model";
+import { defaultOrderImageUsage, mergeOrderImageUpload, ORDER_IMAGE_LIMIT, orderImageBindingField,
+  orderImageSelectionProblem, orderImageUploadBasis, orderImageUploadBasisMatches, orderImageUploadProblem,
+  orderSingleChoiceOptions } from "./order-work-input-model";
 import { OrderArtworkProgress } from "./order-artwork-progress";
 import { OrderArtworkReview } from "./order-artwork-review";
 import { artworkPreviewPending } from "./order-artwork-review-model";
@@ -93,6 +95,9 @@ export function OrderWorkDetailPanel({
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false);
   const [editorFocus, setEditorFocus] = useState<ProductionEditorFocus | undefined>();
+  const [uploading, setUploading] = useState(false);
+  const uploadRequest = useRef<{ orderLineId: string; abort: AbortController } | null>(null);
+  const [saveError, setSaveError] = useState<{ orderLineId: string; input: string; message: string } | null>(null);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [reason, setReason] = useState(""),
@@ -109,6 +114,7 @@ export function OrderWorkDetailPanel({
   const [deadlineState, setDeadlineState] = useState<OrderReviewState>({ dirty: false, busy: false, loading: false });
   const [agentState, setAgentState] = useState({ workItemId: id, busy: false, blocked: false, checking: true });
   const [pendingAgentRefresh, setPendingAgentRefresh] = useState<string | null>(null);
+  const [pendingDetailRefresh, setPendingDetailRefresh] = useState<string | null>(null);
   const [advanceArtwork, setAdvanceArtwork] = useState(review?.autoAdvance ?? false);
   const [reviewFooter, setReviewFooter] = useState<HTMLDivElement | null>(null);
   const [artworkToolsOpen, setArtworkToolsOpen] = useState(false);
@@ -125,12 +131,33 @@ export function OrderWorkDetailPanel({
   const agentApplies = (module === "orders" || module === "artwork") && detail?.line.preparation === "pushed";
   const agentArtworkBlocked = agentApplies && (agentState.workItemId !== id || agentState.blocked || agentState.checking);
   const editable =
-    module === "orders" && detail?.line.preparation !== "pushed" && !detail?.line.held;
+    module === "orders" && detail?.line.id === id && detail.line.preparation !== "pushed" && !detail.line.held;
+  const live = useRef({ id, detail, draft, dirty, navigationBusy, navigationLoading, editable });
+  live.current = { id, detail, draft, dirty, navigationBusy, navigationLoading, editable };
+  const visibleError = error || (saveError?.orderLineId === id && saveError.input === JSON.stringify(draft) ? saveError.message : "");
   const onReviewStateChange = review?.onStateChange ?? onStateChange;
   const Container = review || inline ? "section" : "main";
   useEffect(() => {
     onReviewStateChange?.({ dirty, busy: navigationBusy, loading: navigationLoading });
   }, [dirty, navigationBusy, navigationLoading, onReviewStateChange]);
+  useEffect(() => {
+    setSaveError(previous => previous && (previous.orderLineId !== id || previous.input !== JSON.stringify(draft)) ? null : previous);
+  }, [id, draft]);
+  useEffect(() => {
+    setUploading(false);
+    setBusy(false);
+    return () => {
+      if (uploadRequest.current?.orderLineId === id) {
+        uploadRequest.current.abort.abort();
+        uploadRequest.current = null;
+      }
+    };
+  }, [id]);
+  useEffect(() => {
+    if (pendingDetailRefresh !== id || dirty || navigationBusy || navigationLoading || editorOpen || error) return;
+    setPendingDetailRefresh(null);
+    setRefresh(value => value + 1);
+  }, [pendingDetailRefresh, id, dirty, navigationBusy, navigationLoading, editorOpen, error]);
   useEffect(() => {
     if (pendingAgentRefresh === null) return;
     if (pendingAgentRefresh !== id) { setPendingAgentRefresh(null); return; }
@@ -141,14 +168,28 @@ export function OrderWorkDetailPanel({
     setRefresh(value => value + 1);
   }, [pendingAgentRefresh, id, dirty, navigationBusy, navigationLoading, editorOpen]);
   useEffect(() => {
+    if (live.current.detail?.line.id === id && (live.current.dirty || live.current.navigationBusy)) {
+      // The previous read was aborted by effect cleanup; this deferred branch starts no replacement read.
+      setLoading(false);
+      setPendingDetailRefresh(id);
+      return;
+    }
     const abort = new AbortController();
+    setPendingDetailRefresh(null);
     setLoading(true);
     setError("");
     setEditor(null);
     void centerRequest(`lines/${id}`, undefined, abort.signal)
       .then(async (value) => {
         const next = OrderWorkDetailViewSchema.parse(value);
-        if (abort.signal.aborted) return;
+        if (abort.signal.aborted || live.current.id !== id) return;
+        const current = live.current;
+        if (current.detail?.line.id === id && (current.dirty || current.navigationBusy)) {
+          if (!orderImageUploadBasisMatches(orderImageUploadBasis(current.detail), next))
+            setError("订单版本或来源已变化，当前填写仍保留；请核对后再保存，不自动覆盖草稿。");
+          setPendingDetailRefresh(id);
+          return;
+        }
         setDetail(next);
         setDraft(structuredClone(next.draft));
         if (next.line.editorProjectId && (!inline || module === "artwork")) {
@@ -234,9 +275,10 @@ export function OrderWorkDetailPanel({
     if (!detail || !draft || navigationBusy || loading) return;
     if (deadlineState.dirty) { setError("请先保存平台交期核对，再保存制作需求。"); return; }
     const imageProblem = orderImageSelectionProblem(customizationFields, draft.images);
-    if (imageProblem) { setError(imageProblem); return; }
+    if (imageProblem) { setSaveError({ orderLineId: id, input: JSON.stringify(draft), message: imageProblem }); return; }
     setBusy(true);
     setError("");
+    setSaveError(null);
     setNotice("");
     const payload = {
       expectedRevision: detail.line.revision,
@@ -259,7 +301,7 @@ export function OrderWorkDetailPanel({
       setReason("");
       if (advance) review?.onSavedNext();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setSaveError({ orderLineId: id, input: JSON.stringify(draft), message: cause instanceof Error ? cause.message : "保存失败" });
     } finally {
       setBusy(false);
     }
@@ -354,35 +396,42 @@ export function OrderWorkDetailPanel({
     }
   }
   async function upload(file: File) {
-    if (!detail || !detail.line.revision) {
-      setError("请先保存草稿，再上传订单图片。");
-      return;
-    }
-    if (dirty) {
-      setError("请先保存修改，再上传图片。");
-      return;
-    }
-    if (file.size > 32 * 1024 * 1024) {
-      setError("图片最大 32 MiB。");
-      return;
-    }
+    const current = live.current;
+    if (!current.detail || !current.draft || !current.editable || current.navigationBusy ||
+      current.navigationLoading || uploadRequest.current) return;
+    const problem = orderImageUploadProblem(current.detail, current.draft, file.size);
+    if (problem) { setError(problem); return; }
+    const expected = orderImageUploadBasis(current.detail), abort = new AbortController();
+    const request = { orderLineId: id, abort };
+    uploadRequest.current = request;
     setBusy(true);
+    setUploading(true);
     setError("");
+    setSaveError(null);
+    setNotice("");
     try {
-      update(
-        OrderWorkDetailViewSchema.parse(
-          await centerRequest(`lines/${id}/images`, {
-            name: file.name,
-            contentBase64: await fileBase64(file),
-          }),
-        ),
-      );
-      setNotice("图片已上传，请选中它并核对对应图片字段或制作用途，然后保存。");
+      const contentBase64 = await fileBase64(file);
+      if (abort.signal.aborted || uploadRequest.current !== request || live.current.id !== id) return;
+      const response = OrderWorkDetailViewSchema.parse(await centerRequest(`lines/${id}/images`, {
+        name: file.name, contentBase64,
+      }, abort.signal));
+      const latest = live.current;
+      if (abort.signal.aborted || uploadRequest.current !== request || latest.id !== id || !latest.detail || !latest.draft) return;
+      const merged = mergeOrderImageUpload(expected, latest.detail, latest.draft, response);
+      if (!merged.ok) { setError(merged.message); return; }
+      // Never call update/onChanged here: their refresh would replace unsaved input and explicit cancellations.
+      setDetail(merged.detail);
+      setDraft(merged.draft);
+      if (merged.problem) setError(merged.problem);
+      else setNotice("图片已上传并选中，当前填写仍保留；请核对图片字段或用途后保存审单。");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "上传失败");
+      if (!abort.signal.aborted && uploadRequest.current === request && live.current.id === id)
+        setError(cause instanceof Error ? cause.message : "上传失败，当前填写仍保留。");
     } finally {
-      setBusy(false);
-      if (imageInput.current) imageInput.current.value = "";
+      if (uploadRequest.current === request) {
+        uploadRequest.current = null;
+        if (live.current.id === id) { setBusy(false); setUploading(false); }
+      }
     }
   }
   async function renderProduction(purpose: "production" | "preview" = "production") {
@@ -469,10 +518,10 @@ export function OrderWorkDetailPanel({
             返回{centers[module].title}
           </button>
         )}
-        {error ? (
+        {visibleError ? (
           <>
             <p className="oc-error" role="alert">
-              {error}
+              {visibleError}
             </p>
             <button
               className="oc-button"
@@ -599,9 +648,9 @@ export function OrderWorkDetailPanel({
             此商品已归档，保留原始资料、版本及操作历史。恢复后仍需核对并解除暂停。
           </p>
         )}
-        {error && !review && (
+        {visibleError && !review && (
           <p role="alert" className="oc-error">
-            {error}
+            {visibleError}
           </p>
         )}
         {notice && !review && (
@@ -610,6 +659,7 @@ export function OrderWorkDetailPanel({
           </p>
         )}
         {pendingAgentRefresh === id && (dirty || navigationBusy || editorOpen) && <p className="oc-notice" role="status">自动制作状态已有更新，当前备注和修改仍保留。保存或清空修改后，将刷新稿件与审核信息。</p>}
+        {pendingDetailRefresh === id && <p className="oc-notice" role="status">订单资料有更新，当前未保存内容仍保留；完成当前操作并保存或清空修改后再刷新。</p>}
         {module === "artwork" && editor && (
           <OrderArtworkReview
             key={editor.version.id}
@@ -947,11 +997,11 @@ export function OrderWorkDetailPanel({
             {editable && (
               <button
                 className="oc-button"
-                disabled={busy || !detail.line.revision || dirty}
-                onClick={() => imageInput.current?.click()}
+                disabled={!editable || navigationBusy || navigationLoading}
+                onClick={() => { if (imageInput.current) { imageInput.current.value = ""; imageInput.current.click(); } }}
               >
                 <Upload size={15} />
-                上传定制图片
+                {uploading ? "正在上传图片…" : "上传定制图片"}
               </button>
             )}
             <input
@@ -960,15 +1010,17 @@ export function OrderWorkDetailPanel({
               hidden
               accept="image/png,image/jpeg,image/tiff"
               aria-label="上传订单定制图片"
+              disabled={!editable || navigationBusy || navigationLoading}
               onChange={(event) => {
                 const file = event.target.files?.[0];
+                event.currentTarget.value = "";
                 if (file) void upload(file);
               }}
             />
           </div>
           {!images.length && (
             <p className="oc-hint">
-              暂时没有可用的订单图片。可先保存草稿后上传，或在导入记录中补传定制 ZIP。
+              暂时没有可用的订单图片。可直接上传定制图片，或在导入记录中补传定制 ZIP。
             </p>
           )}
           <div className="oc-image-grid">
@@ -984,7 +1036,11 @@ export function OrderWorkDetailPanel({
                       type="checkbox"
                       disabled={!editable || navigationBusy}
                       checked={!!selected}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        if (event.target.checked && draft.images.length >= ORDER_IMAGE_LIMIT) {
+                          setSaveError({ orderLineId: id, input: JSON.stringify(draft), message: "最多选择 30 张图片，请先取消暂不使用的图片。" });
+                          return;
+                        }
                         setDraft({
                           ...draft,
                           images: event.target.checked
@@ -996,8 +1052,8 @@ export function OrderWorkDetailPanel({
                                 (value) =>
                                   !(value.origin === image.origin && value.key === image.key),
                               ),
-                        })
-                      }
+                        });
+                      }}
                     />
                     <span>{image.name}</span>
                   </label>
@@ -1216,9 +1272,9 @@ export function OrderWorkDetailPanel({
       {review && (
         <footer className="oc-review-footer">
           <div ref={setReviewFooter} />
-          {error && (
+          {visibleError && (
             <p className="oc-error" role="alert">
-              {error}
+              {visibleError}
             </p>
           )}
           {notice && (

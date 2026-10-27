@@ -82,6 +82,8 @@ export const OrderProofStatusSchema = z.enum([
   "approved",
   "changes_requested",
 ]);
+// A readable initial selection with ambiguous image fields; never a field binding.
+export const ORDER_WORK_IMAGE_PENDING_USAGE = "待选择定制字段";
 export const OrderWorkImageSchema = z
   .object({
     origin: z.enum(["report", "upload"]),

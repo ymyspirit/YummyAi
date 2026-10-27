@@ -164,13 +164,20 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
     await centerApi("order-centers/lines/" + line.orderLineId),
   );
   expect(detail.draft.designExecutor).toBe("agent");
+  expect(detail.draft.images.map(({ origin, key }) => ({ origin, key })))
+    .toEqual([{ origin: "report", key: buyer.key }]);
+  const imageFields = artwork.customization.fields.filter(field => field.type === "image");
+  expect(imageFields).toHaveLength(1);
   // Fix the exact synthetic catalog version through the native owner. The report's
   // real-format Size must still match it and remain in the saved draft and source.
+  // This explicit fixture basis change also selects its one image field. It does
+  // not rely on clicking an already-selected checkbox to remap the old usage.
   const basisDraft: OrderWorkDraft = {
     ...detail.draft,
     specificationVersionId: specification.versionId,
     artworkVersionId: artwork.versionId,
     printProfileVersionId: profile.versionId,
+    images: detail.draft.images.map(image => ({ ...image, usage: imageFields[0]!.key })),
   };
   detail = OrderWorkDetailViewSchema.parse(
     await centerApi("order-centers/lines/" + line.orderLineId + "/draft", {
@@ -181,7 +188,9 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
     }),
   );
   expect(detail.draft.designExecutor).toBe("agent");
-  expect(detail.draft.images).toEqual([]);
+  expect(detail.draft.images).toEqual([
+    { origin: "report", key: buyer.key, usage: imageFields[0]!.key },
+  ]);
 
   const readDetail = async () => OrderWorkDetailViewSchema.parse(
     await centerApi("order-centers/lines/" + line.orderLineId),
