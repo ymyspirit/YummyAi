@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ZodType } from "zod";
 import {
   BenchmarkAssistResultSchema,
   LegacyAssistResultSchema,
@@ -30,7 +31,7 @@ export function assistPromptVersion(benchmark = false, orderReview = false) {
   if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
   return benchmark ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION;
 }
-export function assistResultSchema(benchmark = false, orderReview = false) {
+export function assistResultSchema(benchmark = false, orderReview = false): ZodType<AssistResult> {
   if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
   return benchmark ? BenchmarkAssistResultSchema : orderReview ? OrderReviewAssistResultSchema : LegacyAssistResultSchema;
 }

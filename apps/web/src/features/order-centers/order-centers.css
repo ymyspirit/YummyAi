@@ -1021,6 +1021,7 @@
   width: 115px;
 }
 /* The seven-column artwork queue must not leave the order column as a percentage remainder. */
+.oc-workbench > .oc-table-wrap:has(> .oc-table > thead > tr > th:nth-child(7):last-child) { min-width: 0; max-width: 100%; box-sizing: border-box; overflow-x: auto; overflow-y: auto; }
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) { min-width: 1060px; table-layout: fixed; }
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th:nth-child(1) { width: 26%; }
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th:nth-child(2) { width: 12%; }
@@ -1029,6 +1030,16 @@
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th:nth-child(5) { width: 17%; }
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th:nth-child(6) { width: 10%; }
 .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th:nth-child(7) { width: 10%; }
+@media (max-width: 700px) {
+  /* This wide queue scrolls within its wrapper; other mobile tables keep their card layout. */
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) { display: table; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) thead { display: table-header-group; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) tbody { display: table-row-group; width: auto; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) tr { display: table-row; width: auto; border: 0; border-bottom: 1px solid var(--line, #dce1e7); border-radius: 0; margin: 0; padding: 0; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) th { display: table-cell; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) td { display: table-cell; width: auto; }
+  .oc-workbench > .oc-table-wrap > .oc-table:has(> thead > tr > th:nth-child(7):last-child) td[data-label]::before { display: none; content: none; }
+}
 .oc-table td small {
   display: block;
   margin-top: 5px;

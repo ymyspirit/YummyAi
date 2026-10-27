@@ -45,6 +45,7 @@
       ]
     },
     "typecheck": {
+      "passThroughEnv": ["NODE_OPTIONS"],
       "dependsOn": [
         "^typecheck"
       ]

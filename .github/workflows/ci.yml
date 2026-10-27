@@ -84,7 +84,10 @@ jobs:
       - name: Check source before starting infrastructure
         run: pnpm check:secrets
       - run: pnpm lint
-      - run: pnpm typecheck --concurrency=2
+      - name: Typecheck workspace with bounded memory
+        run: pnpm typecheck --concurrency=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=6144"
       - run: pnpm test --concurrency=2
       - name: Prepare pinned native ImageMagick
         shell: bash
