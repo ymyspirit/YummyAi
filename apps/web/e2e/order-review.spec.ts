@@ -255,11 +255,13 @@ test.describe("whole order image upload", () => {
     const second = drawer.getByRole("checkbox", { name: "original-second.png", exact: true });
     await first.uncheck();
     await second.uncheck();
-    state.failNextSave("请补齐顾客原图");
-    await drawer.getByRole("button", { name: "确认本件审单", exact: true }).click();
-    await expect(drawer.getByRole("alert").filter({ hasText: "请补齐顾客原图" })).toBeVisible();
+    const check = drawer.getByRole("region", { name: "定制订单承接核对", exact: true });
+    await expect(check.getByRole("list", { name: "承接待办", exact: true })).toContainText("顾客原图");
+    await expect(drawer.getByRole("button", { name: "确认本件审单", exact: true })).toBeDisabled();
+    expect(state.saves).toEqual([]);
     await first.check();
-    await expect(drawer.getByRole("alert").filter({ hasText: "请补齐顾客原图" })).toHaveCount(0);
+    await expect(check.getByRole("list", { name: "承接待办", exact: true })).toHaveCount(0);
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     await drawer.getByRole("textbox", { name: "定制内容", exact: true }).fill("Unsaved buyer lettering");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Unsaved operator instructions");
     await expect(drawer.getByRole("button", { name: "上传定制图片", exact: true })).toBeEnabled();
@@ -274,10 +276,10 @@ test.describe("whole order image upload", () => {
     await expect(drawer.getByRole("textbox", { name: "定制内容", exact: true })).toHaveValue("Unsaved buyer lettering");
     await expect(drawer.getByRole("textbox", { name: "制作说明", exact: true })).toHaveValue("Unsaved operator instructions");
     expect(state.records[0]!.line.revision).toBe(0);
-    expect(state.saves).toHaveLength(1); // The failed ready attempt did not save anything.
+    expect(state.saves).toHaveLength(0); // Preflight blocked the invalid draft before any save POST.
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();
     await expect(drawer.getByRole("status").filter({ hasText: "草稿已保存" })).toBeVisible();
-    expect(state.saves[1]!.draft).toMatchObject({
+    expect(state.saves[0]!.draft).toMatchObject({
       fields: [{ key: "name", label: "Customer name", kind: "text", value: "Unsaved buyer lettering", font: "Synthetic Serif", color: "#336699" }],
       instructions: "Unsaved operator instructions",
       images: [{ origin: "report", key: "buyer-first", usage: "buyer_photo" },
@@ -300,6 +302,7 @@ test.describe("whole order image upload", () => {
     await (await chooser).setFiles([]);
     expect(state.uploads).toEqual([]);
     await expect(upload).toBeEnabled();
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     await drawer.getByRole("textbox", { name: "定制内容", exact: true }).fill("Retain after a failed upload");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Notes survive failed upload");
     const input = drawer.getByLabel("上传订单定制图片", { exact: true });
@@ -334,6 +337,7 @@ test.describe("whole order image upload", () => {
     const state = await imageReviewFixture(page);
     await page.goto(`/orders?line=${id(1)}`);
     const drawer = page.getByRole("dialog", { name: "整单详情", exact: true });
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     const originalFields = drawer.getByRole("textbox", { name: "定制内容", exact: true });
     await originalFields.fill("Local content must remain");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Local note must remain");

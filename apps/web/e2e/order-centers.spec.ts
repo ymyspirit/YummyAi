@@ -6,7 +6,7 @@ import {
   type AmazonReportWorkspaceView,
   type MarketplaceAccountView,
 } from "@yummyai/contracts";
-import { OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import { CheckOrderIntakeInputSchema, OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperationsView } from "@yummyai/contracts/order/workspace";
 import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
 import { OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
 import type { ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
@@ -29,11 +29,15 @@ test("six centers show real filtered order, product-row and unit totals without 
   test.setTimeout(90_000);
   const prefix = `SYNTHETIC-DAILY-COUNTS-${createEntityId()}`;
   const forbidden: string[] = [], errors: string[] = [];
+  const ownedReviewLineIds = new Set<string>();
   let readOnlySummaryPosts = 0;
   const forbid = (request: Request) => {
     const path = new URL(request.url()).pathname;
     if (request.method() === "POST" && path === "/api/order-centers/summaries"
       && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { readOnlySummaryPosts++; return; }
+    const intake = /^\/api\/order-centers\/lines\/([^/]+)\/intake-check$/.exec(path);
+    if (request.method() === "POST" && intake && ownedReviewLineIds.has(intake[1]!) &&
+      CheckOrderIntakeInputSchema.safeParse(request.postDataJSON()).success) return;
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) && path.startsWith("/api/")) forbidden.push(path);
   };
   page.on("request", forbid); page.on("pageerror", error => errors.push(error.message));
@@ -53,6 +57,8 @@ test("six centers show real filtered order, product-row and unit totals without 
     batchId = batch.id;
     const scope = new URLSearchParams({ accountId: account.id, q: prefix });
     const real = await centerApi<{ total: number; groupTotal: number; matchingQuantity: number }>(`order-centers/workspace?${scope}&module=orders&grouping=orders&pageSize=1`);
+    const reviewLines = await centerApi<{ items: Array<{ id: string }> }>(`order-centers/workspace?${scope}&module=orders&grouping=orders&pageSize=100`);
+    for (const line of reviewLines.items) ownedReviewLineIds.add(line.id);
     expect(real).toMatchObject({ total: 3, groupTotal: 2, matchingQuantity: 6 });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/orders?${scope}`);
@@ -545,6 +551,8 @@ test("six centers automatically match shaped-pillow intake while keeping origina
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) || !path.startsWith("/api/")) return;
     if (request.method() === "POST" && path === "/api/order-centers/summaries"
       && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { summaryReads++; return; }
+    if (request.method() === "POST" && fixtureIds.orderLineId && path === `/api/order-centers/lines/${fixtureIds.orderLineId}/intake-check`
+      && CheckOrderIntakeInputSchema.safeParse(request.postDataJSON()).success) return;
     if (request.method() === "POST" && fixtureIds.orderLineId && path === `/api/order-centers/lines/${fixtureIds.orderLineId}/draft`) {
       const body = request.postDataJSON();
       if (body.status === "pending_review" && body.expectedSourceVersionId === draftSourceVersion

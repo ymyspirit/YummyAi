@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
 import { createEntityId, type MarketplaceAccountView, type AmazonReportBatchView, type AmazonReportWorkspaceView } from "@yummyai/contracts";
 import { ErpSessionViewSchema } from "@yummyai/contracts/auth/session";
-import { OrderWorkDetailViewSchema } from "@yummyai/contracts/order/workspace";
+import { CheckOrderIntakeInputSchema, OrderWorkDetailViewSchema } from "@yummyai/contracts/order/workspace";
 import { Permission } from "@yummyai/authz";
 import { decryptProductionBytes } from "@yummyai/production-editor";
 import { connectDatabase, orderWorkAssets, orderWorkItems } from "../../../packages/database/src/index.js";
@@ -73,6 +73,9 @@ test("whole order image upload uses the real personal API scanner and private st
     const path = new URL(request.url()).pathname;
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) || !path.startsWith("/api/")) return;
     browserWrites.push(`${request.method()} ${path}`);
+    if (request.method() === "POST" && lineId &&
+      path === `/api/order-centers/lines/${lineId}/intake-check` &&
+      CheckOrderIntakeInputSchema.safeParse(request.postDataJSON()).success) return;
     const exact = path === `/api/order-centers/lines/${lineId}/images` || path === `/api/order-centers/lines/${lineId}/draft`;
     const readOnly = ["/api/order-centers/summaries", "/api/agent-resources/definition", "/api/agent-tools/definition", "/api/agent-resources/candidates"].includes(path);
     if (request.method() !== "POST" || !exact && !readOnly) forbiddenWrites.push(`${request.method()} ${path}`);

@@ -542,6 +542,35 @@ image at the pinned specification size and queues faithful enhancement. The mode
 cutout, independent contour optimization and proof render remain explicit follow-up
 operations; dispatch alone does not mean a production sheet has been completed.
 
+## Focused review and early guidance
+
+Opening an editable requirement automatically checks its current fields, original
+images and design route through the existing read-only `intake-check` endpoint.
+Changes trigger a debounced check. The result is tied to the exact draft, source,
+revision and visible order state; late results cannot enable another draft.
+This check does not save, approve, dispatch or call a model.
+
+The review starts with the remaining actions and the compact product, size,
+customer requirements and selected originals. Production prose, version details
+and raw field mapping stay in disclosures. Missing inputs are labelled beside
+their controls, and issue buttons open and focus the relevant section. Existing
+customer values, including original font and color selectors, remain available.
+
+Independent unsupported automatic requirements are reported together with missing
+fields where they can be established. Free customer notes link to the actual
+note. The explicit “改由美工制作” action changes only the local design route and
+retains the complete request; it does not submit the review. Once the current
+check succeeds, one confirmation saves its uniquely normalized fields. The save
+endpoint still independently enforces the original permissions, source, image,
+version and production rules. Draft and needs-information saves retain their
+existing meaning.
+
+If a save reply is lost or uncertain, the operator can explicitly retrieve that
+attempt's result with the exact same body and idempotency key. This recovery is
+bound to the original order, draft and visible state; it does not authorize a new
+write using an old readiness result. A normal confirmation remains blocked while
+the original outcome is unresolved.
+
 ## Validation
 
 - `order-workspace.integration.test.ts` exercises real RLS and migrations, immutable
@@ -561,6 +590,13 @@ operations; dispatch alone does not mean a production sheet has been completed.
   dispatching an order. The runner removes its database, bucket, Redis and identity.
 - The existing report importer and navigation acceptance suites cover the updated
   entry points, source ZIP recovery, editor reopening, and stable navigation.
+- `pnpm test:e2e:order-daily --suite=order-review-guidance` uses disposable native
+  personal-session pillow orders to verify automatic readiness, one-step review
+  confirmation, missing-original navigation, explicit human routing, continuous
+  required-field editing, rejection of a delayed older readiness response and
+  retrying a failed check without restarting verification after a successful save.
+  It also commits a save before dropping its reply, then verifies that explicit
+  recovery replays only the identical body and key without creating a new version.
 
 Verified on 2026-09-13: 124 relevant unit tests, 52 integration tests, and 24
 browser acceptance tests passed, along with the full workspace typecheck, build,

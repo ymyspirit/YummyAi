@@ -594,12 +594,13 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
   productionHandoffBrowser = process.argv.includes("--suite=production-handoff"),
   productionDeliveryBrowser = process.argv.includes("--suite=production-delivery"),
   teamBrowser = process.argv.includes("--suite=teams"),
+  orderReviewGuidanceBrowser = process.argv.includes("--suite=order-review-guidance"),
   orderImageUploadBrowser = process.argv.includes("--suite=order-image-upload"),
   compiledWeb = process.argv.includes("--compiled-web"),
   incomingBrowser = process.argv.includes("--suite=incoming-browser"),
   procurementCycleBrowser = process.argv.includes("--suite=procurement-cycle-browser"),
   erpPersonalBrowser =
-    orderImageUploadBrowser ||
+    orderReviewGuidanceBrowser || orderImageUploadBrowser ||
     ordinaryDailyBrowser ||
     studioPersonalBrowser ||
     shipmentCreateBrowser ||
@@ -641,6 +642,7 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
     process.argv.includes("--suite=erp-identity");
 process.env.WEB_AUTH_MODE = erpPersonalBrowser ? "personal" : "local-service";
 process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED = orderImageUploadBrowser ? "1" : "0";
+process.env.E2E_ORDER_REVIEW_GUIDANCE_ISOLATED = orderReviewGuidanceBrowser ? "1" : "0";
 if (procurementCycleBrowser || procurementPrecisionBrowser || invoiceCommandBrowser || invoiceReconciliationBrowser) process.env.E2E_REAL_PRODUCTS = "1";
 let factoryIdentity: Awaited<ReturnType<typeof startFactoryIdentityFixture>> | Awaited<ReturnType<typeof startAgentMcpBrowserIdentityFixture>> | undefined;
 let webCandidate: Awaited<ReturnType<typeof verifyLocalWebCandidate>> | undefined;
@@ -1881,7 +1883,9 @@ try {
                                                                     ? "apps/web/playwright.factory-directory.config.ts"
                                                                     : teamBrowser
                                                                     ? "apps/web/playwright.teams.config.ts"
-                                                                    : orderImageUploadBrowser
+                                                                    : orderReviewGuidanceBrowser
+                                                                      ? "apps/web/playwright.order-review-guidance.config.ts"
+                                                                      : orderImageUploadBrowser
                                                                       ? "apps/web/playwright.order-image-upload.config.ts"
                                                                       : "apps/web/playwright.erp-identity.config.ts"
                                                   : factoryPortal

@@ -26,6 +26,7 @@ import { prepareOrderDesignSnapshot } from "./order-design-snapshot.js";
 import { assertAutomaticArtwork, composeOrderArtwork } from "../design/order-artwork-layout.js";
 import { isPhotoOnlyPillowArtwork } from "../design/order-pillow-plan.js";
 import { checkOrderIntakeFields } from "./order-intake-check.js";
+import { orderAutomaticIntakeIssues } from "./order-intake-automatic.js";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT, PRIVATE_STORAGE } from "../platform.tokens.js";
 import { ProductionEditorService, ProductionEditorScanner } from "../design/production-editor.service.js";
 import { AmazonOrderReportService, type OrderSummaryReportSelection } from "./amazon-order-report.service.js";
@@ -1117,25 +1118,13 @@ export class OrderWorkspaceService {
         },
       });
       result.issues.push(...fields.issues);
-      if (!fields.issues.length && orderDesignExecutor(input.draft) === "agent") {
-        try {
-          assertAutomaticArtwork(
-            basis.artwork.customization,
-            basis.artwork.layout,
-            fields.normalizedDraft,
-            profile.productType,
-            isPhotoOnlyPillowArtwork(basis.artwork),
-          );
-        } catch (error) {
-          if (!(error instanceof ConflictException)) throw error;
-          result.issues.push({
-            code: "automatic_artwork_not_ready",
-            fieldKey: null,
-            message: error.message,
-            action: "保留并核对顾客的全部要求，明确选择人工制图，或补齐对应的自动制图规则后重新核对",
-          });
-        }
-      }
+      result.issues.push(...orderAutomaticIntakeIssues(
+        basis.artwork.customization,
+        basis.artwork.layout,
+        fields,
+        profile.productType,
+        isPhotoOnlyPillowArtwork(basis.artwork),
+      ));
       if (basis.recipe?.designVersionId && !basis.recipe.editorVersionId)
         result.notes.push(
           "已审核视觉图稿不代替订单生产稿。本单使用固定规格所绑定的已审核通用底稿，生成私有制作版本后继续运营审核与生产检查。",

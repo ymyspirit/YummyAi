@@ -8,7 +8,8 @@ import {
   withTenant,
 } from "@yummyai/database";
 import { eq } from "drizzle-orm";
-import { OrderWorkDetailViewSchema } from "@yummyai/contracts/order/workspace";
+import { CheckOrderIntakeInputSchema, OrderIntakeCheckViewSchema, OrderWorkDetailViewSchema } from "@yummyai/contracts/order/workspace";
+import { checkOrderIntakeFields } from "../../api/src/orders/order-intake-check.js";
 import { ProductionEditorDetailViewSchema } from "@yummyai/contracts/pod/production-editor-api";
 import { createProductionDocument } from "../src/features/production-editor/production-editor-model";
 import { syntheticProductionPng } from "./production-editor-fixture";
@@ -306,6 +307,22 @@ async function orderRoutes(page: Page, artwork = false) {
     // The list uses POST for a bounded, read-only summary query.
     if (path === "/api/order-centers/summaries" && route.request().method() === "POST")
       return route.fulfill({ json: { items: [] } });
+    if (path === `/api/order-centers/lines/${value.line.id}/intake-check` && route.request().method() === "POST") {
+      const input = CheckOrderIntakeInputSchema.parse(route.request().postDataJSON());
+      if (input.expectedRevision !== value.line.revision || input.expectedSourceVersionId !== (value.report?.versionId ?? null))
+        return route.fulfill({ status: 409, json: { message: "Synthetic input is stale" } });
+      const art = value.catalog?.artworks.find(item => item.id === input.draft.artworkVersionId);
+      const checked = checkOrderIntakeFields(art?.customization ?? { version: 1, fields: [] }, input.draft, false);
+      const matched = !!art && !!input.draft.printProfileVersionId;
+      const issues = [...checked.issues, ...(!matched ? [{ code: "basis_or_image_invalid", fieldKey: null,
+        message: "请先匹配本单印花与制作版本", action: "核对制作依据后重新检查" }] : [])];
+      return route.fulfill({ json: OrderIntakeCheckViewSchema.parse({
+        orderLineId: value.line.id, revision: value.line.revision, sourceVersionId: value.report?.versionId ?? null,
+        ready: matched && issues.length === 0, basis: matched ? "manual" : "unmatched", package: null,
+        fields: checked.fields, issues, normalizedDraft: checked.normalizedDraft,
+        notes: ["Synthetic AI transport checks explicit fields; native order tests verify actual save authority"],
+      }) });
+    }
     if (route.request().method() !== "GET") {
       writes.push(path);
       return route.fulfill({ status: 409, json: { message: "Fixture refuses business writes" } });
