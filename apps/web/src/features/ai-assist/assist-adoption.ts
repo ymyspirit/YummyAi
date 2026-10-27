@@ -4,7 +4,6 @@ import {
 } from "@yummyai/contracts/catalog/artwork";
 import type { AssistDirection, AssistMatch, AssistOrderFieldBinding } from "@yummyai/contracts/ai/assist";
 import type { OrderRequirementSource } from "@yummyai/contracts/order/requirement-interpretation";
-import { orderDraftWithArtwork } from "../order-centers/order-work-input-model";
 import { orderRequirementField } from "../order-centers/order-requirements-model";
 import {
   OrderWorkDraftSchema,
@@ -64,7 +63,12 @@ export function adoptOrderMatch(
     printProfileVersionId: spec.processProfileVersionId,
     salesRecipeVersionId: null,
     salesPackageId: null,
-    fields: orderDraftWithArtwork(current, art.id, undefined, art.customization.fields).fields,
+    fields: [
+      ...current.fields,
+      ...art.customization.fields
+        .filter((f) => f.type !== "image" && !current.fields.some((v) => v.key === f.key))
+        .map((f) => ({ key: f.key, label: f.label, kind: "text", value: "" })),
+    ],
   });
 }
 
