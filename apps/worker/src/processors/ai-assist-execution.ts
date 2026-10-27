@@ -4,8 +4,8 @@ import {
   assistUsesReviewedGuidance,
   HarnessContractError,
   ASSIST_MAX_OUTPUT_TOKENS,
-  ASSIST_PROMPT_VERSION,
-  ASSIST_BENCHMARK_PROMPT_VERSION,
+  assistPromptVersion,
+  assistResultSchema,
   isBenchmarkAssist,
   BenchmarkProofError,
   assistFingerprint,
@@ -20,7 +20,7 @@ import {
   type SecretVault,
   KnowledgeEvaluationProofError,
 } from "@yummyai/ai-core";
-import { AssistResultSchema, LegacyAssistResultSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { CreateAssistSchema } from "@yummyai/contracts/ai/assist";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   aiAssistRuns as runs,
@@ -168,14 +168,14 @@ export class DurableAssistExecution {
         async (raw) => JSON.parse(raw) as AssistContext,
       );
       const benchmark = isBenchmarkAssist(input);
-      if (run.promptVersion !== (benchmark ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION)) throw new Error("assist_execution_version_unsupported");
-      const outputSchema = benchmark ? AssistResultSchema : LegacyAssistResultSchema;
+      if (run.promptVersion !== assistPromptVersion(benchmark, run.kind === "order_review")) throw new Error("assist_execution_version_unsupported");
+      const outputSchema = assistResultSchema(benchmark, run.kind === "order_review");
       if (
         assistFingerprint(input) !== run.inputFingerprint ||
         execution.inputFingerprint !== run.inputFingerprint
       )
         throw new Error("assist_input_changed");
-      if (assistExecutionPolicy(!!input.artworkAudit, benchmark).checksum !== execution.policyChecksum)
+      if (assistExecutionPolicy(!!input.artworkAudit, benchmark, run.kind === "order_review").checksum !== execution.policyChecksum)
         throw new Error("assist_execution_version_unsupported");
       input.request = CreateAssistSchema.parse(input.request);
       if (input.request.kind !== run.kind) throw new Error("assist_input_changed");

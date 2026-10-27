@@ -1,12 +1,12 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { authorize, ForbiddenError, permissionScope, Permission, requiredAssistPermissions, assertBusinessBenchmarkScope, businessBenchmarkRunPermissions } from "@yummyai/authz";
 import {
-  ASSIST_PROMPT_VERSION, assistFingerprint, assistScope, assistTaskFingerprint, businessBenchmarkBasisFingerprint,
+  assistPromptVersion, assistResultSchema, assistFingerprint, assistScope, assistTaskFingerprint, businessBenchmarkBasisFingerprint,
   businessBenchmarkCaseChecksum, businessBenchmarkSourcePins, knowledgeEvaluationChecksum,
   type AssistContext, type SecretVault,
 } from "@yummyai/ai-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { CreateAssistSchema, LegacyAssistResultSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
 import {
   BusinessBenchmarkBasisRequestSchema, BusinessBenchmarkTargetQuerySchema,
   BUSINESS_BENCHMARK_ROLES, LEGACY_BUSINESS_BENCHMARK_ROLES, type BusinessBenchmarkCase,
@@ -152,7 +152,7 @@ export class KnowledgeBenchmarkBusinessService {
     try {
       const prepared = await vault.withSecret(row.encryptedInput, value => JSON.parse(value) as AssistContext);
       if (row.benchmarkItemId !== input.itemId || row.kind !== input.fields.role || row.requestId !== input.requestId ||
-        row.modelSnapshot.id !== input.modelId || row.promptVersion !== ASSIST_PROMPT_VERSION || row.expiresAt > input.expiresAt || row.scope !== assistScope(prepared.request) ||
+        row.modelSnapshot.id !== input.modelId || row.promptVersion !== assistPromptVersion(false, row.kind === "order_review") || row.expiresAt > input.expiresAt || row.scope !== assistScope(prepared.request) ||
         row.inputFingerprint !== assistFingerprint(prepared) || prepared.request.modelId !== input.modelId ||
         prepared.request.requestId !== input.requestId || prepared.request.kind !== input.fields.role ||
         prepared.benchmarkExecutionVersion || prepared.accessPolicy?.dataScope !== input.dataScope ||
@@ -165,7 +165,7 @@ export class KnowledgeBenchmarkBusinessService {
       await assertBusinessBenchmarkResources(tx, current, [input.fields.task], prepared.benchmarkResources, newRole(input.fields.role) ? "content" : "metadata");
       if (newRole(input.fields.role) && !await isPinnedAssistGuidanceCurrentInTransaction(tx, current, prepared)) return null;
       const body = await vault.withSecret(row.encryptedOutput, value => JSON.parse(value) as { result: unknown });
-      const result = LegacyAssistResultSchema.parse(body.result);
+      const result = assistResultSchema(false, row.kind === "order_review").parse(body.result);
       if (knowledgeEvaluationChecksum(result) !== input.outputChecksum) throw new Error("benchmark_result_invalid");
       return result;
     } catch (error) { if (error instanceof ForbiddenError) throw error; throw new ConflictException("benchmark_result_unavailable"); }

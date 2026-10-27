@@ -174,7 +174,13 @@ export const AssistResultSchema = z
   })
   .strict();
 /** Exact v1 registered output. Adding optional fields must not change old tool pins. */
-export const LegacyAssistResultSchema = AssistResultSchema.omit({ typedAnswers: true });
+export const LegacyAssistResultSchema = AssistResultSchema.omit({ typedAnswers: true, orderFieldBindings: true });
+/** The existing benchmark keeps its original schema and method checksum. */
+export const BenchmarkAssistResultSchema = AssistResultSchema.omit({ orderFieldBindings: true });
+/** Fresh order analysis has a strict provider schema; old sealed wire results have no new default. */
+export const OrderReviewAssistResultSchema = LegacyAssistResultSchema.extend({
+  orderFieldBindings: z.array(AssistOrderFieldBindingSchema).max(500).default([]),
+});
 const Request = z.object({
   requestId: z.uuid(),
   modelId: Id,

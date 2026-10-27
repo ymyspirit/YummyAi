@@ -1,4 +1,4 @@
-import { ASSIST_PROMPT_VERSION, BenchmarkProofError, assistFingerprint, assistTaskFingerprint, businessBenchmarkBasisFingerprint,
+import { assistPromptVersion, BenchmarkProofError, assistFingerprint, assistTaskFingerprint, businessBenchmarkBasisFingerprint,
  businessBenchmarkCaseChecksum, businessBenchmarkSourcePins, gradeBusinessBenchmark, knowledgeEvaluationChecksum, openBenchmarkValue,
  sealBenchmarkValue, gradeRoleBenchmark, type AssistContext, type SecretVault } from "@yummyai/ai-core";
 import { authorize, authorizeAssistRequest, intersectPermissionContexts, permissionScope, Permission, requiredAssistRequestPermissions,
@@ -60,7 +60,7 @@ export async function assertBusinessBenchmarkExecution(tx:TenantTransaction,ceil
   [attempt.createdBy,item.createdBy,version.createdBy,experiment.createdBy,native.ownerId].some(id=>id!==context.userId)||
   attempt.requestId!==native.requestId||input.request.requestId!==native.requestId||input.request.modelId!==experiment.modelId||
   version.id!==experiment.datasetVersionId||version.checksum!==knowledgeEvaluationChecksum(version.manifest)||
-  experiment.modelId!==native.modelSnapshot.id||native.promptVersion!==ASSIST_PROMPT_VERSION||
+  experiment.modelId!==native.modelSnapshot.id||native.promptVersion!==assistPromptVersion(false,native.kind==="order_review")||
   native.inputFingerprint!==assistFingerprint(input)||!item.encryptedBasis||item.expiresAt<=new Date()||native.expiresAt>item.expiresAt||
   item.taskFingerprint!==assistTaskFingerprint(input)||item.caseChecksum!==businessBenchmarkCaseChecksum(item.fields)||
   item.basisFingerprint!==businessBenchmarkBasisFingerprint(item.fields,input)||

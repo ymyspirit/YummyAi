@@ -7,11 +7,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
-  ASSIST_INSTRUCTIONS,
   ASSIST_MAX_OUTPUT_TOKENS,
-  ASSIST_PROMPT_VERSION,
-  ASSIST_BENCHMARK_PROMPT_VERSION,
-  ASSIST_BENCHMARK_INSTRUCTIONS,
+  assistPromptVersion,
+  assistSystemInstructions,
   isBenchmarkAssist,
   assistFingerprint,
   assistExecutionPolicy,
@@ -297,7 +295,7 @@ export class AssistService {
     if (input.expectedTaskFingerprint && assistTaskFingerprint(prepared) !== input.expectedTaskFingerprint)
       throw new ConflictException("任务依据已变化，请重新读取并核对后再开始分析");
     const estimate = model.inputUsdPerMillion !== null && model.outputUsdPerMillion !== null ? calculateCostUsd(
-      (JSON.stringify(prepared.data).length + ASSIST_INSTRUCTIONS.length + (isBenchmarkAssist(prepared) ? ASSIST_BENCHMARK_INSTRUCTIONS.length : 0) + 8000) * 3 +
+      (JSON.stringify(prepared.data).length + assistSystemInstructions(false, isBenchmarkAssist(prepared), prepared.request.kind === "order_review").length + 8000) * 3 +
         prepared.images.length * 4096,
       ASSIST_MAX_OUTPUT_TOKENS,
       model.inputUsdPerMillion,
@@ -423,7 +421,7 @@ export class AssistService {
           requestFingerprint,
           encryptedInput: this.vault.encrypt(JSON.stringify(prepared)),
           modelSnapshot: { ...model, maxTaskCostUsd: taskCap, providerConfigId: provider.id },
-          promptVersion: isBenchmarkAssist(prepared) ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION,
+          promptVersion: assistPromptVersion(isBenchmarkAssist(prepared), prepared.request.kind === "order_review"),
           reservedCostUsd: taskCap?.toFixed(6) ?? "0",
           // Use the same database clock as created_at, including after lock waits.
           expiresAt: sql`least(now() + ${"orderLineId" in input || input.kind === "after_sales_review" ? 1 : 30} * interval '1 day', ${prepared.expiresAt ?? null}::timestamptz)`,
@@ -440,7 +438,7 @@ export class AssistService {
         amountUsd: taskCap.toFixed(6),
         state: "reserved",
       });
-      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, policyChecksum: assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared)).checksum });
+      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, policyChecksum: assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared), prepared.request.kind === "order_review").checksum });
       if (admission) await admission.created(tx, created!, prepared, this.vault);
       return created!;
     });
@@ -669,7 +667,7 @@ export class AssistService {
       .where(eq(knowledgeBenchmarkItems.id, row.benchmarkItemId!));
     const parsed = BusinessBenchmarkCaseSchema.safeParse(item?.fields);
     if (!item || !parsed.success || item.createdBy !== current.userId || row.ownerId !== current.userId ||
-      row.tenantId !== current.tenantId || item.caseId !== null || parsed.data.role !== row.kind || row.promptVersion !== ASSIST_PROMPT_VERSION)
+      row.tenantId !== current.tenantId || item.caseId !== null || parsed.data.role !== row.kind || row.promptVersion !== assistPromptVersion(false, row.kind === "order_review"))
       throw new ConflictException("benchmark_native_receipt_invalid");
     assertEvaluationScope(current, item.dataScope, "read");
     assertBusinessBenchmarkScope(current, item.dataScope, parsed.data.role);
