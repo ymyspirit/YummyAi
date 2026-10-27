@@ -332,6 +332,72 @@ describe("AI assists use real tenant services and immutable background tasks", (
     prompt: "使用合成资料分析原创方向",
   });
 
+  async function importPrivateNameOrder() {
+    const externalOrderId = `AI-${createEntityId()}`, externalLineId = `LINE-${createEntityId()}`;
+    const batch = await reports.importReport(context, {
+      accountId, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic.txt",
+      content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\tcustomized-url\n${externalOrderId}\t${externalLineId}\t${new Date().toISOString()}\tSYNTHETIC-AI\tSynthetic gift\t1\tUSD\t20\thttps://zme-caps.amazon.com/synthetic`,
+    });
+    const report = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalOrderId, orderItemId: externalLineId,
+      customizationData: { type: "PageContainerCustomization", children: [
+        { type: "TextPrintingCustomization", label: "名字", inputValue: "PRIVATE-SYNTHETIC-NAME" },
+      ] } }));
+    await reports.process(context, report.id, null, await zip.generateAsync({ type: "nodebuffer" }));
+    return report.orderLineId;
+  }
+
+  let manualSalesBasis: { artworkVersionId: string; specificationVersionId: string } | undefined;
+  async function legacyManualSalesBasis() {
+    if (manualSalesBasis) return manualSalesBasis;
+    const { artwork } = await development.registerArtwork(context, {
+      code: `SYNTHETIC-AI-MANUAL-${createEntityId()}`, name: "Synthetic manual text preflight scheme",
+      mode: "personalized_text", customization: { version: 1, fields: [
+        { key: "name", label: "名字", type: "short_text", required: true, validation: { maxLength: 100 } },
+      ] }, layout: [], instructions: "Synthetic manual editor fixture; the missing text layer must remain visible to preflight",
+      expectedVersion: 0, idempotencyKey: randomUUID(),
+    });
+    const { spu } = await development.createSpu(context, { code: `SYNTHETIC-AI-MANUAL-${createEntityId()}`,
+      name: "Synthetic manual preflight product", idempotencyKey: randomUUID() });
+    const { specification } = await development.saveSpecification(context, {
+      spuId: spu.id, code: "MANUAL-12IN", name: "Synthetic 12 inch manual specification", attributes: { size: "12 inch" },
+      processProfileVersionId: profileId, facts: syntheticSpecificationFacts({
+        dimensions: "12 inch", physicalDimensions: { basis: "artwork_longest", unit: "mm", length: 304.8, width: null, height: null },
+      }), expectedVersion: 0, idempotencyKey: randomUUID(),
+    });
+    manualSalesBasis = { artworkVersionId: artwork.versionId, specificationVersionId: specification.versionId };
+    return manualSalesBasis;
+  }
+
+  async function privateManualEditor() {
+    const lineId = await importPrivateNameOrder();
+    let detail = await workspace.detail(context, lineId);
+    detail = await workspace.save(context, lineId, {
+      expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion,
+      expectedSourceVersionId: detail.report!.versionId,
+      draft: { ...detail.draft, ...await legacyManualSalesBasis(), printProfileVersionId: profileId, designExecutor: "human",
+        fields: [{ key: "name", kind: "text", label: "名字", value: "PRIVATE-SYNTHETIC-NAME" }], instructions: "保留买家原文" },
+      status: "ready_to_push", reason: "Synthetic operator confirms this manual preflight fixture only", idempotencyKey: randomUUID(),
+    });
+    expect(detail.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", editorProjectId: null });
+    for (const action of ["push", "start_artwork"] as const)
+      detail = await workspace.action(context, lineId, { action, expectedRevision: detail.line.revision,
+        expectedProjectionVersion: detail.line.projectionVersion, reason: "Synthetic controlled manual handoff", idempotencyKey: randomUUID() });
+    let file = await editor.get(context, detail.line.editorProjectId!);
+    // This registered scheme has no fixed master. Add actual synthetic pixels to
+    // its own private version instead of relying on the empty-catalog fallback.
+    const asset = await editor.upload(context, file.project.id, `synthetic-editor-${file.project.id}.png`, await image()) as ProductionEditorImageView;
+    file = await editor.save(context, file.project.id, { expectedVersionId: file.version.id,
+      document: { ...file.version.document, layers: [{ id: "print", kind: "image", name: "Synthetic print", assetId: asset.id,
+        assetVersion: asset.version, xMm: 5, yMm: 5, widthMm: 40, heightMm: 40, rotationDeg: 0, opacity: 1,
+        visible: true, locked: false, flipX: false, flipY: false }] } });
+    expect(file.version.reviewed).toBe(false);
+    expect(file.version.document.confirmations.visualReview).toBe(false);
+    expect(file.version.document.layers.some(layer => layer.kind === "text")).toBe(false);
+    return { lineId, detail, file };
+  }
+
   const methods = new MethodGovernanceService(database, audit);
   const governedTasks = new Map<string, {
     request: CreateAssist;
@@ -543,40 +609,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
         idempotencyKey: randomUUID(),
       })
     )[0]!.versionId;
-    const externalOrderId = `AI-${createEntityId()}`,
-      externalLineId = `LINE-${createEntityId()}`;
-    const batch = await reports.importReport(context, {
-      accountId,
-      marketplaceId: "ATVPDKIKX0DER",
-      fileName: "synthetic.txt",
-      content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\tcustomized-url\n${externalOrderId}\t${externalLineId}\t${new Date().toISOString()}\tSYNTHETIC-AI\tSynthetic gift\t1\tUSD\t20\thttps://zme-caps.amazon.com/synthetic`,
-    });
-    const report = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
-    lineId = report.orderLineId;
-    const zip = new JSZip();
-    zip.file(
-      "order.json",
-      JSON.stringify({
-        orderId: externalOrderId,
-        orderItemId: externalLineId,
-        customizationData: {
-          type: "PageContainerCustomization",
-          children: [
-            {
-              type: "TextPrintingCustomization",
-              label: "名字",
-              inputValue: "PRIVATE-SYNTHETIC-NAME",
-            },
-          ],
-        },
-      }),
-    );
-    await reports.process(
-      context,
-      report.id,
-      null,
-      await zip.generateAsync({ type: "nodebuffer" }),
-    );
+    lineId = await importPrivateNameOrder();
   }, 60000);
   afterAll(async () => {
     objects.clear();
@@ -687,6 +720,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
   }, 60_000);
 
   it("uses configured models, sends actual research images and rejects tenant/owner access and mutation", async () => {
+    enqueue.mockClear();
     expect(await assists.models(other)).toEqual([]);
     const input = creativeRequest(),
       task = await createGovernedTask(input);
@@ -922,6 +956,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("does not push an order or rewrite customer fields, and marks the result stale after a save", async () => {
+    const lineId = await importPrivateNameOrder();
     let detail = await workspace.detail(context, lineId);
     const task = await assists.create(context, {
       kind: "order_review",
@@ -939,10 +974,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
     });
     detail = await workspace.save(context, lineId, {
       expectedRevision: 0,
+      expectedProjectionVersion: detail.line.projectionVersion,
       expectedSourceVersionId: detail.report?.versionId ?? null,
       draft: {
         ...detail.draft,
+        ...await legacyManualSalesBasis(),
         printProfileVersionId: profileId,
+        designExecutor: "human",
         fields: [{ key: "name", kind: "text", label: "名字", value: "PRIVATE-SYNTHETIC-NAME" }],
         instructions: "保留买家原文",
       },
@@ -964,16 +1002,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("preflights actual production pixels without export or approval, then invalidates an old editor version", async () => {
-    let detail = await workspace.detail(context, lineId);
-    for (const action of ["push", "start_artwork"] as const)
-      detail = await workspace.action(context, lineId, {
-        action,
-        expectedRevision: detail.line.revision,
-        expectedProjectionVersion: detail.line.projectionVersion,
-        reason: "Synthetic controlled handoff",
-        idempotencyKey: randomUUID(),
-      });
-    const file = await editor.get(context, detail.line.editorProjectId!);
+    const { lineId, detail, file } = await privateManualEditor();
     const task = await createGovernedTask({
       kind: "artwork_preflight",
       orderLineId: lineId,
@@ -996,8 +1025,8 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("pins and shares automatic artwork evidence, deduplicates calls, and never approves or reuses stale checks", async () => {
-    const detail = await workspace.detail(context, lineId);
-    let file = await editor.get(context, detail.line.editorProjectId!);
+    const { lineId, detail, file: originalFile } = await privateManualEditor();
+    let file = originalFile;
     const confirmations = {physicalSize: false, visualReview: false, narrowParts: false, whiteBorderRule: false, barcodeTab: false, backText: false};
     file = await editor.save(context, file.project.id, {expectedVersionId: file.version.id, document: {...file.version.document, confirmations}});
     const input = {kind: "artwork_preflight" as const, automaticAudit: true as const, orderLineId: lineId, expectedRevision: detail.line.revision, expectedEditorVersionId: file.version.id, modelId, requestId: randomUUID()};

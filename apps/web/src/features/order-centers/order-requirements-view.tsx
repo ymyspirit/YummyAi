@@ -29,10 +29,12 @@ function TextRequirement({ group, draft, disabled, onChange, onPending, readOnly
         onChange={event => onChange(orderRequirementWithText(draft, group.source, event.target.value))} /></label>
       : <><p className="oc-requirement-original">{group.text || "未填写文字"}</p><p className="oc-hint">这段原文未纳入当前草稿 请在原始字段详情核对</p></>}
     {!group.needsPrinting ? <p className="oc-requirement-empty" role="status">无需印字</p> : <>
-      <dl><div><dt>字体</dt><dd>{group.font || "未提供字体"}</dd></div><div><dt>文字颜色</dt><dd>
+      <dl><div><dt>字体</dt><dd>{group.legacyFont ? <>历史字体值 {group.legacyFont} · 待核对</> : group.font || "未提供字体"}</dd></div><div><dt>文字颜色</dt><dd>
         {group.colorHex ? <><span className="oc-requirement-swatch" style={{ backgroundColor: group.colorHex }} aria-hidden="true" />{group.colorLabel && group.colorLabel !== group.colorHex ? `${group.colorLabel} · ` : ""}{group.colorHex}</>
+          : group.legacyColor ? <>历史色值 {group.legacyColor} · 待核对</>
           : <>{group.colorLabel ? `${group.colorLabel} · ` : ""}未提供真实色值</>}
       </dd></div></dl>
+      {(group.legacyFont || group.legacyColor) && <p className="oc-hint">历史值可能由旧解析继承 尚未确认属于本组文字 {readOnly ? "请回订单制作需求核对" : "请在下方核对后明确采用本组样式"}</p>}
       {group.included && !readOnly && <details className="oc-requirement-style"><summary><Palette size={14} />调整本组字体与颜色</summary>
         <p className="oc-hint">仅作用于这段文字 留空保留原要求 需要实际色值 不会默认黑色</p>
         <div className="oc-requirement-style-fields"><label>指定字体<input aria-label={`指定字体 ${group.source.label}`} maxLength={500} value={font} onChange={event => { setFont(event.target.value); setError(""); }} /></label>

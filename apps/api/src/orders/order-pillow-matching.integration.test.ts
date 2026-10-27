@@ -39,6 +39,10 @@ describe.sequential("exact shaped-pillow order matching and platform-only shippi
     const detail = await f.work.detail(a.context, order.lineId);
     expect(detail.report?.versionId).toBe(order.versionId);
     expect(detail.report?.surfaces[0]?.fields[0]?.value).toBe("16 inches");
+    expect(detail.requirementSources).toHaveLength(2);
+    expect(detail.requirementSources?.map(source => source.value)).toEqual(["16 inches", "Half Body"]);
+    expect(detail.requirementSources?.every(source => source.origin === "legacy_unresolved" && source.jsonPointer === "" &&
+      source.requestedFont === null && source.colorHex === null && source.targetTextKey === null)).toBe(true);
     expect(detail.catalog?.automatic).toMatchObject({ status: "partial", sourceVersionId: order.versionId,
       sizeInches: 16, spuId: spu.id, specificationVersionId: sixteen.versionId, processProfileVersionId: null, applied: true });
     expect(detail.draft).toMatchObject({ specificationVersionId: sixteen.versionId, printProfileVersionId: null, dueAt: null });

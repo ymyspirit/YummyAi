@@ -44,10 +44,15 @@ export function orderRequirementTextGroups(sources: readonly OrderRequirementSou
     const font = source.requestedFont !== null ? source : fonts.length === 1 ? fonts[0]! : null;
     const color = source.colorHex !== null || source.colorLabel !== null ? source : colors.length === 1 ? colors[0]! : null;
     const text = field?.value ?? source.value;
+    const requestedFont = field?.styleOverride?.font ?? font?.requestedFont ?? null;
+    const requestedColor = field?.styleOverride?.colorHex ?? color?.colorHex ?? null;
     return { source, field, text, included: !!field, needsPrinting: !!text.trim(),
-      font: field?.styleOverride?.font ?? font?.requestedFont ?? null,
+      font: requestedFont,
       colorLabel: field?.styleOverride?.colorHex ?? color?.colorLabel ?? null,
-      colorHex: field?.styleOverride?.colorHex ?? color?.colorHex ?? null };
+      colorHex: requestedColor,
+      // An old field value is evidence to check, not an operator style confirmation.
+      legacyFont: source.origin !== "amazon_raw" && !requestedFont && field?.styleOverride?.font === undefined && field?.font?.trim() ? field.font : null,
+      legacyColor: source.origin !== "amazon_raw" && !requestedColor && field?.styleOverride?.colorHex === undefined && field?.color?.trim() ? field.color : null };
   });
 }
 

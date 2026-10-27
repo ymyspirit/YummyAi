@@ -206,6 +206,102 @@ describe("Amazon requirement projection from immutable raw groups", () => {
     expect(result.interpretation.unresolved.length).toBeGreaterThan(0);
   });
 
+  it.each([undefined, null])("returns no invented source when the customization document is absent: %s", document => {
+    expect(extractAmazonRequirementSources(document)).toEqual([]);
+  });
+
+  it("retains exact flat metadata values without inventing raw style ownership when the document is absent", () => {
+    const surfaces: AmazonCustomDocument["surfaces"] = [{ key: "legacy-front", label: "Front", previewFileKey: null, buyerFileKeys: [], fields: [
+      { key: "legacy-message", label: "Custom your text", kind: "text", value: "Synthetic Alpha", font: "Unverified Font", color: "#2468ac" },
+      { key: "legacy-font", label: "Font", kind: "choice", value: "Unverified Font" },
+      { key: "legacy-color", label: "Font Color", kind: "choice", value: "CustomColor" },
+    ] }];
+    const before = structuredClone(surfaces), sources = extractAmazonRequirementSources(undefined, surfaces);
+    expect(sources.map(source => source.value)).toEqual(["Synthetic Alpha", "Unverified Font", "CustomColor"]);
+    expect(sources.every(source => source.origin === "legacy_unresolved" && source.jsonPointer === "" &&
+      source.requestedFont === null && source.colorHex === null && source.targetTextKey === null)).toBe(true);
+    expect(sources.map(source => source.groupKey)).toEqual(["unresolved:legacy-message", "unresolved:legacy-font", "unresolved:legacy-color"]);
+    expect(surfaces).toEqual(before);
+  });
+
+  it("retains a legacy document with no raw property as unresolved instead of claiming raw provenance", () => {
+    const document: AmazonCustomDocument = { schemaVersion: "synthetic-legacy", raw: {}, warnings: [],
+      surfaces: [{ key: "legacy-front", label: "Front", previewFileKey: null, buyerFileKeys: [], fields: [
+        { key: "legacy-text", label: "Custom your text", kind: "text", value: "Synthetic Alpha", font: "Historical Font", color: "#2468ac" },
+      ] }] };
+    Reflect.deleteProperty(document, "raw");
+    const before = structuredClone(document), result = project(document);
+    expect(result.sources).toMatchObject([{ sourceFieldKey: "legacy-text", origin: "legacy_unresolved", jsonPointer: "",
+      requestedFont: null, colorHex: null, targetTextKey: null }]);
+    expect(result.normalizedDraft.fields[0]).toMatchObject({ value: "Synthetic Alpha", font: "Historical Font", color: "#2468ac" });
+    expect(result.interpretation.texts[0]).toMatchObject({ font: { requested: null, sourceFieldKey: null }, color: { hex: null, sourceFieldKey: null } });
+    expect(result.interpretation.unresolved).toContainEqual(expect.objectContaining({ code: "legacy_group_missing", sourceFieldKeys: ["legacy-text"] }));
+    expect(document).toEqual(before);
+  });
+
+  it("uses the actual document surfaces and raw groups instead of mixing an optional flat fallback", async () => {
+    const document = await parsed([group("Actual source group", [text("Synthetic source text"), font("Actual Raw Font")])]);
+    const fallback: AmazonCustomDocument["surfaces"] = [{ key: "unrelated", label: "Unrelated", previewFileKey: null, buyerFileKeys: [], fields: [
+      { key: "unrelated-field", label: "Custom your text", kind: "text", value: "Synthetic unrelated text" },
+    ] }];
+    const before = structuredClone(fallback), sources = extractAmazonRequirementSources(document, fallback);
+    expect(sources).toEqual(extractAmazonRequirementSources(document));
+    expect(sources.every(source => source.origin === "amazon_raw")).toBe(true);
+    expect(sources.some(source => source.sourceFieldKey === "unrelated-field")).toBe(false);
+    expect(fallback).toEqual(before);
+  });
+
+  it("preserves a manual historical text style without treating its values as confirmed source evidence", () => {
+    const draft = OrderWorkDraftSchema.parse({ printProfileVersionId: id(12), fields: [{ key: "manual-name", label: "Name", kind: "text", value: "Alice",
+      font: "Historical Font", color: "#2468ac" }], images: [], instructions: "", customerApprovalRequired: false, dueAt: null });
+    const before = structuredClone(draft), result = interpretOrderRequirements({ basis: basisFor(draft), sources: [], draft });
+    expect(result.normalizedDraft.fields[0]).toMatchObject({ value: "Alice", font: "Historical Font", color: "#2468ac" });
+    expect(result.normalizedDraft.fields[0]?.styleOverride).toBeUndefined();
+    expect(result.interpretation.sources[0]).toMatchObject({ origin: "operator", requestedFont: null, colorHex: null, targetTextKey: null });
+    expect(result.interpretation.texts[0]).toMatchObject({ needsPrinting: true, font: { requested: null, sourceFieldKey: null },
+      color: { label: null, hex: null, sourceFieldKey: null } });
+    expect(result.interpretation.unresolved).toContainEqual(expect.objectContaining({ code: "legacy_group_missing", sourceFieldKeys: ["manual-name"] }));
+    expect(draft).toEqual(before);
+  });
+
+  it("only applies explicitly confirmed manual style properties and leaves the other historical property unverified", () => {
+    const draft = OrderWorkDraftSchema.parse({ printProfileVersionId: id(12), fields: [{ key: "manual-name", label: "Name", kind: "text", value: "Alice",
+      font: "Historical Font", color: "#2468ac", styleOverride: { source: "operator", font: "Confirmed Font" } }],
+      images: [], instructions: "", customerApprovalRequired: false, dueAt: null });
+    const before = structuredClone(draft), result = interpretOrderRequirements({ basis: basisFor(draft), sources: [], draft });
+    expect(result.normalizedDraft.fields[0]).toMatchObject({ font: "Confirmed Font", color: "#2468ac" });
+    expect(result.interpretation.texts[0]).toMatchObject({ font: { requested: "Confirmed Font", sourceFieldKey: "manual-name" },
+      color: { label: null, hex: null, sourceFieldKey: null } });
+    expect(result.interpretation.unresolved).toContainEqual(expect.objectContaining({ code: "legacy_group_missing", sourceFieldKeys: ["manual-name"] }));
+    expect(draft).toEqual(before);
+  });
+
+  it("uses both explicit manual style overrides without promoting the old unverified values", () => {
+    const draft = OrderWorkDraftSchema.parse({ printProfileVersionId: id(12), fields: [{ key: "manual-name", label: "Name", kind: "text", value: "Alice",
+      font: "Historical Font", color: "#2468ac", styleOverride: { source: "operator", font: "Confirmed Font", colorHex: "#13579b" } }],
+      images: [], instructions: "", customerApprovalRequired: false, dueAt: null });
+    const before = structuredClone(draft), result = interpretOrderRequirements({ basis: basisFor(draft), sources: [], draft });
+    expect(result.normalizedDraft.fields[0]).toMatchObject({ font: "Confirmed Font", color: "#13579b" });
+    expect(result.interpretation.texts[0]).toMatchObject({ font: { requested: "Confirmed Font", sourceFieldKey: "manual-name" },
+      color: { hex: "#13579b", sourceFieldKey: "manual-name" } });
+    expect(result.interpretation.unresolved).toEqual([]);
+    expect(draft).toEqual(before);
+  });
+
+  it("still removes inherited raw selector styles and rebuilds text styles only from its real raw group", async () => {
+    const document = await parsed([group("Trusted raw group", [text("Synthetic Alpha"), font("Actual Raw Font"), color("CustomColor", "#2468ac")])]);
+    const draft = draftFor(document), sources = extractAmazonRequirementSources(document);
+    for (const field of draft.fields) { field.font = "Inherited wrong font"; field.color = "#000000"; }
+    const before = structuredClone(draft), result = interpretOrderRequirements({ basis: basisFor(draft), sources, draft });
+    const printed = result.normalizedDraft.fields.find(field => sources.find(source => source.sourceFieldKey === field.sourceKey)?.role === "text");
+    expect(printed).toMatchObject({ font: "Actual Raw Font", color: "#2468ac" });
+    for (const field of result.normalizedDraft.fields.filter(field => field !== printed)) {
+      expect(field.font).toBeUndefined(); expect(field.color).toBeUndefined();
+    }
+    expect(result.interpretation.unresolved).toEqual([]);
+    expect(draft).toEqual(before);
+  });
+
   it("prefers the actual font family for sibling, own inline, and scoped container selections without styling a nested group", async () => {
     const document = await parsed([
       group("Sibling font", [text("Synthetic sibling message"), { type: "FontCustomization", label: "Font",

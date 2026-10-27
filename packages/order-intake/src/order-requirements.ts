@@ -65,10 +65,16 @@ function children(value: unknown, path: string): Array<{ node: unknown; path: st
 }
 
 /** Read immutable raw structure; never infer style ownership from flattened adjacency. */
-export function extractAmazonRequirementSources(document: AmazonCustomDocument): OrderRequirementSource[] {
+export function extractAmazonRequirementSources(
+  document: AmazonCustomDocument | null | undefined,
+  legacySurfaces: AmazonCustomDocument["surfaces"] = [],
+): OrderRequirementSource[] {
   const sources: OrderRequirementSource[] = [], textGroups = new Set<string>();
   const groupStyles = new Map<string, { font?: unknown; color?: unknown; fontPath: string; colorPath: string }>();
-  let root = record(document.raw), rootPath = "", surfaceIndex = -1, count = 0;
+  // A retained flat projection is evidence of values, never of missing raw groups.
+  const sourceDocument = document && Array.isArray(document.surfaces) ? document : null;
+  const surfaces = sourceDocument?.surfaces ?? legacySurfaces;
+  let root = record(sourceDocument?.raw), rootPath = "", surfaceIndex = -1, count = 0;
   for (let depth = 0; root && depth < 8 && !root.orderId && !root.OrderId && !root.orderID; depth++) {
     const keys = Object.keys(root).filter(key => !key.startsWith("?"));
     if (keys.length !== 1 || !record(root[keys[0]!])) break;
@@ -78,7 +84,7 @@ export function extractAmazonRequirementSources(document: AmazonCustomDocument):
   const surface = (): Surface => ({ index: ++surfaceIndex, next: 0 });
   function emit(target: Surface, node: RecordValue, path: string, kind: "text" | "choice" | "image" | "unknown",
     groupKey: string | null, forced?: OrderRequirementRole, inline?: { font?: unknown; color?: unknown }) {
-    const originalSurface = document.surfaces[target.index], original = originalSurface?.fields[target.next++];
+    const originalSurface = surfaces[target.index], original = originalSurface?.fields[target.next++];
     if (!original) return;
     const sourceRole = forced ?? role(original.label, kind);
     const scoped = groupKey ? groupStyles.get(groupKey) : undefined;
@@ -147,7 +153,7 @@ export function extractAmazonRequirementSources(document: AmazonCustomDocument):
     }
   }
   const existing = new Set(sources.map(source => source.sourceFieldKey));
-  for (const item of document.surfaces) for (const field of item.fields) if (!existing.has(field.key)) sources.push({
+  for (const item of surfaces) for (const field of item.fields) if (!existing.has(field.key)) sources.push({
     sourceFieldKey: field.key, surfaceKey: item.key, groupKey: `unresolved:${field.key}`, origin: "legacy_unresolved", jsonPointer: "",
     role: role(field.label, field.kind), label: field.label, value: field.value,
     requestedFont: null, colorLabel: null, colorHex: null, targetTextKey: null,
@@ -167,6 +173,7 @@ export function interpretOrderRequirements(input: {
   basis: OrderRequirementBasis; sources: readonly OrderRequirementSource[]; draft: OrderWorkDraft; fields?: OrderIntakeCheck["fields"];
 }) {
   const sources = structuredClone([...input.sources]), draft = structuredClone(input.draft);
+  const rawSourceKeys = new Set(input.sources.filter(source => source.origin === "amazon_raw").map(source => source.sourceFieldKey));
   const active = new Map(draft.fields.map(field => [field.sourceKey ?? field.key, field]));
   for (const field of draft.fields) {
     const key = field.sourceKey ?? field.key;
@@ -212,7 +219,10 @@ export function interpretOrderRequirements(input: {
       color: { label: color?.colorLabel ?? null, hex: color?.colorHex ?? null, sourceFieldKey: color?.sourceFieldKey ?? null } };
   });
   for (const source of sources) {
-    if (source.origin === "legacy_unresolved" && ["text", "font", "color"].includes(source.role))
+    const field = active.get(source.sourceFieldKey);
+    const unverifiedStyle = source.role === "text" && !!source.value.trim() && !rawSourceKeys.has(source.sourceFieldKey) &&
+      (field?.font && field.styleOverride?.font === undefined || field?.color && field.styleOverride?.colorHex === undefined);
+    if (source.origin === "legacy_unresolved" && ["text", "font", "color"].includes(source.role) || unverifiedStyle)
       unresolved.push({ code: "legacy_group_missing", sourceFieldKeys: [source.sourceFieldKey], message: "旧资料缺少可核对的文字分组来源，保留原文并核对原始定制资料，不按相邻位置猜测样式" });
     if (source.role === "text" && source.value.trim() && !active.has(source.sourceFieldKey))
       unresolved.push({ code: "source_text_not_selected", sourceFieldKeys: [source.sourceFieldKey], message: "原始非空文案未纳入当前制作草稿，请核对是否应保留印字" });
@@ -236,10 +246,17 @@ export function interpretOrderRequirements(input: {
     const key = field.sourceKey ?? field.key, source = sources.find(row => row.sourceFieldKey === key);
     if (!source) continue;
     field.sourceKey = source.sourceFieldKey;
-    delete field.font; delete field.color;
     const printable = interpretation.texts.find(row => row.sourceFieldKey === key && row.needsPrinting);
-    if (printable?.font.requested) field.font = printable.font.requested;
-    if (printable?.color.hex) field.color = printable.color.hex;
+    if (rawSourceKeys.has(key)) {
+      delete field.font; delete field.color;
+      if (printable?.font.requested) field.font = printable.font.requested;
+      if (printable?.color.hex) field.color = printable.color.hex;
+    } else if (printable) {
+      // Unverified historical values still protect the original layout gate.
+      // Only an explicit current edit may replace one of these attributes.
+      if (field.styleOverride?.font !== undefined) field.font = field.styleOverride.font;
+      if (field.styleOverride?.colorHex !== undefined) field.color = field.styleOverride.colorHex;
+    }
   }
   return { interpretation, normalizedDraft: draft };
 }

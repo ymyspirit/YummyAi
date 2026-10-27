@@ -674,7 +674,19 @@ export class AmazonOrderReportService {
       const source = await this.versionLine(tx, id, expectedVersionId);
       const stored = source && await this.readDocument(tx, source.report, source.order.addressStatus);
       if (!source || !stored) throw new NotFoundException("原始定制要求不存在或已到保存期限");
-      const result = extractAmazonRequirementSources(stored.document);
+      let legacySurfaces: AmazonReportDetailView["surfaces"] | undefined;
+      if (!Array.isArray(stored.document?.surfaces)) {
+        // Some retained inputs only have the original version's derived metadata.
+        // Read it without backfilling a document or inventing raw provenance.
+        const [projection] = await tx.select({ encryptedMetadata: readModels.encryptedMetadata }).from(readModels)
+          .where(eq(readModels.versionId, expectedVersionId)).limit(1);
+        if (!projection?.encryptedMetadata) throw new NotFoundException("原始定制要求不存在或已到保存期限");
+        const parsed = this.vault.withSecret(projection.encryptedMetadata, value =>
+          AmazonReportDetailViewSchema.shape.surfaces.safeParse((JSON.parse(value) as Partial<ReviewMetadata> | null)?.surfaces));
+        if (!parsed.success) throw new NotFoundException("原始定制要求不存在或已到保存期限");
+        legacySurfaces = parsed.data;
+      }
+      const result = extractAmazonRequirementSources(stored.document, legacySurfaces);
       await this.access(tx, current, source.report.orderId);
       return result;
     });
