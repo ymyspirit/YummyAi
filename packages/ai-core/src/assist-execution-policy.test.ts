@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { BenchmarkAssistResultSchema, LegacyAssistResultSchema, OrderReviewAssistResultSchema } from "@yummyai/contracts/ai/assist";
-import { ASSIST_INSTRUCTIONS, ASSIST_PROMPT_VERSION, ASSIST_ORDER_PROMPT_VERSION, ASSIST_BENCHMARK_PROMPT_VERSION,
+import { ASSIST_INSTRUCTIONS, ASSIST_PROMPT_VERSION, ASSIST_ORDER_REQUIREMENTS_VERSION, ASSIST_BENCHMARK_PROMPT_VERSION,
   ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS, assistPromptVersion, assistResultSchema } from "./assist.js";
 import { assistExecutionPolicy, assistSystemInstructions } from "./assist-execution-policy.js";
 import { assistHarness } from "./assist-harness.js";
@@ -29,15 +30,22 @@ describe("Assist execution contract selection", () => {
     expect(assistSystemInstructions(false, true)).not.toContain(ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS);
   });
 
-  it("selects the separate order schema and v7 prompt only through the explicit order-review flag", () => {
-    expect(ASSIST_ORDER_PROMPT_VERSION).toBe("erp-assist-2026-10-27-v7");
-    expect(assistPromptVersion(false, true)).toBe(ASSIST_ORDER_PROMPT_VERSION);
+  it("keeps the original BASE v6 while pinning the versioned order supplement, v2 method and complete policy", () => {
+    expect(assistPromptVersion(false, true)).toBe("erp-assist-2026-10-06-v6");
+    expect(ASSIST_ORDER_REQUIREMENTS_VERSION).toBe("order-requirements-2026-10-27-v1");
+    expect(ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS.split("\n")[0]).toBe(ASSIST_ORDER_REQUIREMENTS_VERSION);
     expect(assistResultSchema(false, true)).toBe(OrderReviewAssistResultSchema);
     const bundle = assistHarness("order_review", false, ["fixture.read"], "fixture-policy-v1");
+    expect(bundle.skill.version).toBe("assist-method-2026-10-27-v2");
     const instructions = bundle.registry.instructions(bundle.registry.pin(bundle.skill), bundle.skill);
     expect(instructions).toBe(ASSIST_INSTRUCTIONS + "\n" + ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS);
     expect(assistSystemInstructions(false, false, true)).toBe(instructions);
-    expect(assistExecutionPolicy(false, false, true).checksum).not.toBe(assistExecutionPolicy(false).checksum);
+    const policy = assistExecutionPolicy(false, false, true);
+    expect(policy).toEqual({ contractVersion: "assist-execution-v1", checksum: createHash("sha256").update(JSON.stringify({
+      promptVersion: "erp-assist-2026-10-06-v6", systemInstructions: instructions,
+      maxOutputTokens: 6000, outputSchema: z.toJSONSchema(OrderReviewAssistResultSchema),
+    })).digest("hex") });
+    expect(policy.checksum).not.toBe(assistExecutionPolicy(false).checksum);
   });
 
   it("rejects a contradictory benchmark-plus-order selection in every shared selector", () => {
