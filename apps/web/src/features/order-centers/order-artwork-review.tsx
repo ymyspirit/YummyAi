@@ -62,9 +62,11 @@ export function OrderArtworkReview({
   const fileIssues = check?.issues.filter(i => !i.code.startsWith("artwork_audit_")) ?? [];
   const fileCheck = check && currentAudit ? {...check, issues: fileIssues, productionReady: !fileIssues.some(i => i.severity !== "warning")} : check;
   const state = detail.line.artwork;
+  const candidate = detail.line.designCandidateReview === true;
+  const canReview = candidate || state === "in_review";
   const production = currentProductionRender(editor);
-  const canSubmit = ["in_progress", "changes_requested"].includes(state);
-  const canReject = ["in_review", "approved"].includes(state);
+  const canSubmit = !candidate && ["in_progress", "changes_requested"].includes(state);
+  const canReject = candidate || ["in_review", "approved"].includes(state);
   const locked =
     disabled ||
     detail.line.held ||
@@ -80,9 +82,9 @@ export function OrderArtworkReview({
     <section className="oc-artwork-review" aria-label="生产图审核">
       <div className="oc-section-heading">
         <h2>
-          生产图审核 <span className="oc-badge">V{editor.version.versionNumber}</span>
+          {candidate ? "审核无人设计稿" : "生产图审核"} <span className="oc-badge">V{editor.version.versionNumber}</span>
         </h2>
-        <span className="oc-badge">{label(state)}</span>
+        <span className="oc-badge">{candidate ? "无人设计稿待审核" : label(state)}</span>
       </div>
       <div className="oc-artwork-review-grid">
         <OrderCustomerRequirements key={detail.line.id} detail={detail} revisionId={editor.project.workSource?.revisionId} />
@@ -186,7 +188,7 @@ export function OrderArtworkReview({
             </label>
           )}
           <div className="oc-artwork-decision-actions">
-            {state === "in_review" && (
+            {canReview && (
               <button
                 type="button"
                 className="oc-button primary"
@@ -205,7 +207,7 @@ export function OrderArtworkReview({
                 onClick={() => onAction("reject_artwork")}
               >
                 <RotateCcw size={16} />
-                驳回修改
+                {candidate ? "驳回并交美工修改" : "驳回修改"}
               </button>
             )}
             {canSubmit && (
@@ -219,10 +221,12 @@ export function OrderArtworkReview({
               </button>
             )}
           </div>
-          {state === "in_review" && !!reason.trim() && (
+          {canReview && !!reason.trim() && (
             <p className="oc-hint">已填写驳回理由；如需通过，请先清空理由。</p>
           )}
           {canSubmit && <p className="oc-hint">当前处于制图阶段，提交后由运营审核。</p>}
+          {candidate && <p className="oc-hint">这是 Agent 生成的待审稿 顾客要求 原图和完整检查仍需核对 驳回后美工沿本单原项目修改</p>}
+          {candidate && (!visible || auditBusy || !check?.productionReady) && <p className="oc-hint">原技术与视觉核对尚未全部满足 当前不能通过 可填写具体理由交美工修改</p>}
           {state === "approved" && (
             <p className={production?.status === "failed" ? "oc-error" : "oc-notice"} role="status">
               {production?.status === "completed" ? "审核已完成，生产文件已准备好，等待生产人员安排。"
@@ -247,15 +251,15 @@ export function OrderArtworkReview({
           </button>}
         </div>
       </div>
-      {decisionFooter && onAdvanceAction && (state === "in_review" || canReject) && createPortal(
+      {decisionFooter && onAdvanceAction && (canReview || canReject) && createPortal(
         <div className="oc-review-quick-actions" role="group" aria-label="审图快速操作">
-          {state === "in_review" && <button type="button" className="oc-button primary"
+          {canReview && <button type="button" className="oc-button primary"
             disabled={decisionBlocked || !!reason.trim()} onClick={() => onAdvanceAction("approve_artwork")}>
             <Check size={16} />通过审核{hasNext ? "并下一单" : "并返回列表"}
           </button>}
           {canReject && <button type="button" className="oc-button" disabled={locked || !reason.trim()}
             onClick={() => onAdvanceAction("reject_artwork")}>
-            驳回修改{hasNext ? "并下一单" : "并返回列表"}
+            {candidate ? "驳回并交美工修改" : "驳回修改"}{hasNext ? "并下一单" : "并返回列表"}
           </button>}
         </div>, decisionFooter,
       )}

@@ -27,7 +27,7 @@ export function projectOrderTask(input: {
     stage("intake", "审单与制作依据", lines.map(line => line.sourceChanged || line.held ? "blocked" : line.preparation === "pushed" ? "done" : "waiting"),
       intake[0]?.task.description ?? summarize(lines.filter(line => line.preparation === "pushed").length), href("orders", intake[0]?.line.id), "核对订单资料",
       lines.map(line => ({ label: line.externalLineId || "订单商品", value: `资料 V${line.revision}` }))),
-    stage("artwork", "制作与技术检查", lines.map(line => ["in_review", "approved"].includes(line.artwork) ? "done" : line.designRunStatus === "needs_attention" || line.artwork === "changes_requested" ? "blocked" : ["queued", "running"].includes(line.designRunStatus ?? "") ? "working" : "pending"),
+    stage("artwork", "制作与技术检查", lines.map(line => line.designCandidateReview || ["in_review", "approved"].includes(line.artwork) ? "done" : line.designRunStatus === "needs_attention" || line.artwork === "changes_requested" ? "blocked" : ["queued", "running"].includes(line.designRunStatus ?? "") ? "working" : "pending"),
       "按订单固定配方制作，修正与恢复沿用原任务", href("artwork", tasks.find(({ task }) => ["design_attention", "waiting_design", "customer_changes"].includes(task.key))?.line.id), "查看制作与检查",
       (design.data ?? []).flatMap(run => run ? [{ label: `制作任务 ${run.id.slice(-8)}`, value: `${run.recipeVersion} / ${run.ruleSnapshot ? "已有固定规则快照" : "旧任务缺少规则快照"}` }] : [])),
     stage("review", "审核与客户校样", whole.items.map(item => item.artwork.error ? "unavailable" : item.artwork.data?.approved && (item.line.proof === "not_required" || item.line.proof === "approved" && item.line.proofVersionCurrent === true) ? "done" : "waiting"),

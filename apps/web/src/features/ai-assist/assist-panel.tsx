@@ -15,8 +15,10 @@ import {
   type AssistModel,
   type AssistView,
   type AssistBusinessSelection,
+  type AssistOrderFieldBinding,
   type CreateAssist,
 } from "@yummyai/contracts/ai/assist";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import { requiredAssistPermissions } from "@yummyai/authz/assist-policy";
 import { useErpAccess } from "../identity/erp-access";
 import type { AssistIntent } from "@yummyai/contracts/ai/assist-recovery";
@@ -124,6 +126,7 @@ function AssistPanelContent({
   disabledReason,
   onDirection,
   onMatch,
+  onOrderFieldBindings,
   onTemplateSlot,
   onListingCopy,
   onRestoreBusiness,
@@ -139,6 +142,7 @@ function AssistPanelContent({
   disabledReason?: string;
   onDirection?: (direction: AssistDirection, fields: DirectionField[]) => boolean | void;
   onMatch?: (match: AssistMatch) => boolean | void;
+  onOrderFieldBindings?: (bindings: AssistOrderFieldBinding[], request: Extract<CreateAssist, { kind: "order_review" }>, view: AssistView) => boolean | Promise<boolean>;
   onTemplateSlot?: (slot: AssistTemplateSlot) => boolean | void;
   onListingCopy?: (copy: AssistListingCopy, fields: CopyField[]) => boolean | void;
   onRestoreBusiness?: (selection: AssistBusinessSelection) => void;
@@ -162,6 +166,12 @@ function AssistPanelContent({
   const [selected, setSelected] = useState<AssistDirection | null>(null),
     [fields, setFields] = useState<DirectionField[]>([]);
   const pending = useRef<{ input: CreateAssist; intent: AssistIntent } | null>(null), submitting = useRef(false), mounted = useRef(true), privateBlocked = useRef(false);
+  const orderAnalysis = kind === "order_review" && !!onOrderFieldBindings;
+  const currentInput = input ? orderRequirementDraftInput(input) : "";
+  const inputRef = useRef({ input, currentInput, disabledReason, preferenceScope: access.preferenceScope, canStart });
+  inputRef.current = { input, currentInput, disabledReason, preferenceScope: access.preferenceScope, canStart };
+  const bindingCallback = useRef(onOrderFieldBindings); bindingCallback.current = onOrderFieldBindings;
+  const orderAdoption = useRef<{ request: CreateAssist; input: string; epoch: number; preferenceScope: string } | null>(null);
   const readEpoch = useRef(0),
     deniedCallback = useRef(onReadDenied);
   deniedCallback.current = onReadDenied;
@@ -178,6 +188,7 @@ function AssistPanelContent({
     setModels([]);
     setModelId("");
     pending.current = null;
+    orderAdoption.current = null;
     setError(cause.message);
     deniedCallback.current?.(cause.message);
     window.dispatchEvent(new Event("focus"));
@@ -223,7 +234,7 @@ function AssistPanelContent({
       ]);
       if (mountedScope.current !== scope || signal?.aborted || epoch !== readEpoch.current) return;
       setModels(available);
-      setModelId((id) => (available.some((m) => m.id === id) ? id : (available[0]?.id ?? "")));
+      setModelId((id) => (available.some((m) => m.id === id) ? id : kind === "order_review" ? "" : (available[0]?.id ?? "")));
       const runId = linkedRunId ?? rows[0]?.id;
       const saved = runId
         ? AssistViewSchema.parse(await api(`runs/${runId}`, undefined, signal))
@@ -264,7 +275,7 @@ function AssistPanelContent({
       });
     return () => controller.abort();
   }, [refresh, clearDenied]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readEpoch.current++; pending.current = null; }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readEpoch.current++; pending.current = null; orderAdoption.current = null; }; }, []);
   const active = view?.status === "queued" || view?.status === "running";
   useEffect(() => {
     if (view) onRunChange?.(view);
@@ -324,8 +335,29 @@ function AssistPanelContent({
   const stale =
     !!view &&
     (view.stale || (!readOnly && (!sameAssistInput(view.request, input) || !!disabledReason)));
+  useEffect(() => {
+    if (orderAdoption.current?.input !== currentInput) orderAdoption.current = null;
+  }, [currentInput]);
+  useEffect(() => {
+    const allowed = orderAdoption.current, callback = bindingCallback.current;
+    if (!allowed || !callback || !view || view.status !== "completed" || view.stale || !view.result || view.request?.kind !== "order_review" ||
+      view.request.requestId !== allowed.request.requestId || view.request.modelId !== allowed.request.modelId || view.scope !== scope ||
+      allowed.epoch !== readEpoch.current || allowed.preferenceScope !== inputRef.current.preferenceScope ||
+      inputRef.current.currentInput !== allowed.input || !sameAssistInput(view.request, inputRef.current.input) ||
+      inputRef.current.disabledReason || !inputRef.current.canStart || privateBlocked.current || !mounted.current) return;
+    orderAdoption.current = null;
+    const bindings = view.result.orderFieldBindings;
+    if (!bindings?.length) { setNotice("本次未给出可直接填写的字段对应关系 原始要求保持不变 请核对具体建议"); return; }
+    void Promise.resolve(callback(bindings, view.request, view)).then(applied => {
+      if (mounted.current && allowed.epoch === readEpoch.current && !privateBlocked.current && applied)
+        setNotice("有依据的对应关系已填入当前草稿 请核对待办后确认审单 尚未保存或派发");
+    }).catch(() => {
+      if (mounted.current && allowed.epoch === readEpoch.current && !privateBlocked.current)
+        setError("字段建议未能采用 当前填写仍保留 请核对原始依据");
+    });
+  }, [view, scope, currentInput]);
   async function start() {
-    if (privateBlocked.current || readOnly || !canStart || !input || !modelId || busy || active || disabledReason || submitting.current || !intentState.ready || intentState.error || intentLocked || !access.preferenceScope) return;
+    if (privateBlocked.current || readOnly || !canStart || !input || !modelId || orderAnalysis && !orderPriceReady || busy || active || disabledReason || submitting.current || !intentState.ready || intentState.error || intentLocked || !access.preferenceScope) return;
     submitting.current = true;
     const epoch = readEpoch.current;
     setBusy(true);
@@ -335,7 +367,12 @@ function AssistPanelContent({
     try {
       const original = await prepareAssistIntent({ ...input, modelId, requestId: crypto.randomUUID() }, access.preferenceScope, scope);
       if (!mounted.current || mountedScope.current !== scope || epoch !== readEpoch.current) return;
+      if (orderAnalysis && (inputRef.current.currentInput !== currentInput || !sameAssistInput(original.request, inputRef.current.input) ||
+        inputRef.current.disabledReason || !inputRef.current.canStart || access.preferenceScope !== inputRef.current.preferenceScope)) {
+        setNotice("当前填写已变化 本次分析未发起 请按当前资料重新选择分析"); return;
+      }
       saveAssistIntent(original.intent); pending.current = { input: structuredClone(original.request), intent: original.intent };
+      if (orderAnalysis) orderAdoption.current = { request: structuredClone(original.request), input: currentInput, epoch, preferenceScope: access.preferenceScope };
       const next = AssistViewSchema.parse(await api("runs", original.request));
       if (!mounted.current || mountedScope.current !== scope || epoch !== readEpoch.current) return;
       setView(next);
@@ -362,6 +399,9 @@ function AssistPanelContent({
   }
   const intentLocked = intentState.markers.length > 0 || intentState.allMarkers.some(item => item.kind === kind && item.runId === null);
   const model = models.find((m) => m.id === modelId);
+  const orderPriceReady = !!model && model.inputUsdPerMillion !== null && Number.isFinite(model.inputUsdPerMillion) && model.inputUsdPerMillion >= 0 &&
+    model.outputUsdPerMillion !== null && Number.isFinite(model.outputUsdPerMillion) && model.outputUsdPerMillion >= 0 &&
+    model.maxTaskCostUsd !== null && Number.isFinite(model.maxTaskCostUsd) && model.maxTaskCostUsd > 0;
   const sourceLabel = (id: string) => view?.sources.find((s) => s.id === id)?.label ?? id;
   if (privateDenied) return <section className="ai-assist" aria-label={names[kind]}><p role="status">当前分析读取权限已变化 原结果和填写已隐藏 重新核对权限后可只读恢复原回执</p></section>;
   return (
@@ -402,7 +442,7 @@ function AssistPanelContent({
                     : kind === "creative"
                       ? "分析选中的研究快照与图片，提出 3 个原创方向。选择并核对需要填入需求单的字段。"
                       : kind === "order_review"
-                        ? "核对已保存的订单信息；销售 SKU 已匹配时保留现有绑定，未匹配时建议印花和产品规格。"
+                        ? orderAnalysis ? "分析当前尚未保存的顾客要求与原始分组 有依据的字段对应关系填入草稿 原文和真实色值保持不变 不会自动保存或派发" : "核对已保存的订单信息；销售 SKU 已匹配时保留现有绑定，未匹配时建议印花和产品规格。"
                         : "对照订单需求检查当前已保存的生产稿。规则检查与 AI 视觉意见共同列出，正式审核仍按原流程执行。"}
       </p>
       {loading ? (
@@ -435,18 +475,19 @@ function AssistPanelContent({
           <button
             className="primary"
             type="button"
-            disabled={!canStart || !modelId || !input || !!disabledReason || active || busy || intentLocked || !intentState.ready || Boolean(intentState.error)}
+            disabled={!canStart || !modelId || orderAnalysis && !orderPriceReady || !input || !!disabledReason || active || busy || intentLocked || !intentState.ready || Boolean(intentState.error)}
             onClick={() => void start()}
           >
             <Sparkles size={14} />
-            {busy ? "正在提交…" : active ? "后台分析中…" : view ? "重新分析" : "开始分析"}
+            {busy ? "正在提交…" : active ? "后台分析中…" : orderAnalysis ? "AI分析并填写" : view ? "重新分析" : "开始分析"}
           </button>
           {model && (
             <small>
-              {model.maxTaskCostUsd === null
+              {orderAnalysis ? orderPriceReady ? `输入 $${model.inputUsdPerMillion}/百万 tokens 输出 $${model.outputUsdPerMillion}/百万 tokens 单次费用上限 $${model.maxTaskCostUsd}。组织余额与预算由服务器在发起时核对。` : "本模型缺少有效输入单价 输出单价或单次费用上限 请到 AI 模型配置补齐后再分析。" : model.maxTaskCostUsd === null
                 ? "共用已保存的文本模型；价格未填写，费用以渠道账单为准。"
                 : `单次预估上限 $${model.maxTaskCostUsd}。`}{" "}
-              每次分析最多输出 6000 tokens；重新分析会调用渠道。
+              每次分析最多输出 6000 tokens；{orderAnalysis ? "点击分析会实际调用所选模型。" : "重新分析会调用渠道。"}
+              {orderAnalysis && !orderPriceReady && <Link href={workflowHref("/settings/ai", workflow.current)}>核对模型价格与限额</Link>}
             </small>
           )}
         </div>
@@ -537,7 +578,7 @@ function AssistPanelContent({
           <MethodEvidence selection={view.methodSelection} />
           {stale && (
             <p className="ai-assist-warning">
-              当前资料、版本或草稿已变化；这份结果不可直接采用，请保存并根据当前资料重新分析。
+              当前资料、版本或草稿已变化；这份结果不可直接采用，请核对当前资料后再决定是否重新分析。
             </p>
           )}
           {onRestoreBusiness &&
@@ -703,6 +744,22 @@ function AssistPanelContent({
                   sourceLabel={sourceLabel}
                 />
               )}
+              {!!view.result.orderFieldBindings?.length && <div className="ai-assist-findings" aria-label="本次字段识别建议"><h4>原始要求的对应关系</h4>
+                <p className="ai-assist-muted">文字样式跟随原文字组 空文案无需印字 这里不会生成顾客未提供的文字或颜色</p>
+                <ul>{view.result.orderFieldBindings.map(binding => <li key={binding.sourceFieldKey}><strong>{binding.confidence < 0.85 ? "把握不足，请核对" : binding.targetFieldKey ? "已识别对应项" : "仍需核对"}</strong><p>{binding.reason}</p></li>)}</ul>
+                {orderAnalysis && !readOnly && <button type="button" disabled={stale || busy || active || !!disabledReason} onClick={() => {
+                  const saved = view.request, bindings = view.result?.orderFieldBindings, callback = bindingCallback.current, epoch = readEpoch.current;
+                  if (saved?.kind !== "order_review" || !saved.draft || !bindings?.length || !callback || privateBlocked.current ||
+                    !sameAssistInput(saved, inputRef.current.input) || inputRef.current.disabledReason) return;
+                  orderAdoption.current = null;
+                  void Promise.resolve(callback(bindings, saved, view)).then(applied => {
+                    if (applied && mounted.current && epoch === readEpoch.current && !privateBlocked.current)
+                      setNotice("原分析的字段对应关系已填入草稿 本次未再次调用模型 尚未保存或派发");
+                  }).catch(() => {
+                    if (mounted.current && epoch === readEpoch.current && !privateBlocked.current) setError("原字段建议未能采用 当前填写仍保留");
+                  });
+                }}>采用这次字段对应建议</button>}
+              </div>}
               {!!view.result.matches.length && (
                 <div className="ai-assist-matches">
                   {view.result.matches.map((m, i) => (

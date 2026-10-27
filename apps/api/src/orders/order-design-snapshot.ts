@@ -4,11 +4,35 @@ import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
 import { DesignAutomationRecipeSchema } from "@yummyai/contracts/pod/design-automation";
 import { orderWorkRevisions,productionEditorImages,productionEditorVersions,modelRoutes,modelProviderConfigs,withTenant,type DatabaseConnection } from "@yummyai/database";
 import { buildDesignAutomationPlan } from "@yummyai/production-editor/design-automation";
-import { assertAutomaticArtwork,orderPillowPhotoPlan,isPhotoOnlyPillowArtwork,inspectPillowSuperResolutionRuntime,type OrderDesignSnapshot,type OrderDesignAssetPin } from "@yummyai/order-design";
+import { assertAutomaticArtwork,orderPillowPhotoPlan,isPhotoOnlyPillowArtwork,inspectPillowSuperResolutionRuntime,OrderArtworkLayoutError,type OrderDesignSnapshot,type OrderDesignAssetPin } from "@yummyai/order-design";
 import { and,eq } from "drizzle-orm";
 import type { ProductionEditorService } from "../design/production-editor.service.js";
 import { validateOrderSalesBasis } from "../catalog/order-sales-basis.js";
 import { resolveOrderRules } from "../rules/rule-center.service.js";
+import { OrderRequirementInterpretationSchema, orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
+import { createHash } from "node:crypto";
+
+function safePreparationDiagnostic(error: OrderArtworkLayoutError, requirements: OrderDesignSnapshot["requirements"]) {
+  const messages: Record<string,string> = {
+    font_group_conflict:"本组有互相冲突的字体要求，请核对原始分组并明确采用的真实字体。",
+    color_group_conflict:"本组提供了不同色值，请核对原始分组并明确采用的真实色值。",
+    color_value_missing:"实际印字缺少真实色值，请核对原始预览并填写 #RRGGBB，不能默认黑色。",
+    legacy_group_missing:"旧资料缺少可核对的文字分组来源，请核对原始定制资料，不按相邻字段猜测字体或颜色。",
+    source_text_not_selected:"原始非空文案尚未纳入制作草稿，请保留原文并核对印字字段。",
+  };
+  const pending=requirements?.unresolved.find(issue=>messages[issue.code]);
+  if(pending)return {code:`agent_${pending.code}`,severity:"manual" as const,message:messages[pending.code]!};
+  if(error.message.startsWith("本单包含实际印字要求"))return {code:"agent_print_layout_required",severity:"manual" as const,
+    message:"本单有实际印字；当前来图工艺未配置可执行的文字区域与指定字体，请补齐本单文字制作参数，不能暗用默认字体或黑色。"};
+  if(error.message.includes("指定字体") || error.message.includes("字体或颜色"))return {code:"agent_text_style_required",severity:"manual" as const,
+    message:"实际印字指定了字体或颜色，请配置本单可用的授权字体文件与真实色值，再核对文字区域。"};
+  if(error.message.includes("定制区域"))return {code:"agent_text_region_required",severity:"manual" as const,
+    message:"已填内容缺少可执行的定制区域，请为本单固定印花配置并审核对应文字或图片区域。"};
+  if(error.message.includes("裁切范围") || error.message.includes("印刷面数"))return {code:"agent_pillow_options_required",severity:"manual" as const,
+    message:"裁切范围或单双面参数尚不能唯一识别，请对照原始选项明确本次制作参数，顾客原文继续保留。"};
+  return {code:"agent_input_configuration_required",severity:"manual" as const,
+    message:"自动制作所需的字段、区域或固定规则尚未齐备，请核对本单制作准备；审单保存不表示已完成制图。"};
+}
 
 /** Pins metadata only; copying/scanning large private images happens in Worker. */
 export async function prepareOrderDesignSnapshot(database:DatabaseConnection,editor:ProductionEditorService,context:TenantContext,detail:OrderWorkDetail):Promise<OrderDesignSnapshot|null> {
@@ -23,12 +47,23 @@ export async function prepareOrderDesignSnapshot(database:DatabaseConnection,edi
   const [templateVersion]=await withTenant(database.db,context,tx=>tx.select({checksum:productionEditorVersions.checksum,createdAt:productionEditorVersions.createdAt}).from(productionEditorVersions).where(eq(productionEditorVersions.id,template.version.id)));
   if(!templateVersion)throw new ConflictException("工艺模板版本不可用");
   const document=structuredClone(template.version.document);
+  const requirements=detail.requirementInterpretation?OrderRequirementInterpretationSchema.parse({
+    ...detail.requirementInterpretation,basis:{...detail.requirementInterpretation.basis,templateVersionId:template.version.id},
+  }):undefined;
+  if(requirements && (requirements.basis.orderLineId!==detail.line.id || requirements.basis.revision!==detail.line.revision ||
+    requirements.basis.sourceVersionId!==revision.sourceVersionId ||
+    requirements.basis.draftChecksum!==createHash("sha256").update(orderRequirementDraftInput(detail.draft)).digest("hex")))
+    throw new ConflictException("定制要求解释与已保存制作依据不一致，请刷新后核对");
   const photoOnlyPillow=isPhotoOnlyPillowArtwork(basis.artwork);
   const blockers:string[]=[];
+  const preparationDiagnostics:NonNullable<OrderDesignSnapshot["preparationDiagnostics"]>=[];
   let pillow:ReturnType<typeof orderPillowPhotoPlan>=null;
-  try {assertAutomaticArtwork(basis.artwork.customization,basis.artwork.layout,detail.draft,document.productType,photoOnlyPillow);
-    pillow=photoOnlyPillow?orderPillowPhotoPlan(document.productType,basis.artwork.customization,basis.artwork.layout,detail.draft):null;
-  } catch {blockers.push("agent_inputs_require_manual");}
+  try {assertAutomaticArtwork(basis.artwork.customization,basis.artwork.layout,detail.draft,document.productType,photoOnlyPillow,requirements);
+    pillow=photoOnlyPillow?orderPillowPhotoPlan(document.productType,basis.artwork.customization,basis.artwork.layout,detail.draft,requirements):null;
+  } catch(error) {
+    blockers.push(requirements?"agent_requirements_need_resolution":"agent_inputs_require_manual");
+    if(error instanceof OrderArtworkLayoutError)preparationDiagnostics.push(safePreparationDiagnostic(error,requirements));
+  }
   const recipe=DesignAutomationRecipeSchema.parse(document.automation??{schemaVersion:1,workflow:pillow?"pillow_photo":"template",imagePolicy:"preserve",modelRouteId:null,allowOrderImageTransfer:false,modelCallLimit:0,estimatedCostPerCallUsd:null,maxEstimatedCostUsd:null});
   if(!document.automation)blockers.push("agent_recipe_missing");
   if((recipe.workflow==="pillow_photo")!==!!pillow)blockers.push("agent_recipe_product_mismatch");
@@ -78,5 +113,5 @@ export async function prepareOrderDesignSnapshot(database:DatabaseConnection,edi
     ?{...rule,execution:"manual" as const,executionLocation:"当前固定模板未显式启用新版抱枕链，保留原流程并人工核验"}:rule);
   return {schemaVersion:1,ruleSnapshot,workItemId:detail.line.id,workRevisionId:revision.id,sourceVersionId:revision.sourceVersionId,
     templateProjectId:template.project.id,templateVersionId:template.version.id,templateChecksum:templateVersion.checksum,
-    document,assets,templateAssetKeys,masterAssetKey,layout:basis.artwork.layout,customization:basis.artwork.customization,draft:detail.draft,photoOnlyPillow,recipe,plan,model,blockers};
+    document,assets,templateAssetKeys,masterAssetKey,layout:basis.artwork.layout,customization:basis.artwork.customization,draft:detail.draft,photoOnlyPillow,recipe,plan,model,blockers,...(requirements?{requirements}:{}),...(preparationDiagnostics.length?{preparationDiagnostics}:{})};
 }

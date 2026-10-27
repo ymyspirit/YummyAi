@@ -2,6 +2,15 @@
 
 The agent produces an editable order draft, a full-resolution private proof and quality diagnostics. A completed run still needs the existing artwork review, any required buyer proof confirmation, and production release. It cannot authorize those steps.
 
+Orders now follow Agent-first drafting and operator review. Source-grouped customer
+requirements are pinned to the original work revision. An operator can reject the
+exact current Agent candidate with a reason and hand it to a human designer; the
+original steps, costs and proof remain immutable. The current assignment remains
+human during editing and resubmission. The list's `designCandidateReview` is a
+read-only indication of an evidence-bound candidate, never production approval.
+See [order requirements](order-requirements.md) for text, style, AI field binding
+and legacy-version boundaries.
+
 Original published methods, current knowledge/permission checks, response-cost
 recovery and immutable technical handoff are specified in
 [order design completion](order-design-completion.md). Missing legacy evidence

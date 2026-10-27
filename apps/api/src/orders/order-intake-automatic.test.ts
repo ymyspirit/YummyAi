@@ -25,16 +25,16 @@ const check = (input: OrderWorkDraft, definition = schema) =>
 const inspect = (input: OrderWorkDraft, definition = schema) =>
   orderAutomaticIntakeIssues(definition, [], check(input, definition), "shaped_pillow", true);
 
-describe("automatic intake guidance uses the original executor gate", () => {
-  it("locates the mapped customer note and gives a preserving manual action without inventing font requirements", () => {
+describe("automatic preparation diagnostics retain execution gates independently of intake confirmation", () => {
+  it("locates the original customer note and requires pinned interpretation before Agent drafting without inventing font requirements", () => {
     const input = draft();
     const privateNote = "Synthetic request to preserve a particular head outline";
     input.fields[2] = { key: "source-notes", label: "Order Notes for Seller", kind: "text", value: privateNote };
     input.fields.push({ key: "empty-text", label: "Custom your text", kind: "text", value: "", font: "Synthetic default font", color: "Synthetic default color" });
     const before = structuredClone(input), result = inspect(input);
     expect(result).toEqual([expect.objectContaining({ code: "automatic_artwork_not_ready", fieldKey: "customer_notes",
-      message: expect.stringContaining("顾客特殊要求"), action: expect.stringContaining("改由美工制作") })]);
-    expect(result[0]!.message).toContain("无法按这条特殊备注执行");
+      message: expect.stringContaining("顾客特殊要求"), action: expect.stringContaining("无人设计出稿后由运营审核") })]);
+    expect(result[0]!.message).toContain("需先固定原文与本次无人设计需求解释");
     expect(result[0]!.action).toContain("保留顾客原文");
     expect(JSON.stringify(result)).not.toContain(privateNote);
     expect(JSON.stringify(result)).not.toContain("Synthetic default font");
@@ -66,7 +66,7 @@ describe("automatic intake guidance uses the original executor gate", () => {
     input.fields.push({ key: "inscription", label: "顾客文字", kind: "text", value: "Synthetic text", font: "Synthetic chosen font" });
     const before = structuredClone(input), result = inspect(input, definition);
     expect(result.map(issue => issue.fieldKey)).toEqual(["customer_notes", "crop_scope"]);
-    expect(result.find(issue => issue.fieldKey === "crop_scope")!.message).toContain("头部、全身或半身");
+    expect(result.find(issue => issue.fieldKey === "crop_scope")!.message).toContain("非标准裁切要求");
     expect(input).toEqual(before);
   });
 
@@ -80,7 +80,7 @@ describe("automatic intake guidance uses the original executor gate", () => {
     const before = structuredClone(input), fields = check(input), result = inspect(input);
     expect(fields.issues).toEqual([]);
     expect(result).toEqual([expect.objectContaining({ code: "automatic_artwork_not_ready", fieldKey: "customer_notes",
-      message: expect.stringContaining("特殊备注"), action: expect.stringContaining("保留顾客原文") })]);
+      message: expect.stringContaining("需先固定原文"), action: expect.stringContaining("保留顾客原文") })]);
     expect(result.some(issue => issue.message.includes("指定字体或颜色"))).toBe(false);
     expect(fields.normalizedDraft.fields.slice(-3)).toEqual(before.fields.slice(-3));
     expect(input).toEqual(before);
@@ -93,7 +93,7 @@ describe("automatic intake guidance uses the original executor gate", () => {
     const layout = [{ fieldKey: "name", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, color: "#000000" }];
     expect(orderAutomaticIntakeIssues(definition, layout, fields, "tire_cover")).toEqual([expect.objectContaining({
       code: "automatic_artwork_not_ready", fieldKey: "name", message: expect.stringContaining("指定字体或颜色"),
-      action: expect.stringContaining("改由美工制作"),
+      action: expect.stringContaining("需要修改时再打回美工"),
     })]);
     expect(input).toEqual(before);
   });
@@ -106,7 +106,7 @@ describe("automatic intake guidance uses the original executor gate", () => {
     const before = structuredClone(input), fields = check(input);
     expect(fields.issues).toEqual([]);
     expect(orderAutomaticIntakeIssues(schema, [], fields, "shaped_pillow", true)).toEqual([]);
-    expect(fields.normalizedDraft).toEqual(before);
+    expect(fields.normalizedDraft).toEqual({ ...before, fields: before.fields.map(field => ({ ...field, sourceKey: field.key })) });
     expect(input).toEqual(before);
     input.images = [];
     expect(check(input).issues).toContainEqual(expect.objectContaining({ code: "missing_required", fieldKey: "buyer_photo" }));

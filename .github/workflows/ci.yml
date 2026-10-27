@@ -168,6 +168,8 @@ jobs:
         run: pnpm test:e2e:order-daily --suite=order-image-upload --workers=1 --retries=0
       - name: Validate actionable personal order review guidance
         run: pnpm test:e2e:order-daily --suite=order-review-guidance --workers=1 --retries=0
+      - name: Validate grouped customer requirements and Agent-first review
+        run: pnpm test:e2e:order-daily --suite=order-requirements --workers=1 --retries=0
       - run: pnpm test:e2e --workers=1
       - name: Validate production specification purpose and rule adoption
         run: pnpm test:e2e:order-daily --suite=specification-facts --grep=production-purpose

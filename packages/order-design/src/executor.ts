@@ -89,7 +89,7 @@ export class OrderDesignExecutor {
         }
         case "compose_template": {
           const selected=job.snapshot.assets.filter(pin=>pin.buyerOriginal).map(pin=>{const info=metadata.get(pin.key)!;if(!info)throw new OrderDesignError("agent_asset_unavailable");return {id:pin.key,version:1,usage:pin.usage!,width:info.width,height:info.height};});
-          document=await composeOrderArtwork(document,job.snapshot.layout,job.snapshot.customization,job.snapshot.draft,selected,job.snapshot.photoOnlyPillow);
+          document=await composeOrderArtwork(document,job.snapshot.layout,job.snapshot.customization,job.snapshot.draft,selected,job.snapshot.photoOnlyPillow,job.snapshot.requirements);
           return {document,output:{layerCount:document.layers.length}};
         }
         case "enhance_image":
@@ -104,7 +104,7 @@ export class OrderDesignExecutor {
           const source=await read(sourceId),sourceInfo=metadata.get(sourceId)!;
           const cutout=job.input.tool==="cutout_subject";
           if(pipeline && job.snapshot.model.model!==pipeline.requiredModel)throw new OrderDesignError("agent_pillow_model_mismatch");
-          const prompt=job.input.tool==="cutout_subject"?pillowCutoutPrompt(job.input,pipeline)
+          const prompt=job.input.tool==="cutout_subject"?pillowCutoutPrompt(job.input,pipeline,job.snapshot.requirements)
             :`${ORDER_IMAGE_ENHANCEMENT_INSTRUCTION}只做照片保真美化，保留整张画面的主体、背景、边缘和已有透明区域；不抠图，不加描边、裁剪线、条码或装饰。`;
           await job.assertActive();
           let result:{bytes:Buffer;actualCostUsd?:number};
@@ -260,6 +260,8 @@ export class OrderDesignExecutor {
           const diagnostics=preflight.issues.map(issue=>({code:issue.code,severity:issue.severity,message:qualityMessage(issue.code)}));
           if(quality.checks.some(check=>check.status==="failed"))diagnostics.push({code:"agent_quality_evidence_failed",severity:"error",message:"素材来源、文字或图片技术检查未通过，请人工核对。"});
           if(qualityImages.some(image=>image.modelEdited))diagnostics.push({code:"agent_identity_review",severity:"manual",message:"模型处理结果必须对照顾客原图核对身份与内容。"});
+          if(job.snapshot.requirements?.notes.some(note=>note.original.trim()) || job.snapshot.requirements?.instructions.trim())
+            diagnostics.push({code:"agent_customer_requirements_review",severity:"manual",message:"已将本单顾客备注和制作说明固定到模型请求；运营仍须对照原文与实际稿件逐项审核，模型完成不表示要求已获人工确认。"});
           return {output:{quality,preflight},qualityDiagnostics:[...diagnostics,...pinnedRuleDiagnostics({...job.snapshot,document})]};
         }
         case "render_proof": {

@@ -13,6 +13,7 @@ import {
   productionTextMetrics,
 } from "@yummyai/production-editor";
 import { orderPillowPhotoPlan } from "./order-pillow-plan.js";
+import type { OrderRequirementInterpretation } from "@yummyai/contracts/order/requirement-interpretation";
 
 export function assertAutomaticArtwork(
   customization: CustomizationDefinition,
@@ -20,8 +21,9 @@ export function assertAutomaticArtwork(
   draft: OrderWorkDraft,
   productType?: ProductionEditorDocument["productType"],
   photoOnlyPillow = false,
+  requirements?: OrderRequirementInterpretation,
 ) {
-  if (photoOnlyPillow && orderPillowPhotoPlan(productType, customization, layout, draft)) return;
+  if (photoOnlyPillow && orderPillowPhotoPlan(productType, customization, layout, draft, requirements)) return;
   if (draft.instructions.trim()) throw new ConflictException("自由文字制作说明需要美工核对，或先配置为明确的定制字段和区域");
   const matches = (key: string) =>
     customization.fields.some((f) => f.key === key || f.label === key);
@@ -69,9 +71,10 @@ export async function composeOrderArtwork(
   draft: OrderWorkDraft,
   images: Array<{ usage: string; id: string; version: number; width: number; height: number }>,
   photoOnlyPillow = false,
+  requirements?: OrderRequirementInterpretation,
 ) {
-  assertAutomaticArtwork(customization, layout, draft, document.productType, photoOnlyPillow);
-  const pillow = photoOnlyPillow ? orderPillowPhotoPlan(document.productType, customization, layout, draft) : null;
+  assertAutomaticArtwork(customization, layout, draft, document.productType, photoOnlyPillow, requirements);
+  const pillow = photoOnlyPillow ? orderPillowPhotoPlan(document.productType, customization, layout, draft, requirements) : null;
   if (pillow && document.productType === "shaped_pillow") {
     if (images.length !== 1 || images[0]?.usage !== "buyer_photo")
       throw new ConflictException("来图抱枕缺少唯一的已绑定原图");

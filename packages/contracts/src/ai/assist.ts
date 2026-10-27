@@ -7,6 +7,8 @@ import { TenantContextSchema } from "@yummyai/contracts/tenant/tenant-context";
 import { HarnessExecutionContractSchema, HarnessInvocationViewSchema } from "@yummyai/contracts/harness";
 import { AgentMethodSelectionSchema } from "@yummyai/contracts/harness/methods";
 import { BenchmarkTypedAnswerSchema } from "@yummyai/contracts/knowledge/benchmark-values";
+import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
+import { OrderRequirementRoleSchema } from "@yummyai/contracts/order/requirement-interpretation";
 
 export const AssistKindSchema = z.enum([
   "creative",
@@ -123,6 +125,15 @@ export const AssistListingCopySchema = z
     evidence: z.array(AssistEvidenceSchema).min(1).max(30),
   })
   .strict();
+export const AssistOrderFieldBindingSchema = z.object({
+  sourceFieldKey: z.string().min(1).max(1000),
+  targetFieldKey: z.string().min(1).max(100).nullable(),
+  role: OrderRequirementRoleSchema,
+  confidence: z.number().min(0).max(1),
+  reason: z.string().min(1).max(2000),
+  evidence: z.array(AssistEvidenceSchema).min(1).max(12),
+}).strict();
+export type AssistOrderFieldBinding = z.infer<typeof AssistOrderFieldBindingSchema>;
 export const AssistResultSchema = z
   .object({
     summary: z.string().min(1).max(4000),
@@ -132,6 +143,8 @@ export const AssistResultSchema = z
     findings: z.array(AssistFindingSchema).max(50),
     directions: z.array(AssistDirectionSchema).max(3),
     matches: z.array(AssistMatchSchema).max(3),
+    // Optional, without a default, so previously sealed result bytes do not change.
+    orderFieldBindings: z.array(AssistOrderFieldBindingSchema).max(500).optional(),
     missingInformation: z.array(z.string().min(1).max(500)).max(25),
     templateSlots: z.array(AssistTemplateSlotSchema).max(60).default([]),
     listingCopy: AssistListingCopySchema.nullable().default(null),
@@ -210,6 +223,8 @@ export const CreateAssistSchema = z.discriminatedUnion("kind", [
     orderLineId: Id,
     expectedRevision: z.int().nonnegative(),
     expectedSourceVersionId: Id.nullable(),
+    // Explicit analysis of the current editor draft; it never saves or approves it.
+    draft: OrderWorkDraftSchema.optional(),
   }).strict(),
   Request.extend({
     kind: z.literal("artwork_preflight"),

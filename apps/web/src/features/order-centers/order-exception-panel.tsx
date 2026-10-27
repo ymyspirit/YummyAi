@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { flushSync } from "react-dom";
 import { CheckCircle2, ChevronLeft, ChevronRight, Plus, RefreshCw } from "lucide-react";
 import {
   OrderExceptionCategorySchema,
@@ -13,19 +12,10 @@ import {
   ResolveReviewedOrderExceptionSchema,
 } from "@yummyai/contracts/order/exception-operations";
 import { TaskDrawer } from "../navigation/task-drawer";
-import { observeViewTransition } from "../navigation/view-transition";
 import type { OrderReviewState } from "./order-work-detail";
 import { dateTime } from "./order-center-model";
 import { followupContext } from "../business-tasks/followup-request";
 import "./order-exception-panel.css";
-function animateView(update: () => void) {
-  if (
-    typeof document.startViewTransition === "function" &&
-    !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  )
-    observeViewTransition(document.startViewTransition(() => flushSync(update)));
-  else update();
-}
 class ExceptionRequestError extends Error {
   constructor(
     readonly status: number,
@@ -124,10 +114,7 @@ export function OrderExceptionPanel({
         const value = OrderExceptionOperationsViewSchema.parse(
           await request(orderId, query, controller.signal),
         );
-        if (!controller.signal.aborted)
-          animateView(() => {
-            if (!controller.signal.aborted) setView(value);
-          });
+        if (!controller.signal.aborted) setView(value);
       } catch (cause) {
         if (controller.signal.aborted) return;
         setError(cause instanceof Error ? cause.message : "异常记录暂时无法读取");

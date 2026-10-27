@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { designAgentActivity, designAgentBillingNotice, designAgentErrorMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
+import { designAgentActivity, designAgentBillingNotice, designAgentCurrentVersionApproved, designAgentErrorMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
 
 describe("design agent manual handoff boundary", () => {
   it("requires takeover for paused work while stopping its automatic polling", () => {
@@ -14,6 +14,19 @@ describe("design agent manual handoff boundary", () => {
     for (const status of ["awaiting_review", "cancelled", null] as const) {
       expect(designAgentActivity(status)).toEqual({ polling: false, manualEditsBlocked: false });
     }
+  });
+
+  it("labels only the exact currently approved candidate without changing the original awaiting-review execution or completion", () => {
+    const versionId = "019f0000-0000-7000-8000-000000000001";
+    const candidate = { status: "awaiting_review" as const, currentEditorVersionId: versionId };
+    const before = structuredClone(candidate);
+    expect(designAgentCurrentVersionApproved(candidate, versionId)).toBe(true);
+    for (const approved of [undefined, null, "", "019f0000-0000-7000-8000-000000000002"])
+      expect(designAgentCurrentVersionApproved(candidate, approved)).toBe(false);
+    expect(designAgentCurrentVersionApproved(null, versionId)).toBe(false);
+    for (const status of ["queued", "running", "needs_attention", "cancelled"] as const)
+      expect(designAgentCurrentVersionApproved({ ...candidate, status }, versionId)).toBe(false);
+    expect(candidate).toEqual(before);
   });
 });
 
@@ -48,6 +61,7 @@ describe("design agent diagnostics", () => {
     ["agent_scan_rejected", "不会登记为可用图片或自动重试"],
     ["agent_asset_storage_unavailable", "私有素材存储暂时不可用"],
     ["agent_asset_preview_failed", "无需重新调用模型"],
+    ["agent_requirements_need_resolution", "顾客定制要求仍有待核对项"],
   ])("explains the bounded pillow failure %s with an actionable safe message", (code, expected) => {
     const message = designAgentErrorMessage(code);
     expect(message).toContain(expected);

@@ -61,6 +61,47 @@ describe("AI assist authenticated proxy", () => {
     process.env.API_BASE_URL = "http://api.test";
   });
 
+  it.each([
+    ["assist_model_changed", "模型配置已变化 请刷新模型后核对再分析 当前填写仍保留"],
+    ["assist_pricing_changed", "模型计价已变化 请刷新价格与单次上限后再分析 当前填写仍保留"],
+    ["assist_concurrency_limit", "当前已有 4 个分析任务 请等待完成后再发起 当前填写仍保留"],
+    ["assist_pricing_required", "请先为所选模型填写输入单价 输出单价和单次费用上限 当前填写仍保留"],
+    ["assist_task_budget_exceeded", "本次预估超过组织单次 AI 预算 请核对限额后再分析 当前填写仍保留"],
+    ["assist_unpriced_usage", "本月存在未计价的 AI 调用 请先核对账单与预算 当前填写仍保留"],
+    ["assist_monthly_budget_exceeded", "组织当月 AI 预算不足 请核对预算后再分析 当前填写仍保留"],
+  ])("exposes only the fixed safe configuration failure for POST runs 409: %s", async (code, message) => {
+    const secret = "synthetic-upstream-secret-and-private-order-value";
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code, message: secret, detail: secret }, { status: 409 }));
+    const response = await POST(post(JSON.stringify(request())), context(["runs"]));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ code, message });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.current).toHaveBeenCalledOnce();
+    expect(mocks.upstream).toHaveBeenCalledOnce();
+  });
+
+  it("never passes through unknown codes or arbitrary upstream messages, including safe codes on another route or status", async () => {
+    const secret = "synthetic-upstream-secret-and-private-order-value";
+    for (const upstream of [
+      Response.json({ code: "assist_private_provider_failure", message: secret }, { status: 409 }),
+      Response.json({ code: "__proto__", message: secret }, { status: 409 }),
+      Response.json({ code: "assist_model_changed", message: secret }, { status: 503 }),
+      new Response(secret, { status: 409 }),
+    ]) {
+      mocks.upstream.mockResolvedValueOnce(upstream);
+      const response = await POST(post(JSON.stringify(request())), context(["runs"]));
+      const body = await response.json() as { code?: string; message: string };
+      expect(body.code).toBeUndefined();
+      expect(body.message).not.toContain(secret);
+      expect(body.message).not.toContain("刷新模型");
+      expect(body.message).toBe(response.status === 409 ? "原请求或固定依据存在冲突 请先读取原回执"
+        : "分析请求结果暂不可核对 请保留原编号 不重复发起付费任务");
+    }
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code: "assist_model_changed", message: secret }, { status: 409 }));
+    const response = await GET(new Request(`${origin}/api/ai-assists/models`), context(["models"]));
+    expect(await response.json()).toEqual({ message: "原请求或固定依据存在冲突 请先读取原回执" });
+  });
+
   it("rejects cross-origin writes, oversized bodies, invalid JSON and unrelated routes before authentication forwarding", async () => {
     expect((await POST(post("{}", "http://elsewhere.test"), context(["runs"]))).status).toBe(403);
     expect((await POST(post(JSON.stringify({ prompt: "x".repeat(128 * 1024) })), context(["runs"]))).status).toBe(413);

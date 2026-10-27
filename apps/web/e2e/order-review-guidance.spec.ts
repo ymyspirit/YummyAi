@@ -27,7 +27,8 @@ test.describe("order review guidance with native personal pillow intake", () => 
       const check = await initial;
       const whole = order(page), panel = intake(page), confirm = confirmButton(page);
       await expect(panel).toContainText("可以确认审单");
-      await expect(whole.getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveValue("agent");
+      await expect(whole.getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
+      await expect(whole.getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveCount(0);
       await expect(original(page)).toBeChecked();
       await expect(image(page).getByRole("combobox", { name: "对应图片字段", exact: true }))
         .toHaveValue("buyer_photo");
@@ -66,19 +67,20 @@ test.describe("order review guidance with native personal pillow intake", () => 
     }
   });
 
-  test("order review guidance locates missing originals and explicitly changes special requirements to a human without losing them", async ({ page }, testInfo) => {
+  test("order review guidance locates missing originals and preserves special requirements for Agent-first intake", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     const fixture = await orderIntakePillowFixture(true), audit = watch(page, fixture.lineId);
     let completed = false;
     try {
       await page.setViewportSize({ width: 390, height: 844 });
-      const initial = nextCheck(page, fixture, check => check.issues.some(issue => issue.code === "automatic_artwork_not_ready"));
+      const initial = nextCheck(page, fixture, check => check.ready);
       await page.goto(fixture.url);
-      const blocked = await initial;
-      expect(blocked.ready).toBe(false);
+      const initialCheck = await initial;
+      expect(initialCheck.normalizedDraft.designExecutor).toBe("agent");
       const panel = intake(page), confirm = confirmButton(page);
-      await expect(panel.getByRole("button", { name: "改由美工制作", exact: true })).toBeVisible();
-      await expect(confirm).toBeDisabled();
+      await expect(order(page).getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
+      await expect(panel.getByRole("button", { name: "改由美工制作", exact: true })).toHaveCount(0);
+      await expect(confirm).toBeEnabled();
       expect(audit.saves).toEqual([]);
 
       const missing = nextCheck(page, fixture, check => !check.ready && check.normalizedDraft.images.length === 0);
@@ -87,20 +89,16 @@ test.describe("order review guidance with native personal pillow intake", () => 
       await expect(confirm).toBeDisabled();
       await panel.getByRole("button", { name: "补齐顾客原图", exact: true }).first().click();
       await expect(original(page)).toBeInViewport();
-      const restored = nextCheck(page, fixture, check => check.normalizedDraft.images.length === 1
-        && check.issues.some(issue => issue.code === "automatic_artwork_not_ready"));
+      const restored = nextCheck(page, fixture, check => check.ready && check.normalizedDraft.images.length === 1);
       await original(page).check();
-      await restored;
-      await expect(confirm).toBeDisabled();
+      const ready = await restored;
+      await expect(confirm).toBeEnabled();
       expect((await fixture.readDetail()).draft).toEqual(fixture.initial.draft);
       expect(audit.saves).toEqual([]);
       await panel.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: testInfo.outputPath("special-requirements-actionable-before-save-390.png") });
-
-      const human = nextCheck(page, fixture, check => check.ready && check.normalizedDraft.designExecutor === "human");
-      await panel.getByRole("button", { name: "改由美工制作", exact: true }).click();
-      const ready = await human;
-      await expect(order(page).getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveValue("human");
+      await page.screenshot({ path: testInfo.outputPath("special-requirements-agent-first-before-save-390.png") });
+      expect(ready.normalizedDraft.designExecutor).toBe("agent");
+      await expect(order(page).getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveCount(0);
       expect(ready.normalizedDraft.images).toEqual(fixture.initial.draft.images);
       assertSpecial(ready.normalizedDraft);
       assertSize(ready.normalizedDraft);
@@ -109,7 +107,7 @@ test.describe("order review guidance with native personal pillow intake", () => 
         printProfileVersionId: fixture.profileVersionId, artworkVersionId: fixture.artworkVersionId,
         instructions: fixture.initial.draft.instructions,
       });
-      // Choosing a human changes only this local draft; no save or task starts here.
+      // Source interpretation does not save the draft or start an Agent task.
       expect(audit.saves).toEqual([]);
       expect((await fixture.readDetail()).draft).toEqual(fixture.initial.draft);
       await expect(confirm).toBeEnabled();
@@ -121,7 +119,7 @@ test.describe("order review guidance with native personal pillow intake", () => 
       const saved = OrderWorkDetailViewSchema.parse(await savedResponse.json());
       expect(saved.line.revision).toBe(fixture.initial.line.revision + 1);
       assertNotDispatched(saved);
-      expect(saved.draft.designExecutor).toBe("human");
+      expect(saved.draft.designExecutor).toBe("agent");
       expect(saved.draft.images).toEqual(fixture.initial.draft.images);
       expect(saved.draft.fields).toHaveLength(fixture.initial.draft.fields.length);
       assertSpecial(saved.draft);
@@ -134,11 +132,11 @@ test.describe("order review guidance with native personal pillow intake", () => 
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expect(intake(page)).toContainText("审单已确认");
       await panel.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: testInfo.outputPath("explicit-human-preserved-ready-390.png") });
+      await page.screenshot({ path: testInfo.outputPath("agent-first-preserved-ready-390.png") });
       completed = true;
     } finally {
       audit.stop();
-      await proof(testInfo, fixture, audit, "native_explicit_human_local_change_then_save", completed);
+      await proof(testInfo, fixture, audit, "native_agent_first_requirements_preserved", completed);
     }
   });
 
@@ -211,7 +209,12 @@ test.describe("order review guidance with native personal pillow intake", () => 
       await expect(supplement).toBeVisible();
       await expect(supplement).toHaveValue("Only Face");
       await expect(supplement).toBeFocused();
-      await corrected;
+      const correctedCheck = await corrected;
+      expect(correctedCheck.requirements).toBeDefined();
+      expect(correctedCheck.requirements!.sources.find(source => source.sourceFieldKey === "crop_scope"))
+        .toMatchObject({ role: "crop", origin: "operator", value: "head" });
+      expect(correctedCheck.requirements!.texts.some(text => text.sourceFieldKey === "crop_scope" ||
+        ["Only Face", "head"].includes(text.originalText))).toBe(false);
       await expect(supplement).toBeVisible();
       await expect(supplement).toHaveValue("Only Face");
       await expect(supplement).toBeFocused();

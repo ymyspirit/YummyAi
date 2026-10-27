@@ -92,6 +92,7 @@
     "./catalog/sales-plan-delivery": "./src/catalog/sales-plan-delivery.ts",
     "./ai/artwork-audit": "./src/ai/artwork-audit.ts",
     "./order/production-requirements": "./src/order/production-requirements.ts",
+    "./order/requirement-interpretation": "./src/order/requirement-interpretation.ts",
     ".": "./src/index.ts",
     "./order/report": "./src/order/report.ts",
     "./order/report-import-errors": "./src/order/report-import-errors.ts",

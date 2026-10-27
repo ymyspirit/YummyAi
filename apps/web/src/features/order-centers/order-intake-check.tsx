@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import {
-  CheckOrderIntakeInputSchema, OrderIntakeCheckViewSchema, orderDesignExecutor,
+  CheckOrderIntakeInputSchema, OrderIntakeCheckViewSchema,
   type OrderIntakeCheck, type OrderWorkDetail, type OrderWorkDraft,
 } from "@yummyai/contracts/order/workspace";
 import { centerRequest, dateTime } from "./order-center-model";
@@ -13,7 +13,7 @@ import { orderReviewIssueAction, orderReviewIssueTarget, orderReviewLineState, t
 const fieldStatus = { mapped: "已匹配", missing: "待补资料", conflict: "待确认", optional: "选填", inactive: "本单不适用" };
 type Result = { check: OrderIntakeCheck; snapshot: OrderIntakeSnapshot; projectionVersion: number; lineState: string };
 
-export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onChange, onStateChange, onLocate }: {
+export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onStateChange, onLocate }: {
   detail: OrderWorkDetail;
   draft: OrderWorkDraft;
   disabled: boolean;
@@ -101,13 +101,6 @@ export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onCha
     onStateChange?.({ orderLineId: snapshot.orderLineId, input: snapshot.input, projectionVersion: detail.line.projectionVersion, lineState, status, check: current, error: stateError });
   }, [snapshot.orderLineId, snapshot.input, detail.line.projectionVersion, lineState, status, current, stateError, onStateChange]);
 
-  const automatic = current?.issues.some(issue => issue.code === "automatic_artwork_not_ready") && orderDesignExecutor(draft) === "agent";
-  function manual() {
-    const value = live.current;
-    if (!current || value.disabled || !value.editable || !orderIntakeReceiptMatches(current, value.snapshot) ||
-      !result || !orderIntakeResultCurrent(result, value.snapshot) || result.lineState !== orderReviewLineState(value.detail)) return;
-    onChange({ ...value.draft, designExecutor: "human" });
-  }
   const title = localImageProblem ? "还有 1 项需要处理" : stateError ? editable ? "暂时无法完成审单检查" : "当前暂不能审单" : confirmed && !busy ? "审单已确认" : status === "checking" ? "正在检查审单条件" :
     status === "ready" ? "可以确认审单" : `还有 ${current?.issues.length || 1} 项需要处理`;
   return <section className={`oc-section oc-intake oc-review-check is-${status}`} aria-label="定制订单承接核对" aria-busy={busy}>
@@ -132,10 +125,6 @@ export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onCha
           </li>;
         })}
       </ul>}
-      {automatic && editable && <div className="oc-review-check-actions">
-        <button type="button" className="oc-button primary" disabled={disabled || busy} onClick={manual}>改由美工制作</button>
-        <span className="oc-hint">保留顾客全部要求 选择后继续审单 由美工核对并制作</span>
-      </div>}
       <details className="oc-review-check-details">
         <summary>查看自动匹配与核对详情</summary>
         <p className="oc-hint">{current.basis === "sealed" ? `封存资料 V${current.package?.version} · 核对时间 ${dateTime(current.package?.reviewedAt ?? "")}` :

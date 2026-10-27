@@ -4,6 +4,7 @@ import type { OrderDesignResponseRecoveryEvidence } from "@yummyai/contracts/ord
 import type { OrderWorkDraft } from "@yummyai/contracts/order/workspace";
 import type { ArtworkLayout } from "@yummyai/contracts/catalog/artwork";
 import type { CustomizationDefinition } from "@yummyai/contracts/catalog/product";
+import type { OrderRequirementInterpretation } from "@yummyai/contracts/order/requirement-interpretation";
 import type { DesignAutomationPlan, DesignAutomationRecipe, DesignAutomationStep } from "@yummyai/contracts/pod/design-automation";
 
 export type OrderDesignAssetPin = {
@@ -20,6 +21,9 @@ export type OrderDesignSnapshot = {
   layout:ArtworkLayout; customization:CustomizationDefinition; draft:OrderWorkDraft; photoOnlyPillow:boolean;
   recipe:DesignAutomationRecipe; plan:DesignAutomationPlan; model:null|{routeId:string;providerConfigId:string;model:string;endpoint:string|null};
   blockers?:string[];
+  /** Present only on new, source-interpreted runs. Legacy snapshots keep their original behavior. */
+  requirements?:OrderRequirementInterpretation;
+  preparationDiagnostics?:Array<{code:string;severity:"error"|"warning"|"manual";message:string}>;
 };
 export interface OrderDesignDispatcher { enqueue(input:{tenantId:string;requestedBy:string;runId:string;dispatchId:string}):Promise<void>; }
 export interface OrderDesignImageGateway {

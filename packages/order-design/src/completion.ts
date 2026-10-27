@@ -3,7 +3,7 @@ import { OrderDesignCompletionV1Schema, OrderDesignCompletionRecordSchema, type 
 import { DesignAutomationPlanSchema } from "@yummyai/contracts/pod/design-automation";
 import { orderDesignAgentSteps as steps, productionEditorRenders as renders, productionEditorVersions as versions, type TenantTransaction } from "@yummyai/database";
 import { asc,eq,inArray,and } from "drizzle-orm";
-import { orderDesignHarness,orderDesignInputChecksum } from "./harness.js";
+import { orderDesignHarnessForMethod,orderDesignInputChecksum } from "./harness.js";
 import { fingerprint,open } from "./crypto.js";
 import type { DesignRun } from "./repository.js";
 import type { StepResult } from "./executor.js";
@@ -44,7 +44,7 @@ export function sealOrderDesignEvidence(snapshot:OrderDesignSnapshot,method:Orde
   if(evidence.methodContractChecksum!==method.executionContract.checksum || evidence.inputChecksum!==orderDesignInputChecksum(snapshot,method)
     || evidence.workItemId!==snapshot.workItemId || evidence.workRevisionId!==snapshot.workRevisionId
     || evidence.templateVersionId!==snapshot.templateVersionId || evidence.templateChecksum!==snapshot.templateChecksum)invalid();
-  const binding=orderDesignHarness(snapshot.recipe.workflow);
+  const binding=orderDesignHarnessForMethod(snapshot,method);
   binding.registry.checkOutput(method.executionContract,binding.skill,binding.toolKey,evidence);
   return {evidence,checksum:harnessChecksum(evidence)};
 }
@@ -58,6 +58,9 @@ export function readOrderDesignCompletion(run:DesignRun,snapshot:OrderDesignSnap
     || evidence.projectId!==run.projectId || evidence.editorVersionId!==run.currentEditorVersionId
     || evidence.templateVersionId!==snapshot.templateVersionId || evidence.templateChecksum!==snapshot.templateChecksum
     || evidence.ruleSnapshotChecksum!==(snapshot.ruleSnapshot?harnessChecksum(snapshot.ruleSnapshot):null))invalid();
+  if(!run.methodSnapshot)invalid();
+  const binding=orderDesignHarnessForMethod(snapshot,run.methodSnapshot);
+  binding.registry.checkOutput(run.methodSnapshot.executionContract,binding.skill,binding.toolKey,evidence);
   return parsed.data;
 }
 function invalid():never{throw new OrderDesignError("agent_completion_invalid");}

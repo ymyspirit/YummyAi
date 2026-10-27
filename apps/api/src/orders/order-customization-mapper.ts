@@ -5,10 +5,12 @@ import {
   type OrderCustomizationValue,
 } from "@yummyai/contracts";
 import { pillowCropSubject, pillowPrintSide } from "@yummyai/contracts/order/production-requirements";
+import type { OrderRequirementSource } from "@yummyai/contracts/order/requirement-interpretation";
 
 /** Only the caller's validated shaped-pillow, photo-only artwork may opt in. */
 export interface OrderCustomizationMappingOptions {
   photoOnlyPillow?: boolean;
+  requirementSources?: readonly OrderRequirementSource[];
 }
 
 export interface MappedCustomizationResult {

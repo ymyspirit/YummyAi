@@ -8,6 +8,7 @@ import { OrderRuleSnapshotSchema } from "@yummyai/contracts/rules";
 import { pinnedRuleDiagnostics } from "./rules.js";
 import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderDesignAgentCommands as commands,
   orderWorkItems as works, orderLines, orders, amazonOrderReportLines, memberships, membershipRoles, roles, orderDesignDispatchTenants, aiBudgetLedger, orderDesignModelCalls as modelCalls,
+  productionEditorProjects as projects, productionEditorVersions as versions, productionEditorRenders as renders,
   withTenant, type TenantTransaction, type DatabaseConnection } from "@yummyai/database";
 import { and, eq, gt, inArray, isNull, lte, asc, desc, sql } from "drizzle-orm";
 import { fingerprint, seal, open } from "./crypto.js";
@@ -65,13 +66,71 @@ export async function registerOrderDesignRun(tx:TenantTransaction,context:Tenant
     executorKey:`strict-${snapshot.recipe.workflow}`,recipeVersion:snapshot.recipe.pillowPipeline?.version??"1",policyVersion:"order-design-v1",modelRouteId:snapshot.model?.routeId??null,
     encryptedSnapshot:seal(key,snapshot),inputChecksum:orderDesignInputChecksum(snapshot,methodSnapshot),methodSnapshot,requestedBy:context.userId,
     status:plan.status==="ready" && !snapshot.blockers?.length && !ruleConflict?"queued":"needs_attention",errorCode:ruleConflict?"agent_rule_conflict":snapshot.blockers?.[0]??plan.blockers[0]??null,
-    qualityDiagnostics:ruleDiagnostics,
+    qualityDiagnostics:[...ruleDiagnostics,...(snapshot.preparationDiagnostics??[])],
     estimatedCostUsd:plan.budget.estimatedCostUsd===null?null:String(plan.budget.estimatedCostUsd),actualCostUsd:plan.plannedModelCalls?null:"0",
     costStatus:plan.plannedModelCalls?(plan.budget.estimatedCostUsd===null?"unknown":"estimated"):"not_required",
   });
   for(const [position,input] of plan.steps.entries()) await tx.insert(steps).values({id:createEntityId(),tenantId:context.tenantId,runId:id,key:input.id,label:stepLabel(input.tool),position,requestId:createEntityId(),encryptedInput:seal(key,input),inputChecksum:fingerprint(input)});
   if(plan.status==="ready" && !snapshot.blockers?.length && !ruleConflict) await tx.insert(outbox).values({id:createEntityId(),tenantId:context.tenantId,runId:id,requestedBy:context.userId});
   return id;
+}
+
+/** A completion is evidence for reviewing this exact unapproved project version. */
+export async function assertOrderDesignCandidate(tx:TenantTransaction,context:TenantContext,run:DesignRun,vault:SecretVault,versionId:string) {
+  for(const permission of [Permission.OrderRead,Permission.OrderWrite,Permission.OrderPiiRead,Permission.DesignReview])authorize(context,permission);
+  await lockWork(tx,run.workItemId);
+  const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.workItemId,run.workItemId))).for("update");
+  if(!current || current.revision!==run.revision || current.status!=="awaiting_review" || current.currentEditorVersionId!==versionId)
+    throw new OrderDesignError("agent_editor_changed");
+  const [work]=await tx.select().from(works).where(eq(works.id,current.workItemId));
+  const [project]=current.projectId?await tx.select().from(projects).where(eq(projects.id,current.projectId)).for("update"):[];
+  if(!work?.encryptedDataKey || work.preparation!=="pushed" || work.held || work.archivedAt || work.expiresAt<=new Date() ||
+    work.pushedRevisionId!==current.workRevisionId || work.editorProjectId!==current.projectId ||
+    !project?.encryptedDataKey || project.status!=="active" || project.archivedAt || project.expiresAt && project.expiresAt<=new Date() ||
+    project.sourceWorkItemId!==work.id || project.sourceWorkRevisionId!==work.pushedRevisionId || project.currentVersionId!==versionId)
+    throw new OrderDesignError("agent_work_changed");
+  const key=vault.withSecret(work.encryptedDataKey,value=>Buffer.from(value,"base64"));
+  try {
+    const snapshot=open<OrderDesignSnapshot>(key,current.encryptedSnapshot);
+    const completion=readOrderDesignCompletion(current,snapshot);
+    if(orderDesignInputChecksum(snapshot,current.methodSnapshot)!==current.inputChecksum || !completion)
+      throw new OrderDesignError("agent_completion_invalid");
+    const [version]=await tx.select().from(versions).where(and(eq(versions.id,versionId),eq(versions.projectId,project.id)));
+    if(!version?.encryptedDocument || version.checksum!==completion.evidence.documentChecksum)
+      throw new OrderDesignError("agent_completion_invalid");
+    const proofs=await tx.select().from(renders).where(and(eq(renders.projectId,project.id),eq(renders.versionId,versionId),
+      inArray(renders.id,completion.evidence.proofs.map(proof=>proof.renderId)))).for("share");
+    if(proofs.length!==completion.evidence.proofs.length || completion.evidence.proofs.some(receipt=>{
+      const proof=proofs.find(row=>row.id===receipt.renderId);
+      return !proof || proof.status!=="completed" || !proof.encryptedManifest || fingerprint(proof.encryptedManifest)!==receipt.manifestChecksum;
+    }))throw new OrderDesignError("agent_completion_invalid");
+  } finally {key.fill(0);}
+}
+
+/** Shared by the explicit Agent command and an operator's rejection of its exact proof. */
+export async function takeOverOrderDesignRun(tx:TenantTransaction,context:TenantContext,run:DesignRun,vault:SecretVault,options:{rejectedCandidateVersionId?:string}={}) {
+  for(const permission of [Permission.OrderWrite,Permission.OrderPiiRead,options.rejectedCandidateVersionId?Permission.DesignReview:Permission.DesignWrite]) authorize(context,permission);
+  await lockWork(tx,run.workItemId);
+  const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.workItemId,run.workItemId))).for("update");
+  if(!current || current.revision!==run.revision)throw new OrderDesignError("agent_revision_changed");
+  if(options.rejectedCandidateVersionId)await assertOrderDesignCandidate(tx,context,current,vault,options.rejectedCandidateVersionId);
+  const [work]=await tx.select().from(works).where(eq(works.id,run.workItemId));
+  const key=work?.encryptedDataKey?vault.withSecret(work.encryptedDataKey,value=>Buffer.from(value,"base64")):null;
+  try {
+    const active=await tx.select().from(steps).where(and(eq(steps.runId,run.id),inArray(steps.status,["pending","running"])));
+    for(const step of active) {
+      const input=key?open<{tool:string}>(key,step.encryptedInput):null;
+      const output=key && step.encryptedOutput?open<OrderDesignStepCheckpoint>(key,step.encryptedOutput):{};
+      const recovery=assessPaidRequestRecovery({submissionState:output.submissionState,
+        hasResponseReceipt:!!output.responseReceipt,hasResponseCheckpoint:!!output.responseCheckpoint,
+        provenNotSubmitted:step.status==="pending" && step.attempt===0});
+      const uncertain=(!input || paidTool(input.tool)) && recovery.action==="reconcile";
+      await tx.update(steps).set({status:uncertain?"uncertain":"skipped",errorCode:uncertain?`agent_model_${recovery.reason}`:"agent_manual_takeover",updatedAt:new Date()}).where(eq(steps.id,step.id));
+      if(uncertain && !output.responseReceipt)await tx.update(runs).set({costStatus:"unknown",actualCostUsd:null}).where(eq(runs.id,run.id));
+      else if(input && paidTool(input.tool) && recovery.reservation==="release")await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));
+    }
+  } finally {key?.fill(0);}
+  await tx.update(runs).set({status:"cancelled",revision:current.revision+1,processingToken:null,leaseUntil:null,errorCode:"agent_manual_takeover",updatedAt:new Date()}).where(eq(runs.id,run.id));
 }
 
 export class OrderDesignRepository {
@@ -165,26 +224,8 @@ export class OrderDesignRepository {
         if(!canResumeDesignRun(run,rows)) throw new OrderDesignError("agent_resume_not_safe");
         await tx.update(steps).set({status:"pending",errorCode:null,updatedAt:new Date()}).where(and(eq(steps.runId,run.id),eq(steps.status,"failed")));
         await tx.insert(outbox).values({id:createEntityId(),tenantId:context.tenantId,runId:run.id,requestedBy:run.requestedBy});
-      } else {
-        const [work]=await tx.select().from(works).where(eq(works.id,workItemId));
-        const key=work?.encryptedDataKey?this.vault.withSecret(work.encryptedDataKey,value=>Buffer.from(value,"base64")):null;
-        try {
-          const active=await tx.select().from(steps).where(and(eq(steps.runId,run.id),inArray(steps.status,["pending","running"])));
-          for(const step of active) {
-            const input=key?open<{tool:string}>(key,step.encryptedInput):null;
-            const output=key && step.encryptedOutput?open<OrderDesignStepCheckpoint>(key,step.encryptedOutput):null;
-            const recovery=assessPaidRequestRecovery({submissionState:output?.submissionState,
-              hasResponseReceipt:!!output?.responseReceipt,hasResponseCheckpoint:!!output?.responseCheckpoint,
-              provenNotSubmitted:step.status==="pending" && step.attempt===0});
-            const uncertain=(!input || paidTool(input.tool)) && recovery.action==="reconcile";
-            await tx.update(steps).set({status:uncertain?"uncertain":"skipped",errorCode:uncertain?`agent_model_${recovery.reason}`:"agent_manual_takeover",updatedAt:new Date()}).where(eq(steps.id,step.id));
-            // A missing response file does not erase an already recorded charge receipt.
-            if(uncertain && !output?.responseReceipt)await tx.update(runs).set({costStatus:"unknown",actualCostUsd:null}).where(eq(runs.id,run.id));
-            else if(input && paidTool(input.tool) && recovery.reservation==="release")await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));
-          }
-        } finally {key?.fill(0);}
-      }
-      await tx.update(runs).set({status:action==="resume"?"queued":"cancelled",revision:run.revision+1,processingToken:null,leaseUntil:null,errorCode:action==="resume"?null:"agent_manual_takeover",updatedAt:new Date()}).where(eq(runs.id,run.id));
+        await tx.update(runs).set({status:"queued",revision:run.revision+1,processingToken:null,leaseUntil:null,errorCode:null,updatedAt:new Date()}).where(eq(runs.id,run.id));
+      } else await takeOverOrderDesignRun(tx,context,run,this.vault);
       await tx.insert(commands).values({id:createEntityId(),tenantId:context.tenantId,runId:run.id,idempotencyKey:input.idempotencyKey,action,requestChecksum:digest,requestedBy:context.userId});
     });
     return this.view(context,workItemId);

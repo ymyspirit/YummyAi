@@ -49,11 +49,39 @@ const baseProjection = sql`
     o.account_id as "accountId", ma.display_name as "storeName", o.platform, ol.sku_code as "skuCode", ol.title, ol.quantity,
     o.provider_status as "providerStatus", o.side_state as "sideState", o.placed_at as "placedAt",
     o.created_at as "importedAt", w.archived_at as "archivedAt",
-    w.search_design_executor as "designExecutor", spu.code as "spuCode", psv.name as "specificationName",
+    case when w.preparation='pushed' and exists(
+      select 1 from order_design_agent_runs handoff
+      where handoff.work_item_id=w.id and handoff.work_revision_id=w.pushed_revision_id
+        and handoff.status='cancelled' and handoff.error_code='agent_manual_takeover'
+    ) then 'human' else w.search_design_executor end as "designExecutor", spu.code as "spuCode", psv.name as "specificationName",
     (select run.status from order_design_agent_runs run
       join order_work_revisions revision on revision.id=run.work_revision_id
       where run.work_item_id=ol.id and revision.work_item_id=ol.id and revision.revision=w.revision
       order by run.created_at desc,run.id desc limit 1) as "designRunStatus",
+    (w.preparation='pushed' and w.artwork='in_progress' and exists(
+      select 1 from order_design_agent_runs candidate
+      join order_work_revisions revision on revision.id=candidate.work_revision_id
+      join production_editor_projects project on project.id=candidate.project_id
+      join production_editor_versions candidate_version on candidate_version.id=project.current_version_id
+        and candidate_version.project_id=project.id
+      where candidate.work_item_id=w.id and candidate.work_revision_id=w.pushed_revision_id
+        and revision.work_item_id=w.id and revision.revision=w.revision
+        and candidate.status='awaiting_review' and candidate.project_id=w.editor_project_id
+        and project.status='active' and project.archived_at is null and project.encrypted_data_key is not null
+        and (project.expires_at is null or project.expires_at>now())
+        and project.source_work_item_id=w.id and project.source_work_revision_id=w.pushed_revision_id
+        and candidate.current_editor_version_id=project.current_version_id
+        and candidate.completion_checksum ~ '^[a-f0-9]{64}$'
+        and candidate.completion_evidence->>'contractVersion'='order-design-completion-v1'
+        and candidate.completion_evidence->>'runId'=candidate.id::text
+        and candidate.completion_evidence->>'workItemId'=w.id::text
+        and candidate.completion_evidence->>'workRevisionId'=w.pushed_revision_id::text
+        and candidate.completion_evidence->>'projectId'=project.id::text
+        and candidate.completion_evidence->>'editorVersionId'=project.current_version_id::text
+        and candidate.completion_evidence->>'documentChecksum'=candidate_version.checksum
+        and candidate.completion_evidence->>'inputChecksum'=candidate.input_checksum
+        and candidate.completion_evidence->>'resultState'='awaiting_review'
+    )) as "designCandidateReview",
     (select profile.product_type from order_work_revisions revision
       join print_profile_versions profile on profile.id=revision.profile_version_id
       where revision.work_item_id=ol.id and revision.revision=w.revision) as "productType",
@@ -171,7 +199,7 @@ const stageProjection = sql`select b.*,
     when "readyQuantity">"shippedQuantity" then 'ready_to_ship'
     when production not in ('not_released','cancelled') then 'production'
     when artwork='approved' then 'approved'
-    when artwork='in_review' then 'in_review'
+    when artwork='in_review' or "designCandidateReview" then 'in_review'
     when artwork='changes_requested' then 'changes_requested'
     when artwork in ('starting','in_progress') then 'in_progress'
     when artwork='queued' then 'queued'
@@ -227,7 +255,7 @@ export const workProjection = sql`with line_work as materialized (${lineWorkProj
       when bool_and("shippedQuantity">=quantity) then 'shipped'
       when bool_and("readyQuantity">=quantity) then 'produced'
       when bool_and(artwork='approved' and (proof='not_required' or proof='approved' and "proofVersionCurrent")) then 'reviewed'
-      when bool_and(artwork in ('in_review','approved')) then 'awaiting_review'
+      when bool_and(artwork in ('in_review','approved') or "designCandidateReview") then 'awaiting_review'
       else 'processing' end as "orderStatus"
     from line_work group by "orderId")
   select l.*, o."orderStatus", o."orderLineCount", o."orderQuantity"
@@ -278,7 +306,7 @@ export function workFilter(q: OrderWorkQuery): SQL {
   if (q.platform) filters.push(sql`platform = ${q.platform}`);
   if (q.batchId) filters.push(sql`"batchId" = ${q.batchId}`);
   if (q.preparation) filters.push(sql`preparation = ${q.preparation}`);
-  if (q.artwork) filters.push(sql`artwork = ${q.artwork}`);
+  if (q.artwork) filters.push(q.artwork === 'in_review' ? sql`(artwork='in_review' or "designCandidateReview")` : sql`artwork = ${q.artwork}`);
   if (q.proof) filters.push(sql`proof = ${q.proof}`);
   if (q.production) filters.push(sql`production = ${q.production}`);
   if (q.shipment === "unshipped") filters.push(sql`"shippedQuantity" = 0`);

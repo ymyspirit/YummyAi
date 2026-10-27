@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
-import { assistFingerprint, assistTaskFingerprint, orderAssistChecks, assistHarness, isBenchmarkAssist, assistUsesReviewedGuidance, HarnessContractError, type AssistContext } from "@yummyai/ai-core";
+import { assistFingerprint, assistTaskFingerprint, orderAssistChecks, orderRequirementSourceId, assistHarness, isBenchmarkAssist, assistUsesReviewedGuidance, HarnessContractError, type AssistContext } from "@yummyai/ai-core";
 import { authorize, authorizeAssistRequest, Permission, requiredAssistPermissions, requiredAssistRequestPermissions, ASSIST_ACCESS_POLICY_VERSION } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 import type { CreateAssist } from "@yummyai/contracts/ai/assist";
@@ -331,7 +331,7 @@ export class AssistContextService {
         context,
         request.kind === "order_review" ? Permission.OrderWrite : Permission.DesignWrite,
       );
-      const detail = await this.orders.detail(context, request.orderLineId);
+      let detail = await this.orders.detail(context, request.orderLineId);
       result.expiresAt = (
         await this.orders.analysisExpiresAt(context, request.orderLineId)
       ).toISOString();
@@ -343,6 +343,15 @@ export class AssistContextService {
           (detail.report?.versionId ?? null) !== request.expectedSourceVersionId)
       )
         throw new ConflictException("订单资料已更新，请刷新后重新检查");
+      if (request.kind === "order_review" && request.draft) {
+        const checked = await this.orders.intakeCheck(context, request.orderLineId, {
+          expectedRevision: request.expectedRevision, expectedSourceVersionId: request.expectedSourceVersionId,
+          draft: request.draft,
+        });
+        detail = { ...detail, draft: checked.normalizedDraft,
+          requirementSources: checked.requirements?.sources ?? detail.requirementSources,
+          requirementInterpretation: checked.requirements ?? detail.requirementInterpretation };
+      }
       result.checks = orderAssistChecks(detail);
       result.sources.push({
         id: "order",
@@ -387,6 +396,11 @@ export class AssistContextService {
           href: `/product-specifications?spu=${s.spuId}`,
         })),
       );
+      const requirementSources = detail.requirementInterpretation?.sources ?? detail.requirementSources ?? [];
+      const requirementSourceIds = Object.fromEntries(requirementSources.map(source => [source.sourceFieldKey, orderRequirementSourceId(source.sourceFieldKey)]));
+      if (request.kind === "order_review") result.sources.push(...requirementSources.map(source => ({
+        id: requirementSourceIds[source.sourceFieldKey]!, label: `原始定制字段 · ${source.label}`.slice(0, 240), href: null,
+      })));
       if (
         (detail.catalog?.artworks.length ?? 0) > 50 ||
         (detail.catalog?.specifications.length ?? 0) > 50
@@ -401,6 +415,12 @@ export class AssistContextService {
           sku: detail.line.skuCode,
           title: detail.line.title,
           quantity: detail.line.quantity,
+          projectionVersion: detail.line.projectionVersion,
+          ...(request.kind === "order_review" ? {
+            requirementSources, requirementSourceIds,
+            requirementInterpretation: detail.requirementInterpretation,
+            customization: artworks.find(artwork => artwork.id === detail.draft.artworkVersionId)?.customization,
+          } : {}),
           draft: {
             artworkVersionId: detail.draft.artworkVersionId,
             specificationVersionId: detail.draft.specificationVersionId,
@@ -525,6 +545,7 @@ export class AssistContextService {
       const current = await this.orders.detail(context, request.orderLineId);
       if (
         current.line.revision !== request.expectedRevision ||
+        current.line.projectionVersion !== detail.line.projectionVersion ||
         (current.report?.versionId ?? null) !== (detail.report?.versionId ?? null)
       )
         throw new ConflictException("读取期间订单资料发生变化，请重试");
@@ -587,7 +608,10 @@ export class AssistContextService {
       if (detail.line.revision !== input.expectedRevision || detail.line.sourceChanged) return true;
       if (input.kind === "artwork_preflight" && input.automaticAudit && (detail.line.held || detail.line.archivedAt || (detail.sourceReport?.versionId ?? null) !== snapshot?.artworkAudit?.sourceVersionId)) return true;
       if (input.kind === "order_review")
-        return (detail.report?.versionId ?? null) !== input.expectedSourceVersionId;
+        return (detail.report?.versionId ?? null) !== input.expectedSourceVersionId ||
+          snapshot?.data.order !== undefined &&
+          (snapshot.data.order as { projectionVersion?: number }).projectionVersion !== undefined &&
+          (snapshot.data.order as { projectionVersion: number }).projectionVersion !== detail.line.projectionVersion;
       if (!detail.line.editorProjectId) return true;
       return (
         (await this.editor.get(context, detail.line.editorProjectId)).project.currentVersionId !==

@@ -7,11 +7,13 @@ import { orderDesignExecutor } from "@yummyai/contracts/order/workspace";
 import { orderAutomaticBasisView, orderCatalogSpus } from "./order-auto-basis-model";
 import { orderDraftWithArtwork } from "./order-work-input-model";
 
-export function OrderArtworkBasis({ detail, draft, onChange, children }: {
+export function OrderArtworkBasis({ detail, draft, onChange, children, manualTakeover = false, routePending = false }: {
   detail: OrderWorkDetail;
   draft: OrderWorkDraft;
   onChange: (draft: OrderWorkDraft) => void;
   children?: ReactNode;
+  manualTakeover?: boolean;
+  routePending?: boolean;
 }) {
   const [selectedSpu, setSelectedSpu] = useState({ lineId: detail.line.id, id: "" });
   const [manualOpen, setManualOpen] = useState(false);
@@ -50,10 +52,11 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
       </details>
       {(view.issues.length > 0 || !spus.length || !specification) && <Link className="oc-basis-link" data-task-draft-link href={spuId ? `/product-specifications?spu=${spuId}` : "/product-specifications"}>到商品库核对 SPU 规格与已审核底稿</Link>}
     </section>
-    <label className="oc-review-design" data-review-target="design">制图方式<select aria-label="设计执行方式" value={orderDesignExecutor(draft)} onChange={event => onChange({ ...draft, designExecutor: event.target.value as "human" | "agent" })}>
-      <option value="agent">无人设计 Agent（默认）</option><option value="human">美工领取制作</option>
-    </select><small>{orderDesignExecutor(draft) === "agent" ? "仅支持已核对的自动制作要求 特殊备注会在待办中提示 不能直接自动制图" : "保留顾客全部原始要求 由美工核对并制作 不会自动派发或批准图稿"}</small>
-    </label>
+    <div className="oc-review-design" data-review-target="design" tabIndex={-1}><strong>{manualTakeover ? "已交美工修改" : routePending ? "正在核对本单制图状态" : orderDesignExecutor(draft) === "human" ? "本单已保存美工制作方式" : "先由 Agent 出稿"}</strong>
+      <small>{manualTakeover ? "沿用本单原制作项目修改 已完成素材与费用记录保留 修改后重新送运营审核" : routePending ? "读取原制作任务后显示当前交接方式 历史制作版本保持原样"
+        : orderDesignExecutor(draft) === "human" ? "保留本单原保存方式 不回写历史版本 新单默认先由 Agent 出稿"
+          : "顾客原文与特殊备注一并交给 Agent 运营审核不通过后再交美工修改 审单不会自动放行生产"}</small>
+    </div>
     <details className="oc-basis-manual" data-review-target="basis" open={manualOpen} onToggle={event => setManualOpen(event.currentTarget.open)}>
       <summary><Settings2 size={15} /><span>手动指定印花或改选制作依据</span><ChevronDown size={14} /></summary>
       <div className="oc-basis-fields">

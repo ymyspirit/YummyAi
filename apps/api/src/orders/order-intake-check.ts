@@ -26,6 +26,8 @@ export function checkOrderIntakeFields(
     issues.push({ code, fieldKey, message, action });
   for (const [index, source] of draft.fields.entries()) {
     const candidates = matches[index]!;
+    const original = options.requirementSources?.find(item => item.sourceFieldKey === (source.sourceKey ?? source.key));
+    const styleSelector = original?.origin === "amazon_raw" && ["font", "color"].includes(original.role) && source.kind === "choice";
     if (candidates.length > 1) {
       add(
         "ambiguous_field",
@@ -33,12 +35,12 @@ export function checkOrderIntakeFields(
         `定制字段匹配有歧义：${source.label}`,
         "核对原始资料，明确填写唯一的字段编码和名称",
       );
-    } else if (!candidates.length && source.value.trim() && strict) {
+    } else if (!candidates.length && source.value.trim() && strict && !styleSelector) {
       add(
         "unmapped_field",
         null,
         `定制字段尚未匹配：${source.label}`,
-        "匹配到已封存字段；额外要求交由美工核对，并保留原始资料",
+        "核对原始资料并明确字段含义；保留额外顾客要求供无人设计准备和运营审核",
       );
     }
   }
@@ -65,19 +67,23 @@ export function checkOrderIntakeFields(
     const candidates = matches[index]!;
     if (candidates.length !== 1) continue;
     const field = candidates[0]!;
+    const populated = (sourceIndex: number) => field.type === "image" || !!draft.fields[sourceIndex]!.value.trim();
+    // Keep an emptied provider row as evidence. It must not receive another
+    // row's accepted value or prevent the unique nonempty supplement from normalizing.
+    if (!populated(index)) continue;
     // Invalid, duplicate and ambiguous entries remain fully editable. Never
     // replace multiple provider entries with one accepted canonical value.
-    if (matches.filter(list => list.length === 1 && list[0]!.key === field.key).length !== 1 ||
-      draft.fields.some((other, otherIndex) => otherIndex !== index && other.key === field.key)) continue;
+    if (matches.filter((list, sourceIndex) => list.length === 1 && list[0]!.key === field.key && populated(sourceIndex)).length !== 1 ||
+      draft.fields.some((other, otherIndex) => otherIndex !== index && other.key === field.key && populated(otherIndex))) continue;
     // A report's upload filename is only an editable source marker. Canonical
     // identity does not make it a selected or authorized buyer image.
     if (field.type === "image" && source.kind === "image") {
-      normalizedDraft.fields[index] = { ...source, key: field.key, label: field.label };
+      normalizedDraft.fields[index] = { ...source, sourceKey: source.sourceKey ?? source.key, key: field.key, label: field.label };
       continue;
     }
     if (!mapped.mappedFieldKeys.includes(field.key)) continue;
     const value = mapped.values[field.key];
-    normalizedDraft.fields[index] = { ...source, key: field.key, label: field.label,
+    normalizedDraft.fields[index] = { ...source, sourceKey: source.sourceKey ?? source.key, key: field.key, label: field.label,
       value: typeof value === "string" ? value : source.value };
   }
   const fields: OrderIntakeCheck["fields"] = schema.fields.map(
@@ -148,7 +154,7 @@ export function checkOrderIntakeFields(
                 : required
                   ? "missing"
                   : "optional",
-        sourceKeys: sources.map((source) => source.key),
+        sourceKeys: sources.map((source) => source.sourceKey ?? source.key),
         imageCount: images.length,
       };
     },

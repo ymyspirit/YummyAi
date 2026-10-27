@@ -14,6 +14,7 @@ import {
 import { CreativeRequirementsSchema } from "@yummyai/contracts/catalog/artwork";
 import { CANVAS_WORKFLOW_TEMPLATES } from "@yummyai/contracts/pod/canvas-bridge";
 import { AssistResultSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import {
   aiAssistRuns,
   orderWorkItems,
@@ -581,6 +582,109 @@ describe("AI assists use real tenant services and immutable background tasks", (
     objects.clear();
     await database.client.end();
   });
+
+  it("order requirement analysis pins the actual dirty draft and rejects invented or cross-group model bindings without rewriting an order", async () => {
+    const externalOrderId = "SYNTHETIC-REQUIREMENT-AI-" + createEntityId(), externalLineId = "SYNTHETIC-LINE-" + createEntityId();
+    const batch = await reports.importReport(context, { accountId, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-requirement-analysis.txt",
+      content: ["order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price",
+        [externalOrderId, externalLineId, new Date().toISOString(), "SYNTHETIC", "Synthetic custom shaped pillow", "1", "USD", "20"].join("\t")].join("\n") });
+    const sourceLine = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalOrderId, orderItemId: externalLineId, customizationData: {
+      type: "PageContainerCustomization", children: [
+        ...["Alpha", "Beta"].map(name => ({ type: "TextContainerCustomization", label: "Synthetic " + name, children: [
+          { type: "TextCustomization", label: name === "Alpha" ? "First name" : "Second name", inputValue: "Synthetic " + name },
+          { type: "FontCustomization", label: "Font", fontSelection: { family: name + " Font" } },
+        ] })),
+      ],
+    } }));
+    await reports.process(context, sourceLine.id, null, await zip.generateAsync({ type: "nodebuffer" }));
+    const { artwork } = await development.registerArtwork(context, { code: "SYNTHETIC-REQUIREMENT-" + createEntityId(),
+      name: "Synthetic grouped text scheme", mode: "customer_image", expectedVersion: 0, idempotencyKey: randomUUID(),
+      customization: { version: 1, fields: [
+        { key: "front_message", label: "Front message", type: "short_text", required: true },
+        { key: "back_message", label: "Back message", type: "short_text", required: false },
+        { key: "operator_message", label: "Operator message", type: "short_text", required: false },
+      ] }, layout: [], instructions: "Synthetic analysis classification only No production approval" });
+    const original = await workspace.detail(context, sourceLine.orderLineId), sources = original.requirementSources!;
+    const alpha = sources.find(row => row.role === "text" && row.value === "Synthetic Alpha")!;
+    const beta = sources.find(row => row.role === "text" && row.value === "Synthetic Beta")!;
+    const font = sources.find(row => row.role === "font" && row.groupKey === alpha.groupKey)!;
+    expect(alpha.groupKey).not.toBe(beta.groupKey);
+    // Historical zero-based keys may collide with a current raw ordinal. Only
+    // unique original label/value evidence may recover the legacy source link.
+    const legacyField = { key: alpha.sourceFieldKey, label: "Second name", kind: "text" as const, value: beta.value };
+    const linked = await workspace.intakeCheck(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+      expectedSourceVersionId: original.report!.versionId, draft: { ...original.draft, fields: [legacyField] } });
+    expect(linked.normalizedDraft.fields[0]!.sourceKey).toBe(beta.sourceFieldKey);
+    expect(linked.normalizedDraft.fields[0]!.font).toBe("Beta Font");
+    const unmatched = { ...legacyField, value: "Synthetic unmatched legacy text" };
+    const inputLegacy = { expectedRevision: original.line.revision, expectedSourceVersionId: original.report!.versionId,
+      draft: { ...original.draft, fields: [unmatched] } };
+    const isolated = await workspace.intakeCheck(context, sourceLine.orderLineId, inputLegacy);
+    const stableKey = "operator-legacy:" + createHash("sha256").update(orderRequirementDraftInput({
+      key: unmatched.key, label: unmatched.label, value: unmatched.value,
+    })).digest("hex");
+    expect(isolated.normalizedDraft.fields[0]).toMatchObject({ value: unmatched.value, sourceKey: stableKey });
+    expect(isolated.normalizedDraft.fields[0]!.font).toBeUndefined(); expect(isolated.normalizedDraft.fields[0]!.color).toBeUndefined();
+    expect(isolated.requirements!.sources.find(row => row.sourceFieldKey === stableKey)).toMatchObject({ origin: "operator", value: unmatched.value });
+    expect(isolated.requirements!.sources.find(row => row.sourceFieldKey === alpha.sourceFieldKey)!.value).toBe(alpha.value);
+    expect((await workspace.intakeCheck(context, sourceLine.orderLineId, inputLegacy)).normalizedDraft.fields[0]!.sourceKey).toBe(stableKey);
+    expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+    const dirty = { ...original.draft, artworkVersionId: artwork.versionId,
+      instructions: "Synthetic unsaved operator instruction", fields: [
+        ...original.draft.fields.map(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey ? { ...row, value: "Synthetic dirty Alpha" } : row),
+        { key: "operator-new", label: "Synthetic extra text", kind: "text" as const, value: "Synthetic unsaved extra text" },
+      ] };
+    const changedAlpha = dirty.fields.filter(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey);
+    expect(changedAlpha).toHaveLength(1);
+    expect(changedAlpha[0]!.value).toBe("Synthetic dirty Alpha");
+    expect(original.draft.fields.find(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey)!.value).toBe(alpha.value);
+    const checked = await workspace.intakeCheck(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+      expectedSourceVersionId: original.report!.versionId, draft: dirty });
+    expect(checked.requirements!.sources.find(row => row.sourceFieldKey === "operator-new")).toMatchObject({
+      origin: "operator", value: "Synthetic unsaved extra text", role: "text" });
+    const sourceId = (key: string) => "order-field:" + createHash("sha256").update(JSON.stringify(key)).digest("hex");
+    const binding = (key: string, target: string, role: "text" | "font" = "text") => ({ sourceFieldKey: key, targetFieldKey: target,
+      role, confidence: 0.98, reason: "Synthetic original-source classification", evidence: [{ sourceId: sourceId(key), detail: "Actual source field" }] });
+    const good = [binding(alpha.sourceFieldKey, "front_message"), binding(beta.sourceFieldKey, "back_message"),
+      binding("operator-new", "operator_message"), binding(font.sourceFieldKey, "front_message", "font")];
+    const input = CreateAssistSchema.parse({ kind: "order_review", orderLineId: sourceLine.orderLineId,
+      expectedRevision: original.line.revision, expectedSourceVersionId: original.report!.versionId, draft: dirty,
+      requestId: randomUUID(), modelId });
+    try {
+      templateOutput = AssistResultSchema.parse({ summary: "Synthetic current-source classification only", findings: [], directions: [],
+        matches: [], missingInformation: [], orderFieldBindings: good });
+      const task = await assists.create(context, input);
+      const callsBefore = modelFetch.mock.calls.length;
+      await processor.process(envelope(task.id));
+      const done = await assists.get(context, task.id);
+      expect(done).toMatchObject({ status: "completed", stale: false, request: input });
+      expect(done.result!.orderFieldBindings).toEqual(good);
+      expect(JSON.stringify(observedBody)).toContain("Synthetic dirty Alpha");
+      expect(JSON.stringify(observedBody)).toContain("Synthetic unsaved extra text");
+      expect(JSON.stringify(observedBody)).toContain(sourceId("operator-new"));
+      expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+      expect((await workspace.detail(context, sourceLine.orderLineId)).line.revision).toBe(original.line.revision);
+      await processor.process(envelope(task.id));
+      expect(modelFetch).toHaveBeenCalledTimes(callsBefore + 1);
+      for (const invalid of [
+        good.map(row => row.role === "font" ? { ...row, targetFieldKey: "back_message" } : row),
+        good.map((row, index) => index ? row : { ...row, evidence: [{ sourceId: sourceId(beta.sourceFieldKey), detail: "Wrong original source" }] }),
+      ]) {
+        templateOutput = AssistResultSchema.parse({ ...templateOutput, orderFieldBindings: invalid });
+        const denied = await assists.create(context, { ...input, requestId: randomUUID() });
+        await processor.process(envelope(denied.id));
+        expect(await assists.get(context, denied.id)).toMatchObject({ status: "failed", result: null });
+        expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+      }
+      const changed = await workspace.save(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+        expectedSourceVersionId: original.report!.versionId, draft: { ...dirty, instructions: "Synthetic newer operator input" },
+        status: "needs_information", reason: "Synthetic explicit save after the earlier analysis", idempotencyKey: randomUUID() });
+      expect(changed.draft.instructions).toBe("Synthetic newer operator input");
+      expect(await assists.get(context, task.id)).toMatchObject({ stale: true, result: null });
+    } finally { templateOutput = undefined; }
+  }, 60_000);
 
   it("uses configured models, sends actual research images and rejects tenant/owner access and mutation", async () => {
     expect(await assists.models(other)).toEqual([]);

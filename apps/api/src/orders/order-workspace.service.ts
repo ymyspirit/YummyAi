@@ -20,13 +20,14 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-o
 import { OrderReviewQuerySchema } from "@yummyai/contracts/order/review";
 import { AuditService } from "../audit/audit.service.js";
 import sharp from "sharp";
-import { registerOrderDesignRun } from "@yummyai/order-design";
+import { registerOrderDesignRun, takeOverOrderDesignRun, assertOrderDesignCandidate, OrderDesignError } from "@yummyai/order-design";
 import { currentOrderAuthority, withOrderAuthority } from "@yummyai/order-core";
 import { prepareOrderDesignSnapshot } from "./order-design-snapshot.js";
 import { assertAutomaticArtwork, composeOrderArtwork } from "../design/order-artwork-layout.js";
 import { isPhotoOnlyPillowArtwork } from "../design/order-pillow-plan.js";
 import { checkOrderIntakeFields } from "./order-intake-check.js";
-import { orderAutomaticIntakeIssues } from "./order-intake-automatic.js";
+import { interpretOrderRequirements } from "@yummyai/order-intake";
+import { OrderRequirementInterpretationSchema, orderRequirementDraftInput, type OrderRequirementSource } from "@yummyai/contracts/order/requirement-interpretation";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT, PRIVATE_STORAGE } from "../platform.tokens.js";
 import { ProductionEditorService, ProductionEditorScanner } from "../design/production-editor.service.js";
 import { AmazonOrderReportService, type OrderSummaryReportSelection } from "./amazon-order-report.service.js";
@@ -38,6 +39,28 @@ import { OrderQueueStageSchema, OrderLifecycleStatusSchema, type OrderQueueCount
 type Work = typeof items.$inferSelect;
 type ImageMetadata = { name: string; mediaType: string; width: number; height: number };
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+function interpretRequirements(id: string, revision: number, projectionVersion: number, sourceVersionId: string | null,
+  draft: OrderWorkDraft, sources: readonly OrderRequirementSource[], templateVersionId: string | null,
+  fields?: OrderIntakeCheck["fields"]) {
+  const draftChecksum = hash(orderRequirementDraftInput(draft));
+  draft = structuredClone(draft);
+  // Older drafts replaced the parser's sequential key. Recover only a unique,
+  // byte-identical labelled source; repeated or edited entries remain explicit.
+  for (const field of draft.fields) if (!field.sourceKey) {
+    const candidates = sources.filter(source => source.label === field.label && source.value === field.value);
+    if (candidates.length === 1 && !draft.fields.some(other => other !== field &&
+      (other.sourceKey ?? other.key) === candidates[0]!.sourceFieldKey))
+      field.sourceKey = candidates[0]!.sourceFieldKey;
+    else if (sources.some(source => source.sourceFieldKey === field.key))
+      field.sourceKey = `operator-legacy:${hash(orderRequirementDraftInput({ key: field.key, label: field.label, value: field.value }))}`;
+  }
+  const basis = { orderLineId: id, revision, projectionVersion, sourceVersionId,
+    draftChecksum, artworkVersionId: draft.artworkVersionId ?? null,
+    specificationVersionId: draft.specificationVersionId ?? null, printProfileVersionId: draft.printProfileVersionId,
+    templateVersionId };
+  const value = interpretOrderRequirements({ basis, sources: [...sources], draft, fields });
+  return { ...value, interpretation: OrderRequirementInterpretationSchema.parse(value.interpretation) };
+}
 export const sealWork = sharedSealWork;
 export const openWork = sharedOpenWork;
 
@@ -641,7 +664,7 @@ export class OrderWorkspaceService {
             summary.specification = specification.name;
           } else summary.blockers.push("待匹配产品 SPU 与规格");
           summary.sourceVersionId = report?.versionId ?? null;
-          summary.designExecutor = orderDesignExecutor(draft);
+          summary.designExecutor = line.designExecutor ?? orderDesignExecutor(draft);
           summary.fields = draft.fields.map((field) => ({
             label: field.label,
             value: field.value ?? "",
@@ -997,6 +1020,15 @@ export class OrderWorkspaceService {
         : null;
       if (!version) draft.images = defaultOrderWorkImages(report?.files ?? [],
         catalog.artworks.find(artwork => artwork.id === draft.artworkVersionId)?.customization);
+      const requirementReport = version ? sourceReport : report;
+      const requirementSources = requirementReport?.versionId && state.line.reportLineId
+        ? await this.reports.requirementSources(context, state.line.reportLineId, requirementReport.versionId) : [];
+      const initialRequirements = interpretRequirements(id, state.line.revision, state.line.projectionVersion,
+        requirementReport?.versionId ?? null, draft, requirementSources, profile?.sourceVersionId ?? null);
+      // GET describes the editable representation it actually returns. POST
+      // intake checks still bind their original request before normalization.
+      const requirements = interpretRequirements(id, state.line.revision, state.line.projectionVersion,
+        requirementReport?.versionId ?? null, initialRequirements.normalizedDraft, requirementSources, profile?.sourceVersionId ?? null);
       await this.assertSourceUnchanged(context, id, state.work, version?.id);
       return {
         catalog,
@@ -1011,7 +1043,9 @@ export class OrderWorkspaceService {
           remainingQuantity: Math.max(0, state.line.quantity - state.line.shippedQuantity),
           closed: state.line.sideState === "cancelled" || !!state.line.archivedAt,
         }),
-        draft,
+        draft: requirements.normalizedDraft,
+        requirementSources,
+        requirementInterpretation: requirements.interpretation,
         report,
         sourceReport,
         sourceVersionId,
@@ -1066,7 +1100,7 @@ export class OrderWorkspaceService {
       issues: [],
       normalizedDraft: input.draft,
       notes: [
-        "核对本单字段、原图归属、固定版本与所选制图方式能否通过审单保存，不创建制作任务或调用模型。",
+        "核对本单字段、原图归属与固定版本能否通过审单保存，不创建制作任务或调用模型。Agent制作准备与运营稿件审核分别检查。",
         "买家原始资料与历史需求保留；清晰度、图案、工艺与生产放行继续按原审核流程检查。",
       ],
     };
@@ -1084,6 +1118,14 @@ export class OrderWorkspaceService {
         message: "导入资料已有新版本，本单需求仍保留原来源",
         action: "对照原始资料核对差异；已派单时先撤回，再保存新的需求版本",
       });
+    const sources = detail.sourceVersionId === sourceVersionId || !detail.line.revision
+      ? detail.requirementSources ?? []
+      : sourceVersionId && detail.line.reportLineId ? await this.reports.requirementSources(context, detail.line.reportLineId, sourceVersionId) : [];
+    const initialRequirements = interpretRequirements(id, detail.line.revision, detail.line.projectionVersion, sourceVersionId,
+      input.draft, sources, detail.profile?.sourceVersionId ?? null);
+    input.draft = initialRequirements.normalizedDraft;
+    result.normalizedDraft = input.draft;
+    result.requirements = initialRequirements.interpretation;
     try {
       const basis = await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead], async (tx) => {
         await assertActive(tx, id);
@@ -1108,7 +1150,7 @@ export class OrderWorkspaceService {
         basis.artwork.customization,
         basis.productionDraft,
         !!basis.delivery,
-        { photoOnlyPillow: profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork) },
+        { photoOnlyPillow: profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork), requirementSources: sources },
       );
       Object.assign(result, {
         fields: fields.fields,
@@ -1118,13 +1160,11 @@ export class OrderWorkspaceService {
         },
       });
       result.issues.push(...fields.issues);
-      result.issues.push(...orderAutomaticIntakeIssues(
-        basis.artwork.customization,
-        basis.artwork.layout,
-        fields,
-        profile.productType,
-        isPhotoOnlyPillowArtwork(basis.artwork),
-      ));
+      const requirements = interpretRequirements(id, detail.line.revision, detail.line.projectionVersion, sourceVersionId,
+        result.normalizedDraft, sources, basis.recipe?.editorVersionId ?? profile.sourceVersionId, fields.fields);
+      requirements.interpretation.basis.draftChecksum = initialRequirements.interpretation.basis.draftChecksum;
+      result.normalizedDraft = requirements.normalizedDraft;
+      result.requirements = requirements.interpretation;
       if (basis.recipe?.designVersionId && !basis.recipe.editorVersionId)
         result.notes.push(
           "已审核视觉图稿不代替订单生产稿。本单使用固定规格所绑定的已审核通用底稿，生成私有制作版本后继续运营审核与生产检查。",
@@ -1197,7 +1237,7 @@ export class OrderWorkspaceService {
         basis.artwork.customization,
         basis.productionDraft,
         !!basis.delivery,
-        { photoOnlyPillow: detail.profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork) },
+        { photoOnlyPillow: detail.profile.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(basis.artwork), requirementSources: detail.requirementSources },
       );
       const intakeIssues = [...basis.deliveryIssues, ...intake.issues];
       if (intakeIssues.length) throw new ConflictException(intakeIssues[0]!.message);
@@ -1220,12 +1260,18 @@ export class OrderWorkspaceService {
             : null,
         };
       });
+      const planDraft = { ...intake.normalizedDraft, fields: [...intake.normalizedDraft.fields, ...basis.routingFields] };
+      const interpreted = interpretRequirements(id, detail.line.revision, detail.line.projectionVersion,
+        detail.sourceVersionId ?? detail.report?.versionId ?? null,
+        planDraft,
+        detail.requirementSources ?? [], plan.templateVersionId, intake.fields);
       assertAutomaticArtwork(
         basis.artwork.customization,
         basis.artwork.layout,
-        intake.normalizedDraft,
+        planDraft,
         detail.profile.productType,
         isPhotoOnlyPillowArtwork(basis.artwork),
+        interpreted.interpretation,
       );
       await this.validateImages(context, id, detail.draft, detail.line.reportLineId);
       const template = await this.editor.get(
@@ -1240,7 +1286,7 @@ export class OrderWorkspaceService {
         template.version.document,
         basis.artwork.layout,
         basis.artwork.customization,
-        intake.normalizedDraft,
+        planDraft,
         intake.normalizedDraft.images.map((image) => ({
           usage: image.usage,
           id: createEntityId(),
@@ -1249,6 +1295,7 @@ export class OrderWorkspaceService {
           height: 1,
         })),
         isPhotoOnlyPillowArtwork(basis.artwork),
+        interpreted.interpretation,
       );
     } catch (cause) {
       if (
@@ -1321,6 +1368,10 @@ export class OrderWorkspaceService {
       ? await this.profile(context, input.draft.printProfileVersionId)
       : null;
     const savedSource = await this.currentSource(context, id);
+    const requirementSources = source.report?.currentVersionId
+      ? await this.reports.requirementSources(context, source.report.id, source.report.currentVersionId) : [];
+    input.draft = interpretRequirements(id, savedSource?.work.revision ?? 0, savedSource?.work.projectionVersion ?? 0,
+      input.expectedSourceVersionId, input.draft, requirementSources, profile?.sourceVersionId ?? null).normalizedDraft;
     let historicalPackageId: string | null | undefined;
     let historicalSpecificationId: string | null | undefined;
     let historicalRecipeId: string | null | undefined;
@@ -1358,7 +1409,7 @@ export class OrderWorkspaceService {
           salesBasis.artwork.customization,
           salesBasis.productionDraft,
           !!salesBasis.delivery,
-          { photoOnlyPillow: profile?.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(salesBasis.artwork) },
+          { photoOnlyPillow: profile?.productType === "shaped_pillow" && isPhotoOnlyPillowArtwork(salesBasis.artwork), requirementSources },
         );
         const issues = [...salesBasis.deliveryIssues, ...intake.issues];
         if (issues.length) throw new ConflictException(issues[0]!.message);
@@ -1366,14 +1417,6 @@ export class OrderWorkspaceService {
           ...intake.normalizedDraft,
           fields: [...intake.normalizedDraft.fields, ...salesBasis.routingFields],
         };
-        if (orderDesignExecutor(input.draft) === "agent")
-          assertAutomaticArtwork(
-            salesBasis.artwork.customization,
-            salesBasis.artwork.layout,
-            intake.normalizedDraft,
-            profile?.productType,
-            isPhotoOnlyPillowArtwork(salesBasis.artwork),
-          );
       }
     }
     await this.validateImages(context, id, input.draft, source.report?.id ?? null);
@@ -1416,6 +1459,8 @@ export class OrderWorkspaceService {
         key.fill(0);
       }
       if (await replay(tx, id, input.idempotencyKey, request)) return;
+      if (input.status === "ready_to_push" && source.report && input.expectedSourceVersionId !== null)
+        await this.reports.reviewInTransaction(tx, context, source.report.id, input.expectedSourceVersionId, { expectedWorkLineId: id });
       const [currentSource] = await tx
         .select()
         .from(amazonOrderReportLines)
@@ -1601,10 +1646,16 @@ export class OrderWorkspaceService {
       }
       return detail;
     }
-    const agentSnapshot =
-      input.action === "push" && orderDesignExecutor(detail.draft) === "agent"
-        ? await prepareOrderDesignSnapshot(this.database, this.editor, context, detail)
-        : null;
+    let agentSnapshot: Awaited<ReturnType<typeof prepareOrderDesignSnapshot>> = null;
+    if (input.action === "push" && orderDesignExecutor(detail.draft) === "agent") {
+      const revision = detail.versions.find(version => version.revision === detail.line.revision);
+      if (!revision) throw new ConflictException("已保存制作需求不存在，请重新核对");
+      const pinnedDraft = await this.revision(context, id, revision.id);
+      const checked = await this.intakeCheck(context, id, { expectedRevision: detail.line.revision,
+        expectedSourceVersionId: detail.report?.versionId ?? null, draft: pinnedDraft });
+      agentSnapshot = await prepareOrderDesignSnapshot(this.database, this.editor, context,
+        { ...detail, draft: pinnedDraft, requirementInterpretation: checked.requirements });
+    }
     const editor =
       input.expectedEditorVersionId && detail.line.editorProjectId
         ? await this.editor.get(context, detail.line.editorProjectId)
@@ -1739,8 +1790,23 @@ export class OrderWorkspaceService {
           );
           changes.artwork = to = "in_review";
           break;
-        case "approve_artwork":
-          if (work.artwork !== "in_review") throw new ConflictException("请先提交文件审核");
+        case "approve_artwork": {
+          if (work.artwork !== "in_review") {
+            const [candidate] = work.pushedRevisionId && work.editorProjectId && input.expectedEditorVersionId
+              ? await tx.select().from(orderDesignAgentRuns).where(and(
+                eq(orderDesignAgentRuns.workItemId, id), eq(orderDesignAgentRuns.workRevisionId, work.pushedRevisionId),
+                eq(orderDesignAgentRuns.projectId, work.editorProjectId),
+                eq(orderDesignAgentRuns.currentEditorVersionId, input.expectedEditorVersionId),
+                eq(orderDesignAgentRuns.status, "awaiting_review"),
+              )).for("update") : [];
+            if (work.artwork !== "in_progress" || !candidate) throw new ConflictException("请先提交文件审核");
+            try { await assertOrderDesignCandidate(tx, context, candidate, this.vault, input.expectedEditorVersionId!); }
+            catch (error) {
+              if (error instanceof OrderDesignError) throw new ConflictException({ code: error.code,
+                message: "无人设计候选或交接依据已变化，请刷新后核对原版本" });
+              throw error;
+            }
+          }
           approvedRenderId = await this.editor.confirmWorkVersion(
             tx,
             context,
@@ -1759,8 +1825,18 @@ export class OrderWorkspaceService {
             changes.proofEditorVersionId = null;
           }
           break;
-        case "reject_artwork":
-          if (!["in_review", "approved"].includes(work.artwork))
+        }
+        case "reject_artwork": {
+          const [candidate] = work.pushedRevisionId && work.editorProjectId && input.expectedEditorVersionId
+            ? await tx.select().from(orderDesignAgentRuns).where(and(
+            eq(orderDesignAgentRuns.workItemId, id),
+            eq(orderDesignAgentRuns.workRevisionId, work.pushedRevisionId!),
+            eq(orderDesignAgentRuns.projectId, work.editorProjectId!),
+            eq(orderDesignAgentRuns.currentEditorVersionId, input.expectedEditorVersionId!),
+            eq(orderDesignAgentRuns.status, "awaiting_review"),
+            sql`${orderDesignAgentRuns.completionEvidence} is not null and ${orderDesignAgentRuns.completionChecksum} is not null`,
+          )).for("update") : [];
+          if (!["in_review", "approved"].includes(work.artwork) && !(candidate && work.artwork === "in_progress"))
             throw new ConflictException("当前任务不在审核阶段");
           if (
             (
@@ -1785,11 +1861,21 @@ export class OrderWorkspaceService {
             input.expectedEditorVersionId!,
             "reject",
           );
+          if (candidate) {
+            try { await takeOverOrderDesignRun(tx, context, candidate, this.vault,
+              { rejectedCandidateVersionId: input.expectedEditorVersionId! }); }
+            catch (error) {
+              if (error instanceof OrderDesignError) throw new ConflictException({ code: error.code,
+                message: "无人设计候选或交接依据已变化，请刷新后核对原版本" });
+              throw error;
+            }
+          }
           changes.artwork = to = "changes_requested";
           changes.approvedEditorVersionId = null;
           changes.proof = detail.draft.customerApprovalRequired ? "pending" : "not_required";
           changes.proofEditorVersionId = null;
           break;
+        }
         case "approve_proof":
         case "reject_proof": {
           if (work.proof === "not_required" || work.artwork !== "approved")
@@ -2007,6 +2093,16 @@ export class OrderWorkspaceService {
           originals.push({ name: `${selection.usage} · ${file.name}`, bytes: file.body });
         }
       }
+      let automaticLayout: Parameters<ProductionEditorService["createFromWork"]>[1]["automaticLayout"];
+      if (!manualTakeover && orderDesignExecutor(detail.draft) === "agent" && salesBasis) {
+        const pinnedDraft = await this.revision(context, id, revision.revisionId);
+        const requirementSources = revision.work.reportLineId && revision.work.sourceVersionId
+          ? await this.reports.requirementSources(context, revision.work.reportLineId, revision.work.sourceVersionId) : [];
+        const requirements = interpretRequirements(id, revision.work.revision, revision.work.projectionVersion,
+          revision.work.sourceVersionId, pinnedDraft, requirementSources, template.version.id);
+        automaticLayout = { photoOnlyPillow: isPhotoOnlyPillowArtwork(salesBasis.artwork), layout: salesBasis.artwork.layout,
+          customization: salesBasis.artwork.customization, draft: pinnedDraft, requirements: requirements.interpretation };
+      }
       const result = await this.editor.createFromWork(context, {
         workItemId: id,
         revisionId: revision.revisionId,
@@ -2024,16 +2120,7 @@ export class OrderWorkspaceService {
           ? !!salesBasis.asset || !!salesBasis.recipe?.editorProjectId
           : true,
         suppressAutomaticEnhancement: manualTakeover,
-        ...(!manualTakeover && orderDesignExecutor(detail.draft) === "agent" && salesBasis
-          ? {
-              automaticLayout: {
-                photoOnlyPillow: isPhotoOnlyPillowArtwork(salesBasis.artwork),
-                layout: salesBasis.artwork.layout,
-                customization: salesBasis.artwork.customization,
-                draft: salesBasis.productionDraft,
-              },
-            }
-          : {}),
+        ...(automaticLayout ? { automaticLayout } : {}),
       });
       createdProjectId = result.project.id;
       await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead, Permission.DesignWrite], async (tx) => {
@@ -2598,6 +2685,7 @@ function defaultDraft(report: AmazonReportDetailView | null): OrderWorkDraft {
       report?.surfaces.flatMap((surface, surfaceIndex) =>
         surface.fields.map((field, index) => ({
           ...field,
+          sourceKey: field.sourceKey ?? field.key,
           key: `surface-${surfaceIndex}-field-${index}`,
         })),
       ) ?? [],

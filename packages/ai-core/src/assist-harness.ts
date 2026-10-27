@@ -4,7 +4,7 @@ import { ASSIST_INSTRUCTIONS, ASSIST_BENCHMARK_INSTRUCTIONS } from "./assist.js"
 import { ARTWORK_AUDIT_INSTRUCTIONS } from "./artwork-audit.js";
 import { HarnessRegistry } from "./harness-registry.js";
 
-const version = "assist-method-2026-10-16-v1";
+const version = "assist-method-2026-10-27-v2";
 const labels: Record<AssistKind, string> = {
   creative: "原创方向分析", order_review: "订单资料预审", artwork_preflight: "生产稿预检",
   template_config: "模板配置建议", sku_package: "SKU资料包建议", business_review: "经营依据分析",

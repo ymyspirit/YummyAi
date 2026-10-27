@@ -3,6 +3,7 @@ import { FactoryProductionPinSchema } from "@yummyai/contracts/suppliers/factory
 import { ProductionCapacityPlanSchema } from "@yummyai/contracts/suppliers/factory-capacity";
 import { ShiposShipmentSourceSchema } from "@yummyai/contracts/suppliers/shipos";
 import { z } from "zod";
+import { OrderRequirementInterpretationSchema, OrderRequirementSourceSchema } from "@yummyai/contracts/order/requirement-interpretation";
 import { OrderAutomaticBasisSchema, OrderShippingTimeSchema } from "@yummyai/contracts/order/automatic-basis";
 import { ProductionManufacturingSelectionSchema, ProductionManufacturingPinSchema } from "@yummyai/contracts/order/production-manufacturing";
 import { QualityAssessmentSchema } from "@yummyai/contracts/order/quality-assessment";
@@ -150,6 +151,7 @@ export const OrderIntakeCheckViewSchema = z.object({
   })),
   notes: z.array(z.string()),
   normalizedDraft: OrderWorkDraftSchema,
+  requirements: OrderRequirementInterpretationSchema.optional(),
 }).strict();
 export type OrderIntakeCheck = z.infer<typeof OrderIntakeCheckViewSchema>;
 export const SaveOrderWorkDraftInputSchema = z
@@ -330,6 +332,8 @@ export const OrderWorkListItemSchema = z
     operatorTaskKey: OrderOperatorTaskKeySchema.optional(),
     operatorException: z.boolean().optional(),
     designRunStatus: z.string().nullable().optional(),
+    // A completed Agent proof awaiting an operator decision, not production approval.
+    designCandidateReview: z.boolean().optional(),
     labelStatus: OrderLabelStatusSchema.optional(),
     packageCount: z.int().nonnegative().optional(),
     labeledPackageCount: z.int().nonnegative().optional(),
@@ -448,6 +452,8 @@ export const OrderWorkDetailViewSchema = z
     shippingTime: OrderShippingTimeSchema.optional(),
     draft: OrderWorkDraftSchema,
     report: AmazonReportDetailViewSchema.nullable(),
+    requirementSources: z.array(OrderRequirementSourceSchema).max(500).optional(),
+    requirementInterpretation: OrderRequirementInterpretationSchema.optional(),
     sourceReport: AmazonReportDetailViewSchema.nullable().optional(),
     sourceVersionId: Id.nullable().optional(),
     profile: PrintProfileViewSchema.nullable(),

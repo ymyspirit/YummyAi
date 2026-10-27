@@ -114,6 +114,7 @@ const errorLabels: Record<string, string> = {
   agent_recipe_missing: "底稿尚未配置自动制图配方。请核对通用底稿版本。",
   agent_recipe_product_mismatch: "自动配方与订单产品或来图方式不匹配。请核对通用底稿和订单参数。",
   agent_inputs_require_manual: "定制信息、图片用途或排版规则需要人工核对。请检查订单需求与底稿后接管处理。",
+  agent_requirements_need_resolution: "顾客定制要求仍有待核对项 请查看下方检查结果 原始要求和已完成素材已保留",
   agent_step_dependency_invalid: "前置步骤结果不完整或已变化。请核对已完成素材。",
   agent_retry_exhausted: "可重试步骤已达到重试次数上限。请接管处理。",
   agent_claim_lost: "任务执行权已变化。请刷新核对最新状态。",
@@ -156,10 +157,17 @@ export function designAgentActivity(status: DesignAgentRunView["status"] | null)
   return { polling, manualEditsBlocked: polling || status === "needs_attention" };
 }
 
-export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false }: {
+export function designAgentCurrentVersionApproved(run: Pick<DesignAgentRunView, "status" | "currentEditorVersionId"> | null,
+  approvedEditorVersionId?: string | null) {
+  return run?.status === "awaiting_review" && !!approvedEditorVersionId && run.currentEditorVersionId === approvedEditorVersionId;
+}
+
+export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false, approvedEditorVersionId }: {
   workItemId: string; refreshKey: number; disabled: boolean; onChanged: () => void;
   financialOnly?:boolean;
-  onStateChange: (state: { busy: boolean; blocked: boolean; checking: boolean }) => void;
+  /** Passed only for the work's current approved state; the run's historical status is unchanged. */
+  approvedEditorVersionId?: string | null;
+  onStateChange: (state: { busy: boolean; blocked: boolean; checking: boolean; manualTakeover: boolean }) => void;
 }) {
   const [run, setRun] = useState<DesignAgentRunView | null>(null);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
@@ -173,9 +181,11 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
   const costTransition=useRef<ViewTransition|null>(null),costTransitionName=`order-cost-${useId().replace(/[^a-zA-Z0-9_-]/g,"")}`;
   const { manualEditsBlocked: blocked } = designAgentActivity(run?.status ?? null);
   const checking = loading || !!error;
+  const manualTakeover = run?.status === "cancelled" && run.errorCode === "agent_manual_takeover";
+  const approvedCurrent = designAgentCurrentVersionApproved(run, approvedEditorVersionId);
 
-  useEffect(() => { callbacks.current.onStateChange({ busy, blocked, checking }); }, [busy, blocked, checking]);
-  useEffect(() => () => callbacks.current.onStateChange({ busy: false, blocked: false, checking: false }), []);
+  useEffect(() => { callbacks.current.onStateChange({ busy, blocked, checking, manualTakeover }); }, [busy, blocked, checking, manualTakeover]);
+  useEffect(() => () => callbacks.current.onStateChange({ busy: false, blocked: false, checking: false, manualTakeover: false }), []);
   useEffect(() => {
     const abort = new AbortController();
     const current = ++epoch.current;
@@ -243,12 +253,13 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
     {error && <p role="alert" className="oc-error">{error}</p>}
     {notice && <p role="status" className="oc-notice">{notice}</p>}
     {loading && !run ? <p className="oc-hint">正在读取制图任务…</p> : !run ? <p className="oc-hint">{error ? "尚无法确认自动制图任务状态。请刷新进度。" : financialOnly?"尚无独立的自动制图费用记录。":"暂无自动制图任务。使用已配置自动制图的工艺底稿，审单并派发后开始执行。"}</p> : <>
-      <p><strong>{statusLabels[run.status] ?? "状态待核对"}</strong><span className="oc-hint"> · 更新于 {dateTime(run.updatedAt)}</span></p>
+      <p><strong>{manualTakeover ? "已交美工修改" : approvedCurrent ? "本版本已审核" : statusLabels[run.status] ?? "状态待核对"}</strong><span className="oc-hint"> · 更新于 {dateTime(run.updatedAt)}</span></p>
+      {manualTakeover && <p className="oc-hint">自动制作已停止 原素材 版本与费用记录完整保留 美工在本单原项目继续修改后重新送审</p>}
       {run.privateEvidenceState==="expired"?<p className="oc-hint">订单私有资料已到期 历史方法和产物交接不再展示</p>:financialOnly||run.privateEvidenceOmitted?<p className="oc-hint">当前仅显示制作状态与费用依据。</p>:<>
         <MethodEvidence selection={run.methodSnapshot?.methodSelection} />
-        {run.completion?<p className="oc-hint" aria-label="原始制作交接">已核验 {run.completion.evidence.proofs.reduce((count,proof)=>count+proof.files.length,0)} 份原尺寸待审稿 · 交由业务审核</p>:run.status==="awaiting_review"?<p className="oc-hint">历史任务未记录产物交接凭据</p>:null}
+        {run.completion?<p className="oc-hint" aria-label="原始制作交接">{approvedCurrent ? "历史移交 · " : ""}已核验 {run.completion.evidence.proofs.reduce((count,proof)=>count+proof.files.length,0)} 份原尺寸待审稿 · {approvedCurrent ? "当时交由业务审核" : "交由业务审核"}</p>:run.status==="awaiting_review"?<p className="oc-hint">历史任务未记录产物交接凭据</p>:null}
       </>}
-      {!financialOnly&&!run.privateEvidenceOmitted&&<RecoveryProgress run={run} />}
+      {!financialOnly&&!run.privateEvidenceOmitted&&<RecoveryProgress run={run} approvedCurrent={approvedCurrent} />}
       <p className="oc-hint">{run.costStatus === "not_required" ? "此任务无需模型调用。" : <>
         配置估算：{run.estimatedCostUsd === null ? "未知" : `${run.estimatedCostUsd.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} USD`}；
         实际费用：{run.actualCostUsd === null ? "尚无完整费用依据" : `${run.actualCostUsd.toLocaleString("zh-CN", { maximumFractionDigits: 8 })} USD`}。
@@ -273,11 +284,11 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
           {run.ruleSnapshot.rules.map(rule => <div key={rule.id}><p><strong>{rule.name} · V{rule.version}</strong> · 核验方式：{ruleVerificationLabels[rule.execution]} · <Link href={`/settings/rules?rule=${rule.ruleId}&version=${rule.version}`}>查看规则依据</Link></p><p className="oc-hint">{rule.instructions}</p></div>)}</>
           : <p className="oc-hint">此历史任务没有规则中心快照，不能用当前规则补记；原工艺与文件版本记录仍保留。</p>}
       </details>
-      {run.status === "awaiting_review" && <p className="oc-notice">制作步骤已完成，请核对原图、稿件和预检结果，再进行正式审核。</p>}
+      {run.status === "awaiting_review" && <p className="oc-notice">{approvedCurrent ? "本单同一制作版本已通过运营审核 下方保留自动制作时的原始移交记录 不代表再次待审核" : "制作步骤已完成，请核对原图、稿件和预检结果，再进行正式审核。"}</p>}
       {run.status === "needs_attention" && <p className="oc-notice">自动制作已暂停。请核对下面未完成的步骤；需要人工修改或审核时，请先接管。接管会保留已完成的素材和版本。</p>}
       {run.errorCode && run.status !== "cancelled" && <p className="oc-error" role="status">处理原因：{designAgentErrorMessage(run.errorCode)}</p>}
       <ol className="oc-agent-steps">{run.steps.map(step => <li key={step.id}>
-        <div><strong>{step.key === "review_required" ? "交付待核对稿件" : step.label}</strong><span>{step.key === "review_required" && step.status === "completed" ? "待人工核对" : statusLabels[step.status] ?? "状态待核对"}</span></div>
+        <div><strong>{step.key === "review_required" ? "交付待核对稿件" : step.label}</strong><span>{step.key === "review_required" && step.status === "completed" ? approvedCurrent ? "原始移交记录" : "待人工核对" : statusLabels[step.status] ?? "状态待核对"}</span></div>
         {step.status === "uncertain" && <p className="oc-hint">模型请求可能已执行或计费，不能直接重新提交。可核实原结果时从原检查点继续；无法核实时接管处理。</p>}
         {step.status === "failed" && <p className="oc-hint">该步骤没有完成，已成功的步骤仍然保留。</p>}
         {step.errorCode && <p className="oc-hint">{designAgentErrorMessage(step.errorCode)}</p>}
@@ -307,12 +318,12 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
   </section>;
 }
 
-function RecoveryProgress({ run }: { run: DesignAgentRunView }) {
+function RecoveryProgress({ run, approvedCurrent = false }: { run: DesignAgentRunView; approvedCurrent?: boolean }) {
   const progress = designAgentRecoveryGuidance(run);
   return <div className="oc-agent-recovery-progress" aria-label="制图衔接与恢复">
     <p className="oc-hint">已完成 {progress.completedCount}/{progress.totalCount} 步{progress.lastCompleted ? ` · 最近完成：${progress.lastCompleted.label}` : ""}
       {progress.blockedStep ? ` · 当前步骤：${progress.blockedStep.label}` : ""}</p>
-    <p>{progress.nextAction}</p>
+    <p>{approvedCurrent ? "本版本审核已完成 后续以本单生产与交付状态跟进 原自动制作状态按历史保留" : progress.nextAction}</p>
     {run.projectId && <Link href={`/pod-workbench/production-editor?projectId=${run.projectId}`}>查看当前稿件与保留素材</Link>}
   </div>;
 }
