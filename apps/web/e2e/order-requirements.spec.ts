@@ -1,10 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
-import { expect, test, type Locator, type Page, type Request, type TestInfo } from "@playwright/test";
+import { errors, expect, test, type Frame, type Locator, type Page, type Request, type Response, type TestInfo } from "@playwright/test";
 import { createEntityId, type ProductionEditorDetailView } from "@yummyai/contracts";
 import type { ConfigurationSnapshot } from "@yummyai/contracts/ai/model-configuration";
 import { AssistViewSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
 import type { DesignAutomationRecipe } from "@yummyai/contracts/pod/design-automation";
 import { OrderIntakeCheckViewSchema, OrderWorkDetailViewSchema, type OrderIntakeCheck } from "@yummyai/contracts/order/workspace";
 import type { DesignAgentRunView } from "@yummyai/contracts/order/design-agent";
@@ -42,7 +44,7 @@ test.describe("order requirements personal source interpretation and Agent-first
     const audit = watch(page, f), before = structuredClone(f.initial.draft);
     let completed = false, child: ChildProcess | undefined, modelCalls = 0, output = "";
     const layouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [];
-    let analysisProof: { runId: string; requestId: string; operatorSourceKey: string; adopted: boolean } | undefined;
+    let analysisProof: { runId: string; requestId: string; requestChecksum: string; operatorSourceKey: string; adopted: boolean } | undefined;
     const countCalls = (chunk: Buffer) => {
       output += chunk.toString(); const lines = output.split("\n"); output = lines.pop()!;
       for (const line of lines) if (line.trim() === "SYNTHETIC_ORDER_REQUIREMENTS_ASSIST_CALL") modelCalls++;
@@ -103,19 +105,30 @@ test.describe("order requirements personal source interpretation and Agent-first
       const start = analysis.getByRole("button", { name: "AI分析并填写", exact: true });
       await expect(start).toBeEnabled();
       child = await startProductionEditorWorker(); child.stdout?.on("data", countCalls);
-      const posted = page.waitForResponse(value => path(value.url()) === "/api/ai-assists/runs" && value.request().method() === "POST");
+      const posted = page.waitForResponse(value => path(value.url()) === "/api/ai-assists/runs" && value.request().method() === "POST").then(async reply => {
+        expect(reply.status()).toBe(201);
+        const original = CreateAssistSchema.parse(reply.request().postDataJSON());
+        expect(original).toMatchObject({ kind: "order_review", orderLineId: f.lineId, modelId: analysisModel.id,
+          expectedRevision: f.initial.line.revision, expectedSourceVersionId: f.sourceVersionId });
+        if (original.kind !== "order_review") throw new Error("Original order analysis request required");
+        expect(original.draft!.fields.find(field => field.key === operatorSourceKey)!.value).toBe("Synthetic operator original text");
+        const requestChecksum = createHash("sha256").update(assistRequestRecoveryText(original)).digest("hex");
+        // Read the exact persisted request without submitting another analysis or relying on Chromium's response-body store.
+        const receipt = AssistReceiptViewSchema.parse(await centerApi("ai-assists/receipts?" + new URLSearchParams({
+          requestId: original.requestId, requestChecksum })));
+        expect(receipt).toMatchObject({ state: "found", requestId: original.requestId, requestChecksum });
+        const created = receipt.run;
+        if (!created) throw new Error("Original order analysis receipt must identify its run");
+        expect(created).toMatchObject({ kind: "order_review", scope: `order:${f.lineId}`, stale: false });
+        expect(created.request).toEqual(original);
+        analysisProof = { runId: created.id, requestId: original.requestId, requestChecksum, operatorSourceKey: operatorSourceKey!, adopted: false };
+        return { created, originalRequestId: original.requestId };
+      });
       const adopted = nextCheck(page, f, check => check.ready && check.normalizedDraft.fields.some(field =>
         field.key === "operator_message" && field.sourceKey === operatorSourceKey && field.value === "Synthetic operator original text"));
+      const analyzed = observeResult(Promise.all([posted, adopted]));
       await start.click();
-      const reply = await posted; expect(reply.ok()).toBe(true);
-      const created = AssistViewSchema.parse(await reply.json());
-      expect(created.request).toMatchObject({ kind: "order_review", orderLineId: f.lineId, modelId: analysisModel.id,
-        expectedRevision: f.initial.line.revision, expectedSourceVersionId: f.sourceVersionId });
-      if (created.request?.kind !== "order_review") throw new Error("Original order analysis request required");
-      expect(created.request.draft!.fields.find(field => field.key === operatorSourceKey)!.value).toBe("Synthetic operator original text");
-      const originalRequestId = created.request.requestId;
-      analysisProof = { runId: created.id, requestId: originalRequestId, operatorSourceKey: operatorSourceKey!, adopted: false };
-      const filled = await adopted;
+      const [{ created, originalRequestId }, filled] = requireResult(await analyzed);
       expect(filled.normalizedDraft.fields.find(field => field.key === "operator_message"))
         .toMatchObject({ value: "Synthetic operator original text", sourceKey: operatorSourceKey });
       await expect(advanced.locator('.oc-custom-field[data-review-field="operator_message"]').getByRole("textbox", { name: "定制内容", exact: true }))
@@ -131,7 +144,7 @@ test.describe("order requirements personal source interpretation and Agent-first
         .toMatchObject({ font: { requested: "Synthetic Serif" }, color: { hex: "#1234ab" } });
       expect(filled.normalizedDraft.images).toEqual(before.images);
       expect(audit.analysisPosts).toHaveLength(1); expect(modelCalls).toBe(1);
-      analysisProof.adopted = true;
+      analysisProof!.adopted = true;
       expect((await f.readDetail()).draft).toEqual(before);
       await groups.scrollIntoViewIfNeeded();
       layouts.push(await stableScreenshotLayout(page, groups));
@@ -173,6 +186,7 @@ test.describe("order requirements personal source interpretation and Agent-first
     const f = await orderIntakePillowFixture(true, { automation }), audit = watch(page, f);
     let child: ChildProcess | undefined, completed = false, modelCalls = 0;
     let editorRoundTrip: EditorRoundTrip | null = null;
+    const candidateNavigation: CandidateReviewDiagnostics = { lineRequests: 0, lineAborted: 0, editorRequests: 0, editorAborted: 0 };
     const layouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [];
     try {
       await navigateToInitialOrderCheck(page, f, check => check.ready);
@@ -196,7 +210,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       expect(editor.version.document.confirmations.visualReview).toBe(false); expect(editor.version.reviewed).toBe(false);
       const preview = editor.renders.find(render => render.status === "completed" && render.versionId === editor.version.id)!;
       expect(preview.preflight!.productionReady).toBe(false);
-      await page.goto("/order-artwork?" + new URLSearchParams({ accountId: f.accountId, q: f.externalId, line: f.lineId, queue: f.lineId }));
+      await navigateToCandidateReview(page, f, saved.line.revision, candidate, candidateNavigation);
       const review = page.getByRole("region", { name: "生产图审核", exact: true });
       await expect(review.getByRole("heading", { name: /审核无人设计稿/ })).toBeVisible();
       await expect(review.getByRole("button", { name: "通过审核", exact: true })).toBeDisabled();
@@ -265,11 +279,18 @@ test.describe("order requirements personal source interpretation and Agent-first
       layouts.push(await stableScreenshotLayout(page, design, true));
       await page.screenshot({ path: testInfo.outputPath("operator-rejection-human-handoff-390.png") });
       expect(modelCalls).toBe(2); expect(audit.actions.map(row => row.action)).toEqual(["reject_artwork"]);
-      expect(audit.studioModelReads).toEqual([{ method: "POST", path: "/api/creative-studio/invoke", version: 1,
-        scope: "unassigned", operation: "models" }]);
+      // The disposable runner fixes 0=dev/1=compiled; dev StrictMode may mount the model catalog twice.
+      const compiledWeb = process.env.E2E_COMPILED_WEB;
+      expect(["0", "1"]).toContain(compiledWeb);
+      if (compiledWeb === "0") {
+        expect(audit.studioModelReads.length).toBeGreaterThanOrEqual(1);
+        expect(audit.studioModelReads.length).toBeLessThanOrEqual(2);
+      } else expect(audit.studioModelReads).toHaveLength(1);
+      for (const read of audit.studioModelReads) expect(read).toEqual({ method: "POST", path: "/api/creative-studio/invoke", version: 1,
+        scope: "unassigned", operation: "models" });
       expect(audit.analysisPosts).toEqual([]); expect(audit.otherWrites).toEqual([]); expect(audit.pageErrors).toEqual([]);
       completed = true;
-    } finally { await stopProductionEditorWorker(child); audit.stop(); await proof(testInfo, f, completed, audit, true, null, layouts, editorRoundTrip); }
+    } finally { await stopProductionEditorWorker(child); audit.stop(); await proof(testInfo, f, completed, audit, true, null, layouts, editorRoundTrip, candidateNavigation); }
   });
 });
 
@@ -280,9 +301,98 @@ const path = (url: string) => new URL(url).pathname;
 const draftPath = (f: OrderIntakePillowFixture) => `/api/order-centers/lines/${f.lineId}/draft`;
 const actionsPath = (f: OrderIntakePillowFixture) => `/api/order-centers/lines/${f.lineId}/actions`;
 async function nextCheck(page: Page, f: OrderIntakePillowFixture, predicate: (check: OrderIntakeCheck) => boolean) {
-  const response = await page.waitForResponse(async value => path(value.url()) === `/api/order-centers/lines/${f.lineId}/intake-check`
-    && value.request().method() === "POST" && value.ok() && predicate(OrderIntakeCheckViewSchema.parse(await value.json())));
-  return OrderIntakeCheckViewSchema.parse(await response.json());
+  let matched: OrderIntakeCheck | undefined;
+  await page.waitForResponse(async value => {
+    if (path(value.url()) !== `/api/order-centers/lines/${f.lineId}/intake-check` || value.request().method() !== "POST") return false;
+    expect(value.ok(), `Intake check returned HTTP ${value.status()}`).toBe(true);
+    const check = OrderIntakeCheckViewSchema.parse(await value.json());
+    if (!predicate(check)) return false;
+    matched = check; return true;
+  });
+  if (!matched) throw new Error("Intake response did not identify a matching check");
+  return matched;
+}
+type ObservedResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
+// Observe failures immediately while a UI action/navigation is pending; the main flow must rethrow them.
+function observeResult<T>(pending: Promise<T>): Promise<ObservedResult<T>> {
+  return pending.then(value => ({ ok: true, value }), error => ({ ok: false, error }));
+}
+function requireResult<T>(result: ObservedResult<T>): T {
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+type CandidateReviewDiagnostics = { lineRequests: number; lineAborted: number; editorRequests: number; editorAborted: number };
+async function navigateToCandidateReview(page: Page, f: OrderIntakePillowFixture, revision: number, candidate: DesignAgentRunView, diagnostics: CandidateReviewDiagnostics) {
+  if (!candidate.projectId || !candidate.currentEditorVersionId) throw new Error("Candidate review requires its original project and version");
+  const target = new URL("/order-artwork?" + new URLSearchParams({ accountId: f.accountId, q: f.externalId, line: f.lineId, queue: f.lineId }), page.url());
+  let committed = false, timer: ReturnType<typeof setTimeout> | undefined;
+  const failureState: { current?: { error: unknown } } = {};
+  let fail: (error: unknown) => void = () => {};
+  const failedRead = new Promise<ObservedResult<never>>(resolve => {
+    fail = error => { failureState.current ??= { error }; resolve({ ok: false, error }); };
+  });
+  const commit = (frame: Frame) => { if (frame === page.mainFrame() && frame.url() === target.href) committed = true; };
+  function read<T>(pathname: string, kind: "line" | "editor", parse: (value: unknown) => T) {
+    const requests = new Set<Request>(), aborted = new Set<Request>(), url = new URL(pathname, target).href;
+    const requestCount = kind === "line" ? "lineRequests" : "editorRequests", abortedCount = kind === "line" ? "lineAborted" : "editorAborted";
+    let resolve: (value: ObservedResult<T>) => void = () => {};
+    const result = new Promise<ObservedResult<T>>(settle => { resolve = settle; });
+    const recordAbort = (value: Request) => { if (!aborted.has(value)) { aborted.add(value); diagnostics[abortedCount]++; } };
+    const request = (value: Request) => {
+      if (committed && value.method() === "GET" && value.url() === url && value.frame() === page.mainFrame()) {
+        requests.add(value); diagnostics[requestCount]++;
+      }
+    };
+    const response = (value: Response) => {
+      const original = value.request();
+      if (!requests.has(original)) return;
+      void observeResult((async () => {
+        expect(value.status(), `Candidate review ${pathname} must succeed`).toBe(200);
+        let body: Buffer;
+        try { body = await value.body(); }
+        catch (error) {
+          if (original.failure()?.errorText !== "net::ERR_ABORTED") throw error;
+          recordAbort(original); return null;
+        }
+        return { value: parse(JSON.parse(body.toString("utf8"))) };
+      })()).then(outcome => {
+        if (!outcome.ok) fail(outcome.error);
+        else if (outcome.value) resolve({ ok: true, value: outcome.value.value });
+      });
+    };
+    const failed = (value: Request) => {
+      if (!requests.has(value)) return;
+      if (value.failure()?.errorText === "net::ERR_ABORTED") recordAbort(value);
+      else fail(new Error(`Candidate review ${pathname} failed: ${value.failure()?.errorText ?? "unknown request failure"}`));
+    };
+    page.on("request", request); page.on("response", response); page.on("requestfailed", failed);
+    return { result, stop: () => { page.off("request", request); page.off("response", response); page.off("requestfailed", failed); } };
+  }
+  page.on("framenavigated", commit);
+  const line = read(`/api/order-centers/lines/${f.lineId}`, "line", raw => {
+    const detail = OrderWorkDetailViewSchema.parse(raw);
+    expect(detail.line).toMatchObject({ id: f.lineId, revision, editorProjectId: candidate.projectId, designCandidateReview: true });
+    expect(detail.sourceVersionId).toBe(f.sourceVersionId); expect(detail.report?.versionId).toBe(f.sourceVersionId);
+    return detail;
+  });
+  const editor = read(`/api/production-editor/projects/${candidate.projectId}`, "editor", raw => {
+    const detail = ProductionEditorDetailViewSchema.parse(raw);
+    expect(detail.project).toMatchObject({ id: candidate.projectId, currentVersionId: candidate.currentEditorVersionId });
+    expect(detail.project.workSource).toEqual({ workItemId: f.lineId, revisionId: candidate.workRevisionId });
+    expect(detail.version).toMatchObject({ id: candidate.currentEditorVersionId, reviewed: false });
+    expect(detail.version.document.confirmations.visualReview).toBe(false);
+    return detail;
+  });
+  try {
+    const navigation = await page.goto(target.href);
+    expect(navigation?.ok(), "Candidate review navigation must succeed").toBe(true);
+    expect(committed, "Candidate review must commit the requested artwork route").toBe(true);
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new errors.TimeoutError("Candidate review responses: Timeout 15000ms exceeded after navigation " + JSON.stringify(diagnostics))), 15_000);
+    });
+    await Promise.race([Promise.all([line.result.then(requireResult), editor.result.then(requireResult)]), failedRead.then(requireResult), deadline]);
+    if (failureState.current) throw failureState.current.error;
+  } finally { if (timer) clearTimeout(timer); page.off("framenavigated", commit); line.stop(); editor.stop(); }
 }
 async function run(lineId: string) { return (await centerApi<{ run: DesignAgentRunView | null }>(`order-centers/lines/${lineId}/design-agent`)).run; }
 async function stableScreenshotLayout(page: Page, target: Locator, inspectArtworkTable = false) {
@@ -361,13 +471,14 @@ function watch(page: Page, f: OrderIntakePillowFixture) {
 type EditorRoundTrip = { projectId: string; versionId: string; lineId: string; queue: string; openMethod: "GET";
   closedWithoutChanges: true; remainedUnapproved: true };
 async function proof(info: TestInfo, f: OrderIntakePillowFixture, completed: boolean, audit: ReturnType<typeof watch>, workerStarted: boolean,
-  analysis: { runId: string; requestId: string; operatorSourceKey: string; adopted: boolean; providerCalls: number } | null = null,
-  screenshotLayouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [], editorRoundTrip: EditorRoundTrip | null = null) {
+  analysis: { runId: string; requestId: string; requestChecksum: string; operatorSourceKey: string; adopted: boolean; providerCalls: number } | null = null,
+  screenshotLayouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [], editorRoundTrip: EditorRoundTrip | null = null,
+  candidateNavigation: CandidateReviewDiagnostics | null = null) {
   const output = info.outputPath("order-requirements-proof.json"); await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify({ completed, nonce: f.nonce, lineId: f.lineId, sourceVersionId: f.sourceVersionId,
     originalSha256: f.buyerSha256, analysisPosts: audit.analysisPosts.length, uiActions: audit.actions.map(row => row.action),
     studioModelReads: audit.studioModelReads, otherWrites: audit.otherWrites, pageErrors: audit.pageErrors, isolatedSyntheticTransportOnly: true,
     isolatedProductionFixtureWorkerStarted: workerStarted, ordinaryWorkerStarted: false, productionApproved: false,
-    analysis, screenshotLayouts, editorRoundTrip,
+    analysis, screenshotLayouts, editorRoundTrip, candidateNavigation,
     cleanupOwner: "native disposable runner finally DB bucket Redis identity Web sandbox; fixture child stopped explicitly" }, null, 2), { flag: "wx" });
 }
