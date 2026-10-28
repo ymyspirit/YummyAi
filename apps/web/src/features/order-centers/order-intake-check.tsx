@@ -8,7 +8,7 @@ import {
 import { centerRequest, dateTime } from "./order-center-model";
 import { orderImageSelectionProblem, orderIntakeReceiptMatches, orderIntakeResultCurrent,
   orderIntakeSnapshot, type OrderIntakeSnapshot } from "./order-work-input-model";
-import { orderReviewIssueAction, orderReviewIssueTarget, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
+import { orderReviewIssueAction, orderReviewIssueTarget, orderReviewLineState, orderReviewSavedConfirmed, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
 
 const fieldStatus = { mapped: "已匹配", missing: "待补资料", conflict: "待确认", optional: "选填", inactive: "本单不适用" };
 type Result = { check: OrderIntakeCheck; snapshot: OrderIntakeSnapshot; projectionVersion: number; lineState: string };
@@ -28,8 +28,7 @@ export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onSta
   const [refresh, setRefresh] = useState(0);
   const snapshot = orderIntakeSnapshot(detail, draft);
   const lineState = orderReviewLineState(detail);
-  const confirmed = detail.line.preparation === "ready_to_push" && !detail.line.held && !detail.line.sourceChanged &&
-    !detail.line.archivedAt && detail.line.sideState !== "cancelled" && JSON.stringify(draft) === JSON.stringify(detail.draft);
+  const confirmed = orderReviewSavedConfirmed(detail, draft);
   const imageFields = detail.catalog?.artworks.find(art => art.id === draft.artworkVersionId)?.customization.fields ?? [];
   const localImageProblem = editable ? orderImageSelectionProblem(imageFields, draft.images) : null;
   const live = useRef({ snapshot, disabled, editable, detail, draft });
@@ -94,14 +93,14 @@ export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onSta
   const readOnlyMessage = !editable && !confirmed && !current && !busy ? detail.line.held
     ? "订单已暂停，请查看暂停原因并恢复后再审单"
     : "当前阶段只读，可查看已保存要求或手动核对资料" : null;
-  const status: OrderReviewCheckState["status"] = localImageProblem ? "blocked" : visibleError ? "failed" : readOnlyMessage ? "blocked" : confirmed && !busy ? "ready" :
-    busy || !current ? "checking" : current.ready ? "ready" : "blocked";
+  const status: OrderReviewCheckState["status"] = localImageProblem ? "blocked" : visibleError ? "failed" : readOnlyMessage ? "blocked" : busy ? "checking" :
+    current ? current.ready ? "ready" : "blocked" : confirmed ? "ready" : "checking";
   const stateError = localImageProblem ?? visibleError ?? readOnlyMessage;
   useEffect(() => {
     onStateChange?.({ orderLineId: snapshot.orderLineId, input: snapshot.input, projectionVersion: detail.line.projectionVersion, lineState, status, check: current, error: stateError });
   }, [snapshot.orderLineId, snapshot.input, detail.line.projectionVersion, lineState, status, current, stateError, onStateChange]);
 
-  const title = localImageProblem ? "还有 1 项需要处理" : stateError ? editable ? "暂时无法完成审单检查" : "当前暂不能审单" : confirmed && !busy ? "审单已确认" : status === "checking" ? "正在检查审单条件" :
+  const title = localImageProblem ? "还有 1 项需要处理" : stateError ? editable ? "暂时无法完成审单检查" : "当前暂不能审单" : confirmed && status === "ready" ? "审单已确认" : status === "checking" ? "正在检查审单条件" :
     status === "ready" ? "可以确认审单" : `还有 ${current?.issues.length || 1} 项需要处理`;
   return <section className={`oc-section oc-intake oc-review-check is-${status}`} aria-label="定制订单承接核对" aria-busy={busy}>
     <div className="oc-section-heading oc-review-check-heading">
@@ -111,7 +110,7 @@ export function OrderIntakeCheckPanel({ detail, draft, disabled, editable, onSta
       </button>
     </div>
     {status === "checking" && <p className="oc-hint">正在检查本单顾客要求、原图和制图方式 修改后会自动重新检查</p>}
-    {confirmed && !busy && !stateError && <p className="oc-hint">本件审单已保存 可继续推送制图</p>}
+    {confirmed && status === "ready" && <p className="oc-hint">本件审单已保存 可继续推送制图</p>}
     {stateError && <p role="alert" className="oc-error">{stateError}</p>}
     {localImageProblem && onLocate && <button type="button" className="oc-button" disabled={disabled} onClick={() => onLocate("images")}>补齐顾客原图</button>}
     {current && <>

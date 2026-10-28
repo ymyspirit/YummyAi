@@ -18,6 +18,15 @@ export function orderReviewLineState(detail: Pick<OrderWorkDetail, "line" | "rep
     line.archivedAt ?? null, line.sideState ?? null, line.preparation, detail.report?.versionId ?? null]);
 }
 
+/** Display the saved confirmation only; a new confirmation still requires an intake receipt. */
+export function orderReviewSavedConfirmed(detail: Pick<OrderWorkDetail, "line" | "report" | "sourceVersionId" | "draft">,
+  draft: OrderWorkDraft) {
+  return detail.line.revision > 0 && detail.line.preparation === "ready_to_push" && !detail.line.held &&
+    !detail.line.sourceChanged && !detail.line.archivedAt && detail.line.sideState !== "cancelled" &&
+    (detail.sourceVersionId ?? null) === (detail.report?.versionId ?? null) &&
+    JSON.stringify(draft) === JSON.stringify(detail.draft);
+}
+
 /** A previous green result must never authorize a different draft, source or order. */
 export function orderReviewCheckCurrent(state: OrderReviewCheckState | null,
   detail: Pick<OrderWorkDetail, "line" | "report">, draft: OrderWorkDraft) {
@@ -26,6 +35,13 @@ export function orderReviewCheckCurrent(state: OrderReviewCheckState | null,
     state.projectionVersion === detail.line.projectionVersion &&
     state.lineState === orderReviewLineState(detail) &&
     (!state.check || orderIntakeReceiptMatches(state.check, snapshot));
+}
+
+/** A saved-state hint is never authority to confirm a new or changed draft. */
+export function orderReviewConfirmedCurrent(state: OrderReviewCheckState | null,
+  detail: Pick<OrderWorkDetail, "line" | "report" | "sourceVersionId" | "draft">, draft: OrderWorkDraft, dirty: boolean) {
+  return !dirty && orderReviewSavedConfirmed(detail, draft) && orderReviewCheckCurrent(state, detail, draft) &&
+    state?.status === "ready" && !state.error && (!state.check || state.check.ready);
 }
 
 export function orderReviewIssueTarget(issue: OrderIntakeCheck["issues"][number], check?: OrderIntakeCheck | null): OrderReviewTarget {

@@ -641,6 +641,11 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
     productionDeliveryBrowser ||
     process.argv.includes("--suite=factory-directory") ||
     process.argv.includes("--suite=erp-identity");
+const factoryPortalApiPort = orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser
+  ? await disposableAdvertisingApiPort() : null;
+if (factoryPortalApiPort) process.env.E2E_FACTORY_PORTAL_API_PORT = String(factoryPortalApiPort);
+else delete process.env.E2E_FACTORY_PORTAL_API_PORT;
+Object.assign(manifest, { factoryPortalApiPort });
 process.env.WEB_AUTH_MODE = erpPersonalBrowser ? "personal" : "local-service";
 process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED = orderImageUploadBrowser ? "1" : "0";
 process.env.E2E_ORDER_REVIEW_GUIDANCE_ISOLATED = orderReviewGuidanceBrowser || orderRequirementsBrowser ? "1" : "0";
@@ -1995,7 +2000,7 @@ try {
         REDIS_URL: `redis://127.0.0.1:${port}`,
         E2E_DISPOSABLE_REDIS_CONTAINER: redis,
         E2E_DISPOSABLE_REDIS_URL: `redis://127.0.0.1:${port}`,
-        API_BASE_URL: qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
+        API_BASE_URL: factoryPortalApiPort ? `http://127.0.0.1:${factoryPortalApiPort}` : qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
           factoryPortal || factoryCollaboration || erpPersonalBrowser
             ? "http://127.0.0.1:8130"
             : methodWorkbench || businessMethods || canvasSession || executionMethodsBrowser

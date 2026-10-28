@@ -35,7 +35,7 @@ import { OrderTemplatePlanPanel } from "./order-template-plan";
 import { OrderIntakeCheckPanel } from "./order-intake-check";
 import { OrderRequirementsView } from "./order-requirements-view";
 import { orderRequirementAdoptionSources } from "./order-requirements-model";
-import { orderReviewCheckCurrent, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
+import { orderReviewCheckCurrent, orderReviewConfirmedCurrent, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
 import { OrderWorkImageBinding } from "./order-work-image-binding";
 import { defaultOrderImageUsage, mergeOrderImageUpload, ORDER_IMAGE_LIMIT, orderImageBindingField,
   orderImageSelectionProblem, orderImageUploadBasis, orderImageUploadBasisMatches, orderImageUploadProblem,
@@ -213,10 +213,12 @@ export function OrderWorkDetailPanel({
     reviewFieldMap.artworkVersionId === (draft?.artworkVersionId ?? null) && reviewFieldMap.reportVersionId === (detail?.report?.versionId ?? null)
     ? reviewFieldMap.fields : []);
   const reviewReady = !pendingSaveHere && !styleEditsPending && currentReviewCheck?.status === "ready" && currentReviewCheck.check?.ready === true;
+  const savedReviewConfirmed = !!detail && !!draft && orderReviewConfirmedCurrent(currentReviewCheck, detail, draft, dirty);
   const confirmHint = pendingSaveHere ? "上次保存结果尚未确认 请先核对上次保存结果"
     : styleEditsPending ? "请先采用或取消本组样式调整 再确认审单"
     : !currentReviewCheck || currentReviewCheck.status === "checking" ? "正在核对当前资料 完成后才能确认审单"
     : currentReviewCheck.status === "failed" ? "本次核对未完成 请在待办区重新核对 当前填写仍保留"
+      : savedReviewConfirmed ? "审单已确认 可推送设计"
       : !reviewReady ? currentReviewCheck.check?.issues.length
         ? `还有 ${currentReviewCheck.check.issues.length} 项待处理 请先处理上方待办`
         : "本单仍有待核对事项 请先处理上方待办"
@@ -823,6 +825,12 @@ export function OrderWorkDetailPanel({
         )}
         {agentApplies && (
           <OrderDesignAgentPanel key={id} workItemId={id} refreshKey={detail.line.projectionVersion}
+            editorProjectId={detail.line.editorProjectId} onOpen={projectId => {
+              const current = live.current;
+              if (current.id !== id || current.detail?.line.id !== id || current.detail.line.editorProjectId !== projectId ||
+                current.dirty || current.navigationBusy || current.navigationLoading || agentState.workItemId !== id || !agentState.manualTakeover) return;
+              openEditor();
+            }}
             approvedEditorVersionId={detail.line.artwork === "approved" && editor?.version.reviewed === true &&
               editor.version.id === editor.project.currentVersionId ? editor.version.id : null}
             disabled={navigationBusy || navigationLoading || dirty} onStateChange={state => setAgentState({ ...state, workItemId: id })}

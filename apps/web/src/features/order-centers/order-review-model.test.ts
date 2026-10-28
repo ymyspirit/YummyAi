@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OrderIntakeCheck, OrderWorkDetail, OrderWorkDraft } from "@yummyai/contracts/order/workspace";
 import { orderIntakeSnapshot } from "./order-work-input-model";
-import { orderReviewCheckCurrent, orderReviewIssueTarget, orderReviewLineState, type OrderReviewCheckState } from "./order-review-model";
+import { orderReviewCheckCurrent, orderReviewConfirmedCurrent, orderReviewIssueTarget, orderReviewLineState, orderReviewSavedConfirmed, type OrderReviewCheckState } from "./order-review-model";
 
 const draft: OrderWorkDraft = { artworkVersionId: null, printProfileVersionId: null, fields: [], images: [], instructions: "保留帽子", dueAt: null, customerApprovalRequired: false };
 const detail = { line: { id: "synthetic-line", revision: 3, projectionVersion: 7 }, report: { versionId: "synthetic-source" } } as Pick<OrderWorkDetail, "line" | "report">;
@@ -28,6 +28,42 @@ describe("current order review readiness", () => {
     const failed = { ...state, status: "failed" as const, check: null, error: "网络不可用" };
     expect(orderReviewCheckCurrent(failed, detail, draft)).toBe(true);
     expect(orderReviewCheckCurrent(failed, detail, { ...draft, designExecutor: "human" })).toBe(false);
+  });
+});
+
+describe("saved order review presentation", () => {
+  const saved = { ...detail, draft, sourceVersionId: "synthetic-source",
+    line: { ...detail.line, preparation: "ready_to_push" as const, held: false, sourceChanged: false, archivedAt: null } };
+  const savedState = { ...state, lineState: orderReviewLineState(saved), check: null };
+  it("recognizes an unchanged saved confirmation without requesting a new receipt", () => {
+    expect(orderReviewSavedConfirmed(saved, draft)).toBe(true);
+    expect(orderReviewConfirmedCurrent(savedState, saved, draft, false)).toBe(true);
+    expect(orderReviewConfirmedCurrent({ ...savedState, check }, saved, draft, false)).toBe(true);
+  });
+  it("never presents new, changed or unsaved work as confirmed", () => {
+    expect(orderReviewSavedConfirmed({ ...saved, line: { ...saved.line, revision: 0 } }, draft)).toBe(false);
+    expect(orderReviewSavedConfirmed({ ...saved, line: { ...saved.line, preparation: "pending_review" } }, draft)).toBe(false);
+    expect(orderReviewSavedConfirmed(saved, { ...draft, instructions: "改为背面图案" })).toBe(false);
+    expect(orderReviewConfirmedCurrent(savedState, saved, draft, true)).toBe(false);
+    expect(orderReviewConfirmedCurrent(null, saved, draft, false)).toBe(false);
+  });
+  it("invalidates the hint for changed source, revision, projection or order state", () => {
+    expect(orderReviewSavedConfirmed({ ...saved, sourceVersionId: "old-source" }, draft)).toBe(false);
+    expect(orderReviewConfirmedCurrent(savedState, { ...saved, report: { ...saved.report!, versionId: "new-source" } }, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent(savedState, { ...saved, line: { ...saved.line, revision: 4 } }, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent(savedState, { ...saved, line: { ...saved.line, projectionVersion: 8 } }, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent(savedState, { ...saved, line: { ...saved.line, sourceChanged: true } }, draft, false)).toBe(false);
+    expect(orderReviewSavedConfirmed({ ...saved, line: { ...saved.line, held: true } }, draft)).toBe(false);
+    expect(orderReviewSavedConfirmed({ ...saved, line: { ...saved.line, archivedAt: "2026-10-28T06:00:00Z" } }, draft)).toBe(false);
+    expect(orderReviewSavedConfirmed({ ...saved, line: { ...saved.line, sideState: "cancelled" } }, draft)).toBe(false);
+  });
+  it("prioritizes a current blocked, pending or failed check over the saved label", () => {
+    expect(orderReviewConfirmedCurrent({ ...savedState, status: "checking" }, saved, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent({ ...savedState, status: "blocked" }, saved, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent({ ...savedState, status: "failed", error: "网络不可用" }, saved, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent({ ...savedState, error: "来源待核对" }, saved, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent({ ...savedState, check: { ...check, ready: false } }, saved, draft, false)).toBe(false);
+    expect(orderReviewConfirmedCurrent({ ...savedState, check: { ...check, sourceVersionId: "old-source" } }, saved, draft, false)).toBe(false);
   });
 });
 

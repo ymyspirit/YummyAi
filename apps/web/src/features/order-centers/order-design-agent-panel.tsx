@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState,useId,type MouseEvent } from "react";
-import { RefreshCw } from "lucide-react";
+import { Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { DesignAgentViewSchema, type DesignAgentRunView, type OrderDesignRestoreResponse } from "@yummyai/contracts/order/design-agent";
 import { centerRequest, dateTime } from "./order-center-model";
@@ -162,9 +162,11 @@ export function designAgentCurrentVersionApproved(run: Pick<DesignAgentRunView, 
   return run?.status === "awaiting_review" && !!approvedEditorVersionId && run.currentEditorVersionId === approvedEditorVersionId;
 }
 
-export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false, approvedEditorVersionId }: {
+export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false, approvedEditorVersionId, editorProjectId, onOpen }: {
   workItemId: string; refreshKey: number; disabled: boolean; onChanged: () => void;
   financialOnly?:boolean;
+  editorProjectId?: string | null;
+  onOpen?: (projectId: string) => void;
   /** Passed only for the work's current approved state; the run's historical status is unchanged. */
   approvedEditorVersionId?: string | null;
   onStateChange: (state: { busy: boolean; blocked: boolean; checking: boolean; manualTakeover: boolean }) => void;
@@ -182,6 +184,8 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
   const { manualEditsBlocked: blocked } = designAgentActivity(run?.status ?? null);
   const checking = loading || !!error;
   const manualTakeover = run?.status === "cancelled" && run.errorCode === "agent_manual_takeover";
+  const takeoverProjectId = manualTakeover && run?.projectId && run.projectId === editorProjectId && run.privateEvidenceState !== "expired"
+    ? run.projectId : null;
   const approvedCurrent = designAgentCurrentVersionApproved(run, approvedEditorVersionId);
 
   useEffect(() => { callbacks.current.onStateChange({ busy, blocked, checking, manualTakeover }); }, [busy, blocked, checking, manualTakeover]);
@@ -259,7 +263,9 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
         <MethodEvidence selection={run.methodSnapshot?.methodSelection} />
         {run.completion?<p className="oc-hint" aria-label="原始制作交接">{approvedCurrent ? "历史移交 · " : ""}已核验 {run.completion.evidence.proofs.reduce((count,proof)=>count+proof.files.length,0)} 份原尺寸待审稿 · {approvedCurrent ? "当时交由业务审核" : "交由业务审核"}</p>:run.status==="awaiting_review"?<p className="oc-hint">历史任务未记录产物交接凭据</p>:null}
       </>}
-      {!financialOnly&&!run.privateEvidenceOmitted&&<RecoveryProgress run={run} approvedCurrent={approvedCurrent} />}
+      {!financialOnly&&!run.privateEvidenceOmitted&&<RecoveryProgress run={run} approvedCurrent={approvedCurrent}
+        disabled={disabled || busy || checking}
+        onContinue={takeoverProjectId && onOpen ? () => onOpen(takeoverProjectId) : undefined} />}
       <p className="oc-hint">{run.costStatus === "not_required" ? "此任务无需模型调用。" : <>
         配置估算：{run.estimatedCostUsd === null ? "未知" : `${run.estimatedCostUsd.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} USD`}；
         实际费用：{run.actualCostUsd === null ? "尚无完整费用依据" : `${run.actualCostUsd.toLocaleString("zh-CN", { maximumFractionDigits: 8 })} USD`}。
@@ -318,12 +324,15 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
   </section>;
 }
 
-function RecoveryProgress({ run, approvedCurrent = false }: { run: DesignAgentRunView; approvedCurrent?: boolean }) {
+function RecoveryProgress({ run, approvedCurrent = false, disabled, onContinue }: {
+  run: DesignAgentRunView; approvedCurrent?: boolean; disabled?: boolean; onContinue?: () => void;
+}) {
   const progress = designAgentRecoveryGuidance(run);
   return <div className="oc-agent-recovery-progress" aria-label="制图衔接与恢复">
     <p className="oc-hint">已完成 {progress.completedCount}/{progress.totalCount} 步{progress.lastCompleted ? ` · 最近完成：${progress.lastCompleted.label}` : ""}
       {progress.blockedStep ? ` · 当前步骤：${progress.blockedStep.label}` : ""}</p>
     <p>{approvedCurrent ? "本版本审核已完成 后续以本单生产与交付状态跟进 原自动制作状态按历史保留" : progress.nextAction}</p>
-    {run.projectId && <Link href={`/pod-workbench/production-editor?projectId=${run.projectId}`}>查看当前稿件与保留素材</Link>}
+    {onContinue ? <button type="button" className="oc-button" disabled={disabled} onClick={onContinue}><Pencil size={14} aria-hidden="true" />继续本单制作</button>
+      : run.projectId && <Link href={`/pod-workbench/production-editor?projectId=${run.projectId}`}>查看当前稿件与保留素材</Link>}
   </div>;
 }

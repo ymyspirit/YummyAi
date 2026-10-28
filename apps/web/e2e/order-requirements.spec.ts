@@ -8,6 +8,7 @@ import { AssistViewSchema, CreateAssistSchema, type CreateAssist } from "@yummya
 import type { DesignAutomationRecipe } from "@yummyai/contracts/pod/design-automation";
 import { OrderIntakeCheckViewSchema, OrderWorkDetailViewSchema, type OrderIntakeCheck } from "@yummyai/contracts/order/workspace";
 import type { DesignAgentRunView } from "@yummyai/contracts/order/design-agent";
+import { ProductionEditorDetailViewSchema } from "@yummyai/contracts/pod/production-editor-api";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { loginErp } from "./erp-identity-fixture";
 import { centerApi } from "./order-centers-fixture";
@@ -170,6 +171,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       maxEstimatedCostUsd: 0.2 };
     const f = await orderIntakePillowFixture(true, { automation }), audit = watch(page, f);
     let child: ChildProcess | undefined, completed = false, modelCalls = 0;
+    let editorRoundTrip: EditorRoundTrip | null = null;
     const layouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [];
     try {
       const loaded = nextCheck(page, f, check => check.ready);
@@ -194,7 +196,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       expect(editor.version.document.confirmations.visualReview).toBe(false); expect(editor.version.reviewed).toBe(false);
       const preview = editor.renders.find(render => render.status === "completed" && render.versionId === editor.version.id)!;
       expect(preview.preflight!.productionReady).toBe(false);
-      await page.goto("/order-artwork?" + new URLSearchParams({ accountId: f.accountId, q: f.externalId, line: f.lineId }));
+      await page.goto("/order-artwork?" + new URLSearchParams({ accountId: f.accountId, q: f.externalId, line: f.lineId, queue: f.lineId }));
       const review = page.getByRole("region", { name: "生产图审核", exact: true });
       await expect(review.getByRole("heading", { name: /审核无人设计稿/ })).toBeVisible();
       await expect(review.getByRole("button", { name: "通过审核", exact: true })).toBeDisabled();
@@ -223,6 +225,40 @@ test.describe("order requirements personal source interpretation and Agent-first
       await f.assertOriginalPreserved();
       const design = order(page).getByRole("region", { name: "无人设计进度", exact: true });
       await expect(design.getByText("已交美工修改", { exact: true })).toBeVisible();
+      const handoffUrl = page.url(), route = new URL(handoffUrl);
+      expect(route.pathname).toBe("/order-artwork");
+      expect(Object.fromEntries(route.searchParams)).toMatchObject({ accountId: f.accountId, q: f.externalId, line: f.lineId, queue: f.lineId });
+      expect(route.searchParams.has("editor")).toBe(false);
+      const continueEditing = design.getByRole("button", { name: "继续本单制作", exact: true });
+      await expect(continueEditing).toBeVisible(); await expect(continueEditing).toBeEnabled();
+      const openedReply = page.waitForResponse(value => path(value.url()) === `/api/production-editor/projects/${editor.project.id}`
+        && value.request().method() === "GET" && value.ok());
+      await continueEditing.click();
+      const opened = ProductionEditorDetailViewSchema.parse(await (await openedReply).json());
+      expect(opened.project.id).toBe(editor.project.id); expect(opened.version.id).toBe(candidate.currentEditorVersionId);
+      const session = page.getByRole("region", { name: "当前任务生产作图", exact: true });
+      await expect(session.getByRole("heading", { name: `${f.externalId} · 制作需求 V${handoff.line.revision}`, exact: true })).toBeVisible();
+      await expect(session.getByRole("combobox", { name: "打开生产项目", exact: true })).toHaveValue(editor.project.id);
+      await expect(session.getByRole("combobox", { name: "历史版本", exact: true })).toHaveValue(candidate.currentEditorVersionId!);
+      await expect(session.getByRole("textbox", { name: "图稿名称", exact: true })).toHaveValue(unapproved.version.document.name);
+      const openedRoute = new URL(page.url());
+      expect(openedRoute.pathname).toBe(route.pathname);
+      expect(Object.fromEntries(openedRoute.searchParams)).toMatchObject({ accountId: f.accountId, q: f.externalId,
+        line: f.lineId, queue: f.lineId, editor: "1" });
+      await session.getByRole("button", { name: "返回制图任务", exact: true }).click();
+      await expect(session).toHaveCount(0); await expect(page).toHaveURL(handoffUrl);
+      await expect(design.getByText("已交美工修改", { exact: true })).toBeVisible();
+      await expect(review.getByRole("button", { name: "提交文件审核", exact: true })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "通过审核", exact: true })).toHaveCount(0);
+      const returned = await f.readDetail();
+      expect(returned.line).toMatchObject({ artwork: "changes_requested", designExecutor: "human", designCandidateReview: false,
+        editorProjectId: editor.project.id, production: "not_released" });
+      expect(returned.draft).toEqual(saved.draft);
+      const retained = ProductionEditorDetailViewSchema.parse(await centerApi(`production-editor/projects/${editor.project.id}`));
+      expect(retained.version).toEqual(unapproved.version); expect(retained.version.reviewed).toBe(false);
+      await f.assertOriginalPreserved();
+      editorRoundTrip = { projectId: editor.project.id, versionId: retained.version.id, lineId: f.lineId, queue: f.lineId,
+        openMethod: "GET", closedWithoutChanges: true, remainedUnapproved: true };
       await page.setViewportSize({ width: 390, height: 844 });
       await design.getByText("已交美工修改", { exact: true }).scrollIntoViewIfNeeded();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -231,7 +267,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       expect(modelCalls).toBe(2); expect(audit.actions.map(row => row.action)).toEqual(["reject_artwork"]);
       expect(audit.analysisPosts).toEqual([]); expect(audit.otherWrites).toEqual([]); expect(audit.pageErrors).toEqual([]);
       completed = true;
-    } finally { await stopProductionEditorWorker(child); audit.stop(); await proof(testInfo, f, completed, audit, true, null, layouts); }
+    } finally { await stopProductionEditorWorker(child); audit.stop(); await proof(testInfo, f, completed, audit, true, null, layouts, editorRoundTrip); }
   });
 });
 
@@ -307,14 +343,16 @@ function watch(page: Page, f: OrderIntakePillowFixture) {
   page.on("request", request); page.on("pageerror", error);
   return { analysisPosts, actions, otherWrites, pageErrors, stop: () => { page.off("request", request); page.off("pageerror", error); } };
 }
+type EditorRoundTrip = { projectId: string; versionId: string; lineId: string; queue: string; openMethod: "GET";
+  closedWithoutChanges: true; remainedUnapproved: true };
 async function proof(info: TestInfo, f: OrderIntakePillowFixture, completed: boolean, audit: ReturnType<typeof watch>, workerStarted: boolean,
   analysis: { runId: string; requestId: string; operatorSourceKey: string; adopted: boolean; providerCalls: number } | null = null,
-  screenshotLayouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = []) {
+  screenshotLayouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [], editorRoundTrip: EditorRoundTrip | null = null) {
   const output = info.outputPath("order-requirements-proof.json"); await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify({ completed, nonce: f.nonce, lineId: f.lineId, sourceVersionId: f.sourceVersionId,
     originalSha256: f.buyerSha256, analysisPosts: audit.analysisPosts.length, uiActions: audit.actions.map(row => row.action),
     otherWrites: audit.otherWrites, pageErrors: audit.pageErrors, isolatedSyntheticTransportOnly: true,
     isolatedProductionFixtureWorkerStarted: workerStarted, ordinaryWorkerStarted: false, productionApproved: false,
-    analysis, screenshotLayouts,
+    analysis, screenshotLayouts, editorRoundTrip,
     cleanupOwner: "native disposable runner finally DB bucket Redis identity Web sandbox; fixture child stopped explicitly" }, null, 2), { flag: "wx" });
 }

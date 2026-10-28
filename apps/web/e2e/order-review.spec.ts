@@ -320,7 +320,8 @@ test.describe("whole order image upload", () => {
     await expect(binding).toHaveValue("");
     await expect(uploaded.getByRole("status")).toHaveText("已选此图，尚未绑定图片字段；请明确选择，原用途不会自动改写。");
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();
-    await expect(drawer.getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
+    await expect(drawer.getByRole("region", { name: "定制订单承接核对", exact: true }).getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
+    await expect(drawer.locator("footer.oc-review-footer").getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
     expect(state.saves).toEqual([]);
     await binding.selectOption("back_photo");
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();

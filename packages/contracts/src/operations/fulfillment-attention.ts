@@ -4,7 +4,7 @@ export const fulfillmentAttentionSources = ["logistics", "production", "delivery
 export const FulfillmentAttentionSourceSchema = z.enum(fulfillmentAttentionSources);
 export type FulfillmentAttentionSource = z.infer<typeof FulfillmentAttentionSourceSchema>;
 export const fulfillmentAttentionLabels: Record<FulfillmentAttentionSource, string> = {
-  logistics: "物流下单", production: "生产异常", delivery: "工厂回执",
+  logistics: "物流下单", production: "生产异常", delivery: "工厂进度",
 };
 
 export const FulfillmentAttentionQuerySchema = z.object({

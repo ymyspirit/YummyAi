@@ -1,7 +1,7 @@
 # Fulfillment attention in the operations dashboard
 
 The home page's unified action center reads current logistics, production and
-factory-receipt work independently of the historical dashboard date range. It
+factory-progress work independently of the historical dashboard date range. It
 links to the original business record. A page load, refresh, focus or filter
 change never creates a task, calls a carrier, changes an approval or buys a label.
 
@@ -12,7 +12,8 @@ change never creates a task, calls a carrier, changes an approval or buys a labe
 `all`, `logistics`, `production` and `delivery`; pages contain 12 items. Counts
 cover the entire eligible queue, not a sample of recent records. Ordering is
 blocked work, overdue work, then pending work, with deterministic time/source/ID
-ties. Each request reads counts and items from the same SQL statement/snapshot.
+ties. Counts and page selection come from one SQL statement; original-owner
+factory verification uses the same repeatable-read, read-only snapshot.
 Concurrent business changes can move rows between pages; refresh starts from
 the current state. An empty later page offers a return to page one.
 
@@ -20,9 +21,17 @@ The query runs in `withTenant()` using forced RLS. `DashboardRead` is mandatory.
 All fulfillment sources require tenant scope, `OrderRead` and `OrderPiiRead`,
 matching their destinations. Factory delivery additionally requires `DesignRead`
 and `AssetRead`. Unavailable source counts are `null`, never a fabricated zero;
-explicitly requesting such a source returns forbidden. The projection selects
-only IDs, states and timestamps. It does not decrypt customer data, include
-carrier error text or return production files, addresses or label URLs.
+explicitly requesting such a source returns forbidden. The public projection
+contains only identifiers, fixed operational states and timestamps. Factory
+progress is verified through its original owner before it becomes a next action;
+private factory source data, tracking references, carrier error text, production
+files, addresses and label URLs are not returned.
+
+Current scoped membership is verified before factory observations can affect
+counts, sorting or page results. Legacy direct adapters retain their earlier
+feedback-only queue. An unavailable vault exposes an explicit unknown state;
+failed source verification fails the read instead of publishing an unverified
+factory state or silently removing rows after pagination.
 
 The same-origin Web proxy is `GET /api/dashboard/fulfillment-attention`.
 Unknown/duplicate query keys are rejected, errors are sanitized and all results
@@ -37,10 +46,11 @@ on focus; requests are aborted on navigation.
 | --- | --- | --- |
 | Logistics | Pending/quoted, attention, uncertain purchase/label results, created orders awaiting labels | Opens `/logistics?task=<id>` through the task's direct GET, including tasks outside the recent-list limit; reloading cannot redispatch |
 | Production | Past expected completion with an active stage, failed, quality hold, cancellation awaiting confirmation | Opens the original order and line in production; new factual milestones still use existing evidence and version gates |
-| Factory receipt | Latest package for the current production version: pending submission, submitted, received or rejected | Opens the order drawer and exact package with `delivery=<package-id>`, loading it directly when outside recent history |
+| Factory progress | Latest current-version package: pending submission, submitted, received, rejected, or an unresolved factory void | Opens the order drawer and exact package with `delivery=<package-id>`, loading it directly when outside recent history |
 
 Logistics work with a live execution lease is excluded until the lease ends.
-Completed/cancelled logistics tasks and accepted packages leave the queue.
+Completed/cancelled logistics tasks and accepted packages leave the queue;
+an unresolved factory void re-enters the authorized exception queue.
 Factory rejection is one actionable receipt item, not a second generic
 production-failure item. Members who cannot read delivery retain the production
 exception they are authorized to view. Changed drafts or production versions
@@ -52,6 +62,13 @@ visible for reconciliation even after an order cancellation; the queue exposes
 no private snapshot. Logistics rows show their last update, not an inferred
 deadline from the encrypted address/package snapshot. Exact shipping constraints
 remain visible in the authorized task page.
+
+A recorded successful factory submission displays scheduled-by-submission.
+Verified factory CSV states display scheduled, shipped or void handling as
+appropriate. Received/accepted feedback remains optional history. Factory-shipped
+progress asks the operator to check actual quantities, logistics evidence and
+platform confirmation; it does not create physical shipment, QC or production
+milestones.
 
 The dense white/blue UI uses existing Lucide icons, keyboard focus states,
 responsive rows, entry/exit transitions and native View Transitions when
