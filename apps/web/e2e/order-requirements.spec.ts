@@ -15,6 +15,7 @@ import { loginErp } from "./erp-identity-fixture";
 import { centerApi } from "./order-centers-fixture";
 import { orderIntakePillowFixture, type OrderIntakePillowFixture } from "./order-intake-pillow-fixture";
 import { startProductionEditorWorker, stopProductionEditorWorker } from "./production-editor-fixture";
+import { navigateToInitialOrderCheck } from "./order-intake-navigation";
 
 test.describe("order requirements personal source interpretation and Agent-first review", () => {
   test.beforeEach(async ({ page }) => {
@@ -47,8 +48,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       for (const line of lines) if (line.trim() === "SYNTHETIC_ORDER_REQUIREMENTS_ASSIST_CALL") modelCalls++;
     };
     try {
-      const loaded = nextCheck(page, f, check => check.ready);
-      await page.goto(f.url); await loaded;
+      await navigateToInitialOrderCheck(page, f, check => check.ready);
       const whole = order(page), groups = whole.getByRole("region", { name: "分组印字要求", exact: true });
       await expect(groups.locator("fieldset.oc-requirement-text")).toHaveCount(3);
       const alpha = groups.getByRole("group", { name: "Custom your text", exact: true });
@@ -175,8 +175,7 @@ test.describe("order requirements personal source interpretation and Agent-first
     let editorRoundTrip: EditorRoundTrip | null = null;
     const layouts: Array<Awaited<ReturnType<typeof stableScreenshotLayout>>> = [];
     try {
-      const loaded = nextCheck(page, f, check => check.ready);
-      await page.goto(f.url); await loaded;
+      await navigateToInitialOrderCheck(page, f, check => check.ready);
       await expect(order(page).getByRole("region", { name: "分组印字要求", exact: true })).toContainText("无需印字");
       await expect(confirm(page)).toBeEnabled();
       const save = page.waitForResponse(value => path(value.url()) === draftPath(f) && value.request().method() === "POST");

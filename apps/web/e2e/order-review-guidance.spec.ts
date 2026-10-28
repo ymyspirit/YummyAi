@@ -8,6 +8,7 @@ import {
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { loginErp } from "./erp-identity-fixture";
 import { orderIntakePillowFixture, type OrderIntakePillowFixture } from "./order-intake-pillow-fixture";
+import { navigateToInitialOrderCheck } from "./order-intake-navigation";
 
 test.describe("order review guidance with native personal pillow intake", () => {
   test.beforeEach(async ({ page }) => {
@@ -22,9 +23,7 @@ test.describe("order review guidance with native personal pillow intake", () => 
     const fixture = await orderIntakePillowFixture(false), audit = watch(page, fixture.lineId);
     let completed = false;
     try {
-      const initial = nextCheck(page, fixture, check => check.ready);
-      await page.goto(fixture.url);
-      const check = await initial;
+      const check = await navigateToInitialOrderCheck(page, fixture, check => check.ready);
       const whole = order(page), panel = intake(page), confirm = confirmButton(page);
       await expect(panel).toContainText("可以确认审单");
       await expect(whole.getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
@@ -73,9 +72,7 @@ test.describe("order review guidance with native personal pillow intake", () => 
     let completed = false;
     try {
       await page.setViewportSize({ width: 390, height: 844 });
-      const initial = nextCheck(page, fixture, check => check.ready);
-      await page.goto(fixture.url);
-      const initialCheck = await initial;
+      const initialCheck = await navigateToInitialOrderCheck(page, fixture, check => check.ready);
       expect(initialCheck.normalizedDraft.designExecutor).toBe("agent");
       const panel = intake(page), confirm = confirmButton(page);
       await expect(order(page).getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
@@ -341,9 +338,7 @@ test.describe("order review guidance with native personal pillow intake", () => 
       return route.fulfill({ response });
     });
     try {
-      const ready = nextCheck(page, fixture, check => check.ready);
-      await page.goto(fixture.url);
-      await ready;
+      await navigateToInitialOrderCheck(page, fixture, check => check.ready);
       const panel = intake(page), confirm = confirmButton(page);
       await expect(confirm).toBeEnabled();
       await confirm.click();
