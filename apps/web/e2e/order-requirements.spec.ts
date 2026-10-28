@@ -9,6 +9,7 @@ import type { DesignAutomationRecipe } from "@yummyai/contracts/pod/design-autom
 import { OrderIntakeCheckViewSchema, OrderWorkDetailViewSchema, type OrderIntakeCheck } from "@yummyai/contracts/order/workspace";
 import type { DesignAgentRunView } from "@yummyai/contracts/order/design-agent";
 import { ProductionEditorDetailViewSchema } from "@yummyai/contracts/pod/production-editor-api";
+import { StudioPersonalInvokeSchema } from "@yummyai/contracts/pod/studio-personal";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { loginErp } from "./erp-identity-fixture";
 import { centerApi } from "./order-centers-fixture";
@@ -265,6 +266,8 @@ test.describe("order requirements personal source interpretation and Agent-first
       layouts.push(await stableScreenshotLayout(page, design, true));
       await page.screenshot({ path: testInfo.outputPath("operator-rejection-human-handoff-390.png") });
       expect(modelCalls).toBe(2); expect(audit.actions.map(row => row.action)).toEqual(["reject_artwork"]);
+      expect(audit.studioModelReads).toEqual([{ method: "POST", path: "/api/creative-studio/invoke", version: 1,
+        scope: "unassigned", operation: "models" }]);
       expect(audit.analysisPosts).toEqual([]); expect(audit.otherWrites).toEqual([]); expect(audit.pageErrors).toEqual([]);
       completed = true;
     } finally { await stopProductionEditorWorker(child); audit.stop(); await proof(testInfo, f, completed, audit, true, null, layouts, editorRoundTrip); }
@@ -331,17 +334,30 @@ async function stableScreenshotLayout(page: Page, target: Locator, inspectArtwor
 }
 function watch(page: Page, f: OrderIntakePillowFixture) {
   const analysisPosts: CreateAssist[] = [], actions: Array<{ action: string }> = [], otherWrites: string[] = [], pageErrors: string[] = [];
+  const studioModelReads: Array<{ method: "POST"; path: "/api/creative-studio/invoke"; version: 1;
+    scope: "unassigned"; operation: "models" }> = [];
   const request = (value: Request) => {
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(value.method()) || !path(value.url()).startsWith("/api/")) return;
     const pathname = path(value.url());
     if (value.method() === "POST" && pathname === "/api/ai-assists/runs") { analysisPosts.push(CreateAssistSchema.parse(value.postDataJSON())); return; }
     if (value.method() === "POST" && pathname === actionsPath(f)) { actions.push(value.postDataJSON()); return; }
     if (value.method() === "POST" && [draftPath(f), `/api/order-centers/lines/${f.lineId}/intake-check`, "/api/order-centers/summaries"].includes(pathname)) return;
+    if (value.method() === "POST" && pathname === "/api/creative-studio/invoke") {
+      try {
+        const body = value.postDataJSON(), parsed = StudioPersonalInvokeSchema.safeParse(body);
+        if (parsed.success && parsed.data.request.operation === "models" && parsed.data.request.scope === "unassigned" &&
+          body.request.scope === "unassigned") {
+          studioModelReads.push({ method: "POST", path: pathname, version: parsed.data.version,
+            scope: parsed.data.request.scope, operation: parsed.data.request.operation });
+          return;
+        }
+      } catch { /* Malformed invoke requests remain unexpected writes. */ }
+    }
     otherWrites.push(value.method() + " " + pathname);
   };
   const error = (value: Error) => pageErrors.push(value.message);
   page.on("request", request); page.on("pageerror", error);
-  return { analysisPosts, actions, otherWrites, pageErrors, stop: () => { page.off("request", request); page.off("pageerror", error); } };
+  return { analysisPosts, actions, studioModelReads, otherWrites, pageErrors, stop: () => { page.off("request", request); page.off("pageerror", error); } };
 }
 type EditorRoundTrip = { projectId: string; versionId: string; lineId: string; queue: string; openMethod: "GET";
   closedWithoutChanges: true; remainedUnapproved: true };
@@ -351,7 +367,7 @@ async function proof(info: TestInfo, f: OrderIntakePillowFixture, completed: boo
   const output = info.outputPath("order-requirements-proof.json"); await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify({ completed, nonce: f.nonce, lineId: f.lineId, sourceVersionId: f.sourceVersionId,
     originalSha256: f.buyerSha256, analysisPosts: audit.analysisPosts.length, uiActions: audit.actions.map(row => row.action),
-    otherWrites: audit.otherWrites, pageErrors: audit.pageErrors, isolatedSyntheticTransportOnly: true,
+    studioModelReads: audit.studioModelReads, otherWrites: audit.otherWrites, pageErrors: audit.pageErrors, isolatedSyntheticTransportOnly: true,
     isolatedProductionFixtureWorkerStarted: workerStarted, ordinaryWorkerStarted: false, productionApproved: false,
     analysis, screenshotLayouts, editorRoundTrip,
     cleanupOwner: "native disposable runner finally DB bucket Redis identity Web sandbox; fixture child stopped explicitly" }, null, 2), { flag: "wx" });
