@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { fixture, id, imageReviewFixture, imageUploadPng } from "./order-review-fixture";
 import { loginErp } from "./erp-identity-fixture";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
@@ -213,13 +213,29 @@ test("whole order navigation skips siblings and survives a saved order leaving t
 });
 
 test.describe("whole order image upload", () => {
+  const browserAudits = new WeakMap<Page, ReturnType<typeof imageReviewBrowserAudit>>();
   // Existing local-service review suites remain unchanged. This family's config
   // rejects missing isolation and its native runner supplies real personal OIDC.
   test.skip(process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED !== "1", "Use the dedicated personal image-upload acceptance suite");
   test.beforeEach(async ({ page }) => {
     requireDisposableIntegrationEnvironment();
     expect(process.env.WEB_AUTH_MODE).toBe("personal");
+    browserAudits.set(page, imageReviewBrowserAudit(page));
     await loginErp(page, "operator", "/orders");
+  });
+  test.afterEach(async ({ page }, testInfo) => {
+    const audit = browserAudits.get(page);
+    if (!audit) return;
+    try {
+      await testInfo.attach("order-image-upload-browser-audit", {
+        body: Buffer.from(JSON.stringify({ pageErrors: audit.pageErrors }, null, 2)),
+        contentType: "application/json",
+      });
+      expect(audit.pageErrors, "Order image review must not crash during navigation or reload").toEqual([]);
+    } finally {
+      audit.stop();
+      browserAudits.delete(page);
+    }
   });
 
   test("shows native original defaults and preserves a saved explicit empty selection", async ({ page }) => {
@@ -239,12 +255,22 @@ test.describe("whole order image upload", () => {
     expect(state.saves).toHaveLength(1);
     expect(state.saves[0]!.draft.images).toEqual([]);
     expect(state.records[0]!.versions).toHaveLength(1);
-    await page.reload();
-    await expect(first).not.toBeChecked();
-    await expect(second).not.toBeChecked();
-    expect(state.records[0]!.line.revision).toBe(1);
-    expect(state.uploads).toEqual([]);
-    expect(state.unexpectedWrites).toEqual([]);
+    for (let reload = 1; reload <= 2; reload++) {
+      await test.step(`real reload ${reload} preserves the explicit empty selection`, async () => {
+        await page.reload();
+        await expect(drawer).toBeVisible();
+        await expect(first).toBeVisible();
+        await expect(second).toBeVisible();
+        await expect(first).not.toBeChecked();
+        await expect(second).not.toBeChecked();
+        expect(state.saves).toHaveLength(1);
+        expect(state.records[0]!.versions).toHaveLength(1);
+        expect(state.records[0]!.draft.images).toEqual([]);
+        expect(state.records[0]!.line.revision).toBe(1);
+        expect(state.uploads).toEqual([]);
+        expect(state.unexpectedWrites).toEqual([]);
+      });
+    }
   });
 
   test("uploads before the first save while retaining dirty fields notes and canceled originals", async ({ page }, testInfo) => {
@@ -367,3 +393,10 @@ test.describe("whole order image upload", () => {
     expect(state.unexpectedWrites).toEqual([]);
   });
 });
+
+function imageReviewBrowserAudit(page: Page) {
+  const pageErrors: string[] = [];
+  const error = (value: Error) => pageErrors.push(value.message);
+  page.on("pageerror", error);
+  return { pageErrors, stop: () => page.off("pageerror", error) };
+}

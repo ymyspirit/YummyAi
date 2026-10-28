@@ -24,6 +24,7 @@ import { OrderLifecycleBadge } from "./order-lifecycle";
 import { useErpAccess } from "../identity/erp-access";
 import { orderSummaryMessages, orderSummaryState, type OrderSummaryState } from "./order-summary-state";
 import { orderCustomizationHighlights, orderFieldLabel, orderFieldPriority, orderFieldValue, orderLineUnits, orderProductLabel } from "./order-operations-summary";
+import { reconcileOrderProductSelection } from "./order-product-selection-model";
 
 const initialState: OrderReviewState = { dirty: false, busy: false, loading: false };
 type ProductListProps = {
@@ -130,10 +131,7 @@ function OrderProductListContent({
     setSelectionNotice("");
   }, [scope]);
   useEffect(() => {
-    setSelected(
-      (current) =>
-        new Map([...current].map(([id, item]) => [id, items.find((row) => row.id === id) ?? item])),
-    );
+    setSelected(current => reconcileOrderProductSelection(current, items));
   }, [items]);
   useEffect(() => {
     const abort = new AbortController(), sequence = ++readSequence.current;
@@ -190,9 +188,12 @@ function OrderProductListContent({
     if (unavailableIds.length) {
       setSelected(current => new Map([...current].filter(([id]) => !unavailableIds.includes(id))));
       setBulk(null); setSelectionNotice(`${unavailableIds.length} 个商品行的定制内容尚不可读取 已取消选择 订单历史仍可查看`);
-    } else setSelectionNotice(current => current.startsWith("正在核对所选商品") ? `已读取 ${selected.size} 商品行的当前定制内容` : current);
+    } else if (selectionNotice.startsWith("正在核对所选商品")) {
+      // Do not dispatch a no-op layout update when the selection is already settled.
+      setSelectionNotice(`已读取 ${selected.size} 商品行的当前定制内容`);
+    }
     if (inlineChoice && !usable(inlineChoice.row)) { inlineEpoch.current++; setInlineRow(null); setEditState(initialState); }
-  }, [summaryRead, accepted, selected, inlineChoice, usable]);
+  }, [summaryRead, accepted, selected, inlineChoice, usable, selectionNotice]);
   const leaveEditor = useCallback(() => {
     if (busy || editState.loading) return false;
     if (editState.dirty && !window.confirm("本件商品有未保存的修改，确定放弃修改？")) return false;
