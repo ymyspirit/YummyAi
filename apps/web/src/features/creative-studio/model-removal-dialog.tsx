@@ -8,11 +8,13 @@ export function ModelRemovalDialog({ label, model, channel, shared, busy, error,
   busy: boolean; error: string; onConfirm: () => void; onCancel: () => void;
   confirmationBlocked?: boolean; rechecking?: boolean; notice?: string; onReconcile?: () => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null), titleId = useId(), descriptionId = useId();
+  const ref = useRef<HTMLDialogElement>(null), cancelRef = useRef<HTMLButtonElement>(null), titleId = useId(), descriptionId = useId();
   useEffect(() => {
     const dialog = ref.current, previousFocus = document.activeElement;
     const overflow = document.body.style.overflow;
     dialog?.showModal();
+    // Native dialog focusing runs on open, after React's mount-time autoFocus.
+    cancelRef.current?.focus({ preventScroll: true });
     document.body.style.overflow = "hidden";
     return () => {
       dialog?.close();
@@ -33,7 +35,7 @@ export function ModelRemovalDialog({ label, model, channel, shared, busy, error,
     {confirmationBlocked && <p>核对前不能再次删除 读取配置不会重试删除</p>}
     <footer>
       {onReconcile && <button type="button" className="studio-reconcile-removal" aria-label="读取原配置核对" disabled={busy} onClick={onReconcile}><RefreshCw size={14} />{rechecking ? "正在核对…" : "读取原配置核对"}</button>}
-      <button type="button" autoFocus disabled={busy} onClick={onCancel}>取消</button>
+      <button ref={cancelRef} type="button" autoFocus disabled={busy} onClick={onCancel}>取消</button>
       <button type="button" className="studio-confirm-removal" disabled={busy || confirmationBlocked} onClick={onConfirm}><Trash2 size={14} />{rechecking ? "正在核对…" : busy ? "正在删除…" : "确认删除"}</button>
     </footer>
   </dialog>;

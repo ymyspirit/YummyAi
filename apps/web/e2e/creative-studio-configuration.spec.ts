@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { emptyModelDefaults, type ConfigurationRpc, type ConfigurationSnapshot } from "@yummyai/contracts/ai/model-configuration";
 import { loginErp } from "./erp-identity-fixture.js";
 
@@ -271,7 +272,16 @@ test("channel removal shows its models, handles conflicts and pending state, and
   state.snapshot.defaults = { ...emptyModelDefaults(), image: imageId, analysis: analysisId };
   await frame.getByRole("button", { name: "刷新配置", exact: true }).click();
   await expect(frame.getByRole("button", { name: "删除模型 gpt-image-fixture", exact: true })).toBeHidden();
-  await expect(page.getByText("图文分析模型与费用设置", { exact: true })).toBeHidden();
+  if (process.env.E2E_STUDIO_CONFIGURATION_ISOLATED === "1") {
+    const analysis = page.locator("details#analysis-model-settings");
+    await expect(analysis.locator("summary")).toHaveText("图文分析模型与费用设置");
+    await expect(analysis.locator("summary")).toBeVisible();
+    await expect(analysis).toHaveJSProperty("open", false);
+    await expect(analysis.getByRole("button", { name: "刷新分析模型", exact: true })).toBeHidden();
+    await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toHaveAttribute("aria-selected", "true");
+    expect(state.requests.filter(input => input.operation === "model.remove")).toHaveLength(0);
+    expect(state.externalCalls).toEqual([]);
+  } else await expect(page.getByText("图文分析模型与费用设置", { exact: true })).toBeHidden();
   // Only this leaf owns these synthetic HTTP outcomes. Provider credentials and
   // real tenant settings are never touched, and every reconcile stays a read.
   let outcome: "busy" | "unknown_unchanged" | "unknown_saved" = "busy";
@@ -411,7 +421,40 @@ test("manual fallback and OpenAI defaults remain usable at mobile width", async 
   await expect(drawer.getByLabel("渠道名称", { exact: true })).toHaveValue("OpenAI");
   await expect(drawer.getByLabel("接口地址", { exact: true })).toHaveValue("https://api.openai.com/v1");
   await drawer.getByLabel("API Key", { exact: true }).fill("synthetic-credential-never-sent-to-provider");
-  await drawer.getByRole("button", { name: "选择模型", exact: true }).click();
+  const selectModels = drawer.getByRole("button", { name: "选择模型", exact: true });
+  try { await selectModels.click(); }
+  catch (originalError) {
+    // Failure evidence contains geometry only. It never reads field values,
+    // markup, request bodies or credentials, and does not replay the click.
+    const [screenshot, parent, target] = await Promise.allSettled([
+      page.screenshot({ path: testInfo.outputPath("configuration-select-models-failure.png") }),
+      page.locator('iframe[title="无限画布模型配置"]').evaluate(iframe => {
+        const box = iframe.getBoundingClientRect();
+        return { rect: { x: box.x, y: box.y, width: box.width, height: box.height, top: box.top, right: box.right, bottom: box.bottom, left: box.left },
+          viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY,
+            visual: visualViewport ? { width: visualViewport.width, height: visualViewport.height, offsetLeft: visualViewport.offsetLeft, offsetTop: visualViewport.offsetTop } : null } };
+      }),
+      selectModels.evaluate(button => {
+        const rectangle = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, top: box.top, right: box.right, bottom: box.bottom, left: box.left }; };
+        const ancestors = [];
+        for (let ancestor = button.parentElement, depth = 0; ancestor && depth < 10; ancestor = ancestor.parentElement, depth++) {
+          const style = getComputedStyle(ancestor);
+          ancestors.push({ depth, tagName: ancestor.tagName, rect: rectangle(ancestor), scrollTop: ancestor.scrollTop, scrollLeft: ancestor.scrollLeft,
+            scrollHeight: ancestor.scrollHeight, scrollWidth: ancestor.scrollWidth, clientHeight: ancestor.clientHeight, clientWidth: ancestor.clientWidth,
+            overflow: style.overflow, overflowX: style.overflowX, overflowY: style.overflowY, position: style.position });
+        }
+        return { rect: rectangle(button), iframeViewport: { width: innerWidth, height: innerHeight, scrollX, scrollY }, ancestors };
+      }),
+    ]);
+    try {
+      await writeFile(testInfo.outputPath("configuration-select-models-failure-geometry.json"), JSON.stringify({
+        version: 1, screenshotSaved: screenshot.status === "fulfilled", viewport: page.viewportSize(),
+        parent: parent.status === "fulfilled" ? parent.value : null, target: target.status === "fulfilled" ? target.value : null,
+        captureFailed: [screenshot.status !== "fulfilled" ? "screenshot" : null, parent.status !== "fulfilled" ? "parent_geometry" : null, target.status !== "fulfilled" ? "target_geometry" : null].filter(Boolean),
+      }, null, 2) + "\n", { flag: "wx" });
+    } catch { /* Evidence failure must never replace the original interaction failure. */ }
+    throw originalError;
+  }
   const modal = frame.getByRole("dialog", { name: /选择渠道模型/ });
   state.failDiscover = true;
   await modal.getByRole("button", { name: "拉取模型列表", exact: true }).click();
