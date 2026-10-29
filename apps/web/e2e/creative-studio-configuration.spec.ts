@@ -43,6 +43,7 @@ async function fixture(page: Page) {
       if (state.unknownRemoval === "unchanged") { await route.fulfill({ status: 502, headers, json: { error: "PRIVATE_REMOVAL_DIAGNOSTIC" } }); return; }
       const channel = state.snapshot.channels.find(item => item.id === input.channelId)!;
       channel.models = channel.models.filter(item => item.id !== input.modelId);
+      channel.analysisModels = channel.analysisModels.filter(item => item.id !== input.modelId);
       channel.revision = "c".repeat(64);
       state.snapshot.analysisModels = state.snapshot.analysisModels.filter(item => item.id !== input.modelId);
       for (const capability of ["image", "video", "text", "analysis"] as const) if (state.snapshot.defaults[capability] === input.modelId) state.snapshot.defaults[capability] = null;
@@ -54,7 +55,9 @@ async function fixture(page: Page) {
     await route.fulfill({ status: 200, headers, json: result });
   });
   await page.route("**/api/ai-assists/models", async route => {
-    await route.fulfill({ json: state.snapshot.analysisModels.map(model => ({ ...model, inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })) });
+    const authority = route.request().headers()["x-yummyai-context-authority"];
+    const headers: Record<string, string> = authority ? { "x-yummyai-context-authority": authority } : {};
+    await route.fulfill({ headers, json: state.snapshot.analysisModels.map(({ id, label, model, providerLabel }) => ({ id, label, model, providerLabel, inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })) });
   });
   await page.goto("/settings/ai");
   const frame = page.frameLocator('iframe[title="无限画布模型配置"]');
@@ -174,6 +177,7 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   const reads = () => state.requests.filter(input => input.operation === "configuration.get");
   await page.setViewportSize({ width: 390, height: 844 });
   state.snapshot.analysisModels = [{ id: analysisId, label: "QA 图文分析", model: "qa-vision-model", providerLabel: "QA OpenAI", providerConfigId: channelId }];
+  state.snapshot.channels[0]!.analysisModels = [{ id: analysisId, label: "QA 图文分析", name: "qa-vision-model" }];
   state.snapshot.defaults.analysis = analysisId;
   await frame.getByRole("tab", { name: "模型管理", exact: true }).click();
   await page.getByText("图文分析模型与费用设置", { exact: true }).click();
