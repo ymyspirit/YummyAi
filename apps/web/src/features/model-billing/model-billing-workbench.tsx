@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Check, FileCheck2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Calculator, Check, ExternalLink, FileCheck2, RefreshCw, Table2 } from "lucide-react";
 import {
   ModelBillingBasisSchema,
   ModelBillingConfirmSchema,
@@ -11,8 +11,14 @@ import {
   ModelBillingWorkspaceSchema,
   ModelBillingSubjectIdSchema,
   type ModelBillingBasis,
+  type ModelBillingOwner,
   type ModelBillingWorkspace,
 } from "@yummyai/contracts/ai/model-billing";
+import type {
+  OfficialApiPriceCatalog,
+  OfficialApiPriceCheck,
+} from "@yummyai/contracts/ai/official-model-pricing";
+import { ModelTokenUsageLine } from "../ai-assist/model-usage-summary";
 import { InvocationEvidence } from "../execution/invocation-evidence";
 import "../order-centers/order-centers.css";
 import "./model-billing.css";
@@ -59,6 +65,156 @@ const message = (error: unknown) =>
   error instanceof BillingFailure ? error.message : "费用记录读取失败 请重试";
 const denied = (error: unknown) =>
   error instanceof BillingFailure && [401, 403, 404, 503].includes(error.status);
+
+const ownerLabels: Record<ModelBillingOwner, string> = {
+  assist: "AI 辅助",
+  pod: "POD 处理",
+  order_design: "订单无人设计",
+};
+const endpointLabels: Record<OfficialApiPriceCheck["endpointKind"], string> = {
+  images: "Images API",
+  responses: "Responses API",
+  chat_completions: "Chat Completions API",
+  unknown: "调用接口未识别",
+};
+const priceStatusLabels: Record<OfficialApiPriceCheck["status"], string> = {
+  calculated: "官方核价已完成",
+  partial: "官方核价依据不完整",
+  usage_missing: "原调用用量未返回",
+  model_unsupported: "官方价表尚未覆盖此模型",
+};
+function OfficialRate({ value }: { value: string | null }) {
+  return value === null ? (
+    <span title="官方标准价表未单列此项">—</span>
+  ) : (
+    <span className="model-billing-money">{"$" + value}</span>
+  );
+}
+
+export function OfficialPriceCatalogPanel({ catalog, loading = false }: {
+  catalog?: OfficialApiPriceCatalog;
+  loading?: boolean;
+}) {
+  return (
+    <section aria-label="官方标准 API 价表" className="model-billing-price-catalog">
+      <header className="model-billing-price-heading">
+        <h2><Table2 size={17} aria-hidden="true" />官方标准 API 价表</h2>
+        {catalog && <p>
+          USD / {catalog.unitTokens.toLocaleString("zh-CN")} token · 核价日期{" "}
+          <time dateTime={catalog.checkedAt}>{catalog.checkedAt.slice(0, 10)}</time>
+        </p>}
+      </header>
+      {!catalog ? (
+        <p role="status">{loading ? "正在读取官方标准 API 价格…" : "价格暂未读取 请刷新费用记录"}</p>
+      ) : (
+        <>
+          <p className="model-billing-price-meta">标准 API 公开价 · 版本 {catalog.version}</p>
+          {!catalog.rates.length ? <p>官方价表暂无模型价格</p> : (
+            <div className="model-billing-price-scroll" role="region" aria-label="官方 API 单价明细 可横向滚动" tabIndex={0}>
+              <table className="model-billing-price-table">
+                <caption>每百万 token 的美元单价 缓存输入和缓存写入均为输入子集</caption>
+                <thead><tr>
+                  <th scope="col">模型</th>
+                  <th scope="col">文本输入</th>
+                  <th scope="col">文本缓存输入</th>
+                  <th scope="col">图像输入</th>
+                  <th scope="col">图像缓存输入</th>
+                  <th scope="col">输出</th>
+                  <th scope="col">缓存写入</th>
+                  <th scope="col">来源</th>
+                </tr></thead>
+                <tbody>{catalog.rates.map(rate => (
+                  <tr key={rate.modelId}>
+                    <th scope="row">
+                      <strong>{rate.modelId}</strong>
+                      <small>{rate.category === "image" ? "图像模型" : "文本模型"}</small>
+                      {(rate.longContextAfterInputTokens !== null || rate.notes.length > 0) && (
+                        <details className="model-billing-price-rules">
+                          <summary>计价规则</summary>
+                          {rate.longContextAfterInputTokens !== null && (
+                            <p>输入超过 {rate.longContextAfterInputTokens.toLocaleString("zh-CN")} token 时适用长上下文规则</p>
+                          )}
+                          {!!rate.notes.length && <ul>{rate.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
+                        </details>
+                      )}
+                    </th>
+                    <td><OfficialRate value={rate.inputUsdPerMillion} /></td>
+                    <td><OfficialRate value={rate.cachedInputUsdPerMillion} /></td>
+                    <td><OfficialRate value={rate.imageInputUsdPerMillion} /></td>
+                    <td><OfficialRate value={rate.cachedImageInputUsdPerMillion} /></td>
+                    <td><OfficialRate value={rate.outputUsdPerMillion} /></td>
+                    <td>
+                      {rate.cacheWrite30mUsdPerMillion === null && rate.cacheWrite12hUsdPerMillion === null ? (
+                        <OfficialRate value={null} />
+                      ) : (
+                        <>
+                          <span className="model-billing-rate-term">30 分钟 <OfficialRate value={rate.cacheWrite30mUsdPerMillion} /></span>
+                          <span className="model-billing-rate-term">12 小时 <OfficialRate value={rate.cacheWrite12hUsdPerMillion} /></span>
+                        </>
+                      )}
+                    </td>
+                    <td><a href={rate.sourceUrl} target="_blank" rel="noopener noreferrer" aria-label={rate.modelId + " 官方价格来源"}>
+                      官方文档 <ExternalLink size={12} aria-hidden="true" />
+                    </a></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+          {!!catalog.notes.length && (
+            <ul className="model-billing-price-notes">{catalog.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export function OfficialPriceCheckPanel({ check }: { check?: OfficialApiPriceCheck }) {
+  const calculated = check?.status === "calculated" && check.amountUsd !== null;
+  const status = check?.status === "calculated" && !calculated ? "partial" : check?.status;
+  return (
+    <section aria-label="原调用官方核价" className="model-billing-price-check" data-price-state={status ?? "not_loaded"}>
+      <header className="model-billing-price-heading">
+        <h2><Calculator size={17} aria-hidden="true" />原调用官方核价</h2>
+        {check?.sourceUrl && <a href={check.sourceUrl} target="_blank" rel="noopener noreferrer">
+          官方价格来源 <ExternalLink size={12} aria-hidden="true" />
+        </a>}
+      </header>
+      {!check ? <p role="status">价格暂未读取 请重新读取原调用依据</p> : (
+        <>
+          <p className="model-billing-price-meta">
+            {check.modelId} · {endpointLabels[check.endpointKind]} · 价格版本 {check.priceVersion}
+          </p>
+          <p className="model-billing-price-status" role="status">
+            {priceStatusLabels[status ?? check.status]}
+          </p>
+          <ModelTokenUsageLine usage={check.usage} label="本次调用实际 Token" className="model-billing-price-usage" />
+          {!!check.components.length && (
+            <ol className="model-billing-price-components" aria-label="官方价格核算分项">
+              {check.components.map((component, index) => (
+                <li key={component.kind + "/" + index} data-kind={component.kind}>
+                  <strong>{component.label}</strong>
+                  <code>{component.tokenCount.toLocaleString("zh-CN")} token × {"$" + component.usdPerMillion} ÷ 1,000,000 = {"$" + component.amountUsd}</code>
+                </li>
+              ))}
+            </ol>
+          )}
+          <dl className="model-billing-price-total">
+            <div><dt>官方标准 API 核算金额</dt><dd>{calculated ? "$" + check.amountUsd : "暂无法核算总额"}</dd></div>
+            {!calculated && check.knownSubtotalUsd !== null && (
+              <div><dt>已知小计</dt><dd>{"$" + check.knownSubtotalUsd}</dd></div>
+            )}
+          </dl>
+          {!!check.issues.length && <ul className="model-billing-price-notes" aria-label="官方核价缺项">
+            {check.issues.map((issue, index) => <li key={index}>{issue}</li>)}
+          </ul>}
+          <p className="model-billing-price-boundary">按原调用用量与官方标准 API 价核算 渠道实际费用仍以原账单和凭证核对为准</p>
+        </>
+      )}
+    </section>
+  );
+}
 
 export function ModelBillingWorkbench() {
   const router = useRouter(),
@@ -255,7 +411,7 @@ export function ModelBillingWorkbench() {
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!basis || busy || hashing || conflict) return;
+    if (!basis || !basis.canConfirm || basis.owner === "order_design" || busy || hashing || conflict) return;
     const payload = {
       expectedFingerprint: basis.fingerprint,
       amountUsd: draft.amountUsd,
@@ -324,7 +480,7 @@ export function ModelBillingWorkbench() {
         <div>
           <p className="oc-eyebrow">AI 执行</p>
           <h1>模型费用核对</h1>
-          <p>关联渠道凭证与原请求 保留原报告和每次核对记录</p>
+          <p>按原调用实际用量核算官方 API 价格 保留渠道凭证和每次人工核对记录</p>
         </div>
         <Link href="/ai-tasks">
           <ArrowLeft size={15} />
@@ -334,6 +490,7 @@ export function ModelBillingWorkbench() {
       <p className="model-billing-note">
         此处记录人工确认的美元费用 凭证文件只在当前浏览器计算摘要 原文件请自行保管
       </p>
+      <OfficialPriceCatalogPanel catalog={workspace?.officialPriceCatalog} loading={!workspace && !listError} />
       <div className="model-billing-layout">
         <section aria-label="费用记录列表" className="model-billing-list">
           <div className="model-billing-toolbar">
@@ -372,8 +529,8 @@ export function ModelBillingWorkbench() {
                   >
                     <strong>{item.modelLabel}</strong>
                     <span>
-                      {item.owner === "assist" ? "AI 辅助" : "POD 处理"} ·{" "}
-                      {item.reconciled ? "已有人工核对" : "待核对"}
+                      {ownerLabels[item.owner]} ·{" "}
+                      {item.owner === "order_design" ? "只读用量" : item.reconciled ? "已有人工核对" : "待核对"}
                     </span>
                     <small>{item.id}</small>
                     <time dateTime={item.createdAt}>
@@ -434,12 +591,13 @@ export function ModelBillingWorkbench() {
               <header>
                 <h2>{basis.modelLabel}</h2>
                 <p>
-                  {basis.owner === "assist" ? "AI 辅助" : "POD 处理"} · {basis.subjectId}
+                  {ownerLabels[basis.owner]} · {basis.subjectId}
                 </p>
               </header>
               {basis.originalInvocation && (
                 <InvocationEvidence entries={[basis.originalInvocation]} />
               )}
+              <OfficialPriceCheckPanel check={basis.officialPriceCheck} />
               {!!basis.blockers.length && (
                 <ul>
                   {basis.blockers.map((value) => (
@@ -456,7 +614,11 @@ export function ModelBillingWorkbench() {
                   </button>
                 </div>
               )}
-              <form onSubmit={submit} aria-label="人工费用核对">
+              {basis.owner === "order_design" ? (
+                <p className="model-billing-note" role="note">
+                  订单无人设计调用提供原始用量与官方核价的只读查询 当前不提供渠道账单确认
+                </p>
+              ) : <form onSubmit={submit} aria-label="人工费用核对">
                 <fieldset disabled={!basis.canConfirm || busy}>
                   <legend>人工核对</legend>
                   <label>
@@ -539,7 +701,7 @@ export function ModelBillingWorkbench() {
                     {busy ? "正在保存…" : "保存人工核对"}
                   </button>
                 </fieldset>
-              </form>
+              </form>}
               <section aria-label="人工核对历史">
                 <h2>
                   <FileCheck2 size={17} />
