@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Permission, ForbiddenError, ASSIST_ACCESS_POLICY_VERSION, requiredAssistPermissions } from "@yummyai/authz";
-import { SecretVault, OpenAiCompatibleProvider, assistFingerprint, ASSIST_PROMPT_VERSION, assistExecutionPolicy, assistHarness } from "@yummyai/ai-core";
+import { SecretVault, OpenAiCompatibleProvider, assistFingerprint, ASSIST_PROMPT_VERSION, assistExecutionPolicy, assistHarness, ModelResponseCheckpointSchema } from "@yummyai/ai-core";
 import {
   CaptureDraftSchema,
   createEntityId,
@@ -1760,7 +1760,8 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it.each(["missing", "unknown_tool", "wrong_method", "unsupported_version"] as const)("rejects a historical %s tool contract before replay, model submission or reservation use", async kind => {
-    const request = CreateAssistSchema.parse(creativeRequest()), input = await contexts.prepareForExecution(context, request), id = createEntityId();
+    // This stored historical run uses the original finite-output execution policy.
+    const request = CreateAssistSchema.parse(creativeRequest()), input = await contexts.prepareForExecution(context, request, false, true), id = createEntityId();
     if (kind === "missing") delete input.executionContract;
     else if (kind === "unknown_tool") input.executionContract!.tools[0]!.key = "marketplace.publish";
     else if (kind === "wrong_method") input.executionContract!.skill.key = "yummyai.assist.knowledge_answer.review";
@@ -1844,23 +1845,107 @@ describe("AI assists use real tenant services and immutable background tasks", (
     expect(execution).toMatchObject({ phase: "completed", attemptCount: 2, leaseToken: null });
   });
 
+  async function lateAssistEvidence(id: string) {
+    return withTenant(database.db, context, async tx => {
+      const [run] = await tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, id));
+      const [execution] = await tx.select().from(aiAssistExecutions).where(eq(aiAssistExecutions.runId, id));
+      const [ledger] = await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, id));
+      expect(run).toBeDefined(); expect(execution).toBeDefined(); expect(ledger).toBeDefined();
+      return { run: run!, execution: execution!, ledger: ledger! };
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  }
+  const lateResponseUsage = {
+    version: "model-token-usage-v1" as const, inputTokens: 120, outputTokens: 300, cachedInputTokens: null,
+    totalTokens: 420, totalTokensBasis: "reported_components" as const, inputTextTokens: null, inputImageTokens: null,
+    outputTextTokens: null, outputImageTokens: null, reasoningTokens: null,
+  };
+  function originalLateReceipt(evidence: Awaited<ReturnType<typeof lateAssistEvidence>>, providerPayload: unknown, model: string) {
+    expect(evidence.execution.encryptedResponse).toEqual(expect.stringMatching(/^v1\./));
+    expect(evidence.execution.responseReceiptTransactionId).toMatch(/^[1-9]\d*$/);
+    expect(evidence.execution.responseReceiptTransactionId).not.toBe(evidence.run.creationTransactionId);
+    expect(providerPayload).toMatchObject({ usage: { prompt_tokens: 120, completion_tokens: 300 } });
+    return contentVault.withSecret(evidence.execution.encryptedResponse!, raw => {
+      const saved = JSON.parse(raw) as { response: unknown };
+      const response = ModelResponseCheckpointSchema.parse(saved.response);
+      const checksum = createHash("sha256").update(raw).digest("hex");
+      expect(evidence.execution.responseChecksum).toBe(checksum);
+      expect(response).toMatchObject({ providerId, modelKey: model, providerRequestId: null,
+        payload: providerPayload, inputTokens: 120, outputTokens: 300, tokenUsage: lateResponseUsage });
+      expect(response.payload).toEqual(providerPayload);
+      expect(response.costUsd).toBeGreaterThan(0);
+      expect(evidence.execution.receivedAt).toEqual(new Date(response.receivedAt));
+      return { response, checksum };
+    });
+  }
+
   it("rejects a late response from an expired lease after uncertainty has been recorded", async () => {
     const task = await assists.create(context, creativeRequest()), before = modelFetch.mock.calls.length;
     const original = modelFetch.getMockImplementation()!;
     const started = executionGate(), gate = executionGate();
-    modelFetch.mockImplementationOnce(async (...args) => { started.resolve(); await gate.promise; return original(...args); });
+    let providerPayload: unknown, uncertain: Awaited<ReturnType<typeof lateAssistEvidence>> | undefined;
+    modelFetch.mockImplementationOnce(async (...args) => {
+      started.resolve(); await gate.promise;
+      const response = await original(...args); providerPayload = await response.clone().json(); return response;
+    });
     const running = processor.process(envelope(task.id));
     try {
       await started.promise;
       await withTenant(database.db, context, tx => tx.update(aiAssistExecutions).set({ leaseExpiresAt: sql`clock_timestamp()-interval '1 second'` }).where(eq(aiAssistExecutions.runId, task.id)));
       await processor.process(envelope(task.id));
+      uncertain = await lateAssistEvidence(task.id);
+      expect(uncertain.run).toMatchObject({ status: "failed", errorCode: "assist_submission_unknown", encryptedOutput: null,
+        tokenUsage: null, inputTokens: null, outputTokens: null, costUsd: null });
+      expect(uncertain.execution).toMatchObject({ phase: "uncertain", submissionState: "submitted", attemptCount: 1,
+        leaseToken: null, leaseExpiresAt: null, encryptedResponse: null, responseChecksum: null, receivedAt: null, responseReceiptTransactionId: null });
+      expect(uncertain.ledger.state).toBe("reserved");
     } finally { gate.resolve(); await running; }
     expect(modelFetch).toHaveBeenCalledTimes(before + 1);
-    const [stored] = await withTenant(database.db, context, tx => tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, task.id)));
-    const [execution] = await withTenant(database.db, context, tx => tx.select().from(aiAssistExecutions).where(eq(aiAssistExecutions.runId, task.id)));
-    const [ledger] = await withTenant(database.db, context, tx => tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, task.id)));
-    expect(stored).toMatchObject({ status: "failed", errorCode: "assist_submission_unknown", encryptedOutput: null });
-    expect(execution).toMatchObject({ phase: "uncertain", encryptedResponse: null }); expect(ledger?.state).toBe("reserved");
+    expect(uncertain).toBeDefined();
+    const received = await lateAssistEvidence(task.id), receipt = originalLateReceipt(received, providerPayload, task.model);
+    expect(received.run).toEqual({ ...uncertain!.run, tokenUsage: lateResponseUsage });
+    expect(received.execution).toEqual({ ...uncertain!.execution, submissionState: "received",
+      encryptedResponse: expect.any(String), responseChecksum: receipt.checksum, providerRequestId: receipt.response.providerRequestId,
+      receivedAt: new Date(receipt.response.receivedAt), responseReceiptTransactionId: expect.stringMatching(/^[1-9]\d*$/), updatedAt: expect.any(Date) });
+    expect(received.ledger).toEqual(uncertain!.ledger);
+    expect(await processor.process(envelope(task.id))).toMatchObject({ disposition: "skipped" });
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(await lateAssistEvidence(task.id)).toEqual(received);
+  });
+
+  it("fences an expired lease's late response before any second delivery without adoption or settlement", async () => {
+    const task = await assists.create(context, creativeRequest()), before = modelFetch.mock.calls.length;
+    const original = modelFetch.getMockImplementation()!;
+    const started = executionGate(), gate = executionGate();
+    let providerPayload: unknown, expired: Awaited<ReturnType<typeof lateAssistEvidence>> | undefined;
+    modelFetch.mockImplementationOnce(async (...args) => {
+      started.resolve(); await gate.promise;
+      const response = await original(...args); providerPayload = await response.clone().json(); return response;
+    });
+    const running = processor.process(envelope(task.id));
+    try {
+      await started.promise;
+      await withTenant(database.db, context, tx => tx.update(aiAssistExecutions).set({ leaseExpiresAt: sql`clock_timestamp()-interval '1 second'` }).where(eq(aiAssistExecutions.runId, task.id)));
+      expired = await lateAssistEvidence(task.id);
+      expect(expired.run).toMatchObject({ status: "running", encryptedOutput: null,
+        tokenUsage: null, inputTokens: null, outputTokens: null, costUsd: null });
+      expect(expired.execution).toMatchObject({ phase: "preparing", submissionState: "submitted", attemptCount: 1,
+        encryptedResponse: null, responseChecksum: null, receivedAt: null, responseReceiptTransactionId: null });
+      expect(expired.execution.leaseToken).not.toBeNull(); expect(expired.ledger.state).toBe("reserved");
+      // Deliberately release the original response before any second delivery can fence it.
+    } finally { gate.resolve(); await running; }
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(expired).toBeDefined();
+    const received = await lateAssistEvidence(task.id), receipt = originalLateReceipt(received, providerPayload, task.model);
+    expect(received.run).toEqual({ ...expired!.run, status: "failed", errorCode: "assist_submission_unknown",
+      completedAt: expect.any(Date), tokenUsage: lateResponseUsage });
+    expect(received.execution).toEqual({ ...expired!.execution, phase: "uncertain", submissionState: "received",
+      leaseToken: null, leaseExpiresAt: null, encryptedResponse: expect.any(String), responseChecksum: receipt.checksum,
+      providerRequestId: receipt.response.providerRequestId, receivedAt: new Date(receipt.response.receivedAt),
+      responseReceiptTransactionId: expect.stringMatching(/^[1-9]\d*$/), updatedAt: expect.any(Date) });
+    expect(received.ledger).toEqual(expired!.ledger);
+    expect(await processor.process(envelope(task.id))).toMatchObject({ disposition: "skipped" });
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(await lateAssistEvidence(task.id)).toEqual(received);
   });
 
   it("retains an uncertain submitted request without another provider call or budget release", async () => {

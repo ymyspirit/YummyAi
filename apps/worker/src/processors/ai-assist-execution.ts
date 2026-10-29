@@ -425,14 +425,24 @@ export class DurableAssistExecution {
       if(current.receivedAt && (current.responseChecksum!==responseChecksum || current.providerRequestId!==response.providerRequestId
         || current.receivedAt.getTime()!==Date.parse(response.receivedAt)))throw new Error("assist_response_changed");
       const now=await leaseClock(tx);
-      const active=currentRun.status==="running"&&!terminal(current.phase)&&current.leaseToken===token&&!!current.leaseExpiresAt&&current.leaseExpiresAt>now;
+      const active=currentRun.status==="running"&&!terminal(current.phase)&&current.leaseToken===token
+        &&current.attemptCount===original.attemptCount+1&&!!current.leaseExpiresAt&&current.leaseExpiresAt>now;
+      const expiredOriginalClaim=currentRun.status==="running"&&!terminal(current.phase)&&current.leaseToken===token
+        &&current.attemptCount===original.attemptCount+1&&!!current.leaseExpiresAt&&current.leaseExpiresAt<=now&&!current.encryptedResponse;
+      if(expiredOriginalClaim){
+        // A late first receipt cannot revive or settle an expired submission.
+        // Retain its evidence behind the same uncertainty fence as a second delivery.
+        await tx.update(executions).set({phase:"uncertain",leaseToken:null,leaseExpiresAt:null,updatedAt:now}).where(eq(executions.runId,run.id));
+        await tx.update(runs).set({status:"failed",errorCode:"assist_submission_unknown",completedAt:now}).where(eq(runs.id,run.id));
+      }
       const retainPrivate=currentRun.expiresAt>now&&currentRun.encryptedInput!==null;
+      const mayRetainCheckpoint=active||expiredOriginalClaim||terminal(current.phase)||["completed","failed","cancelled"].includes(currentRun.status);
       await tx.update(executions).set({
         ...(!current.receivedAt?{submissionState:"received" as const,receivedAt:new Date(response.receivedAt),providerRequestId:response.providerRequestId,responseChecksum}:{}),
-        ...(encryptedResponse&&retainPrivate&&!current.encryptedResponse?{encryptedResponse}:{}),
-        ...(active&&encryptedResponse&&retainPrivate?{phase:"response_ready" as const}:{}),updatedAt:new Date(),
+        ...(encryptedResponse&&retainPrivate&&mayRetainCheckpoint&&!current.encryptedResponse?{encryptedResponse}:{}),
+        ...(active&&encryptedResponse&&retainPrivate?{phase:"response_ready" as const}:{}),updatedAt:now,
       }).where(eq(executions.runId,run.id));
-      await settleAssistResponse(tx,run,response,true);
+      await settleAssistResponse(tx,run,response,true,active?"active_claim":"usage_only");
     });
   }
 
@@ -463,13 +473,17 @@ async function releaseReservation(tx: TenantTransaction, id: string) {
     .set({ state: "released" })
     .where(and(eq(aiBudgetLedger.requestId, id), eq(aiBudgetLedger.state, "reserved")));
 }
-export async function settleAssistResponse(tx: TenantTransaction, run: Run, response: ModelResponseCheckpoint, allowTerminalUsage=false) {
+export async function settleAssistResponse(tx: TenantTransaction, run: Run, response: ModelResponseCheckpoint, allowTerminalUsage=false, settlement:"active_claim"|"usage_only"="active_claim") {
   const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.ownerId,run.ownerId))).for("update");
   if(!current || current.requestId!==run.requestId || current.inputFingerprint!==run.inputFingerprint)throw new Error("assist_response_identity_invalid");
   if(current.tokenUsage!==null && response.tokenUsage!==undefined && !isDeepStrictEqual(current.tokenUsage,response.tokenUsage))throw new Error("assist_usage_conflict");
   const tokenUsage=current.tokenUsage===null&&response.tokenUsage!=null?{tokenUsage:response.tokenUsage}:{};
   if(["completed","failed","cancelled"].includes(current.status)) {
     if(allowTerminalUsage&&"tokenUsage" in tokenUsage)await tx.update(runs).set(tokenUsage).where(eq(runs.id,run.id));
+    return;
+  }
+  if(settlement==="usage_only"){
+    if("tokenUsage" in tokenUsage)await tx.update(runs).set(tokenUsage).where(eq(runs.id,run.id));
     return;
   }
   if(current.status!=="running")throw new Error("assist_lease_lost");
