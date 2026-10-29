@@ -24,6 +24,8 @@
 
 收到明确拒绝时，弹窗展示未删除的具体原因。超时、网络中断、无效回执等仍保持结果未知，核对前禁止再次提交删除。弹窗内的核对只执行 `configuration.get`：原目标已不在时告知当前配置事实；仍在时采用原 ID 的最新版本并要求用户重新确认。不能自动重放删除、按同名替换目标、取消原任务或绕过任务保护。
 
+配置页验收使用 `--suite=studio-configuration-browser`，强制显式 compiled candidate、合成个人 OIDC、nonce 数据库/桶/Redis 与 4316 密封画布。该 suite 仅运行现有七个配置页用例，配置与分析模型 HTTP 边界明确由合成 fixture 拥有；不会删除真实渠道或调用提供方。CI 的 `run-studio-configuration-browser.mjs` 复用 P2 已核验的相同候选和密封画布，不重建候选，并核对完整资源回收。旧的 `canvas-upgrade` 基础端口不是这项在线日用验收的入口；不能通过复用日用服务或跳过隔离来运行。
+
 客户端从 `useErpAccess` 取得当前 authority 和本人范围，在请求发出、正文解析、iframe reply、Blob/UI 写回前校验本人/scope/epoch。退出或 CLEAR 必须同步停止新 RPC、取消在途读取、销毁 iframe、清预览和项目记忆；隐藏另一路由仍保留同本人同 scope 的正常画布。自然侧栏切换未带 `brief` 时不等于清空当前项目；明确更换项目或选择未分配才重新核权。短暂网络故障保留草稿；真正撤权、本人变化及已不可访问项目清私文。`generation.get` 可能提交待审方案，不能列为无副作用重试或末核。
 
 ## 固定运行产物与升级

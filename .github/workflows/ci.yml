@@ -153,6 +153,8 @@ jobs:
         run: env -u CHROME_BIN node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p2-creative-browser.mjs
       - name: Validate product knowledge and personal Agent on the same candidate
         run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-p6-knowledge-agent-browser.mjs
+      - name: Validate model removal feedback and read-only reconciliation
+        run: node --env-file=.env --import ./apps/api/node_modules/tsx/dist/loader.mjs tools/scripts/run-studio-configuration-browser.mjs
       - name: Validate current knowledge evaluation and versioned Agent owners
         shell: bash
         run: |

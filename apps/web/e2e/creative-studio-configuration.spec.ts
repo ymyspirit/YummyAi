@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { emptyModelDefaults, type ConfigurationRpc, type ConfigurationSnapshot } from "@yummyai/contracts/ai/model-configuration";
+import { loginErp } from "./erp-identity-fixture.js";
 
 const channelId = "019a0000-0000-7000-8000-000000000001";
 const imageId = "019a0000-0000-7000-8000-000000000002";
@@ -59,7 +60,10 @@ async function fixture(page: Page) {
     const headers: Record<string, string> = authority ? { "x-yummyai-context-authority": authority } : {};
     await route.fulfill({ headers, json: state.snapshot.analysisModels.map(({ id, label, model, providerLabel }) => ({ id, label, model, providerLabel, inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })) });
   });
-  await page.goto("/settings/ai");
+  if (process.env.E2E_STUDIO_CONFIGURATION_ISOLATED === "1") {
+    await loginErp(page, "operator", "/settings/ai");
+    await expect(page).toHaveURL(/\/settings\/ai(?:\?|$)/);
+  } else await page.goto("/settings/ai");
   const frame = page.frameLocator('iframe[title="无限画布模型配置"]');
   await expect(frame.getByRole("button", { name: "编辑渠道", exact: true })).toBeVisible({ timeout: 30_000 });
   return { frame, state };
