@@ -281,7 +281,11 @@ export class AssistService {
     const model = (await this.models(context)).find((m) => m.id === input.modelId);
     if (!model)
       throw new BadRequestException("尚未配置可用的文本模型，请先在 AI 模型配置中添加并启用");
-    const basis = admission?.prepared ? await admission.prepared(input) : await this.contexts.prepareForExecution(context, input);
+    // Native evaluation v1 keeps its sealed execution policy. Ordinary requests
+    // use provider token limits; an evaluation already requires trusted admission above.
+    const basis = admission?.prepared ? await admission.prepared(input) : await this.contexts.prepareForExecution(
+      context, input, false, input.kind === "knowledge_answer" && input.purpose === "evaluation",
+    );
     if (admission?.prepared) {
       if (assistFingerprint(basis.request) !== assistFingerprint(input)) throw new ConflictException("固定样本的原运输身份不一致");
       await this.contexts.assertExecutionCurrent(context, basis);
