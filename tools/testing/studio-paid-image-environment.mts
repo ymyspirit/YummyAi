@@ -2,6 +2,7 @@ import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireStudioPersonalEnvironment } from "./require-studio-personal-environment.mjs";
+import { currentSchemaVersion } from "./current-schema.mjs";
 
 function requirePrivateLoopbackStorage(environment: NodeJS.ProcessEnv) {
   const endpoint = new URL(environment.S3_ENDPOINT || "https://invalid.invalid");
@@ -24,7 +25,7 @@ export function requireStudioPaidImageEnvironment(environment = process.env, bro
   if (environment.E2E_STUDIO_PAID_IMAGE_ISOLATED !== "1" || environment.DATABASE_POOL_SIZE !== "1")
     throw new Error("studio_paid_image_explicit_isolation_required");
   requirePrivateLoopbackStorage(environment);
-  return { ...isolated, schema: 192 as const,
+  return { ...isolated, schema: currentSchemaVersion(),
     lane: paidLane(environment, isolated.nonce) };
 }
 
@@ -36,5 +37,5 @@ export function requireStudioPaidImageLegacyEnvironment(environment = process.en
       || environment.DATABASE_POOL_SIZE !== "2" || environment.STUDIO_PAID_IMAGE_ENABLED !== "0"
       || environment.STUDIO_PAID_IMAGE_TENANT_IDS !== "") throw new Error("studio_paid_image_legacy_explicit_isolation_required");
   requirePrivateLoopbackStorage(environment);
-  return { ...isolated, schema: 192 as const, lane: paidLane(environment, isolated.nonce) };
+  return { ...isolated, schema: currentSchemaVersion(), lane: paidLane(environment, isolated.nonce) };
 }

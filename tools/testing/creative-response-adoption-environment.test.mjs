@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import { requireCreativeResponseAdoptionEnvironment } from "./creative-response-adoption-environment.mts";
 
 const nonce = "7".repeat(32), other = "8".repeat(32);
+const canonicalSchema = JSON.parse(readFileSync(new URL("../../packages/database/migrations/meta/_journal.json", import.meta.url), "utf8")).entries.length;
 const isolated = () => ({ NODE_ENV: "test", E2E_ISOLATED_DAILY: "1", YUMMYAI_STUDIO_PERSONAL_TEST_ISOLATION: "1",
   E2E_CREATIVE_RESPONSE_ADOPTION_ISOLATED: "1", DATABASE_POOL_SIZE: "1", E2E_LEGACY_SCHEMA_TARGET: "current",
   YUMMYAI_TEST_CACHE_DIR: fileURLToPath(new URL("../../tmp/order-daily-artifacts-" + nonce, import.meta.url)),
@@ -21,13 +23,19 @@ test("response adoption rejects missing explicit family or single-session admiss
 test("response adoption uses one disposable nonce and only its new owned lane", () => {
   const value = requireCreativeResponseAdoptionEnvironment(isolated());
   assert.equal(value.nonce, nonce); assert.equal(value.upgrade, false);
-  assert.equal(value.lane, isolated().YUMMYAI_TEST_CACHE_DIR); assert.equal(value.schema, 192);
+  assert.equal(value.lane, isolated().YUMMYAI_TEST_CACHE_DIR); assert.equal(value.schema, canonicalSchema);
   for (const patch of [{ DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:42830/yummyai" },
     { DATABASE_URL: "postgres://synthetic:synthetic@external.invalid:42830/order_daily_e2e_" + nonce },
     { S3_PRIVATE_BUCKET: "order-daily-e2e-" + other }, { E2E_DISPOSABLE_REDIS_CONTAINER: "yummyai-daily-" + other },
     { REDIS_URL: "redis://127.0.0.1:6379" }, { E2E_DISPOSABLE_REDIS_URL: "redis://external.invalid:41111", REDIS_URL: "redis://external.invalid:41111" },
     { E2E_LEGACY_SCHEMA_TARGET: "189" }, { DEMO_ERP: "1" }])
     assert.throws(() => requireCreativeResponseAdoptionEnvironment({ ...isolated(), ...patch }));
+});
+
+test(`response adoption requires this checkout's canonical schema ${canonicalSchema} regardless of environment overrides`, () => {
+  const environment = { ...isolated(), E2E_EXPECTED_SCHEMA: "192", YUMMYAI_EXPECTED_MIGRATIONS: "999" };
+  assert.equal(requireCreativeResponseAdoptionEnvironment(environment).schema, canonicalSchema);
+  assert.equal(requireCreativeResponseAdoptionEnvironment({ ...environment, E2E_CREATIVE_RESPONSE_ADOPTION_UPGRADE_ISOLATED: "1", E2E_LEGACY_SCHEMA_TARGET: "189" }).schema, canonicalSchema);
 });
 
 test("response adoption upgrade admits the real 189 target without pretending it is current or a browser", () => {

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import { requireStudioPaidImageEnvironment, requireStudioPaidImageLegacyEnvironment } from "../testing/studio-paid-image-environment.mts";
 
 const nonce = "e".repeat(32);
+const canonicalSchema = JSON.parse(readFileSync(new URL("../../packages/database/migrations/meta/_journal.json", import.meta.url), "utf8")).entries.length;
 const isolated = () => ({ E2E_ISOLATED_DAILY: "1", YUMMYAI_STUDIO_PERSONAL_TEST_ISOLATION: "1",
   E2E_STUDIO_PAID_IMAGE_ISOLATED: "1", E2E_LEGACY_SCHEMA_TARGET: "current", DATABASE_POOL_SIZE: "1",
   YUMMYAI_TEST_CACHE_DIR: fileURLToPath(new URL("../../tmp/order-daily-artifacts-" + nonce, import.meta.url)),
@@ -14,13 +16,17 @@ const isolated = () => ({ E2E_ISOLATED_DAILY: "1", YUMMYAI_STUDIO_PERSONAL_TEST_
 
 test("paid image rejects mixed resources and any ordinary database before connecting", () => {
   const value = requireStudioPaidImageEnvironment(isolated());
-  assert.equal(value.nonce, nonce); assert.equal(value.schema, 192);
+  assert.equal(value.nonce, nonce); assert.equal(value.schema, canonicalSchema);
   assert.equal(value.lane, isolated().YUMMYAI_TEST_CACHE_DIR);
   for (const patch of [{ E2E_STUDIO_PAID_IMAGE_ISOLATED: undefined }, { DATABASE_POOL_SIZE: "2" },
     { DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:42830/yummyai" },
     { S3_PRIVATE_BUCKET: `order-daily-e2e-${"a".repeat(32)}` }, { REDIS_URL: "redis://127.0.0.1:6379" },
     { E2E_DISPOSABLE_REDIS_CONTAINER: `yummyai-daily-${"a".repeat(32)}` }, { DEMO_ERP: "1" }])
     assert.throws(() => requireStudioPaidImageEnvironment({ ...isolated(), ...patch }));
+});
+
+test(`paid image uses exact checkout schema ${canonicalSchema} rather than an environment override`, () => {
+  assert.equal(requireStudioPaidImageEnvironment({ ...isolated(), E2E_EXPECTED_SCHEMA: "192", YUMMYAI_EXPECTED_MIGRATIONS: "999" }).schema, canonicalSchema);
 });
 
 test("paid image rejects missing foreign or nested runner output without touching it", () => {
@@ -53,6 +59,7 @@ test("only the separate dormant legacy regression may use two isolated connectio
   const legacy = { ...isolated(), DATABASE_POOL_SIZE: "2", E2E_STUDIO_PAID_IMAGE_LEGACY_ISOLATED: "1",
     STUDIO_PAID_IMAGE_ENABLED: "0", STUDIO_PAID_IMAGE_TENANT_IDS: "" };
   assert.equal(requireStudioPaidImageLegacyEnvironment(legacy).nonce, nonce);
+  assert.equal(requireStudioPaidImageLegacyEnvironment({ ...legacy, E2E_EXPECTED_SCHEMA: "192", YUMMYAI_EXPECTED_MIGRATIONS: "999" }).schema, canonicalSchema);
   assert.throws(() => requireStudioPaidImageEnvironment(legacy));
   for (const patch of [{ E2E_STUDIO_PAID_IMAGE_LEGACY_ISOLATED: undefined }, { DATABASE_POOL_SIZE: "1" },
     { DATABASE_POOL_SIZE: "10" }, { STUDIO_PAID_IMAGE_ENABLED: "1" }, { STUDIO_PAID_IMAGE_TENANT_IDS: "*" },
