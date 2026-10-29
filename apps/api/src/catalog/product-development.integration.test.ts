@@ -1,6 +1,7 @@
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
 import { SaveProductSpecificationSchema } from "@yummyai/contracts/catalog/development";
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
+import { ProductionEditorTextLayerSchema } from "@yummyai/contracts/pod/production-editor";
 import { productSpecifications, productSpecificationVersions } from "@yummyai/database";
 import { mutateDevelopment } from "./development-data.js";
 import { randomUUID, createHash } from "node:crypto";
@@ -64,6 +65,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { createDefaultProductionDocument } from "@yummyai/production-editor/products";
 import { encryptProductionBytes } from "@yummyai/production-editor";
+import { getProductionBodySize } from "@yummyai/production-editor/geometry";
 import JSZip from "jszip";
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
@@ -2722,7 +2724,7 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
     ).toBe("unmatched");
   });
 
-  it("dispatches a direct print and SPU specification into a private template draft without a sales recipe", async () => {
+  it("prepares a human private template draft from a direct print and SPU specification without a sales recipe", async () => {
     const creativeVersionId = await creativeVersion("#339977");
     const input = {
       code: "DIRECT-CUSTOM",
@@ -2796,14 +2798,15 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
         artworkVersionId: custom.versionId,
         specificationVersionId: specifications[0]!.versionId,
         printProfileVersionId: profileVersionId,
-        designExecutor: "agent",
+        designExecutor: "human",
         fields: [{ key: "pet_name", label: "宠物名字", value: "Luna", kind: "text" }],
       },
       status: "ready_to_push",
       reason: "Operations confirms direct match",
       idempotencyKey: randomUUID(),
     });
-    expect(detail.line).toMatchObject({ artwork: "not_pushed", editorProjectId: null });
+    expect(detail.draft.designExecutor).toBe("human");
+    expect(detail.line).toMatchObject({ artwork: "not_pushed", editorProjectId: null, designExecutor: "human" });
     const plan = await work.templatePlan(a, id);
     expect(plan).toMatchObject({
       ready: true,
@@ -2827,12 +2830,38 @@ describe.sequential("artwork to sales SKU, immutable package and order basis", (
       idempotencyKey: randomUUID(),
     };
     detail = await work.action(a, id, action);
-    expect(detail.line.artwork).toBe("in_progress");
+    expect(detail.line).toMatchObject({ artwork: "queued", editorProjectId: null, designExecutor: "human" });
+    detail = await work.action(a, id, {
+      action: "start_artwork",
+      expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion,
+      reason: "Human designer explicitly prepares the private template",
+      idempotencyKey: randomUUID(),
+    });
+    expect(detail.line).toMatchObject({ artwork: "in_progress", designExecutor: "human" });
     expect((await work.action(a, id, action)).line.editorProjectId).toBe(
       detail.line.editorProjectId,
     );
-    const project = await editor.get(a, detail.line.editorProjectId!);
+    let project = await editor.get(a, detail.line.editorProjectId!);
     expect(project.project.workSource?.workItemId).toBe(id);
+    expect(project.version.document.automation).toBeUndefined();
+    const originalPrivateVersion = project.version, size = getProductionBodySize(project.version.document);
+    const placement = custom.layout[0]!, field = detail.draft.fields.find(row => row.key === placement.fieldKey)!;
+    const text = ProductionEditorTextLayerSchema.parse({
+      id: "custom_pet_name", kind: "text", name: field.label, text: field.value,
+      fontId: "geist_regular", fontSizeMm: size.width * 0.055, letterSpacingMm: 0, color: "#111111",
+      xMm: size.width * placement.xPercent / 100, yMm: size.height * placement.yPercent / 100,
+      rotationDeg: 0, opacity: 1, visible: true, locked: false, arc: null,
+    });
+    // Human creation uses the editor's normal text shape and a native version save.
+    project = await editor.save(a, project.project.id, {
+      expectedVersionId: project.version.id,
+      document: { ...project.version.document, layers: [...project.version.document.layers, text] },
+    });
+    expect(project.version.id).not.toBe(originalPrivateVersion.id);
+    expect(project.version.versionNumber).toBe(originalPrivateVersion.versionNumber + 1);
+    expect((await editor.get(a, project.project.id, originalPrivateVersion.id)).version.document)
+      .toEqual(originalPrivateVersion.document);
     expect(project.version.document.layers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "catalog_artwork", name: custom.code }),
