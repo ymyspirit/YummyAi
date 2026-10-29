@@ -209,13 +209,14 @@ async function proxy(request: Request, context: Context, method: "GET" | "POST")
               ? `?revision=${params.get("revision")}`
               : "";
     const listRead = method === "GET" && ["workspace", "tasks", "options"].includes(target);
+    const cancellableRead = listRead || (method === "POST" && target === "summaries");
     const timeout = AbortSignal.timeout(listRead ? 12_000 : 110_000);
     const response = await apiFetch(`${base}/v1/order-centers/${target}${query}`, {
       method,
       body,
       cache: "no-store",
       headers: body ? { "content-type": "application/json" } : undefined,
-      signal: listRead ? AbortSignal.any([request.signal, timeout]) : timeout,
+      signal: cancellableRead ? AbortSignal.any([request.signal, timeout]) : timeout,
     });
     if (!response.ok) {
       let message: string | undefined, code: string | undefined;

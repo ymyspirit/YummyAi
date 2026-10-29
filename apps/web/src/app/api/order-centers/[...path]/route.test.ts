@@ -243,6 +243,25 @@ describe("order list proxy recovery", () => {
     );
   });
 
+  it("forwards summary cancellation without cancelling a submitted business action", async () => {
+    const line = "019f0000-0000-7000-8000-000000000001";
+    for (const [path, shouldCancel] of [["summaries", true], [`lines/${line}/intake-check`, false]] as const) {
+      const abort = new AbortController();
+      apiFetchMock.mockImplementationOnce(async (_url, init) => {
+        abort.abort();
+        expect(init?.signal?.aborted).toBe(shouldCancel);
+        return Response.json({ items: [] });
+      });
+      const response = await POST(new Request(`http://web.test/api/order-centers/${path}`, {
+        method: "POST", headers: { origin: "http://web.test", "content-type": "application/json" },
+        body: JSON.stringify(path === "summaries" ? { ids: [line] } : { expectedRevision: 0 }),
+        signal: abort.signal,
+      }), context(path.split("/")));
+      expect(response.status).toBe(200);
+    }
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("returns a recoverable gateway message without exposing the upstream failure", async () => {
     apiFetchMock.mockRejectedValue(new Error("Private upstream connection details"));
     const response = await GET(

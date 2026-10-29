@@ -299,69 +299,60 @@ export class OrderWorkspaceService {
       this.database.db,
       context,
       [Permission.OrderRead], async (tx) => {
-        const totals = await tx.execute(
-          sql`with v as (${workProjection}) select count(*)::int as total, count(distinct "orderId")::int as groups,
-            coalesce(sum(quantity),0) as "matchingQuantity" from v where ${filter}`,
-        );
-        const rows = await tx.execute(
-          query.grouping === "orders"
-            ? sql`with v as (${workProjection}), matched as (select * from v where ${filter}), page_orders as (select "orderId", max("updatedAt") as updated,
-                min("operatorSortRank") as priority, min("platformShipByAt") filter(where "shippedQuantity"<quantity) as deadline
-                from matched group by "orderId" order by ${query.workView ? sql`priority asc, deadline asc nulls last,` : sql``} updated desc, "orderId" desc
-                limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize})
-                select m.* from ${["production", "shipments", "after-sales"].includes(query.module) ? sql`v` : sql`matched`} m join page_orders p on p."orderId" = m."orderId"
-                order by ${query.workView ? sql`p.priority asc, p.deadline asc nulls last,` : sql``} p.updated desc, p."orderId" desc,
-                ${query.workView ? sql`m."operatorSortRank" asc, m."platformShipByAt" asc nulls last,` : sql``} m.id desc limit 1001`
-            : sql`with v as (${workProjection}) select * from v where ${filter} order by ${query.workView ? sql`"operatorSortRank" asc, "platformShipByAt" asc nulls last,` : sql``} "updatedAt" desc, id desc limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize}`,
-        );
+        const countFilter = workFilter({ ...query, stage: undefined, workView: undefined, orderStatus: undefined });
+        const overviewFilter = workFilter({ ...query, workView: undefined, stage: undefined, orderStatus: undefined,
+          preparation: undefined, artwork: undefined, production: undefined, proof: undefined, shipment: undefined,
+          afterSales: undefined, attention: undefined, labelStatus: undefined });
+        // All six list/count consumers share one current, RLS-filtered projection.
+        // Whole-order state is still derived before SKU/status/page filtering.
+        const [batch] = await tx.execute<{
+          total: number; groups: number; matchingQuantity: string | number; orderCount: number;
+          items: Record<string, unknown>[];
+          grouped: Array<{ stage: string; count: number; quantity: number; held: number; overdue: number; changed: number; missing: number }>;
+          operatorCounts: { all: number; todo: number; waiting: number; exceptions: number };
+          lifecycleCounts: Array<{ orderStatus: string; count: number }>;
+        }>(sql`with v as materialized (${workProjection}),
+          matched as (select * from v where ${filter}),
+          count_scope as (select * from v where ${countFilter}),
+          overview_scope as (select * from v where ${overviewFilter}),
+          page_orders as (select "orderId", max("updatedAt") as updated,
+            min("operatorSortRank") as priority, min("platformShipByAt") filter(where "shippedQuantity"<quantity) as deadline
+            from matched group by "orderId"
+            order by ${query.workView ? sql`priority asc, deadline asc nulls last,` : sql``} updated desc, "orderId" desc
+            limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize}),
+          page_rows as (${query.grouping === "orders"
+            ? sql`select m.*, row_number() over(order by ${query.workView ? sql`p.priority asc, p.deadline asc nulls last,` : sql``}
+                p.updated desc, p."orderId" desc, ${query.workView ? sql`m."operatorSortRank" asc, m."platformShipByAt" asc nulls last,` : sql``} m.id desc) as "__pageOrder"
+              from ${["production", "shipments", "after-sales"].includes(query.module) ? sql`v` : sql`matched`} m
+              join page_orders p on p."orderId"=m."orderId"
+              order by "__pageOrder" limit 1001`
+            : sql`select v.*, row_number() over(order by ${query.workView ? sql`"operatorSortRank" asc, "platformShipByAt" asc nulls last,` : sql``}
+                "updatedAt" desc, id desc) as "__pageOrder"
+              from v where ${filter} order by "__pageOrder"
+              limit ${query.pageSize} offset ${(query.page - 1) * query.pageSize}`}),
+          stage_counts as (select "queueStage" as stage, count(*)::int as count, sum(quantity)::int as quantity,
+            count(*) filter(where held or "sideState"='on_hold')::int as held,
+            count(*) filter(where "platformShipByAt"<now() and "shippedQuantity"<quantity and "sideState" is distinct from 'cancelled')::int as overdue,
+            count(*) filter(where "sourceChanged")::int as changed,
+            count(*) filter(where "labelStatus" in ('missing','partial'))::int as missing
+            from count_scope group by "queueStage"),
+          lifecycle_counts as (select "orderStatus", count(distinct "orderId")::int as count
+            from overview_scope group by "orderStatus")
+          select (select count(*)::int from matched) as total,
+            (select count(distinct "orderId")::int from matched) as groups,
+            (select coalesce(sum(quantity),0) from matched) as "matchingQuantity",
+            (select count(distinct "orderId")::int from count_scope) as "orderCount",
+            coalesce((select jsonb_agg(to_jsonb(p)-'__pageOrder' order by p."__pageOrder") from page_rows p),'[]'::jsonb) as items,
+            coalesce((select jsonb_agg(to_jsonb(s)) from stage_counts s),'[]'::jsonb) as grouped,
+            (select jsonb_build_object('all',count(*)::int,'todo',count(*) filter(where ${operatorTodo})::int,
+              'waiting',count(*) filter(where ${operatorWaiting})::int,'exceptions',count(*) filter(where "operatorException")::int)
+              from overview_scope) as "operatorCounts",
+            coalesce((select jsonb_agg(to_jsonb(l)) from lifecycle_counts l),'[]'::jsonb) as "lifecycleCounts"`);
+        const rows = batch?.items ?? [], grouped = batch?.grouped ?? [], lifecycleCounts = batch?.lifecycleCounts ?? [];
         if (rows.length > 1000)
-          throw new UnprocessableEntityException(
-            "本页商品超过 1000 条，请减少每页订单数或缩小筛选范围",
-          );
-        const grouped = await tx.execute(sql`with v as (${workProjection})
-        select "queueStage" as stage, count(*)::int as count, sum(quantity)::int as quantity,
-        count(*) filter(where held or "sideState"='on_hold')::int as held,
-        count(*) filter(where "platformShipByAt"<now() and "shippedQuantity"<quantity and "sideState" is distinct from 'cancelled')::int as overdue,
-        count(*) filter(where "sourceChanged")::int as changed,
-        count(*) filter(where "labelStatus" in ('missing','partial'))::int as missing
-        from v where ${workFilter({ ...query, stage: undefined, workView: undefined, orderStatus: undefined })} group by "queueStage"`);
-        const countOrders = await tx.execute(
-          sql`with v as (${workProjection}) select count(distinct "orderId")::int as count from v where ${workFilter({ ...query, stage: undefined, workView: undefined, orderStatus: undefined })}`,
-        );
-        const [operatorCounts] = await tx.execute(sql`with v as (${workProjection})
-          select count(*)::int as "all", count(*) filter(where ${operatorTodo})::int as todo,
-            count(*) filter(where ${operatorWaiting})::int as waiting, count(*) filter(where "operatorException")::int as exceptions
-          from v where ${workFilter({
-            ...query,
-            workView: undefined,
-            stage: undefined,
-            orderStatus: undefined,
-            preparation: undefined,
-            artwork: undefined,
-            production: undefined,
-            proof: undefined,
-            shipment: undefined,
-            afterSales: undefined,
-            attention: undefined,
-            labelStatus: undefined,
-          })}`);
-        const lifecycleCounts = await tx.execute(sql`with v as (${workProjection})
-          select "orderStatus", count(distinct "orderId")::int as count from v
-          where ${workFilter({
-            ...query,
-            orderStatus: undefined,
-            workView: undefined,
-            stage: undefined,
-            preparation: undefined,
-            artwork: undefined,
-            production: undefined,
-            proof: undefined,
-            shipment: undefined,
-            afterSales: undefined,
-            attention: undefined,
-            labelStatus: undefined,
-          })}
-          group by "orderStatus"`);
+          throw new UnprocessableEntityException("本页商品超过 1000 条，请减少每页订单数或缩小筛选范围");
+        const totals = [{ total: batch?.total ?? 0, groups: batch?.groups ?? 0, matchingQuantity: batch?.matchingQuantity ?? 0 }];
+        const countOrders = [{ count: batch?.orderCount ?? 0 }], operatorCounts = batch?.operatorCounts;
         const counts: OrderQueueCounts = {
           total: 0,
           orders: Number(countOrders[0]?.count ?? 0),
@@ -501,23 +492,33 @@ export class OrderWorkspaceService {
     return this.detail(context, id);
   }
 
+  /** Summary cards need current work/source headers, not global production/quality aggregates. */
+  private summaryLines(tx: TenantTransaction, ids: readonly string[]) {
+    return tx.select({ id: orderLines.id, orderId: orders.id, reportLineId: amazonOrderReportLines.id,
+      revision: sql<number>`coalesce(${items.revision},0)`, printSku: items.printSku,
+      held: sql<boolean>`coalesce(${items.held},false)`, sideState: orders.sideState,
+      sourceChanged: sql<boolean>`(coalesce(${items.revision},0)>0 and ${items.sourceVersionId} is distinct from ${amazonOrderReportLines.currentVersionId})`,
+      designExecutor: sql<"human" | "agent" | null>`case when ${items.preparation}='pushed' and exists(
+        select 1 from order_design_agent_runs handoff where handoff.work_item_id=${items.id}
+          and handoff.work_revision_id=${items.pushedRevisionId} and handoff.status='cancelled'
+          and handoff.error_code='agent_manual_takeover') then 'human' else ${items.searchDesignExecutor} end`,
+    }).from(orderLines).innerJoin(orders, eq(orders.id, orderLines.orderId))
+      .leftJoin(amazonOrderReportLines, eq(amazonOrderReportLines.orderLineId, orderLines.id))
+      .leftJoin(items, eq(items.id, orderLines.id)).where(inArray(orderLines.id, [...ids]));
+  }
+
   async summaries(context: TenantContext, raw: unknown) {
     authorize(context, Permission.OrderRead);
     authorize(context, Permission.OrderPiiRead);
     const { ids } = OrderWorkSelectionInputSchema.parse(raw);
     const state = await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead], async (tx) => {
       await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
-      const rows = await tx.execute(
-        sql`with v as (${workProjection}) select * from v where id in (${sql.join(
-          ids.map((id) => sql`${id}`),
-          sql`,`,
-        )})`,
-      );
+      const rows = await this.summaryLines(tx, ids);
       // No private key or encrypted draft may escape this discovery transaction.
       const work = await tx.select({ id: items.id, revision: items.revision, reportLineId: items.reportLineId, sourceVersionId: items.sourceVersionId,
         expiresAt: items.expiresAt, archivedAt: items.archivedAt, retained: sql<boolean>`${items.encryptedDataKey} is not null` })
         .from(items).where(inArray(items.id, ids));
-      const lines = rows.map(parseLine), orderIds = [...new Set(lines.map(line => line.orderId))];
+      const lines = rows, orderIds = [...new Set(lines.map(line => line.orderId))];
       const sources = orderIds.length ? await tx.select({ id: orders.id, addressStatus: orders.addressStatus }).from(orders).where(inArray(orders.id, orderIds)) : [];
       const privacy = orderIds.length ? await tx.select({ orderId: orderProtectedDetails.orderId, status: orderProtectedDetails.status,
         expiresAt: orderProtectedDetails.retentionExpiresAt, retained: sql<boolean>`${orderProtectedDetails.encryptedEnvelope} is not null` })
@@ -548,24 +549,25 @@ export class OrderWorkspaceService {
       // Retention/anonymization takes order first and erases report versions
       // before work keys. Keep the same source-lock direction here.
       const sourceOrders = orderIds.length ? await tx.select().from(orders).where(inArray(orders.id, orderIds)).orderBy(asc(orders.id)).for("share") : [];
-      const privacy = orderIds.length ? await tx.select().from(orderProtectedDetails).where(inArray(orderProtectedDetails.orderId, orderIds))
-        .orderBy(asc(orderProtectedDetails.orderId)).for("share") : [];
+      const privacy = orderIds.length ? await tx.select({ orderId: orderProtectedDetails.orderId, status: orderProtectedDetails.status,
+        retentionExpiresAt: orderProtectedDetails.retentionExpiresAt, retained: sql<boolean>`nullif(${orderProtectedDetails.encryptedEnvelope},'') is not null` })
+        .from(orderProtectedDetails).where(inArray(orderProtectedDetails.orderId, orderIds)).orderBy(asc(orderProtectedDetails.orderId)).for("share") : [];
       const checkedReports = await this.reports.verifySummaryDetailsInTransaction(tx, context, reports);
       const work = await tx.select().from(items).where(inArray(items.id, ids)).orderBy(asc(items.id)).for("share");
       const drafts = await tx.select({ id: revisions.workItemId, encryptedDraft: revisions.encryptedDraft })
         .from(revisions).innerJoin(items, and(eq(items.id, revisions.workItemId), eq(items.revision, revisions.revision)))
         .where(inArray(items.id, ids));
-      const currentRows = await tx.execute(sql`with v as (${workProjection}) select * from v where id in (${sql.join(ids.map(id => sql`${id}`), sql`,`)})`);
-      const lines = currentRows.map(parseLine);
-      const sourceAvailability = async (lineId: string, orderId: string) => {
+      const lines = await this.summaryLines(tx, ids);
+      const [initialClock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
+      const initialNow = new Date(initialClock!.now);
+      const sourceAvailability = (lineId: string, orderId: string, now = initialNow, reportDeadlines: readonly Date[] = []) => {
         const order = sourceOrders.find(order => order.id === orderId), retainedWork = work.find(row => row.id === lineId);
         const protectedDetail = privacy.find(row => row.orderId === orderId);
-        const [clock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
         return orderSummaryAvailability({ anonymized: order?.addressStatus === "anonymized" || protectedDetail?.status === "anonymized",
-          deadlines: [...(retainedWork ? [retainedWork.expiresAt] : []), ...(protectedDetail ? [protectedDetail.retentionExpiresAt] : [])],
-          cleared: Boolean(retainedWork && !retainedWork.encryptedDataKey) || Boolean(protectedDetail && !protectedDetail.encryptedEnvelope),
+          deadlines: [...(retainedWork ? [retainedWork.expiresAt] : []), ...(protectedDetail ? [protectedDetail.retentionExpiresAt] : []), ...reportDeadlines],
+          cleared: Boolean(retainedWork && !retainedWork.encryptedDataKey) || Boolean(protectedDetail && !protectedDetail.retained),
           archived: Boolean(retainedWork?.archivedAt), failed: !order,
-        }, new Date(clock!.now));
+        }, now);
       };
       const artworks = new Map<string, Awaited<ReturnType<typeof readArtwork>>>();
       const specifications = new Map<string, Awaited<ReturnType<typeof readSpecification>>>();
@@ -710,13 +712,15 @@ export class OrderWorkspaceService {
       }
       // No private result is adopted after its original source/authority fence.
       const finalReports = await this.reports.verifySummaryDetailsInTransaction(tx, context, checkedReports);
+      const [finalClock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
+      const finalNow = new Date(finalClock!.now);
       for (const summary of result) {
         if (summary.availability !== "available") continue;
         const line = lines.find(line => line.id === summary.id)!;
-        const availability = await sourceAvailability(line.id, line.orderId);
-        if (availability !== "available") { hideOrderSummary(summary, availability); continue; }
         const selection = summaryReportSelection(line, work.find(work => work.id === line.id));
         const reportRead = selection ? finalReports.find(read => sameSummaryReportSelection(read.selection, selection)) : null;
+        const availability = sourceAvailability(line.id, line.orderId, finalNow, reportRead?.retentionDeadlines);
+        if (availability !== "available") { hideOrderSummary(summary, availability); continue; }
         if (selection && !reportRead) hideOrderSummary(summary, "failed", "定制资料已变化 请重新读取");
         else if (reportRead && reportRead.availability !== "available") hideOrderSummary(summary, reportRead.availability, reportRead.error ?? undefined);
       }

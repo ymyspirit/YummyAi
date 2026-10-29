@@ -24,7 +24,7 @@ export default defineConfig({
       "src/ai/agent-native-v4.integration.test.ts", "src/ai/agent-native-v4-late.integration.test.ts",
       "src/ai/agent-native-v4-upgrade.integration.test.ts", "src/ai/agent-native-v4-shipment-create.integration.test.ts",
       "src/ai/agent-fulfillment-command.integration.test.ts", "src/ai/agent-fulfillment-command-upgrade.integration.test.ts",
-      "src/orders/order-summary-availability.integration.test.ts",
+      "src/orders/order-summary-availability.integration.test.ts", "src/orders/order-center-performance.integration.test.ts",
       "src/ai/agent-read.integration.test.ts", "src/ai/assist-request-recovery.integration.test.ts",
       "src/ai/agent-chat.integration.test.ts",
       "src/ai/assist-target-page.integration.test.ts",
