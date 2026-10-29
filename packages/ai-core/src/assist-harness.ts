@@ -1,10 +1,10 @@
-import { AssistKindSchema, CreateAssistSchema, AssistResultSchema, LegacyAssistResultSchema, type AssistKind } from "@yummyai/contracts/ai/assist";
+import { AssistKindSchema, CreateAssistSchema, type AssistKind } from "@yummyai/contracts/ai/assist";
 import type { HarnessToolDescriptor } from "@yummyai/contracts/harness";
-import { ASSIST_INSTRUCTIONS, ASSIST_BENCHMARK_INSTRUCTIONS } from "./assist.js";
-import { ARTWORK_AUDIT_INSTRUCTIONS } from "./artwork-audit.js";
+import { assistResultSchema } from "./assist.js";
+import { assistSystemInstructions } from "./assist-execution-policy.js";
 import { HarnessRegistry } from "./harness-registry.js";
 
-const version = "assist-method-2026-10-16-v1";
+const legacyVersion = "assist-method-2026-10-16-v1", orderVersion = "assist-method-2026-10-27-v2";
 const labels: Record<AssistKind, string> = {
   creative: "原创方向分析", order_review: "订单资料预审", artwork_preflight: "生产稿预检",
   template_config: "模板配置建议", sku_package: "SKU资料包建议", business_review: "经营依据分析",
@@ -25,7 +25,7 @@ export function assistHarness(kind: AssistKind, artworkAudit: boolean, permissio
   if (benchmark && (kind !== "knowledge_answer" || artworkAudit)) throw new Error("assist_execution_version_unsupported");
   const requiredPermissions = [...new Set(permissions)].sort(), identity = JSON.stringify([kind, artworkAudit, requiredPermissions, permissionPolicyVersion, benchmark]);
   const cached = cache.get(identity); if (cached) return cached;
-  const selectedVersion = benchmark ? "assist-benchmark-2026-10-21-v1" : version;
+  const selectedVersion = benchmark ? "assist-benchmark-2026-10-21-v1" : kind === "order_review" ? orderVersion : legacyVersion;
   const toolKey = `yummyai.assist.${kind}${benchmark ? ".benchmark" : ""}`, skill = { key: `${toolKey}${artworkAudit ? ".artwork_audit" : ".review"}`, version: selectedVersion };
   const inputSchema = CreateAssistSchema.options.find(option => option.shape.kind.value === kind)!;
   const registry = new HarnessRegistry("ai_assist", [{
@@ -35,9 +35,9 @@ export function assistHarness(kind: AssistKind, artworkAudit: boolean, permissio
       permissionPolicyVersion, requiredPermissions, resourcePolicy: "assist.current-input-authority-v1", dataDomains: domains[kind],
       timeout: { mode: "abort_signal", milliseconds: 120_000 }, maxInputBytes: 1024 * 1024, maxOutputBytes: 8 * 1024 * 1024,
       recovery: "response_or_reconcile", approval: "owning_business_flow",
-    }, inputSchema, outputSchema: benchmark ? AssistResultSchema : LegacyAssistResultSchema,
+    }, inputSchema, outputSchema: assistResultSchema(benchmark, kind === "order_review"),
   }], [{
-    ...skill, label: benchmark ? "固定数据集知识评测" : labels[kind], instructions: ASSIST_INSTRUCTIONS + (artworkAudit ? `\n${ARTWORK_AUDIT_INSTRUCTIONS}` : "") + (benchmark ? `\n${ASSIST_BENCHMARK_INSTRUCTIONS}` : ""),
+    ...skill, label: benchmark ? "固定数据集知识评测" : labels[kind], instructions: assistSystemInstructions(artworkAudit, benchmark, kind === "order_review"),
     steps: ["authorize_current_member", "check_current_dependencies", "prepare_evidence", "checkpoint_response", "validate_citations", "handoff_to_business_owner"],
     tools: [{ key: toolKey, version: selectedVersion }],
   }]);

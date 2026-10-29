@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createEntityId } from "@yummyai/contracts";
-import { AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { AssistViewSchema, CreateAssistSchema, type AssistHistoryEntry } from "@yummyai/contracts/ai/assist";
 import { AssistAutomaticAuditReuseProofSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
 import { ARTWORK_AUDIT_POLICY, ArtworkAuditCodeSchema, ArtworkAuditReportSchema } from "@yummyai/contracts/ai/artwork-audit";
 import { erpSessionAuthority, type ErpSessionView } from "@yummyai/contracts/auth/session";
@@ -59,6 +59,77 @@ describe("AI assist authenticated proxy", () => {
     vi.clearAllMocks(); mocks.upstream.mockReset(); mocks.identity.mockResolvedValue({ view: actor }); mocks.current.mockResolvedValue();
     mocks.failure.mockImplementation((error: PersonalSessionError) => Response.json({ code: error.code }, { status: error.status }));
     process.env.API_BASE_URL = "http://api.test";
+  });
+
+  it.each(["knowledge_answer", "artwork_preflight"] as const)("preserves shared usage history for %s before the client reads the original detail", async kind => {
+    const reader = kind === "artwork_preflight" ? auditMetadata().reviewer : actor;
+    mocks.identity.mockResolvedValue({ view: reader });
+    const stamp = erpSessionAuthority(reader), automatic = kind === "artwork_preflight";
+    const query = new URLSearchParams({ kind, scope: (automatic ? "order:" : "knowledge:") + createEntityId(), ...(automatic ? { automaticAudit: "1" } : {}) });
+    const row: AssistHistoryEntry = { id: createEntityId(), status: "completed", createdAt: "2026-10-29T00:00:00.000Z", modelLabel: "Synthetic history model",
+      tokenUsage: { version: "model-token-usage-v1", inputTokens: 100, outputTokens: 60, cachedInputTokens: 20, totalTokens: 160, totalTokensBasis: "provider" },
+      usageSummary: { scope: "assist_scope", state: "complete", callCount: 1, reportedCalls: 1, unknownCalls: 0,
+        inputTokens: 100, outputTokens: 60, cachedInputTokens: 20, totalTokens: 160 } };
+    mocks.upstream.mockResolvedValueOnce(Response.json([row]));
+    const response = await GET(new Request(`${origin}/api/ai-assists/runs?${query}`, { headers: { "x-yummyai-context-authority": stamp } }), context(["runs"]));
+    expect(response.status).toBe(200); expect(await response.json()).toEqual([row]);
+    expect(response.headers.get("x-yummyai-context-authority")).toBe(stamp);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.upstream).toHaveBeenCalledWith(`http://api.test/v1/ai-assists/runs?${query}`, expect.objectContaining({ method: "GET", cache: "no-store" }));
+    expect(mocks.current).toHaveBeenCalledOnce();
+  });
+
+  it("keeps legacy history readable but rejects unknown fields in the upstream history", async () => {
+    const row = { id: createEntityId(), status: "completed", createdAt: "2026-10-29T00:00:00.000Z", modelLabel: "Synthetic legacy model" };
+    const target = () => new Request(`${origin}/api/ai-assists/runs?kind=knowledge_answer&scope=knowledge:${createEntityId()}`,
+      { headers: { "x-yummyai-context-authority": authority } });
+    mocks.upstream.mockResolvedValueOnce(Response.json([row]));
+    const legacy = await GET(target(), context(["runs"]));
+    expect(legacy.status).toBe(200); expect(await legacy.json()).toEqual([row]);
+    mocks.upstream.mockResolvedValueOnce(Response.json([{ ...row, syntheticPrivateBody: "Synthetic substituted response" }]));
+    const invalid = await GET(target(), context(["runs"]));
+    expect(invalid.status).toBe(502); expect(await invalid.text()).not.toContain("Synthetic substituted response");
+  });
+
+  it.each([
+    ["assist_model_changed", "模型配置已变化 请刷新模型后核对再分析 当前填写仍保留"],
+    ["assist_pricing_changed", "模型计价已变化 请刷新价格与单次上限后再分析 当前填写仍保留"],
+    ["assist_concurrency_limit", "当前已有 4 个分析任务 请等待完成后再发起 当前填写仍保留"],
+    ["assist_pricing_required", "请先为所选模型填写输入单价 输出单价和单次费用上限 当前填写仍保留"],
+    ["assist_task_budget_exceeded", "本次预估超过组织单次 AI 预算 请核对限额后再分析 当前填写仍保留"],
+    ["assist_unpriced_usage", "本月存在未计价的 AI 调用 请先核对账单与预算 当前填写仍保留"],
+    ["assist_monthly_budget_exceeded", "组织当月 AI 预算不足 请核对预算后再分析 当前填写仍保留"],
+  ])("exposes only the fixed safe configuration failure for POST runs 409: %s", async (code, message) => {
+    const secret = "synthetic-upstream-secret-and-private-order-value";
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code, message: secret, detail: secret }, { status: 409 }));
+    const response = await POST(post(JSON.stringify(request())), context(["runs"]));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ code, message });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.current).toHaveBeenCalledOnce();
+    expect(mocks.upstream).toHaveBeenCalledOnce();
+  });
+
+  it("never passes through unknown codes or arbitrary upstream messages, including safe codes on another route or status", async () => {
+    const secret = "synthetic-upstream-secret-and-private-order-value";
+    for (const upstream of [
+      Response.json({ code: "assist_private_provider_failure", message: secret }, { status: 409 }),
+      Response.json({ code: "__proto__", message: secret }, { status: 409 }),
+      Response.json({ code: "assist_model_changed", message: secret }, { status: 503 }),
+      new Response(secret, { status: 409 }),
+    ]) {
+      mocks.upstream.mockResolvedValueOnce(upstream);
+      const response = await POST(post(JSON.stringify(request())), context(["runs"]));
+      const body = await response.json() as { code?: string; message: string };
+      expect(body.code).toBeUndefined();
+      expect(body.message).not.toContain(secret);
+      expect(body.message).not.toContain("刷新模型");
+      expect(body.message).toBe(response.status === 409 ? "原请求或固定依据存在冲突 请先读取原回执"
+        : "分析请求结果暂不可核对 请保留原编号 不重复发起付费任务");
+    }
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code: "assist_model_changed", message: secret }, { status: 409 }));
+    const response = await GET(new Request(`${origin}/api/ai-assists/models`), context(["models"]));
+    expect(await response.json()).toEqual({ message: "原请求或固定依据存在冲突 请先读取原回执" });
   });
 
   it("rejects cross-origin writes, oversized bodies, invalid JSON and unrelated routes before authentication forwarding", async () => {

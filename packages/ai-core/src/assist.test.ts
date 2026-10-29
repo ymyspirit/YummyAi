@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { CreativeRequirementsSchema } from "@yummyai/contracts/catalog/artwork";
 import {
   AssistResultSchema,
+  BenchmarkAssistResultSchema,
   LegacyAssistResultSchema,
+  OrderReviewAssistResultSchema,
   type AssistDirection,
   type AssistResult,
 } from "@yummyai/contracts/ai/assist";
@@ -184,6 +187,7 @@ describe("bounded ERP assist output", () => {
     const value = {
       ...result(),
       directions: [],
+      orderFieldBindings: [],
       matches: [
         {
           artworkVersionId: id(5),
@@ -205,7 +209,9 @@ describe("bounded ERP assist output", () => {
       ),
     ).toThrow("assist_invalid_match");
   });
-  it("emits a strict ordinary Worker schema with every object property required", () => {
+  it.each([
+    ["legacy", LegacyAssistResultSchema], ["order_review", OrderReviewAssistResultSchema],
+  ] as const)("emits a strict %s Worker schema with every object property required", (_kind, schema) => {
     const visit = (value: unknown) => {
       if (!value || typeof value !== "object") return;
       const obj = value as Record<string, unknown>;
@@ -217,15 +223,40 @@ describe("bounded ERP assist output", () => {
         if (Array.isArray(v)) v.forEach(visit);
         else visit(v);
     };
-    visit(z.toJSONSchema(LegacyAssistResultSchema));
+    visit(z.toJSONSchema(schema));
   });
-  it("preserves historical assist output bytes without adding typedAnswers", () => {
+  it("keeps the registered legacy and benchmark JSON schemas byte-identical to the dd7a528 baseline", () => {
+    // Captured once from the original dd7a528 modules. Tests never execute Git.
+    const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const legacy = z.toJSONSchema(LegacyAssistResultSchema), benchmark = z.toJSONSchema(BenchmarkAssistResultSchema);
+    const originalFields = ["summary", "artworkChecks", "findings", "directions", "matches", "missingInformation",
+      "templateSlots", "listingCopy", "actions", "replyDraft"];
+    expect(Object.keys(legacy.properties!)).toEqual(originalFields);
+    expect(legacy.required).toEqual(originalFields);
+    expect(Object.keys(benchmark.properties!)).toEqual(["summary", "typedAnswers", ...originalFields.slice(1)]);
+    expect(benchmark.required).toEqual(originalFields);
+    expect(sha256(legacy)).toBe("4f641a5b0cd81fd28f3aa86dc39dfa1b7628f93eaeb98323fa8dc1e96e2f02bb");
+    expect(sha256(benchmark)).toBe("a75ae7ca6fbff2928e3169a8ccec5166a43636f84ffa2c9c64d6d6d5f1efd06b");
+    expect(legacy.properties).not.toHaveProperty("orderFieldBindings");
+    expect(benchmark.properties).not.toHaveProperty("orderFieldBindings");
+  });
+  it("preserves historical public assist output bytes without adding typedAnswers or order bindings", () => {
     const original = result();
     const originalJson = JSON.stringify(original);
     const parsed = AssistResultSchema.parse(original);
     expect(parsed).not.toHaveProperty("typedAnswers");
+    expect(parsed).not.toHaveProperty("orderFieldBindings");
     expect(JSON.stringify(parsed)).toBe(originalJson);
+    expect(JSON.stringify(LegacyAssistResultSchema.parse(original))).toBe(originalJson);
     expect(JSON.stringify(original)).toBe(originalJson);
+  });
+  it("adds bindings only to fresh order-review output without changing the public old-result default", () => {
+    const original = result(), sealed = JSON.stringify(original);
+    expect(OrderReviewAssistResultSchema.parse(original)).toEqual({ ...original, orderFieldBindings: [] });
+    expect(AssistResultSchema.parse(original)).not.toHaveProperty("orderFieldBindings");
+    expect(BenchmarkAssistResultSchema.parse(original)).not.toHaveProperty("orderFieldBindings");
+    expect(AssistResultSchema.parse({ ...original, orderFieldBindings: [] })).toHaveProperty("orderFieldBindings", []);
+    expect(JSON.stringify(original)).toBe(sealed);
   });
   it("keeps required fields, overlong text and process mismatch as rule checks", () => {
     const detail = {

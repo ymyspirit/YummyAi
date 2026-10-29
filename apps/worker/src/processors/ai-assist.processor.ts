@@ -3,17 +3,20 @@ import {
   isBenchmarkAssist,
   assistUsesReviewedGuidance,
   HarnessContractError,
-  ASSIST_MAX_OUTPUT_TOKENS,
+  ASSIST_LEGACY_MAX_OUTPUT_TOKENS,
+  assistPromptVersion,
+  assistResultSchema,
   OpenAiCompatibleProvider,
   OpenAiProvider,
   ProviderError,
   validateAssistResult,
+  ModelResponseCheckpointSchema,
   readAssistResearchImageBytes,
   type AssistContext,
   type ModelProvider,
   type SecretVault,
 } from "@yummyai/ai-core";
-import { AssistResultSchema, LegacyAssistResultSchema, CreateAssistSchema, AssistInputAuthoritySchema } from "@yummyai/contracts/ai/assist";
+import { CreateAssistSchema, AssistInputAuthoritySchema } from "@yummyai/contracts/ai/assist";
 import { authorizeAssistRequest, ForbiddenError, requiredAssistPermissions, ASSIST_ACCESS_POLICY_VERSION } from "@yummyai/authz";
 import type { TenantContext } from "@yummyai/contracts";
 import {
@@ -36,7 +39,7 @@ import type { JobEnvelope } from "@yummyai/jobs";
 import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
-import { DurableAssistExecution } from "./ai-assist-execution.js";
+import { DurableAssistExecution, assistResultReceipt, settleAssistResponse } from "./ai-assist-execution.js";
 import { knowledgeExecutionAuthority, assertMethodKnowledge } from "@yummyai/knowledge-core";
 
 type ProviderRow = typeof modelProviderConfigs.$inferSelect;
@@ -159,6 +162,7 @@ export class AiAssistProcessor {
       // Image downloads may take seconds. Re-read current grants and route just before external submission.
       const provider = await this.providerForExecution(context, row, input);
       const harness = assistHarness(row.kind, !!input.artworkAudit, requiredAssistPermissions(row.kind, "run"), ASSIST_ACCESS_POLICY_VERSION, isBenchmarkAssist(input));
+      let receiptCaptured=false;
       const result = await this.modelVault.withSecret(provider.encryptedApiKey, async (apiKey) => {
         const model = this.providerFactory(provider, apiKey, row);
         if (row.expiresAt <= new Date()) throw new Error("assist_expired");
@@ -177,14 +181,21 @@ export class AiAssistProcessor {
               availableImageIds: imageIds,
             },
             images,
-            outputSchema: isBenchmarkAssist(input) ? AssistResultSchema : LegacyAssistResultSchema,
+            outputSchema: assistResultSchema(isBenchmarkAssist(input), row.kind === "order_review"),
             outputSchemaName: "erp_assist",
             maxCostUsd: row.modelSnapshot.maxTaskCostUsd,
-            maxOutputTokens: ASSIST_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: input.outputTokenPolicy === "provider" ? null : ASSIST_LEGACY_MAX_OUTPUT_TOKENS,
+            onResponseCheckpoint:async response=>{
+              const original=ModelResponseCheckpointSchema.parse(response);
+              if(original.modelKey!==row.modelSnapshot.model || original.providerId!==model.providerId)throw new Error("assist_response_identity_invalid");
+              await withTenant(this.database.db,context,tx=>settleAssistResponse(tx,row,original));
+              receiptCaptured=true;
+            },
           },
           AbortSignal.timeout(harness.registry.descriptor(input.executionContract, harness.skill, harness.toolKey).timeout.milliseconds),
         );
       });
+      if(!receiptCaptured)await withTenant(this.database.db,context,tx=>settleAssistResponse(tx,row,assistResultReceipt(result)));
       const validated = validateAssistResult(result.value, input, imageIds);
       harness.registry.checkOutput(input.executionContract, harness.skill, harness.toolKey, validated);
       const usageKnown =
@@ -248,6 +259,8 @@ export class AiAssistProcessor {
   }
 
   private async providerForExecution(context: TenantContext, row: Run, input: AssistContext): Promise<ProviderRow> {
+    if (row.promptVersion !== assistPromptVersion(isBenchmarkAssist(input), row.kind === "order_review"))
+      throw new Error("assist_execution_version_unsupported");
     const { current, grants, provider, route, policy } = await withTenant(this.database.db, context, async tx => {
       const [current] = await tx.select({ status: runs.status, expiresAt: runs.expiresAt }).from(runs)
         .where(and(eq(runs.id, row.id), eq(runs.ownerId, context.userId)));

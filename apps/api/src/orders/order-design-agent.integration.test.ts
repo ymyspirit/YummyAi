@@ -1,15 +1,17 @@
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import JSZip from "jszip";
 import { SecretVault,harnessChecksum } from "@yummyai/ai-core";
 import { Permission } from "@yummyai/authz";
 import { createEntityId, CustomizationSchema, type ProductionEditorDocument, type TenantContext } from "@yummyai/contracts";
 import { ArtworkLayoutSchema } from "@yummyai/contracts/catalog/artwork";
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import type { OrderDesignRestoreResponse } from "@yummyai/contracts/order/design-agent";
 import type { DesignAutomationRecipe, DesignQualityReport } from "@yummyai/contracts/pod/design-automation";
 import { createPillowPipeline, PILLOW_CONTOUR_GRAPH_VERSION,DesignAutomationPlanSchema } from "@yummyai/contracts/pod/design-automation";
 import {
-  aiBudgetLedger, aiBudgetPolicies, connectDatabase, marketplaceAccounts, memberships, membershipRoles,
+  aiBudgetLedger, aiBudgetPolicies, amazonOrderReportLines, connectDatabase, marketplaceAccounts, memberships, membershipRoles,
   migrateDatabase, modelProviderConfigs, modelRoutes, orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderDesignDispatchTenants,
   orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions,
   productionEditorImages as images, productionEditorProjects as projects, productionEditorRenders as renders,
@@ -36,6 +38,7 @@ import { ProductionEditorService } from "../design/production-editor.service.js"
 import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderWorkspaceService } from "./order-workspace.service.js";
+import { prepareOrderDesignSnapshot } from "./order-design-snapshot.js";
 import { RuleCenterService, resolveOrderRules } from "../rules/rule-center.service.js";
 import { MethodGovernanceService } from "../knowledge/method-governance.service.js";
 import { KnowledgeService } from "../knowledge/knowledge.service.js";
@@ -1250,6 +1253,238 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
   },30_000);
 
   async function pillowImage(size:number) {return sharp(Buffer.from(`<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg"><ellipse cx="${size/2}" cy="${size/2}" rx="${size*0.43}" ry="${size*0.44}" fill="#795630"/></svg>`)).png().toBuffer();}
+
+  it("order requirement analysis preserves raw empty text and styles, confirms intake, and pins real notes to an unapproved Agent candidate", async () => {
+    const f = await requirementOrder(), initial = await f.workspace.detail(f.context, f.lineId);
+    const reviewState = () => withTenant(database.db, f.context, async tx => {
+      const [report] = await tx.select({ reviewedVersionId: amazonOrderReportLines.reviewedVersionId,
+        reviewedBy: amazonOrderReportLines.reviewedBy, reviewedAt: amazonOrderReportLines.reviewedAt })
+        .from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id, f.reportLineId));
+      const revisions = await tx.select({ id: orderWorkRevisions.id, revision: orderWorkRevisions.revision, checksum: orderWorkRevisions.checksum })
+        .from(orderWorkRevisions).where(eq(orderWorkRevisions.workItemId, f.lineId)).orderBy(orderWorkRevisions.revision);
+      return { report, revisions };
+    });
+    const beforeConfirmation = await reviewState();
+    expect(beforeConfirmation.report).toEqual({ reviewedVersionId: null, reviewedBy: null, reviewedAt: null });
+    expect(beforeConfirmation.revisions).toHaveLength(1);
+    const rawDraft = { ...initial.draft, instructions: "Synthetic operator instruction Preserve the original ears" };
+    const checked = await f.workspace.intakeCheck(f.context, f.lineId, { expectedRevision: initial.line.revision,
+      expectedSourceVersionId: initial.report!.versionId, draft: rawDraft });
+    expect(checked.issues).toEqual([]);
+    expect(checked.ready).toBe(true);
+    expect(checked.normalizedDraft.designExecutor).toBe("agent");
+    expect(checked.requirements!.basis.draftChecksum).toBe(checksum(orderRequirementDraftInput(rawDraft)));
+    expect(checksum(orderRequirementDraftInput(checked.normalizedDraft))).not.toBe(checked.requirements!.basis.draftChecksum);
+    expect(checked.requirements!.texts).toHaveLength(1);
+    expect(checked.requirements!.texts[0]).toMatchObject({ originalText: "", needsPrinting: false,
+      font: { requested: "Luckiest Guy" }, color: { label: "CustomColor", hex: null } });
+    expect(checked.requirements!.notes.map(row => row.original)).toEqual(["Synthetic keep the complete head and ears"]);
+    expect(checked.requirements!.options.some(row => row.role === "enhancement" && row.value === "Yes")).toBe(true);
+    expect(checked.normalizedDraft.fields.every(row => !row.font && !row.color)).toBe(true);
+    await expect(f.workspace.save(f.context, f.lineId, { expectedRevision: initial.line.revision - 1,
+      expectedSourceVersionId: initial.report!.versionId, expectedProjectionVersion: initial.line.projectionVersion,
+      draft: checked.normalizedDraft, status: "ready_to_push", reason: "Stale review cannot leave a source approval or another work revision",
+      idempotencyKey: randomUUID() })).rejects.toThrow();
+    expect(await reviewState()).toEqual(beforeConfirmation);
+    const saved = await f.workspace.save(f.context, f.lineId, { expectedRevision: initial.line.revision,
+      expectedSourceVersionId: initial.report!.versionId, expectedProjectionVersion: initial.line.projectionVersion,
+      draft: checked.normalizedDraft, status: "ready_to_push", reason: "Synthetic operator confirms intake only", idempotencyKey: randomUUID() });
+    expect(saved.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", production: "not_released" });
+    const confirmed = await reviewState();
+    expect(confirmed.report).toEqual({ reviewedVersionId: f.sourceVersionId, reviewedBy: f.context.userId, reviewedAt: expect.any(Date) });
+    expect(confirmed.revisions).toHaveLength(beforeConfirmation.revisions.length + 1);
+    expect(confirmed.revisions.slice(0, -1)).toEqual(beforeConfirmation.revisions);
+    const savedCheck = await f.workspace.intakeCheck(f.context, f.lineId, { expectedRevision: saved.line.revision,
+      expectedSourceVersionId: saved.report!.versionId, draft: saved.draft });
+    await expect(prepareOrderDesignSnapshot(database, f.editor, f.context, { ...saved, requirementInterpretation: {
+      ...savedCheck.requirements!, basis: { ...savedCheck.requirements!.basis, draftChecksum: checked.requirements!.basis.draftChecksum },
+    } })).rejects.toThrow("定制要求解释与已保存制作依据不一致");
+    const active = await f.pushAndProcess(saved);
+    expect(active.snapshot.requirements?.basis.draftChecksum).toBe(checksum(orderRequirementDraftInput(saved.draft)));
+    expect(active.snapshot.requirements?.notes).toEqual(savedCheck.requirements!.notes);
+    expect(active.snapshot.requirements?.texts).toEqual(savedCheck.requirements!.texts);
+    expect(active.final.run.status, safeRequirementRunDiagnostic(active.final)).toBe("awaiting_review");
+    expect(active.final.work).toMatchObject({ artwork: "in_progress", approvedEditorVersionId: null });
+    expect(active.final.document!.confirmations.visualReview).toBe(false);
+    expect(active.final.project!.reviewedVersionId).toBeNull();
+    expect(active.final.document!.layers.every(row => row.kind !== "text")).toBe(true);
+    const prompt = active.generate.mock.calls.find(([input]) => input.prompt.includes("顾客要求JSON"))![0].prompt;
+    expect(prompt).toContain("Synthetic keep the complete head and ears");
+    expect(prompt).toContain("Synthetic operator instruction Preserve the original ears");
+    expect(prompt).toContain("HD Enhancement");
+    expect(active.generate).toHaveBeenCalledTimes(2);
+    const review = await f.workspace.detail(f.context, f.lineId);
+    expect(review.line.designCandidateReview).toBe(true);
+    expect(review.line.queueStage).toBe("in_review");
+    const queue = await f.workspace.list(f.context, { module: "artwork", q: f.externalOrderId, artwork: "in_review" });
+    expect(queue.total).toBe(1);
+    expect(queue.counts.stages.in_review).toBe(1);
+    expect(queue.items[0]).toMatchObject({ id: f.lineId, designCandidateReview: true, designExecutor: "agent", orderStatus: "awaiting_review" });
+    const check = await f.editor.preflight(f.context, active.final.project!.id, { expectedVersionId: active.final.project!.currentVersionId,
+      purpose: "production", format: "jpeg", background: "white" });
+    expect(check.productionReady).toBe(false);
+    expect(await withTenant(database.db, f.context, tx => tx.select().from(productionOrders).where(eq(productionOrders.sourceWorkItemId, f.lineId)))).toEqual([]);
+    expect(await f.reports.requirementSources(f.context, f.reportLineId, f.sourceVersionId)).toEqual(f.originalSources);
+  }, 90_000);
+
+  it("order requirement analysis rejects only the exact unapproved candidate and retains human queue ownership through editing and resubmission", async () => {
+    const f = await requirementOrder(), initial = await f.workspace.detail(f.context, f.lineId);
+    const checked = await f.workspace.intakeCheck(f.context, f.lineId, { expectedRevision: initial.line.revision,
+      expectedSourceVersionId: initial.report!.versionId, draft: initial.draft });
+    expect(checked.ready).toBe(true);
+    const saved = await f.workspace.save(f.context, f.lineId, { expectedRevision: initial.line.revision,
+      expectedSourceVersionId: initial.report!.versionId, draft: checked.normalizedDraft, status: "ready_to_push",
+      reason: "Synthetic intake confirmation before Agent drafting", idempotencyKey: randomUUID() });
+    const active = await f.pushAndProcess(saved), before = await state(active.fixture);
+    expect(before.run.status, safeRequirementRunDiagnostic(before)).toBe("awaiting_review");
+    let detail = await f.workspace.detail(f.context, f.lineId);
+    expect(detail.line.designCandidateReview).toBe(true);
+    const candidate = await f.editor.get(f.context, detail.line.editorProjectId!);
+    expect(candidate.version.document.confirmations.visualReview).toBe(false);
+    const reviewer = { ...f.context, permissions: f.context.permissions.filter(bit => bit !== Permission.DesignWrite) };
+    const command = { action: "reject_artwork", expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: candidate.version.id,
+      reason: "Synthetic operator rejects the exact candidate and requests a human correction", idempotencyKey: randomUUID() };
+    await expect(f.workspace.action(f.context, f.lineId, { ...command, action: "approve_artwork", reason: "Synthetic premature approval must fail" }))
+      .rejects.toThrow("请先完成生产文件检查和确认");
+    await expect(f.workspace.action({ ...reviewer, permissions: reviewer.permissions.filter(bit => bit !== Permission.DesignReview) },
+      f.lineId, command)).rejects.toThrow();
+    await expect(f.workspace.action(reviewer, f.lineId, { ...command, expectedEditorVersionId: createEntityId() })).rejects.toThrow("版本已变化");
+    expect(await state(active.fixture)).toEqual(before);
+    detail = await f.workspace.action(reviewer, f.lineId, command);
+    const rejected = await state(active.fixture);
+    expect(rejected.run).toMatchObject({ status: "cancelled", errorCode: "agent_manual_takeover",
+      actualCostUsd: before.run.actualCostUsd, costStatus: before.run.costStatus, inputChecksum: before.run.inputChecksum });
+    expect(rejected.run.encryptedSnapshot).toBe(before.run.encryptedSnapshot);
+    expect(rejected.ledger).toEqual(before.ledger);
+    expect(rejected.versions).toEqual(before.versions);
+    expect(detail.draft).toEqual(saved.draft);
+    expect(detail.line).toMatchObject({ artwork: "changes_requested", designExecutor: "human", designCandidateReview: false });
+    expect((await f.workspace.action(reviewer, f.lineId, command)).line.projectionVersion).toBe(detail.line.projectionVersion);
+    const originalCalls = active.generate.mock.calls.length;
+    await active.processor.process({ tenantId: f.context.tenantId, requestedBy: f.context.userId, runId: rejected.run.id });
+    expect(active.generate).toHaveBeenCalledTimes(originalCalls);
+    const human = await f.editor.save(f.context, candidate.project.id, { expectedVersionId: candidate.version.id,
+      document: { ...candidate.version.document, name: "Synthetic explicit human correction", confirmations: {
+        physicalSize: true, visualReview: true, whiteBorderRule: true, narrowParts: true, barcodeTab: true, backText: true,
+      } } });
+    expect(human.version.id).not.toBe(candidate.version.id);
+    expect(human.version.versionNumber).toBe(candidate.version.versionNumber + 1);
+    detail = await f.workspace.detail(f.context, f.lineId);
+    expect(detail.line.designExecutor).toBe("human");
+    expect(detail.line.artwork).toBe("changes_requested");
+    const humanQueue = await f.workspace.list(f.context, { module: "artwork", q: f.externalOrderId, designExecutor: "human" });
+    expect(humanQueue.total).toBe(1);
+    expect(humanQueue.items[0]!.designExecutor).toBe("human");
+    const preflight = await f.editor.preflight(f.context, human.project.id, { expectedVersionId: human.version.id,
+      purpose: "production", format: "jpeg", background: "white" });
+    expect(preflight.productionReady, JSON.stringify(preflight.issues)).toBe(true);
+    detail = await f.workspace.action(f.context, f.lineId, { action: "submit_artwork", expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: human.version.id,
+      reason: "Synthetic human resubmits a new version for operator review", idempotencyKey: randomUUID() });
+    expect(detail.line).toMatchObject({ artwork: "in_review", designExecutor: "human" });
+    expect((await state(active.fixture)).work.approvedEditorVersionId).toBeNull();
+    expect(detail.draft.designExecutor).toBe("agent");
+    expect(detail.draft).toEqual(saved.draft);
+    expect((await f.workspace.list(f.context, { module: "artwork", q: f.externalOrderId, designExecutor: "human", artwork: "in_review" })).total).toBe(1);
+    expect((await f.workspace.list(f.context, { module: "artwork", q: f.externalOrderId, designExecutor: "agent" })).total).toBe(0);
+    await expect(f.workspace.action(reviewer, f.lineId, { action: "approve_artwork", expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: candidate.version.id,
+      reason: "Original rejected candidate cannot approve the human replacement", idempotencyKey: randomUUID() })).rejects.toThrow("版本已变化");
+    const approved = await f.workspace.action(reviewer, f.lineId, { action: "approve_artwork", expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: human.version.id,
+      reason: "Synthetic operator explicitly approves only the checked human replacement", idempotencyKey: randomUUID() });
+    expect(approved.line).toMatchObject({ artwork: "approved", designExecutor: "human",
+      production: "not_released" });
+    expect((await state(active.fixture)).work.approvedEditorVersionId).toBe(human.version.id);
+    expect(approved.draft).toEqual(saved.draft);
+    expect((await f.editor.get(f.context, candidate.project.id, candidate.version.id)).version.document).toEqual(candidate.version.document);
+    expect(await f.reports.requirementSources(f.context, f.reportLineId, f.sourceVersionId)).toEqual(f.originalSources);
+    expect(await withTenant(database.db, f.context, tx => tx.select().from(productionOrders).where(eq(productionOrders.sourceWorkItemId, f.lineId)))).toEqual([]);
+  }, 90_000);
+
+  async function requirementOrder() {
+    const base = await seed({ pillow: true, paid: true,
+      permissions: [Permission.ProductRead, Permission.ProductWrite, Permission.DesignReview] });
+    const context = base.context, audit = new AuditService(database);
+    const reports = new AmazonOrderReportService(database, vault, new OrderService(database, vault, audit), audit,
+      { download: async () => { throw new Error("No external fixture download"); }, scan: scanner.scan },
+      { schedule: async () => undefined }, { schedule: async () => undefined });
+    const editor = new ProductionEditorService(database, vault, storage, reports, audit, { enqueue: async () => undefined }, scanner);
+    const workspace = new OrderWorkspaceService(database, vault, storage, reports, editor, scanner);
+    const catalog = new ProductDevelopmentService(database, storage);
+    const templateDocument = structuredClone(base.snapshot.document);
+    if (templateDocument.productType !== "shaped_pillow") throw new Error("Synthetic requirements need the pillow template");
+    templateDocument.spec = { ...templateDocument.spec, factoryStandardId: "ps-pillow-2026-09-17", declaredLongestMm: 254,
+      whiteBorderMm: 200 * 25.4 / 150, panelGapMm: 100 * 25.4 / 150, sheetMarginMm: 50 * 25.4 / 150,
+      barcodeTab: { widthMm: 600 * 25.4 / 150, heightMm: 200 * 25.4 / 150, centerXMm: 55 } };
+    let template = await editor.create(context, { name: "Synthetic requirement template", document: templateDocument });
+    template = await editor.review(context, template.project.id, template.version.id);
+    const profile = (await workspace.saveProfile(context, { code: "REQUIREMENT-PROFILE", name: "Synthetic requirement profile",
+      projectId: template.project.id, versionId: template.version.id, instructions: "Fixed synthetic ten-inch manufacturing profile",
+      expectedVersion: 0, idempotencyKey: randomUUID() }))[0]!;
+    const { spu } = await catalog.createSpu(context, { code: "CUSTOM-SHAPED-PILLOW", name: "Synthetic shaped pillow", idempotencyKey: randomUUID() });
+    const { specification } = await catalog.saveSpecification(context, { spuId: spu.id, code: "SIZE-10IN", name: "Synthetic ten-inch pillow",
+      attributes: { size: "10 inch" }, facts: syntheticSpecificationFacts(), processProfileVersionId: profile.versionId,
+      expectedVersion: 0, idempotencyKey: randomUUID() });
+    const { artwork } = await catalog.registerArtwork(context, { code: "ART-CUSTOM-SHAPED-PILLOW", name: "Synthetic photo-only scheme",
+      mode: "customer_image", customization: base.snapshot.customization, layout: [], instructions: "Preserve each original requirement",
+      expectedVersion: 0, idempotencyKey: randomUUID() });
+    const externalOrderId = "SYNTHETIC-REQUIREMENT-" + createEntityId(), externalLineId = "SYNTHETIC-LINE-" + createEntityId();
+    const batch = await reports.importReport(context, { accountId: base.accountId, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-requirements.txt",
+      content: ["order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price",
+        [externalOrderId, externalLineId, new Date().toISOString(), "SYNTHETIC", "Synthetic body shaped pillow", "1", "USD", "20"].join("\t")].join("\n") });
+    const line = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalOrderId, orderItemId: externalLineId, customizationData: {
+      type: "PageContainerCustomization", children: [
+        { type: "ImageCustomization", label: "Upload One Clear Photo", image: { imageName: "buyer.png" } },
+        ...[["Pillow Shape", "Only Face"], ["Size", "10 inch-Mini Keepsake"], ["Style", "Double-Sided Print — Same Photo on Back"],
+          ["HD Enhancement", "Yes"], ["Order Notes for Seller", "Synthetic keep the complete head and ears"]].map(([label, name]) =>
+          ({ type: "OptionCustomization", label, optionSelection: { name } })),
+        { type: "TextContainerCustomization", label: "Synthetic empty message", children: [
+          { type: "TextCustomization", label: "Custom your text", inputValue: "" },
+          { type: "FontCustomization", label: "Font", fontSelection: { family: "Luckiest Guy", name: "Synthetic display name" } },
+          { type: "ColorCustomization", label: "Font Color", colorSelection: { name: "CustomColor" } },
+        ] },
+      ],
+    } }));
+    zip.file("buyer.png", await image());
+    const report = await reports.process(context, line.id, null, await zip.generateAsync({ type: "nodebuffer" }));
+    const originalSources = await reports.requirementSources(context, line.id, report.versionId!);
+    const initial = await workspace.detail(context, line.orderLineId);
+    const source = await workspace.save(context, line.orderLineId, { expectedRevision: initial.line.revision,
+      expectedSourceVersionId: report.versionId, draft: { ...initial.draft, artworkVersionId: artwork.versionId,
+        specificationVersionId: specification.versionId, printProfileVersionId: profile.versionId,
+        images: initial.draft.images.map(row => ({ ...row, usage: "buyer_photo" })) }, status: "needs_information",
+      reason: "Synthetic fixture binds exact library basis only", idempotencyKey: randomUUID() });
+    return { context, reports, workspace, editor, lineId: line.orderLineId, sourceVersionId: report.versionId!, reportLineId: line.id,
+      externalOrderId, originalSources, initial: source,
+      async pushAndProcess(detail: typeof source) {
+        await workspace.action(context, line.orderLineId, { action: "push", expectedRevision: detail.line.revision,
+          expectedProjectionVersion: detail.line.projectionVersion, reason: "Synthetic Agent-first handoff", idempotencyKey: randomUUID() });
+        const run = (await new OrderDesignRepository(database, vault).view(context, line.orderLineId)).run!;
+        const [work] = await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, line.orderLineId)));
+        const workKey = vault.withSecret(work!.encryptedDataKey!, value => Buffer.from(value, "base64")); workKeys.push(workKey);
+        const [row] = await withTenant(database.db, context, tx => tx.select().from(runs).where(eq(runs.id, run.id)));
+        const snapshot = open<OrderDesignSnapshot>(workKey, row!.encryptedSnapshot);
+        const fixture: Fixture = { ...base, lineId: line.orderLineId, orderId: line.orderId!, runId: run.id, snapshot, workKey };
+        const generate = vi.fn<OrderDesignImageGateway["generate"]>().mockResolvedValueOnce({ bytes: await image(), actualCostUsd: 0.1 })
+          .mockResolvedValueOnce({ bytes: await pillowImage(2048), actualCostUsd: 0.1 });
+        expect(snapshot.recipe.pillowPipeline).toBeUndefined();
+        const processor = worker(generate);
+        await process(processor, fixture);
+        return { fixture, snapshot, processor, generate, final: await state(fixture) };
+      },
+    };
+  }
+
+  function safeRequirementRunDiagnostic(value: Awaited<ReturnType<typeof state>>) {
+    return JSON.stringify({ status: value.run.status, errorCode: value.run.errorCode,
+      qualityDiagnostics: value.run.qualityDiagnostics.map(row => ({ code: row.code, severity: row.severity })),
+      steps: value.steps.map(row => ({ key: row.key, status: row.status, attempt: row.attempt, errorCode: row.errorCode })),
+    });
+  }
   function worker(generate: OrderDesignImageGateway["generate"],upscale?:OrderDesignSuperResolutionGateway) { return new OrderDesignProcessor(database, storage, vault, { generate }, scanner,upscale); }
   function process(processor: OrderDesignProcessor, fixture: Fixture) { return processor.process({ tenantId: fixture.context.tenantId, requestedBy: fixture.context.userId, runId: fixture.runId }); }
   async function command(fixture: Fixture, action: "resume" | "takeover") {
@@ -1288,9 +1523,9 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
   }
 
   type Fixture = Awaited<ReturnType<typeof seed>>;
-  async function seed(options: { paid?: boolean; imageCount?: number; monthlyBudget?: number; pillow?: boolean; pipeline?:boolean; contourGraph?:boolean; cropScope?:string; missingRoute?: boolean; rules?: "manual" | "baseline"; legacy?:boolean; beforeRegister?:(context:TenantContext)=>Promise<void> } = {}) {
+  async function seed(options: { paid?: boolean; imageCount?: number; monthlyBudget?: number; pillow?: boolean; pipeline?:boolean; contourGraph?:boolean; cropScope?:string; missingRoute?: boolean; rules?: "manual" | "baseline"; legacy?:boolean; permissions?:TenantContext["permissions"]; beforeRegister?:(context:TenantContext)=>Promise<void> } = {}) {
     const tenantId = createEntityId(), userId = createEntityId(), accountId = createEntityId(), membershipId = createEntityId(), roleId = createEntityId();
-    const context: TenantContext = { tenantId, userId, permissions: [...executionPermissions,...(options.beforeRegister||options.legacy?[Permission.WorkflowRead,Permission.WorkflowManage,Permission.WorkflowApprove]:[])], dataScope: "tenant" };
+    const context: TenantContext = { tenantId, userId, permissions: [...executionPermissions,...(options.permissions??[]),...(options.beforeRegister||options.legacy?[Permission.WorkflowRead,Permission.WorkflowManage,Permission.WorkflowApprove]:[])], dataScope: "tenant" };
     const lineId = createEntityId(), workRevisionId = createEntityId(), orderId = createEntityId(), sourceSnapshotId = createEntityId();
     const templateProjectId = createEntityId(), templateVersionId = createEntityId(), routeId = createEntityId(), providerId = createEntityId();
     const workKey = randomBytes(32); workKeys.push(workKey);
@@ -1381,7 +1616,7 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
       }
       const id=await registerOrderDesignRun(tx,context,snapshot,workKey);expect(await registerOrderDesignRun(tx,context,snapshot,workKey)).toBe(id);return id;
     });
-    return { context, lineId, orderId, runId, membershipId, roleId, snapshot, workKey };
+    return { context, accountId, lineId, orderId, runId, membershipId, roleId, snapshot, workKey };
   }
 });
 

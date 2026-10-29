@@ -25,6 +25,7 @@ import { AgentFulfillmentProposalHandoff } from "../ai-tasks/agent-fulfillment-p
 import { orderFieldLabel, orderFieldPriority, orderFieldValue, orderProductLabel } from "./order-operations-summary";
 
 const idle: OrderReviewState = { dirty: false, busy: false, loading: false };
+const originalFieldText = (value: string) => value.trim() ? value : "未填写";
 const stages: Array<[OrderWorkspaceModule, string]> = [["orders", "订单要求"], ["artwork", "审核与制图"], ["production", "生产"], ["shipments", "发货"], ["after-sales", "售后"]];
 type OrderWholeDetailPanelProps = {
   id: string; module: OrderWorkspaceModule; options: OrderCenterOptions | null; editorOpen: boolean;
@@ -120,14 +121,22 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
         <p className="oc-hint">每个抱枕保留自己的定制要求和审核版本。点击商品可在下方处理。</p>
         {view.items.map((item, index) => {
           const file = item.artwork.data, summary = item.summary.data;
+          const fields = summary?.fields ?? [];
+          const keyFields = fields.filter(field => orderFieldPriority(field.label) <= 2)
+            .toSorted((a, b) => orderFieldPriority(a.label) - orderFieldPriority(b.label));
+          const otherFields = fields.filter(field => orderFieldPriority(field.label) > 2);
           return <article className={`oc-whole-item${item.line.id === id ? " selected" : ""}`} key={item.line.id}>
             <div className="oc-whole-image">{file?.preview ? <a href={file.preview.path} target="_blank" rel="noreferrer"><Image src={file.preview.path} alt={`商品 ${index + 1} 当前审核稿`} width={168} height={112} unoptimized /></a> : <span>{item.artwork.error ? "审核稿无法读取" : "暂无审核稿"}</span>}</div>
             <div className="oc-whole-requirements"><button className="oc-text-button" aria-pressed={item.line.id === id} disabled={disabled}
               onClick={() => selectOperation(item.line.id, module)}>商品行 {index + 1} · {orderProductLabel(item.line)} · {item.line.quantity} 件</button>
               <small>{item.line.skuCode ?? "未提供 SKU"} · {summary?.specification ?? item.line.specificationName ?? "规格待确认"} · {item.line.externalLineId}</small>
               {item.summary.error || summary?.error ? <p className="oc-error">{item.summary.error ?? summary?.error}</p> : <>
-                {summary?.fields.toSorted((a, b) => orderFieldPriority(a.label) - orderFieldPriority(b.label)).map((field, fieldIndex) => <p key={`${field.label}:${fieldIndex}`}><b title={field.label}>{orderFieldLabel(field.label, field.value)}：</b><span title={field.value}>{orderFieldValue(field.value) || "待补充"}</span></p>)}
-                <p>{summary?.instructions || "无额外定制说明"}</p>
+                {keyFields.map((field, fieldIndex) => <p key={`${field.label}:${fieldIndex}`}><b title={field.label}>{orderFieldLabel(field.label, field.value)}：</b><span title={field.value}>{originalFieldText(orderFieldValue(field.value))}</span></p>)}
+                {(otherFields.length > 0 || summary?.instructions) && <details className="oc-original-title oc-review-reference">
+                  <summary>其他定制信息与原始说明{otherFields.length > 0 ? ` · ${otherFields.length} 项` : ""}</summary>
+                  {otherFields.map((field, fieldIndex) => <p className="oc-hint" key={`${field.label}:${fieldIndex}`}><b>{field.label || "未命名定制项"}：</b>{originalFieldText(field.value)}</p>)}
+                  {summary?.instructions && <p className="oc-hint"><b>制作说明：</b>{originalFieldText(summary.instructions)}</p>}
+                </details>}
               </>}
               <details className="oc-original-title"><summary>平台原商品标题</summary><p>{item.line.title}</p></details>
               {item.line.held && <p className="oc-error">已暂停，请先核对原因</p>}

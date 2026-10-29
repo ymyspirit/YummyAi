@@ -4,6 +4,7 @@ import { SecretVault } from "@yummyai/ai-core";
 import { ForbiddenError, Permission } from "@yummyai/authz";
 import { createEntityId, ProductionEditorDocumentSchema, type ShapedPillowDocument, type TenantContext } from "@yummyai/contracts";
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
+import { FACTORY_ERP_HEADERS } from "@yummyai/contracts/order/factory-erp-import";
 import { connectDatabase, migrateDatabase, withTenant, marketplaceAccounts, orderSourceSnapshots, orders, orderLines, orderWorkItems, orderWorkRevisions,
   productionEditorProjects, productionEditorVersions, productionEditorImages, fulfillmentSuppliers, orderDesignAgentRuns,
   productionDeliveryPackages, productionDeliveryItems, productionDeliveryFeedback, productionOrders,memberships,roles,membershipRoles,factoryAccessGrants,factoryTaskAssignments,factoryTaskReceipts } from "@yummyai/database";
@@ -39,6 +40,8 @@ import type { ShiposService } from "../suppliers/shipos.service.js";
 import {FactoryCollaborationService} from "./factory-collaboration.service.js";
 import {DatabaseMembershipContextLoader} from "../auth/tenant-context.guard.js";
 import { syntheticManufacturingProduct } from "./manufacturing-production.test-fixture.js";
+import { FactoryErpImportService } from "./factory-erp-import.service.js";
+import { FactoryErpSourceGateway } from "./factory-erp-source.gateway.js";
 
 // Finally teardown belongs to the isolated runner, even if this process fails.
 if (process.env.E2E_ISOLATED_DAILY !== "1" || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname)) throw new Error("Use the disposable production-delivery-integration runner");
@@ -386,7 +389,7 @@ describe("immutable pillow delivery and operator factory feedback", () => {
   });
   it("binds and deduplicates received/accepted replies and advances progress atomically", async () => {
     const f = await fixture(); let packet = await create(f);
-    const attention = new FulfillmentAttentionService(database);
+    const attention = new FulfillmentAttentionService(database, vault);
     // Earlier cases retain their pending delivery history in this disposable
     // tenant. Find this actual item across the supported 12-item pages.
     const currentAttention = async () => {
@@ -402,12 +405,77 @@ describe("immutable pillow delivery and operator factory feedback", () => {
     await expect(delivery.recordFeedback(context, packet.id, packet.items[0]!.id, receipt(packet, "received", { fileChecksum: "0".repeat(64) }))).rejects.toBeInstanceOf(ConflictException);
     const input = receipt(packet, "received"); packet = await delivery.recordFeedback(context, packet.id, packet.items[0]!.id, input); await delivery.recordFeedback(context, packet.id, packet.items[0]!.id, input);
     expect(packet.items[0]).toMatchObject({ sequence: 1, status: "received" }); expect((await production.get(context, f.productionId)).productionOrder.status).toBe("submitted");
-    expect((await currentAttention())?.status).toBe("received");
+    expect(await currentAttention()).toMatchObject({ status: "legacy_received", nextAction: "同步工厂进度" });
     await expect(delivery.recordFeedback(context, packet.id, packet.items[0]!.id, { ...input, note: "Changed same reply" })).rejects.toBeInstanceOf(ConflictException);
     packet = await delivery.recordFeedback(context, packet.id, packet.items[0]!.id, receipt(packet, "accepted")); expect(packet.items[0]).toMatchObject({ sequence: 2, status: "accepted" });
     expect(await currentAttention()).toBeUndefined();
     const current = await production.get(context, f.productionId); expect(current.productionOrder.status).toBe("acknowledged"); expect(current.milestones).toHaveLength(2);
   });
+  it("projects original factory CSV progress and void exceptions without optional receipts or shipment side effects", async () => {
+    const f = await fixture(); let packet = await create(f);
+    packet = await delivery.recordFeedback(context, packet.id, packet.items[0]!.id, receipt(packet, "submitted"));
+    const operator = (await loader.load({ sub: `delivery-${userId}`, tenant_id: tenantId }))!;
+    expect(operator.permissionScopes).toBeDefined();
+    const attention = new FulfillmentAttentionService(database, vault);
+    const importer = new FactoryErpImportService(database, vault, new FactoryErpSourceGateway(storage, vault, { scan: clean }), delivery, audit);
+    const item = packet.items[0]!, pin = item.snapshot!, externalId = `PRIVATE-ERP-HEAD-${createEntityId()}`;
+    const selection = { deliveryItemId: item.id, productionOrderId: f.productionId, productionVersionId: pin.productionVersionId,
+      fileChecksum: pin.file.checksum, manufacturingChecksum: pin.manufacturing!.plan.checksum };
+    const physical = await submittedPhysicalState(f.productionId), submitted = await production.get(context, f.productionId);
+    async function collect(service = attention, actor = operator) {
+      const first = await service.workspace(actor, { source: "delivery" }), items = [...first.items];
+      expect(first.sources.find(source => source.source === "delivery")?.count).toBe(first.total);
+      for (let page = 2; (page - 1) * first.pageSize < first.total; page++) {
+        const next = await service.workspace(actor, { source: "delivery", page });
+        expect(next.total).toBe(first.total); expect(next.sources).toEqual(first.sources);
+        expect(next.items.length).toBeGreaterThan(0); items.push(...next.items);
+      }
+      expect(items).toHaveLength(first.total); expect(new Set(items.map(row => row.id)).size).toBe(first.total);
+      expect(JSON.stringify(items)).not.toMatch(/PRIVATE-ERP|trackingReference|rawStatus|shippedQuantity/);
+      return { ...first, items };
+    }
+    async function importStatus(status: string) {
+      const row = [externalId, "Synthetic owned source", "PRIVATE-ERP-REFERENCE", "PRIVATE-ERP-TRACKING", "", "", "1", "2",
+        "PRIVATE-ERP-CARRIER", "PRIVATE-ERP-SERVICE", status, "2026-10-21 08:09:10", "2026-10-21 09:10:11"];
+      const quote = (text: string) => /[,\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      const bytes = Buffer.from([FACTORY_ERP_HEADERS, row].map(values => values.map(quote).join(",")).join("\r\n"), "utf8");
+      const source = await importer.upload(operator, { factoryId: factoryFixture.factory.id, fileName: "synthetic-factory-current-page.csv",
+        contentBase64: bytes.toString("base64"), checksumSha256: sha(bytes), options: { csvEncoding: "utf-8", delimiter: "," }, idempotencyKey: randomUUID() });
+      await importer.apply(operator, source.id, { fileChecksum: source.fileChecksum, previewChecksum: source.previewChecksum,
+        idempotencyKey: randomUUID(), confirmed: true, rows: [{ rowNumber: 2, items: [selection], wholeGroupConfirmed: true }] });
+    }
+    expect((await collect()).items.find(row => row.entityId === item.id)).toMatchObject({ status: "scheduled_by_submission", nextAction: "同步工厂进度" });
+    await importStatus("已审核");
+    expect((await collect()).items.find(row => row.entityId === item.id)).toMatchObject({ status: "factory_scheduled", nextAction: "同步工厂进度" });
+    await importStatus("已出库");
+    expect((await collect()).items.find(row => row.entityId === item.id)).toMatchObject({ status: "factory_shipped", nextAction: "核对实际发货" });
+    expect((await collect(attention, context)).items.find(row => row.entityId === item.id)?.status).toBe("scheduled_by_submission");
+    expect((await collect(new FulfillmentAttentionService(database))).items.find(row => row.entityId === item.id))
+      .toMatchObject({ status: "factory_status_unavailable", priority: "blocked" });
+    await expect(collect(new FulfillmentAttentionService(database, new SecretVault(Buffer.alloc(32, 94))))).rejects.toThrow();
+    expect((await delivery.get(context, packet.id)).items[0]!.feedback.map(value => value.kind)).toEqual(["submitted"]);
+    expect(await production.get(context, f.productionId)).toEqual(submitted);
+    expect(await submittedPhysicalState(f.productionId)).toEqual(physical);
+
+    // Optional legacy acceptance may close its old queue. A later original
+    // factory void must re-enter only the member-authorized exception queue.
+    packet = await delivery.recordFeedback(context, packet.id, item.id, receipt(packet, "received"));
+    packet = await delivery.recordFeedback(context, packet.id, item.id, receipt(packet, "accepted"));
+    const beforeVoid = await collect(), legacyBeforeVoid = await collect(attention, context);
+    expect(beforeVoid.items.some(row => row.entityId === item.id)).toBe(false);
+    const accepted = await production.get(context, f.productionId), acceptedPhysical = await submittedPhysicalState(f.productionId);
+    await importStatus("已作废");
+    const afterVoid = await collect(), legacyAfterVoid = await collect(attention, context);
+    expect(afterVoid.total).toBe(beforeVoid.total + 1);
+    expect(afterVoid.items.find(row => row.entityId === item.id))
+      .toMatchObject({ status: "factory_voided_requires_review", nextAction: "核对工厂作废", priority: "blocked" });
+    expect(legacyAfterVoid.total).toBe(legacyBeforeVoid.total); expect(legacyAfterVoid.items).toEqual(legacyBeforeVoid.items);
+    const emptyAdapterPage = await attention.workspace(context, { source: "delivery", page: 10_000 });
+    expect(emptyAdapterPage).toMatchObject({ total: legacyBeforeVoid.total, hasMore: false, items: [] });
+    await expect(attention.workspace({ ...operator, tenantId: otherTenant }, { source: "delivery", page: 10_000 })).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await production.get(context, f.productionId)).toEqual(accepted);
+    expect(await submittedPhysicalState(f.productionId)).toEqual(acceptedPhysical);
+  }, 60_000);
   it("prevents old milestone routes bypassing new file receipts", async () => {
     const f = await fixture(); await create(f);
     await expect(production.recordMilestone(context, f.productionId, { type: "submitted", expectedProjectionVersion: 1, externalEventId: null, occurredAt: new Date().toISOString(), evidence: { code: "SYNTHETIC", note: null, assetIds: [] } })).rejects.toBeInstanceOf(ConflictException);
@@ -415,7 +483,7 @@ describe("immutable pillow delivery and operator factory feedback", () => {
   it("creates a partial remake from explicitly reviewed artwork and links it to the rejected delivery", async () => {
     const f = await fixture(); let packet = await create(f);
     packet = await delivery.recordFeedback(context, packet.id, packet.items[0]!.id, receipt(packet, "rejected", { affectedQuantity: 1 }));
-    const attention = new FulfillmentAttentionService(database);
+    const attention = new FulfillmentAttentionService(database, vault);
     expect((await attention.workspace(context,{source:"delivery"})).items.find(item=>item.entityId===packet.items[0]!.id)).toMatchObject({status:"rejected",priority:"blocked"});
     expect((await attention.workspace(context,{source:"production"})).items.some(item=>item.entityId===f.productionId)).toBe(false);
     expect((await attention.workspace({...context,permissions:context.permissions.filter(p=>p!==Permission.DesignRead)},{source:"production"})).items.some(item=>item.entityId===f.productionId)).toBe(true);
@@ -478,7 +546,7 @@ describe("immutable pillow delivery and operator factory feedback", () => {
   });
   it("retains original snapshot but revokes download after hold, revision change or expiry", async () => {
     const f = await fixture(), packet = await create(f);
-    const attention = new FulfillmentAttentionService(database);
+    const attention = new FulfillmentAttentionService(database, vault);
     await withTenant(database.db, context, tx => tx.update(orderWorkItems).set({ held: true }).where(eq(orderWorkItems.id, f.lineId))); expect((await delivery.get(context, packet.id)).canDownload).toBe(false);
     expect((await attention.workspace(context,{source:"delivery"})).items.some(item=>item.entityId===packet.items[0]!.id)).toBe(false);
     await withTenant(database.db, context, tx => tx.update(orderWorkItems).set({ held: false, artwork: "changes_requested", approvedEditorVersionId: null }).where(eq(orderWorkItems.id, f.lineId)));

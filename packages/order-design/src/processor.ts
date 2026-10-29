@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { assessPaidRequestRecovery, type SecretVault } from "@yummyai/ai-core";
 import { createEntityId, ProductionEditorDocumentSchema, type TenantContext } from "@yummyai/contracts";
 import { DesignAutomationStepSchema } from "@yummyai/contracts/pod/design-automation";
+import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
 import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderWorkItems as works, orderLines,orders,productionEditorProjects as projects,
   productionEditorVersions as versions, productionEditorImages as images, productionEditorRenders as renders, aiBudgetLedger, aiBudgetPolicies,
   withTenant,type DatabaseConnection,type TenantTransaction } from "@yummyai/database";
@@ -15,7 +16,7 @@ import { sealOrderDesignCompletion } from "./completion.js";
 import {registerOrderModelSubmission,recordOrderModelResponse,readOrderModelCostProjection,orderModelBudgetAmount} from "./model-costs.js";
 import {orderDesignModelCalls as modelCalls} from "@yummyai/database";
 import { OrderDesignError,OrderDesignSubmissionNotSentError,type DesignStepInput,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignSnapshot,
-  type OrderDesignStepCheckpoint,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
+  type OrderDesignStepCheckpoint,type OrderDesignModelResponseReceipt,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
 import { OrderDesignExecutor, type StepResult } from "./executor.js";
 
 export class OrderDesignProcessor {
@@ -89,6 +90,7 @@ export class OrderDesignProcessor {
             responseCheckpoint:active.responseCheckpoint,
             responseRecovery:active.responseRecovery,
             assertActive:()=>this.assertActive(context,active.run.id,token),markSubmitted:()=>this.markSubmitted(context,active.run,active.step,token),
+            markProviderReceived:receipt=>this.recordProviderResponse(context,active.run,active.step,token,receipt),
             markReceived:receipt=>this.recordResponse(context,active.run,active.step,token,receipt),
             checkpointResponse:checkpoint=>this.recordResponse(context,active.run,active.step,token,checkpoint)});
           await this.commitStep(context,active.run,active.step,active.input,result,token);
@@ -122,7 +124,7 @@ export class OrderDesignProcessor {
               hasResponseReceipt:!!checkpoint.responseReceipt||!!originalCall?.receivedAt || (error instanceof OrderDesignError && error.code==="agent_model_response_uncheckpointed"),
               hasResponseCheckpoint:!!checkpoint.responseCheckpoint,provenNotSubmitted:error instanceof OrderDesignSubmissionNotSentError});
             const hasResponse=recovery.action==="reuse_response";
-            const responseCaptureStopped=error instanceof OrderDesignError&&["agent_source_expired","agent_model_cost_report_invalid","agent_model_cost_conflict"].includes(error.code);
+            const responseCaptureStopped=error instanceof OrderDesignError&&["agent_source_expired","agent_model_cost_report_invalid","agent_model_cost_conflict","agent_model_usage_invalid","agent_model_usage_conflict"].includes(error.code);
             const uncertain=paidTool(active.input.tool) && recovery.action==="reconcile"&&!responseCaptureStopped;
             const exhausted=hasResponse?(checkpoint.responseProcessingAttempts??1)>=3:!paidTool(active.input.tool) && (currentStep?.attempt??0)>=3;
             const code=responseCaptureStopped?safeCode(error):uncertain?`agent_model_${recovery.reason}`:exhausted?"agent_retry_exhausted":
@@ -205,9 +207,12 @@ export class OrderDesignProcessor {
       const key=this.workKey(work.encryptedDataKey!);try{await assertOrderDesignRunMethod(tx,context,current,key);await registerOrderModelSubmission(tx,context,current,step,token);await tx.update(steps).set({encryptedOutput:seal(key,{submissionState:"submitted"}),updatedAt:new Date()}).where(eq(steps.id,step.id));}finally{key.fill(0);}
     });
   }
-  private async recordResponse(context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignResponseReceipt|OrderDesignResponseCheckpoint) {
+  private async recordProviderResponse(context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignModelResponseReceipt) {
     const fee=await recordOrderModelResponse(this.database,context,run,step,token,receipt);
     if(fee.state==="invalid")throw new OrderDesignError("agent_model_cost_report_invalid");
+  }
+  private async recordResponse(context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignResponseReceipt|OrderDesignResponseCheckpoint) {
+    await this.recordProviderResponse(context,run,step,token,receipt);
     await withTenant(this.database.db,context,async tx=>{
       await lockWork(tx,run.workItemId);
       const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.processingToken,token),eq(runs.status,"running"))).for("update");
@@ -280,16 +285,19 @@ export class OrderDesignProcessor {
 }
 
 async function reserveModelBudget(tx:TenantTransaction,context:TenantContext,run:DesignRun,step:DesignStep,snapshot:OrderDesignSnapshot) {
-  if(!snapshot.plan.budget.allowed || !snapshot.model || !snapshot.recipe.allowOrderImageTransfer || snapshot.plan.budget.estimatedCostPerCallUsd===null) throw new OrderDesignError("agent_model_budget_unavailable");
+  const unlimited=snapshot.recipe.costPolicy==="unlimited";
+  if(!snapshot.plan.budget.allowed || !snapshot.model || !snapshot.recipe.allowOrderImageTransfer || (!unlimited&&snapshot.plan.budget.estimatedCostPerCallUsd===null)) throw new OrderDesignError("agent_model_budget_unavailable");
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);
   const [previous]=await tx.select().from(aiBudgetLedger).where(and(eq(aiBudgetLedger.requestId,step.requestId),inArray(aiBudgetLedger.state,["reserved","committed"]))).limit(1);
   if(previous) throw new OrderDesignError("agent_model_submission_unknown",true);
   const [policy]=await tx.select().from(aiBudgetPolicies);
   const unit=snapshot.plan.budget.estimatedCostPerCallUsd;
-  const budgetAmount=orderModelBudgetAmount(unit),unitMicros=budgetMicros(budgetAmount);
+  // A zero reservation for an explicitly unpriced unlimited call is not a zero bill.
+  // The original call receipt remains unknown until the provider reports actual cost.
+  const budgetAmount=unit===null?"0.000000":orderModelBudgetAmount(unit),unitMicros=budgetMicros(budgetAmount);
   const [spent]=await tx.select({amount:sql<string>`coalesce(sum(${aiBudgetLedger.amountUsd}),0)`}).from(aiBudgetLedger).innerJoin(steps,eq(steps.requestId,aiBudgetLedger.requestId)).where(and(eq(steps.runId,run.id),inArray(aiBudgetLedger.state,["reserved","committed"])));
   const originalCap=snapshot.recipe.maxEstimatedCostUsd;
-  if(originalCap===null||budgetMicros(spent?.amount??"0")+unitMicros>budgetMicros(orderModelBudgetAmount(originalCap)))throw new OrderDesignError("agent_model_original_budget_exceeded");
+  if(!unlimited&&(originalCap===null||budgetMicros(spent?.amount??"0")+unitMicros>budgetMicros(orderModelBudgetAmount(originalCap))))throw new OrderDesignError("agent_model_original_budget_exceeded");
   if(policy) {
     const cap=policy.taskCapsUsd.order_design??Number(policy.defaultTaskCapUsd);
     if(snapshot.plan.budget.estimatedCostUsd===null || budgetMicros(orderModelBudgetAmount(snapshot.plan.budget.estimatedCostUsd))>budgetMicros(orderModelBudgetAmount(cap))||budgetMicros(spent?.amount??"0")+unitMicros>budgetMicros(orderModelBudgetAmount(cap)))throw new OrderDesignError("agent_model_task_budget_exceeded");
@@ -310,6 +318,7 @@ function validResponseCheckpoint(value:OrderDesignResponseCheckpoint,step:Design
   return value.version===1 && value.quarantined===true && value.requestId===step.requestId
     && /^[a-f0-9]{64}$/.test(value.checksum) && Number.isSafeInteger(value.byteSize) && value.byteSize>0 && value.byteSize<=64*1024*1024
     && Number.isFinite(Date.parse(value.receivedAt)) && (value.actualCostUsd===undefined || Number.isFinite(value.actualCostUsd) && value.actualCostUsd>=0 && value.actualCostUsd<=1_000_000)
+    && (value.tokenUsage==null || ModelTokenUsageSchema.safeParse(value.tokenUsage).success)
     && parts.length===5 && parts[0]==="tenants" && parts[1]===context.tenantId && parts[2]==="order"
     && /^[a-f0-9]{64}$/.test(parts[3]!) && parts[4]===`${step.requestId}-response-quarantine.pe`;
 }

@@ -22,9 +22,11 @@ export const PillowUpscalePolicySchema = z.object({
   binarySha256: Sha256, modelBinSha256: Sha256, modelParamSha256: Sha256,
 }).strict();
 export type PillowUpscalePolicy = z.infer<typeof PillowUpscalePolicySchema>;
-export const PillowPipelineSchema = z.object({
-  version: z.literal("pillow-subject-v1-2026-09-19"), factoryStandard: z.literal("ps-pillow-2026-09-17"),
-  requiredModel: z.literal("gpt-image-2.5"), cutoutPromptVersion: z.literal("pillow-cutout-whiskers-v1"),
+const PillowPipelineBaseSchema = z.object({
+  version: z.literal("pillow-subject-v1-2026-09-19"),
+  factoryStandard: z.literal("ps-pillow-2026-09-17"),
+  requiredModel: z.literal("gpt-image-2.5"),
+  cutoutPromptVersion: z.literal("pillow-cutout-whiskers-v1"),
   whiskerPolicy: z.literal("remove-protruding-long-whiskers"),
   subjectAlphaThreshold: z.literal(32), subjectMeasurement: z.literal("alpha-inclusive-bounds-v1"),
   contour: z.object({ baseBorderPx: z.literal(200), maxExtraPx: z.literal(30), roundingPx: z.literal(20), fineDetailPx: z.literal(0),
@@ -32,6 +34,11 @@ export const PillowPipelineSchema = z.object({
   }).strict(),
   upscale: PillowUpscalePolicySchema,
 }).strict();
+export const PillowImageModelSchema = z.enum(["gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
+export const PillowPipelineSchema = z.discriminatedUnion("version", [
+  PillowPipelineBaseSchema.extend({ version: z.literal("pillow-subject-v1-2026-09-19"), requiredModel: z.literal("gpt-image-2.5") }).strict(),
+  PillowPipelineBaseSchema.extend({ version: z.literal("pillow-subject-v2-2026-10-29"), requiredModel: PillowImageModelSchema }).strict(),
+]);
 export type PillowPipeline = z.infer<typeof PillowPipelineSchema>;
 
 /** Public, bounded technical evidence. No document, private path or model output. */
@@ -63,6 +70,11 @@ export function createPillowPipeline(upscale: PillowUpscalePolicy): PillowPipeli
     contour: { baseBorderPx: 200, maxExtraPx: 30, roundingPx: 20, fineDetailPx: 0 }, upscale });
 }
 
+/** New templates explicitly pin the selected supported variant; no alias substitution on existing runs. */
+export function createPillowPipelineForModel(upscale: PillowUpscalePolicy, requiredModel: z.infer<typeof PillowImageModelSchema>): PillowPipeline {
+  return PillowPipelineSchema.parse({ ...createPillowPipeline(upscale), version: "pillow-subject-v2-2026-10-29", requiredModel });
+}
+
 /** Safe capability response: no credentials or executable filesystem paths. */
 export const PillowRuntimeCapabilitySchema = z.object({
   available: z.boolean(), upscale: PillowUpscalePolicySchema.nullable(), reason: z.string().max(500).optional(),
@@ -81,8 +93,12 @@ export const DesignAutomationRecipeSchema = z.object({
   /** Approved per-call estimate, not a provider bill or token price. */
   estimatedCostPerCallUsd: NullableMoney,
   maxEstimatedCostUsd: NullableMoney,
+  /** Explicit unlimited spending. Absence keeps the legacy priced-and-capped policy. */
+  costPolicy: z.literal("unlimited").optional(),
   pillowPipeline: PillowPipelineSchema.optional(),
 }).strict().superRefine((recipe, ctx) => {
+  if (recipe.costPolicy === "unlimited" && recipe.maxEstimatedCostUsd !== null)
+    ctx.addIssue({ code: "custom", path: ["maxEstimatedCostUsd"], message: "Unlimited spending cannot contain a task spending cap" });
   if (recipe.pillowPipeline && (recipe.workflow !== "pillow_photo" || recipe.imagePolicy !== "faithful_enhancement")) {
     ctx.addIssue({ code: "custom", path: ["pillowPipeline"], message: "The versioned pillow pipeline requires faithful enhancement and the pillow workflow" });
   }

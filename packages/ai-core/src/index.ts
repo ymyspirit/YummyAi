@@ -6,6 +6,7 @@ export * from "./harness-registry.js";
 export * from "./assist-harness.js";
 export * from "./assist-invocation.js";
 export * from "./model-billing.js";
+export * from "./model-usage.js";
 export * from "./artwork-audit.js";
 export * from "./image-provider.js";
 export * from "./provider.js";

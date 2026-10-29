@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import daily from "./playwright.order-daily.config";
-import personal from "./playwright.factory-portal.config";
+import personal, { factoryPortalApiHealthUrl } from "./playwright.factory-portal.config";
 
 const servers = Array.isArray(personal.webServer) ? personal.webServer : [];
 
@@ -13,7 +13,7 @@ export default defineConfig({
   outputDir: "../../tmp/order-daily-personal-e2e",
   webServer: servers.map(server => ({
     ...server,
-    ...(String(server.url).includes(":8130") ? {} : { url: "http://localhost:3130/login" }),
+    ...(server.url === factoryPortalApiHealthUrl ? {} : { url: "http://localhost:3130/login" }),
     env: {
       ...server.env,
       FACTORY_PORTAL_ONLY: "0",

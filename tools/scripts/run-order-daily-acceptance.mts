@@ -594,12 +594,14 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
   productionHandoffBrowser = process.argv.includes("--suite=production-handoff"),
   productionDeliveryBrowser = process.argv.includes("--suite=production-delivery"),
   teamBrowser = process.argv.includes("--suite=teams"),
+  orderRequirementsBrowser = process.argv.includes("--suite=order-requirements"),
+  orderReviewGuidanceBrowser = process.argv.includes("--suite=order-review-guidance"),
   orderImageUploadBrowser = process.argv.includes("--suite=order-image-upload"),
   compiledWeb = process.argv.includes("--compiled-web"),
   incomingBrowser = process.argv.includes("--suite=incoming-browser"),
   procurementCycleBrowser = process.argv.includes("--suite=procurement-cycle-browser"),
   erpPersonalBrowser =
-    orderImageUploadBrowser ||
+    orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser ||
     ordinaryDailyBrowser ||
     studioPersonalBrowser ||
     shipmentCreateBrowser ||
@@ -639,8 +641,15 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
     productionDeliveryBrowser ||
     process.argv.includes("--suite=factory-directory") ||
     process.argv.includes("--suite=erp-identity");
+const factoryPortalApiPort = orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser
+  ? await disposableAdvertisingApiPort() : null;
+if (factoryPortalApiPort) process.env.E2E_FACTORY_PORTAL_API_PORT = String(factoryPortalApiPort);
+else delete process.env.E2E_FACTORY_PORTAL_API_PORT;
+Object.assign(manifest, { factoryPortalApiPort });
 process.env.WEB_AUTH_MODE = erpPersonalBrowser ? "personal" : "local-service";
 process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED = orderImageUploadBrowser ? "1" : "0";
+process.env.E2E_ORDER_REVIEW_GUIDANCE_ISOLATED = orderReviewGuidanceBrowser || orderRequirementsBrowser ? "1" : "0";
+process.env.E2E_ORDER_REQUIREMENTS_ISOLATED = orderRequirementsBrowser ? "1" : "0";
 if (procurementCycleBrowser || procurementPrecisionBrowser || invoiceCommandBrowser || invoiceReconciliationBrowser) process.env.E2E_REAL_PRODUCTS = "1";
 let factoryIdentity: Awaited<ReturnType<typeof startFactoryIdentityFixture>> | Awaited<ReturnType<typeof startAgentMcpBrowserIdentityFixture>> | undefined;
 let webCandidate: Awaited<ReturnType<typeof verifyLocalWebCandidate>> | undefined;
@@ -1080,6 +1089,7 @@ try {
   const orderIntakeIntegration = forwarded.includes("--suite=order-intake-integration");
   const orderReview = forwarded.includes("--suite=order-review");
   const orderReviewIntegration = forwarded.includes("--suite=order-review-integration");
+  const orderRequirementsIntegration = forwarded.includes("--suite=order-requirements-integration");
   const productVisuals = forwarded.includes("--suite=product-visuals");
   const productVisualsIntegration = forwarded.includes("--suite=product-visuals-integration");
   const aiTasks =
@@ -1203,7 +1213,7 @@ try {
     allIntegration ||
     logisticsIntegration ||
     qualityScrapIntegration || qualityScrapUpgradeIntegration || productionQuantityIntegration || productionQuantityUpgradeIntegration || factoryCapacityIntegration || factoryCapacityUpgradeIntegration || factoryAuthorityIntegration || advertisingIntegration || advertisingCommandIntegration || advertisingHistoryIntegration || advertisingMeasurementIntegration || advertisingAuthorityIntegration ||
-    orderReviewIntegration ||
+    orderRequirementsIntegration || orderReviewIntegration ||
     orderIntakeIntegration ||
     salesDeliveryIntegration ||
     productVisualsIntegration ||
@@ -1715,6 +1725,9 @@ try {
                                       ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--testTimeout=60000", "src/orders/order-shipment.integration.test.ts", "src/orders/order-shipment-physical-evidence.integration.test.ts", "src/orders/shipment-production-sources.integration.test.ts", "src/orders/order-workspace.integration.test.ts", ...extra]
                                     : qualityUpgradeIntegration
                                       ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--testTimeout=60000", "src/orders/quality-upgrade.integration.test.ts", ...extra]
+                                    : orderRequirementsIntegration
+                                      ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "--maxWorkers=1", "--testTimeout=60000",
+                                          "src/orders/order-design-agent.integration.test.ts", "src/ai/assist.integration.test.ts", ...extra]
                                     : orderReviewIntegration
                                       ? [
                                           apiRequire.resolve("vitest/vitest.mjs"),
@@ -1881,7 +1894,11 @@ try {
                                                                     ? "apps/web/playwright.factory-directory.config.ts"
                                                                     : teamBrowser
                                                                     ? "apps/web/playwright.teams.config.ts"
-                                                                    : orderImageUploadBrowser
+                                                                    : orderRequirementsBrowser
+                                                                      ? "apps/web/playwright.order-requirements.config.ts"
+                                                                    : orderReviewGuidanceBrowser
+                                                                      ? "apps/web/playwright.order-review-guidance.config.ts"
+                                                                      : orderImageUploadBrowser
                                                                       ? "apps/web/playwright.order-image-upload.config.ts"
                                                                       : "apps/web/playwright.erp-identity.config.ts"
                                                   : factoryPortal
@@ -1983,7 +2000,7 @@ try {
         REDIS_URL: `redis://127.0.0.1:${port}`,
         E2E_DISPOSABLE_REDIS_CONTAINER: redis,
         E2E_DISPOSABLE_REDIS_URL: `redis://127.0.0.1:${port}`,
-        API_BASE_URL: qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
+        API_BASE_URL: factoryPortalApiPort ? `http://127.0.0.1:${factoryPortalApiPort}` : qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
           factoryPortal || factoryCollaboration || erpPersonalBrowser
             ? "http://127.0.0.1:8130"
             : methodWorkbench || businessMethods || canvasSession || executionMethodsBrowser

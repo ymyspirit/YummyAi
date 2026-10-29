@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireStudioPersonalEnvironment } from "./require-studio-personal-environment.mjs";
 import { requireDisposableIntegrationEnvironment } from "./require-disposable-integration.mjs";
+import { currentSchemaVersion } from "./current-schema.mjs";
 
 /** Every branch rejects ordinary or mixed resources before creating a client. */
 export function requireCreativeResponseAdoptionEnvironment(environment = process.env, browser = false) {
@@ -30,5 +31,5 @@ export function requireCreativeResponseAdoptionEnvironment(environment = process
   if (!environment.YUMMYAI_TEST_CACHE_DIR || !path.isAbsolute(environment.YUMMYAI_TEST_CACHE_DIR)
       || environment.YUMMYAI_TEST_CACHE_DIR !== lane)
     throw new Error("creative_response_adoption_exact_runner_output_required");
-  return { ...isolated, upgrade, schema: 192 as const, lane };
+  return { ...isolated, upgrade, schema: currentSchemaVersion(), lane };
 }

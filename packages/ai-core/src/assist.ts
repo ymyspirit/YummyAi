@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import type { ZodType } from "zod";
 import {
-  AssistResultSchema,
+  BenchmarkAssistResultSchema,
   LegacyAssistResultSchema,
+  OrderReviewAssistResultSchema,
   type AssistCheck,
   type AssistResult,
   type AssistSource,
@@ -15,16 +17,33 @@ import type { KnowledgeReference } from "@yummyai/contracts/knowledge";
 import type { HarnessExecutionContract } from "@yummyai/contracts/harness";
 import type { AgentMethodSelection } from "@yummyai/contracts/harness/methods";
 import type { BenchmarkResourceBindings } from "@yummyai/contracts/knowledge/benchmark";
+import { OrderRequirementSourceSchema, type OrderRequirementSource } from "@yummyai/contracts/order/requirement-interpretation";
+import type { CustomizationDefinition } from "@yummyai/contracts/catalog/product";
 
 export const ASSIST_PROMPT_VERSION = "erp-assist-2026-10-06-v6";
+export const ASSIST_ORDER_REQUIREMENTS_VERSION = "order-requirements-2026-10-27-v1";
 export const ASSIST_BENCHMARK_PROMPT_VERSION = "erp-benchmark-2026-10-21-v1";
 export const ASSIST_BENCHMARK_INSTRUCTIONS = "这是固定数据集的独立评测执行契约。仅根据本次固定输入和原来源回答。benchmarkCalculations仅包含给定操作数而无预期答案。存在计算题时必须输出typedAnswers，逐项保留key、unit、currency、规定scale的十进制value及原benchmark-input:key或本次知识来源引用。不得从其他文字的短语匹配代替结构化数值，也不得执行任意代码。";
-export const ASSIST_MAX_OUTPUT_TOKENS = 6000;
+export const ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS = `${ASSIST_ORDER_REQUIREMENTS_VERSION}
+order_review补充：requirementSources是原始定制字段的有来源投影；可以用orderFieldBindings建议它对应当前customization中的哪个字段，只能引用已有sourceFieldKey和targetFieldKey，并保留原role及原值，每条引用requirementSourceIds中该字段的sourceId证据。字体、字号、颜色选择器不是可印文字；空文字不生成印字要求。字体和颜色只能归属targetTextKey指向的同group文字，不跨面或跨组；颜色标签与实际hex不同，不能把CustomColor猜成黑色。原备注完整保留并用于后续制作，不因存在备注就建议强制改人工。未确认或有冲突的来源保持targetFieldKey=null并说明，不能把未知要求标为已执行。`;
+/** Kept for already frozen executions and benchmark reproducibility. */
+export const ASSIST_LEGACY_MAX_OUTPUT_TOKENS = 6000;
+export const ASSIST_MAX_OUTPUT_TOKENS = ASSIST_LEGACY_MAX_OUTPUT_TOKENS;
+export function assistPromptVersion(benchmark = false, orderReview = false) {
+  if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
+  return benchmark ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION;
+}
+export function assistResultSchema(benchmark = false, orderReview = false): ZodType<AssistResult> {
+  if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
+  return benchmark ? BenchmarkAssistResultSchema : orderReview ? OrderReviewAssistResultSchema : LegacyAssistResultSchema;
+}
 /** Published method notes require knowledge-read access even with zero search hits. */
 export function assistUsesReviewedGuidance(input: {knowledge?: readonly unknown[] | null; methodSelection?: AgentMethodSelection | null}) {
   return !!input.knowledge?.length || input.methodSelection?.mode === "published";
 }
 export interface AssistContext {
+  /** New ordinary executions omit the provider output cap. Absence retains historical policy. */
+  outputTokenPolicy?: "provider";
   benchmarkExecutionVersion?: "knowledge-benchmark-execution-v1";
   /** Server-only IDs for fixed role evaluation; never an authority grant. */
   benchmarkResources?: BenchmarkResourceBindings;
@@ -53,6 +72,9 @@ export interface AssistContext {
 export function assistFingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
+export function orderRequirementSourceId(sourceFieldKey: string): string {
+  return `order-field:${assistFingerprint(sourceFieldKey)}`;
+}
 export function assistScope(input: CreateAssist): string {
   if (input.kind === "knowledge_answer") return `knowledge:${input.scopeId}`;
   if (input.kind === "creative") return `creative:${input.scopeId}`;
@@ -69,7 +91,7 @@ export function validateAssistResult(
   input: AssistContext,
   availableImageIds: string[],
 ): AssistResult {
-  const result: AssistResult = (isBenchmarkAssist(input) ? AssistResultSchema : LegacyAssistResultSchema).parse(raw);
+  const result: AssistResult = assistResultSchema(isBenchmarkAssist(input), input.request.kind === "order_review").parse(raw);
   if (result.typedAnswers?.length && (input.request.kind !== "knowledge_answer" || input.request.purpose !== "evaluation" || !Array.isArray(input.data.benchmarkCalculations)))
     throw new Error("assist_invalid_result");
   if (input.request.kind === "knowledge_answer" && !input.sources.length &&
@@ -90,6 +112,7 @@ export function validateAssistResult(
     ...result.findings,
     ...result.directions,
     ...result.matches,
+    ...(result.orderFieldBindings ?? []),
     ...result.templateSlots,
     ...result.actions,
     ...(result.typedAnswers ?? []),
@@ -120,6 +143,7 @@ export function validateAssistResult(
       !input.allowedSpecificationIds.includes(match.specificationVersionId)
     )
       throw new Error("assist_invalid_match");
+  validateOrderFieldBindings(result, input);
   if (input.request.kind !== "template_config" && result.templateSlots.length)
     throw new Error("assist_invalid_result");
   if (input.request.kind === "template_config") {
@@ -177,6 +201,51 @@ export function validateAssistResult(
       throw new Error("assist_invalid_listing_copy");
   }
   return result;
+}
+
+/** Suggestions may identify an existing field, never invent customer content or style. */
+function validateOrderFieldBindings(result: AssistResult, input: AssistContext) {
+  const bindings = result.orderFieldBindings ?? [];
+  if (!bindings.length) return;
+  if (input.request.kind !== "order_review") throw new Error("assist_invalid_order_field_binding");
+  const order = input.data.order as { requirementSources?: unknown; customization?: CustomizationDefinition } | undefined;
+  const parsed = OrderRequirementSourceSchema.array().safeParse(order?.requirementSources);
+  if (!parsed.success || new Set(parsed.data.map(source => source.sourceFieldKey)).size !== parsed.data.length)
+    throw new Error("assist_invalid_order_field_binding");
+  const sources = new Map(parsed.data.map(source => [source.sourceFieldKey, source]));
+  const fields = order?.customization?.fields ?? [];
+  const seen = new Set<string>(), targets = new Set<string>();
+  for (const binding of bindings) {
+    const source = sources.get(binding.sourceFieldKey);
+    if (!source || seen.has(source.sourceFieldKey) || binding.role !== source.role ||
+      !binding.evidence.some(item => item.sourceId === orderRequirementSourceId(source.sourceFieldKey)))
+      throw new Error("assist_invalid_order_field_binding");
+    seen.add(source.sourceFieldKey);
+    if (binding.targetFieldKey === null) continue;
+    const field = fields.find(candidate => candidate.key === binding.targetFieldKey);
+    if (!field || !bindingTypeMatches(source, field) ||
+      !["font", "color"].includes(source.role) && targets.has(field.key))
+      throw new Error("assist_invalid_order_field_binding");
+    if (source.role === "font" || source.role === "color") {
+      const text = source.targetTextKey ? sources.get(source.targetTextKey) : null;
+      const target = text && bindings.find(candidate => candidate.sourceFieldKey === text.sourceFieldKey);
+      if (!text || text.role !== "text" || text.groupKey !== source.groupKey || target?.targetFieldKey !== field.key)
+        throw new Error("assist_invalid_order_field_binding");
+    } else targets.add(field.key);
+    if ((field.type === "single_choice" || field.type === "multiple_choice") &&
+      field.options.filter(option => option.value === source.value || option.label === source.value).length !== 1)
+      throw new Error("assist_invalid_order_field_binding");
+  }
+}
+
+function bindingTypeMatches(source: OrderRequirementSource, field: CustomizationDefinition["fields"][number]) {
+  if (source.role === "image") return field.type === "image";
+  if (["text", "font", "color"].includes(source.role)) return field.type === "short_text" || field.type === "long_text";
+  if (source.role === "notes") return field.key === "customer_notes" && ["short_text", "long_text"].includes(field.type);
+  if (source.role === "crop") return field.key === "crop_scope" && ["short_text", "single_choice"].includes(field.type);
+  if (source.role === "side") return field.key === "print_sides" && field.type === "single_choice";
+  if (source.role === "option" || source.role === "enhancement") return field.type === "single_choice" || field.type === "multiple_choice";
+  return false;
 }
 
 export function isBenchmarkAssist(input: Pick<AssistContext, "benchmarkExecutionVersion">): boolean {

@@ -1,6 +1,10 @@
 import { defineConfig } from "@playwright/test";
 import isolated from "./playwright.order-daily.config";
 const servers = Array.isArray(isolated.webServer) ? isolated.webServer : [];
+const apiPort = Number(process.env.E2E_FACTORY_PORTAL_API_PORT ?? "8130");
+if (!Number.isInteger(apiPort) || apiPort <= 1024 || apiPort > 65535 || [3000,3130,4177,8000].includes(apiPort))
+  throw new Error("A dedicated isolated factory portal API port is required");
+export const factoryPortalApiHealthUrl = `http://127.0.0.1:${apiPort}/health`;
 export default defineConfig({
   ...isolated,
   testMatch: "factory-portal.spec.ts",
@@ -12,7 +16,7 @@ export default defineConfig({
   webServer: servers.map((server) => ({
     ...server,
     ...(String(server.url).includes(":8000")
-      ? { url: "http://127.0.0.1:8130/health" }
+      ? { url: factoryPortalApiHealthUrl }
       : {
           command: process.env.KNOWLEDGE_BROWSER_COMMAND ?? "pnpm dev --port 3130",
           ...(process.env.KNOWLEDGE_BROWSER_CWD ? { cwd: process.env.KNOWLEDGE_BROWSER_CWD } : {}),
@@ -21,8 +25,8 @@ export default defineConfig({
     env: {
       ...server.env,
       ...process.env,
-      API_BASE_URL: "http://127.0.0.1:8130",
-      PORT: "8130",
+      API_BASE_URL: `http://127.0.0.1:${apiPort}`,
+      PORT: String(apiPort),
       FACTORY_PORTAL_ONLY: "1",
       FACTORY_PORTAL_ORIGIN: "http://localhost:3130",
       DASHBOARD_DEMO_MODE: "0",

@@ -1,4 +1,4 @@
-import { AmazonReportArchiveProcessor, AmazonReportProcessingError, createAmazonReportReadModel, type StoredSource, type StoredDocument, type StoredFile, type ReviewMetadata, type ReadModel } from "@yummyai/order-intake";
+import { AmazonReportArchiveProcessor, AmazonReportProcessingError, createAmazonReportReadModel, extractAmazonRequirementSources, type StoredSource, type StoredDocument, type StoredFile, type ReviewMetadata, type ReadModel } from "@yummyai/order-intake";
 import { createHash } from "node:crypto";
 
 import {
@@ -664,6 +664,34 @@ export class AmazonOrderReportService {
     });
   }
 
+  /** Owner-only projection of the original customization tree; no archive is rewritten. */
+  async requirementSources(context: TenantContext, id: string, expectedVersionId: string) {
+    authorize(context, Permission.OrderRead);
+    authorize(context, Permission.OrderPiiRead);
+    await this.cleanupExpired(context);
+    return withTenant(this.database.db, context, async tx => {
+      const current = await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead]);
+      const source = await this.versionLine(tx, id, expectedVersionId);
+      const stored = source && await this.readDocument(tx, source.report, source.order.addressStatus);
+      if (!source || !stored) throw new NotFoundException("原始定制要求不存在或已到保存期限");
+      let legacySurfaces: AmazonReportDetailView["surfaces"] | undefined;
+      if (!Array.isArray(stored.document?.surfaces)) {
+        // Some retained inputs only have the original version's derived metadata.
+        // Read it without backfilling a document or inventing raw provenance.
+        const [projection] = await tx.select({ encryptedMetadata: readModels.encryptedMetadata }).from(readModels)
+          .where(eq(readModels.versionId, expectedVersionId)).limit(1);
+        if (!projection?.encryptedMetadata) throw new NotFoundException("原始定制要求不存在或已到保存期限");
+        const parsed = this.vault.withSecret(projection.encryptedMetadata, value =>
+          AmazonReportDetailViewSchema.shape.surfaces.safeParse((JSON.parse(value) as Partial<ReviewMetadata> | null)?.surfaces));
+        if (!parsed.success) throw new NotFoundException("原始定制要求不存在或已到保存期限");
+        legacySurfaces = parsed.data;
+      }
+      const result = extractAmazonRequirementSources(stored.document, legacySurfaces);
+      await this.access(tx, current, source.report.orderId);
+      return result;
+    });
+  }
+
   /** Only owning services may choose a pinned version; public clients choose a work revision. */
   async fileFromVersion(context: TenantContext, id: string, versionId: string, key: string) {
     authorize(context, Permission.OrderRead);
@@ -735,33 +763,46 @@ export class AmazonOrderReportService {
     authorize(context, Permission.OrderPiiRead);
     await this.cleanupExpired(context);
     await withTenant(this.database.db, context, async (tx) => {
-      await lockLine(tx, context, id);
-      const row = await this.loadLine(tx, id);
-      if (
-        row.report.currentVersionId !== expectedVersionId ||
-        !["ready", "partial"].includes(row.report.state)
-      )
-        throw new ConflictException("仅可核对当前已解析版本，请刷新后重试");
-      const document = await this.readDocument(tx, row.report, row.order.addressStatus);
-      if (!document) throw new ConflictException("定制文件已不可用");
-      await tx
-        .update(reportLines)
-        .set({
-          reviewedVersionId: expectedVersionId,
-          reviewedBy: context.userId,
-          reviewedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(reportLines.id, id));
-      await this.audit.recordInTransaction(tx, context, {
-        action: "order.report.reviewed",
-        resourceType: "amazon_order_report_line",
-        resourceId: id,
-        result: "success",
-        metadata: { versionId: expectedVersionId },
-      });
+      await this.reviewInTransaction(tx, context, id, expectedVersionId);
     });
     return this.detail(context, id);
+  }
+
+  /** Owning-service confirmation, atomic with the operator's reviewed work revision. */
+  async reviewInTransaction(
+    tx: TenantTransaction,
+    context: TenantContext,
+    id: string,
+    expectedVersionId: string,
+    options: { expectedWorkLineId?: string } = {},
+  ): Promise<void> {
+    const current = await currentOrderAuthority(tx, context, [Permission.OrderWrite, Permission.OrderPiiRead]);
+    await lockLine(tx, current, id);
+    // Keep the same advisory -> report row direction as archive processing.
+    const [locked] = await tx.select({ id: reportLines.id }).from(reportLines)
+      .where(eq(reportLines.id, id)).for("update");
+    if (!locked) throw new NotFoundException("订单行不存在");
+    const row = await this.loadLine(tx, id);
+    if (row.line.orderId !== row.order.id || options.expectedWorkLineId !== undefined &&
+      (row.report.orderLineId !== options.expectedWorkLineId || row.line.id !== options.expectedWorkLineId))
+      throw new NotFoundException("订单行不存在");
+    if (row.report.currentVersionId !== expectedVersionId || !["ready", "partial"].includes(row.report.state))
+      throw new ConflictException("仅可核对当前已解析版本，请刷新后重试");
+    const document = await this.readDocument(tx, row.report, row.order.addressStatus);
+    if (!document) throw new ConflictException("定制文件已不可用");
+    await tx.update(reportLines).set({
+      reviewedVersionId: expectedVersionId,
+      reviewedBy: current.userId,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(reportLines.id, id));
+    await this.audit.recordInTransaction(tx, current, {
+      action: "order.report.reviewed",
+      resourceType: "amazon_order_report_line",
+      resourceId: id,
+      result: "success",
+      metadata: { versionId: expectedVersionId },
+    });
   }
 
   async file(

@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { ModelResponseCheckpoint } from "./response-checkpoint.js";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 
 export interface ModelRequest<T> {
   modelKey: string;
@@ -9,7 +10,8 @@ export interface ModelRequest<T> {
   outputSchema: z.ZodType<T>;
   outputSchemaName?: string;
   maxCostUsd: number | null;
-  maxOutputTokens?: number;
+  /** null omits the provider cap; undefined retains the caller's legacy default. */
+  maxOutputTokens?: number | null;
   images?: Array<{ sourceId: string; dataUrl: string }>;
   onResponseCheckpoint?: (response: ModelResponseCheckpoint) => Promise<void>;
 }
@@ -26,6 +28,7 @@ export interface ModelResult<T> {
   inputTokens: number;
   outputTokens: number;
   usageReported?: boolean;
+  tokenUsage?: ModelTokenUsage | null;
   providerRequestId?: string;
   completedAt: Date;
 }
@@ -33,7 +36,7 @@ export interface ModelResult<T> {
 export interface CostEstimate {
   costUsd: number | null;
   estimatedInputTokens: number;
-  maxOutputTokens: number;
+  maxOutputTokens: number | null;
 }
 
 export interface ProviderHealth {

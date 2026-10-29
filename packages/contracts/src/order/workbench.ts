@@ -11,6 +11,7 @@ export const ORDER_LIFECYCLE_LABELS: Record<OrderLifecycleStatus, string> = {
 };
 export type OrderLifecycleLine = {
   sideState: string | null; artwork: string; proof: string;
+  designCandidateReview?: boolean;
   proofVersionCurrent?: boolean; quantity: number; readyQuantity: number; shippedQuantity: number;
 };
 /** Computes from ALL items, before search, workflow filtering or pagination. */
@@ -21,7 +22,7 @@ export function orderLifecycleStatus(lines: readonly OrderLifecycleLine[]): Orde
   if (lines.every(line => line.readyQuantity >= line.quantity)) return "produced";
   if (lines.every(line => line.artwork === "approved" && (line.proof === "not_required"
     || line.proof === "approved" && line.proofVersionCurrent === true))) return "reviewed";
-  if (lines.every(line => ["in_review", "approved"].includes(line.artwork))) return "awaiting_review";
+  if (lines.every(line => ["in_review", "approved"].includes(line.artwork) || line.designCandidateReview === true)) return "awaiting_review";
   return "processing";
 }
 
@@ -105,6 +106,7 @@ export type OrderQueueCounts = z.infer<typeof OrderQueueCountsSchema>;
 /** Used by older transport fixtures; the database computes the same exclusive stage. */
 export function orderQueueStage(row: {
   queueStage?: OrderQueueStage;
+  designCandidateReview?: boolean;
   sideState: string | null;
   preparation: string;
   artwork: string;
@@ -119,7 +121,7 @@ export function orderQueueStage(row: {
   if (row.readyQuantity > row.shippedQuantity) return "ready_to_ship";
   if (!["not_released", "cancelled"].includes(row.production)) return "production";
   if (row.artwork === "approved") return "approved";
-  if (row.artwork === "in_review") return "in_review";
+  if (row.artwork === "in_review" || row.designCandidateReview === true) return "in_review";
   if (row.artwork === "changes_requested") return "changes_requested";
   if (["starting", "in_progress"].includes(row.artwork)) return "in_progress";
   if (row.artwork === "queued") return "queued";

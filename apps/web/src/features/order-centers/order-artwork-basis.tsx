@@ -7,14 +7,16 @@ import { orderDesignExecutor } from "@yummyai/contracts/order/workspace";
 import { orderAutomaticBasisView, orderCatalogSpus } from "./order-auto-basis-model";
 import { orderDraftWithArtwork } from "./order-work-input-model";
 
-export function OrderArtworkBasis({ detail, draft, onChange, children }: {
+export function OrderArtworkBasis({ detail, draft, onChange, children, manualTakeover = false, routePending = false }: {
   detail: OrderWorkDetail;
   draft: OrderWorkDraft;
   onChange: (draft: OrderWorkDraft) => void;
   children?: ReactNode;
+  manualTakeover?: boolean;
+  routePending?: boolean;
 }) {
   const [selectedSpu, setSelectedSpu] = useState({ lineId: detail.line.id, id: "" });
-  const [manualOpen, setManualOpen] = useState(!detail.catalog?.automatic?.applied && detail.catalog?.automatic?.status !== "preserved");
+  const [manualOpen, setManualOpen] = useState(false);
   const catalog = detail.catalog;
   if (!catalog) return <><p className="oc-hint oc-full-field" role="status">本单制作依据暂不可读取 请保留原需求并刷新核对</p>{children}</>;
   const view = orderAutomaticBasisView(detail, draft), { recipe, specification } = view;
@@ -31,22 +33,31 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
       <header><span>{view.tone === "warning" ? <AlertTriangle size={16} /> : <Layers3 size={16} />}<strong>{view.title}</strong></span>
         <small>{view.changed || view.automatic?.applied ? "待保存到本单需求" : detail.line.revision > 0 ? `本单需求 V${detail.line.revision}` : "待核对并保存"}</small></header>
       <dl>
-        <div><dt>产品 SPU</dt><dd>{spu ? `${spu.code} · ${spu.name}` : "待明确产品"}</dd></div>
-        <div><dt>具体规格</dt><dd>{specification ? `${specification.name} · V${specification.version}` : "待明确具体规格"}{specification?.dimensions && <small>{specification.dimensions}</small>}</dd></div>
-        <div><dt>通用工艺底稿</dt><dd>{view.process}</dd></div>
-        <div><dt>印花与素材</dt><dd>{art ? `${art.code} · ${art.name} · V${art.version}` : "来图方案待确认"}</dd></div>
+        <div><dt>商品</dt><dd>{spu ? spu.name : "待明确产品"}</dd></div>
+        <div><dt>本件尺寸 / 规格</dt><dd>{specification ? specification.name : "待明确具体规格"}{specification?.dimensions && <small>{specification.dimensions}</small>}</dd></div>
+        <div><dt>制作数量</dt><dd>{detail.line.quantity} 件</dd></div>
       </dl>
       {!!view.issues.length && <ul className="oc-basis-issues" aria-label="制作依据待办">{view.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>}
-      {view.automatic && <details className="oc-basis-evidence"><summary>{view.changed ? "查看原自动匹配依据 当前已改选" : "查看本次匹配依据"}</summary>
-        {view.automatic.sizeInches !== null && <p>定制信息中的尺寸 {view.automatic.sizeInches} in</p>}
-        {!!view.automatic.reasons.length && <ul>{view.automatic.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
-        {view.changed && !!view.automatic.issues.length && <ul>{view.automatic.issues.map((issue, index) => <li key={index}>原匹配提示 {issue}</li>)}</ul>}
-        {!view.automatic.reasons.length && <p>当前没有额外匹配说明</p>}
-      </details>}
-      <p className="oc-basis-note">匹配只准备制作依据 保存审单与派发时仍会核对固定版本 不代表图稿已审核或已放行生产</p>
+      <details className="oc-basis-evidence"><summary>工艺 印花版本与匹配依据</summary>
+        <dl><div><dt>产品 SPU</dt><dd>{spu ? `${spu.code} · ${spu.name}` : "待明确产品"}</dd></div>
+          <div><dt>规格版本</dt><dd>{specification ? `V${specification.version}` : "未固定"}</dd></div>
+          <div><dt>通用工艺底稿</dt><dd>{view.process}</dd></div>
+          <div><dt>印花与素材</dt><dd>{art ? `${art.code} · ${art.name} · V${art.version}` : "来图方案待确认"}</dd></div></dl>
+        {view.automatic && <>
+          {view.automatic.sizeInches !== null && <p>定制信息中的尺寸 {view.automatic.sizeInches} in</p>}
+          {!!view.automatic.reasons.length && <ul>{view.automatic.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
+          {view.changed && !!view.automatic.issues.length && <ul>{view.automatic.issues.map((issue, index) => <li key={index}>原匹配提示 {issue}</li>)}</ul>}
+        </>}
+        <p className="oc-basis-note">匹配仅准备本单制作依据 不代表图稿已审核或放行生产 历史订单继续使用原固定版本</p>
+      </details>
       {(view.issues.length > 0 || !spus.length || !specification) && <Link className="oc-basis-link" data-task-draft-link href={spuId ? `/product-specifications?spu=${spuId}` : "/product-specifications"}>到商品库核对 SPU 规格与已审核底稿</Link>}
     </section>
-    <details className="oc-basis-manual" open={manualOpen} onToggle={event => setManualOpen(event.currentTarget.open)}>
+    <div className="oc-review-design" data-review-target="design" tabIndex={-1}><strong>{manualTakeover ? "已交美工修改" : routePending ? "正在核对本单制图状态" : orderDesignExecutor(draft) === "human" ? "本单已保存美工制作方式" : "先由 Agent 出稿"}</strong>
+      <small>{manualTakeover ? "沿用本单原制作项目修改 已完成素材与费用记录保留 修改后重新送运营审核" : routePending ? "读取原制作任务后显示当前交接方式 历史制作版本保持原样"
+        : orderDesignExecutor(draft) === "human" ? "保留本单原保存方式 不回写历史版本 新单默认先由 Agent 出稿"
+          : "顾客原文与特殊备注一并交给 Agent 运营审核不通过后再交美工修改 审单不会自动放行生产"}</small>
+    </div>
+    <details className="oc-basis-manual" data-review-target="basis" open={manualOpen} onToggle={event => setManualOpen(event.currentTarget.open)}>
       <summary><Settings2 size={15} /><span>手动指定印花或改选制作依据</span><ChevronDown size={14} /></summary>
       <div className="oc-basis-fields">
         <label>销售 SKU 制作版本<select aria-label="销售 SKU 制作版本" value={draft.salesRecipeVersionId ?? ""} onChange={event => {
@@ -81,11 +92,6 @@ export function OrderArtworkBasis({ detail, draft, onChange, children }: {
         {children}
       </div>
     </details>
-    <label>设计执行方式<select aria-label="设计执行方式" value={orderDesignExecutor(draft)} onChange={event => onChange({ ...draft, designExecutor: event.target.value as "human" | "agent" })}>
-      <option value="agent">无人设计 Agent（默认）</option><option value="human">美工领取制作</option>
-    </select><small>{orderDesignExecutor(draft) === "agent" ? "派发后自动准备模板排版并美化顾客图片，生成待核对草稿；复杂要求会提示处理，运营审核后才能生产。" : "派发后由美工领取，系统准备素材并自动美化顾客图片，运营审核后才能生产。"}</small>
-      <small>所有顾客图片统一保真美化，与顾客是否选择美化无关。保留原图及原始选项，核对人物、宠物外貌和特征。</small>
-    </label>
   </>;
 }
 export function OrderArtworkMaterials({
@@ -100,13 +106,9 @@ export function OrderArtworkMaterials({
   const art = detail.catalog?.artworks.find((a) => a.id === draft.artworkVersionId);
   if (!art) return null;
   return (
-    <section className="oc-section art-order-materials" aria-label="本单印花素材">
-      <div className="oc-section-heading">
-        <strong>
-          {art.code} · 素材 V{art.version}
-        </strong>
-        <span>{art.materials.length} 个文件</span>
-      </div>
+    <details className="oc-section art-order-materials oc-review-reference" aria-label="本单印花素材">
+      <summary>素材与制作说明 <small>{art.materials.length} 个文件</small></summary>
+      <p className="oc-hint">{art.code} · 素材 V{art.version}</p>
       <p className="oc-hint">设计阶段使用以下绑定素材。{art.instructions}</p>
       <div className="art-material-list">
         {art.materials.map((m) => (
@@ -137,6 +139,6 @@ export function OrderArtworkMaterials({
         </p>
       )}
       <Link href="/print-library">查看印花库</Link>
-    </section>
+    </details>
   );
 }

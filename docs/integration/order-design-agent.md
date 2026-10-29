@@ -2,6 +2,15 @@
 
 The agent produces an editable order draft, a full-resolution private proof and quality diagnostics. A completed run still needs the existing artwork review, any required buyer proof confirmation, and production release. It cannot authorize those steps.
 
+Orders now follow Agent-first drafting and operator review. Source-grouped customer
+requirements are pinned to the original work revision. An operator can reject the
+exact current Agent candidate with a reason and hand it to a human designer; the
+original steps, costs and proof remain immutable. The current assignment remains
+human during editing and resubmission. The list's `designCandidateReview` is a
+read-only indication of an evidence-bound candidate, never production approval.
+See [order requirements](order-requirements.md) for text, style, AI field binding
+and legacy-version boundaries.
+
 Original published methods, current knowledge/permission checks, response-cost
 recovery and immutable technical handoff are specified in
 [order design completion](order-design-completion.md). Missing legacy evidence
@@ -11,9 +20,21 @@ is identified explicitly; existing manufacturing and business-review gates remai
 
 1. Create a production template in the existing editor. Select the product and enter the supplier's actual dimensions, DPI, safety regions and manufacturing rules.
 2. In **自动制图配方**, explicitly choose template placement or the supported photo-pillow workflow. Legacy recipes retain their preserve/enhancement choice; pillow segmentation remains a model call. The new pillow pipeline below requires faithful enhancement and separate explicit opt-in.
-3. For model operations, select a configured image model, confirm permission to transfer the order images to that provider, and enter the per-call estimate, order estimate cap and call count limit. The estimate is not a provider bill. Missing settings prevent execution.
+3. For model operations, select a configured image model, confirm permission to transfer the order images to that provider, and enter the per-call estimate, order estimate cap and call count limit. Alternatively explicitly select unlimited spending; this records `costPolicy: "unlimited"` and a null task cap. Missing prices on a legacy/capped recipe still prevent execution. An estimate is not a provider bill; see [actual model usage](model-token-usage.md).
 4. Save a new version, review the template and bind it through the existing process profile and sales recipe. Orders pin these versions; later template changes do not rewrite dispatched orders.
 5. Review the order's field/image mappings, save preparation and dispatch it. The order/artwork detail shows persisted progress. Browser polling is read-only; closing the page does not own task execution.
+
+Agent dispatch requires an automation recipe on the pinned template. A missing
+recipe is an actionable configuration failure, not a successfully queued Agent
+job. Historical pushed work without a durable run is shown explicitly and is not
+silently restarted through the legacy image preparation path.
+
+New explicitly configured pillow pipelines may pin
+`pillow-subject-v2-2026-10-29` and the exact configured `gpt-image-2.5`,
+`gpt-image-2.5-flare` or `gpt-image-2.5-sunburst` model. The runtime route must match
+that pin. Old v1 pipelines still require their original exact model; aliases and
+variants are never silently substituted during recovery. Supplier dimensions,
+geometry checks and operator artwork review remain separate.
 
 If a model route or provider configuration changes after a template version was saved, new paid runs using that version are blocked. Recheck the destination and estimate, save and review a new template version, and bind it for new orders. Existing pinned runs still validate their destination immediately before submission.
 

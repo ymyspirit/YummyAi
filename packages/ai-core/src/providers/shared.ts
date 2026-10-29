@@ -1,10 +1,18 @@
 import { ProviderError } from "../provider.js";
 import type { z } from "zod";
+import { assertResponsesPayloadComplete } from "./responses-payload.js";
 
 /** Safe failure codes only; never expose provider text or customer content. */
 export function parseStructuredOutput<T>(payload: unknown, schema: z.ZodType<T>): T {
-  const meta = payload as {status?: string; choices?: Array<{finish_reason?: string}>};
+  const meta = payload as {status?: string; error?: unknown; incomplete_details?: unknown; choices?: Array<{finish_reason?: string; message?: {refusal?: unknown}}>} ;
   if (meta?.status === "incomplete" || meta?.choices?.[0]?.finish_reason === "length") throw new Error("model_output_truncated");
+  // Recovery must reject the same terminal/refusal envelope as the initial read.
+  // Retaining a charged response is not permission to adopt its content.
+  if (payload && typeof payload === "object" && !Array.isArray(payload) && ("output" in payload || "output_text" in payload))
+    assertResponsesPayloadComplete(payload as Record<string, unknown>);
+  if (meta?.status !== undefined && meta.status !== "completed" || meta?.error || meta?.incomplete_details ||
+      meta?.choices?.[0]?.message?.refusal || meta?.choices?.[0]?.finish_reason === "content_filter")
+    throw new Error("model_response_incomplete");
   let text: string;
   try { text = extractJsonText(payload); } catch { throw new Error("model_output_missing"); }
   if (!text.trim()) throw new Error("model_output_missing");

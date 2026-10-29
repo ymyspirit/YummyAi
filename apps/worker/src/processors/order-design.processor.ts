@@ -2,7 +2,7 @@ import type { SecretVault } from "@yummyai/ai-core";
 import { createEntityId } from "@yummyai/contracts";
 import { modelProviderConfigs, modelRoutes, withTenant, type DatabaseConnection } from "@yummyai/database";
 import { createQueue, createTraceId, enqueueJob, OrderDesignJobPayloadSchema, QueueName, type JobEnvelope } from "@yummyai/jobs";
-import { dispatchOrderDesignOutbox, OrderDesignError, OrderDesignSubmissionNotSentError, type OrderDesignImageGateway, type OrderDesignProcessor } from "@yummyai/order-design";
+import { dispatchOrderDesignOutbox, OrderDesignError, OrderDesignSubmissionNotSentError, type OrderDesignImageGateway, type OrderDesignModelResponseReceipt, type OrderDesignProcessor } from "@yummyai/order-design";
 import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
 import { HttpStudioGateway, type StudioGateway } from "./studio-generation.gateway.js";
@@ -34,16 +34,19 @@ export class OrderDesignStudioGateway implements OrderDesignImageGateway {
       return { selected, bytes };
     })().catch(error => { throw new OrderDesignSubmissionNotSentError(error instanceof OrderDesignError ? error.code : input.signal.aborted ? "agent_model_cancelled_before_submission" : "agent_model_preparation_failed"); });
     const { selected } = prepared;
+    let receipt:OrderDesignModelResponseReceipt|undefined;
     const output = await this.vault.withSecret(selected.encryptedApiKey, apiKey => this.gateway.generate({
       endpoint: selected.endpoint ?? "https://api.openai.com/v1", apiKey, model: input.model.model, capability: "image", providerTaskId: null,
       signal: input.signal, references: [{ bytes: prepared.bytes, mediaType: "image/png" }],
       input: { requestId: input.requestId, modelId: input.model.routeId, prompt: input.prompt, referenceKeys: [], size: input.size,
         quality: "high", background: input.transparent ? "transparent" : "auto", seconds: 4 },
-    }, async () => undefined));
+    }, async () => undefined, async original => {
+      receipt={requestId:input.requestId,...(original.costUsd!==null?{actualCostUsd:Number(original.costUsd)}:{}),tokenUsage:original.tokenUsage??null};
+      await input.onReceipt?.(receipt);
+    }));
     input.signal.throwIfAborted();
     if (!("bytes" in output) || !output.mediaType.startsWith("image/")) throw new OrderDesignError("agent_model_invalid_output", true);
-    // The existing provider protocol supplies no actual billing evidence.
-    return { bytes: output.bytes };
+    return { bytes: output.bytes,...(receipt?.actualCostUsd!==undefined?{actualCostUsd:receipt.actualCostUsd}:{}),tokenUsage:receipt?.tokenUsage??null };
   }
 }
 

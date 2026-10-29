@@ -1,7 +1,7 @@
 import { LegacyAssistResultSchema, type AssistResult } from "@yummyai/contracts/ai/assist";
 import type { BusinessBenchmarkCase, BenchmarkAssessment, BenchmarkItem } from "@yummyai/contracts/knowledge/benchmark";
 import { BenchmarkResourceBindingsSchema, BusinessBenchmarkRoleSchema, LEGACY_BUSINESS_BENCHMARK_ROLES } from "@yummyai/contracts/knowledge/benchmark";
-import { assistScope, validateAssistResult, type AssistContext } from "./assist.js";
+import { assistResultSchema, assistScope, validateAssistResult, type AssistContext } from "./assist.js";
 import { assistTaskFingerprint } from "./assist-task-fingerprint.js";
 import { knowledgeEvaluationChecksum } from "./knowledge-evaluation.js";
 
@@ -58,7 +58,7 @@ export function runBusinessBenchmarkBaseline(prepared:AssistContext):AssistResul
 export function gradeBusinessBenchmark(fields:BusinessBenchmarkCase,result:AssistResult,prepared:AssistContext,availableImageIds:string[]=[]):Pick<BenchmarkAssessment,"hardPass"|"checks">{
  const checks:BenchmarkAssessment["checks"]=[],add=(key:string,label:string,pass:boolean,detail:string)=>checks.push({key,label,status:pass?"pass":"fail",detail:detail.slice(0,6500)});
  add("business_role","原业务角色",fields.role===prepared.request.kind&&fields.task.kind===fields.role,"固定样本与原生执行角色一致");
- const shape=LegacyAssistResultSchema.safeParse(result);add("business_schema","原生产输出契约",shape.success,"使用原生产输出结构；不增加评测专属数值字段");
+ const shape=assistResultSchema(false,fields.role==="order_review").safeParse(result);add("business_schema","原生产输出契约",shape.success,"使用原生产输出结构；不增加评测专属数值字段");
  let valid=true;try{validateAssistResult(result,prepared,availableImageIds);}catch{valid=false;}
  add("business_evidence","原生业务引用检查",valid,"事实必须引用本次允许的真实来源，不执行任何业务采用动作");
  const text=JSON.stringify(result).normalize("NFKC").toLowerCase(),normalize=(v:string)=>v.normalize("NFKC").toLowerCase();

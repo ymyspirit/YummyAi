@@ -6,7 +6,8 @@ import {
   type AmazonReportWorkspaceView,
   type MarketplaceAccountView,
 } from "@yummyai/contracts";
-import { OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import { CheckOrderIntakeInputSchema, OrderWorkDetailViewSchema, OrderWorkSelectionInputSchema, type OrderWorkDetail, type OrderOperationsView } from "@yummyai/contracts/order/workspace";
+import { DesignAgentViewSchema } from "@yummyai/contracts/order/design-agent";
 import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
 import { OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
 import type { ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
@@ -29,11 +30,15 @@ test("six centers show real filtered order, product-row and unit totals without 
   test.setTimeout(90_000);
   const prefix = `SYNTHETIC-DAILY-COUNTS-${createEntityId()}`;
   const forbidden: string[] = [], errors: string[] = [];
+  const ownedReviewLineIds = new Set<string>();
   let readOnlySummaryPosts = 0;
   const forbid = (request: Request) => {
     const path = new URL(request.url()).pathname;
     if (request.method() === "POST" && path === "/api/order-centers/summaries"
       && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { readOnlySummaryPosts++; return; }
+    const intake = /^\/api\/order-centers\/lines\/([^/]+)\/intake-check$/.exec(path);
+    if (request.method() === "POST" && intake && ownedReviewLineIds.has(intake[1]!) &&
+      CheckOrderIntakeInputSchema.safeParse(request.postDataJSON()).success) return;
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) && path.startsWith("/api/")) forbidden.push(path);
   };
   page.on("request", forbid); page.on("pageerror", error => errors.push(error.message));
@@ -53,6 +58,8 @@ test("six centers show real filtered order, product-row and unit totals without 
     batchId = batch.id;
     const scope = new URLSearchParams({ accountId: account.id, q: prefix });
     const real = await centerApi<{ total: number; groupTotal: number; matchingQuantity: number }>(`order-centers/workspace?${scope}&module=orders&grouping=orders&pageSize=1`);
+    const reviewLines = await centerApi<{ items: Array<{ id: string }> }>(`order-centers/workspace?${scope}&module=orders&grouping=orders&pageSize=100`);
+    for (const line of reviewLines.items) ownedReviewLineIds.add(line.id);
     expect(real).toMatchObject({ total: 3, groupTotal: 2, matchingQuantity: 6 });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/orders?${scope}`);
@@ -164,7 +171,7 @@ test("six centers show real filtered order, product-row and unit totals without 
   }
 });
 
-test("six centers preserve an operator-edited order through artwork, whole production, shipping and after-sales", async ({
+test("six centers preserve an existing human order through operator edits, artwork, whole production, shipping and after-sales", async ({
   page,
 }, testInfo) => {
   test.setTimeout(360_000);
@@ -241,23 +248,44 @@ test("six centers preserve an operator-edited order through artwork, whole produ
       `orders/reports/workspace?batchId=${batch.id}`,
     );
     const id = workspace.lines[0]!.orderLineId;
+    // Compatibility fixture for human requirements saved before this UI session.
+    const initial = OrderWorkDetailViewSchema.parse(await centerApi(`order-centers/lines/${id}`));
+    const legacy = OrderWorkDetailViewSchema.parse(await centerApi(`order-centers/lines/${id}/draft`, {
+      expectedRevision: initial.line.revision,
+      expectedProjectionVersion: initial.line.projectionVersion,
+      expectedSourceVersionId: initial.report?.versionId ?? null,
+      draft: { ...initial.draft, designExecutor: "human" },
+      status: "pending_review",
+      reason: "Synthetic existing saved human requirements compatibility fixture",
+      idempotencyKey: createEntityId(),
+    }));
+    expect(legacy.draft).toEqual({ ...initial.draft, designExecutor: "human" });
+    expect(legacy.line).toMatchObject({ preparation: "pending_review", designExecutor: "human", artwork: "not_pushed",
+      production: "not_released", editorProjectId: null });
+    expect(DesignAgentViewSchema.parse(await centerApi(`order-centers/lines/${id}/design-agent`)).run).toBeNull();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/orders?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
+    const whole = page.getByRole("dialog", { name: "整单详情", exact: true });
+    await expect(whole.getByText("本单已保存美工制作方式", { exact: true })).toBeVisible();
+    await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveCount(0);
     await page.locator("details.oc-platform-editor > summary").click();
     await page.getByLabel("平台最晚发货时间").fill(await currentLocalMinute(2 * 86_400_000));
     await page.getByLabel("平台交期核对依据").fill("Synthetic Seller Central ship-by verification");
     await page.getByRole("button", { name: "保存平台交期核对" }).click();
     await expect(page.getByRole("status").filter({ hasText: "平台交期核对已记录" })).toBeVisible();
-    await page.getByLabel("销售 SKU 制作版本").selectOption(profile.recipeId);
-    await page.getByRole("dialog").getByLabel("设计执行方式").selectOption("human");
+    const manual = whole.locator("details.oc-basis-manual");
+    await manual.locator(":scope > summary").click();
+    await manual.getByLabel("销售 SKU 制作版本", { exact: true }).selectOption(profile.recipeId);
     await page.getByRole("checkbox", { name: "需要客户确认校样" }).check();
     await page
       .getByLabel("制作说明", { exact: true })
       .fill("Use the operator-selected original. Keep the complete subject.");
-    await page.getByRole("button", { name: "添加定制字段" }).click();
-    await page.getByLabel("字段名称").last().fill("Customer name");
-    await page.getByLabel("定制内容", { exact: true }).last().fill("Synthetic Alice");
+    const fields = whole.locator("details.oc-review-raw-fields");
+    await fields.locator(":scope > summary").click();
+    await fields.getByRole("button", { name: "添加定制字段", exact: true }).click();
+    await fields.getByLabel("字段名称", { exact: true }).last().fill("Customer name");
+    await fields.getByLabel("定制内容", { exact: true }).last().fill("Synthetic Alice");
     await page.getByRole("button", { name: "保存草稿", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "草稿已保存" })).toBeVisible();
     await page
@@ -274,6 +302,9 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await expect(page.getByRole("button", { name: "推送本件设计", exact: true })).toBeVisible();
     const before = await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`);
     expect(before.line).toMatchObject({ artwork: "not_pushed", editorProjectId: null });
+    expect(before.draft).toMatchObject({ designExecutor: "human", salesRecipeVersionId: profile.recipeId,
+      customerApprovalRequired: true, instructions: "Use the operator-selected original. Keep the complete subject." });
+    expect(before.draft.fields).toContainEqual(expect.objectContaining({ label: "Customer name", value: "Synthetic Alice" }));
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       path: testInfo.outputPath("orders-reviewed-desktop.png"),
@@ -283,7 +314,9 @@ test("six centers preserve an operator-edited order through artwork, whole produ
     await expect(page.getByRole("status").filter({ hasText: "推送制图已记录" })).toBeVisible();
     await page.getByRole("button", { name: "返回订单中心", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    expect((await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`)).line.preparation).toBe("pushed");
+    expect((await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`)).line).toMatchObject({ preparation: "pushed",
+      designExecutor: "human", artwork: "queued", production: "not_released", editorProjectId: null });
+    expect(DesignAgentViewSchema.parse(await centerApi(`order-centers/lines/${id}/design-agent`)).run).toBeNull();
     await expect(page.getByLabel("搜索订单", { exact: true })).toHaveValue(externalId);
     await page.goto(`/order-artwork?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
@@ -458,6 +491,10 @@ test("six centers preserve an operator-edited order through artwork, whole produ
       await page.screenshot({ path: testInfo.outputPath(`${route}-mobile.png`), fullPage: true });
       await page.setViewportSize({ width: 1440, height: 1000 });
     }
+    const fulfilled = OrderWorkDetailViewSchema.parse(await centerApi(`order-centers/lines/${id}`));
+    expect(fulfilled.draft).toEqual(before.draft);
+    expect(fulfilled.report?.line).toMatchObject({ quantity: workspace.lines[0]!.quantity, currency: workspace.lines[0]!.currency,
+      itemTotalMinor: workspace.lines[0]!.itemTotalMinor });
     expect(errors).toEqual([]);
   } finally {
     await stopProductionEditorWorker(worker);
@@ -545,6 +582,8 @@ test("six centers automatically match shaped-pillow intake while keeping origina
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) || !path.startsWith("/api/")) return;
     if (request.method() === "POST" && path === "/api/order-centers/summaries"
       && OrderWorkSelectionInputSchema.safeParse(request.postDataJSON()).success) { summaryReads++; return; }
+    if (request.method() === "POST" && fixtureIds.orderLineId && path === `/api/order-centers/lines/${fixtureIds.orderLineId}/intake-check`
+      && CheckOrderIntakeInputSchema.safeParse(request.postDataJSON()).success) return;
     if (request.method() === "POST" && fixtureIds.orderLineId && path === `/api/order-centers/lines/${fixtureIds.orderLineId}/draft`) {
       const body = request.postDataJSON();
       if (body.status === "pending_review" && body.expectedSourceVersionId === draftSourceVersion

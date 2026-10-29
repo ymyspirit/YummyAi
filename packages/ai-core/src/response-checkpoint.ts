@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ModelResult } from "./provider.js";
 import { parseStructuredOutput } from "./providers/shared.js";
+import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
 
 /** Private response data. Persist encrypted before interpreting model content. */
 export const ModelResponseCheckpointSchema = z
@@ -13,6 +14,7 @@ export const ModelResponseCheckpointSchema = z
     inputTokens: z.int().nonnegative().nullable(),
     outputTokens: z.int().nonnegative().nullable(),
     costUsd: z.number().nonnegative().nullable(),
+    tokenUsage: ModelTokenUsageSchema.nullable().optional(),
     receivedAt: z.iso.datetime(),
   })
   .strict();
@@ -31,6 +33,7 @@ export function decodeModelResponse<T>(
     inputTokens: saved.inputTokens ?? 0,
     outputTokens: saved.outputTokens ?? 0,
     usageReported: saved.inputTokens !== null && saved.outputTokens !== null,
+    ...(saved.tokenUsage !== undefined ? { tokenUsage: saved.tokenUsage } : {}),
     costUsd: saved.costUsd,
     completedAt: new Date(saved.receivedAt),
   };

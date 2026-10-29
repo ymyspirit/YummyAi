@@ -6,17 +6,59 @@ import { OrderExceptionOperationsQuerySchema, OrderExceptionOperationsViewSchema
 import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { orderQueueStage, OrderQueueStageSchema, orderOperatorTask, orderOperatorException, orderLifecycleStatus, OrderLifecycleStatusSchema } from "@yummyai/contracts/order/workbench";
 import {
+  CheckOrderIntakeInputSchema,
+  OrderIntakeCheckViewSchema,
   OrderWorkDetailViewSchema,
   SaveOrderWorkDraftInputSchema,
   OrderBulkPreviewInputSchema,
   type OrderWorkDetail,
 } from "@yummyai/contracts/order/workspace";
+import { checkOrderIntakeFields } from "../../api/src/orders/order-intake-check.js";
 
 // This suite owns its in-memory order transport. No customer order, factory,
 // marketplace or AI provider is written. The real save boundary is exercised
 // separately by order-workspace.integration.test.ts and order-centers.spec.ts.
 export const id = (n: number) => `019f0000-0000-7000-8000-${n.toString().padStart(12, "0")}`;
 const now = "2026-09-14T00:00:00.000Z";
+
+/** In-memory UI transport only. Native pillow leaves prove the actual save gates. */
+function intakeReply(record: OrderWorkDetail, raw: unknown) {
+  const input = CheckOrderIntakeInputSchema.parse(raw);
+  if (input.expectedRevision !== record.line.revision ||
+    input.expectedSourceVersionId !== (record.report?.versionId ?? null)) return null;
+  const artwork = record.catalog?.artworks.find(item => item.id === input.draft.artworkVersionId);
+  // Older review interaction fixtures explicitly own a free-text profile, rather
+  // than an actual catalog. Infer only those fixed synthetic field identities.
+  const schema = artwork?.customization ?? { version: 1 as const,
+    fields: record.draft.fields.filter(field => field.kind !== "image").map(field => ({
+      key: field.key, label: field.label, type: "short_text" as const, required: true,
+    })) };
+  const checked = checkOrderIntakeFields(schema, input.draft, false);
+  const issues = [...checked.issues];
+  const add = (code: string, message: string) => issues.push({
+    code, fieldKey: null, message, action: "核对本单实际资料后重新检查",
+  });
+  if (!input.draft.printProfileVersionId) add("profile_missing", "请先核对本单工艺版本");
+  else if (record.profile && input.draft.printProfileVersionId !== record.profile.versionId)
+    add("profile_mismatch", "所选工艺不属于当前合成订单固定依据");
+  if (record.catalog && !artwork) add("artwork_missing", "请先选择本单印花版本");
+  if (record.line.held) add("order_held", "订单已暂停");
+  if (record.line.sourceChanged) add("source_changed", "本单来源已变化");
+  for (const image of input.draft.images) {
+    const known = image.origin === "upload"
+      ? record.assets.some(asset => asset.id === image.key && asset.mediaType.startsWith("image/"))
+      : record.report?.files.some(file => file.key === image.key && file.role === "buyer_image" &&
+        file.originalFileKey && file.mediaType.startsWith("image/"));
+    if (!known) add("image_not_available", "所选顾客原图不属于当前订单资料");
+  }
+  return OrderIntakeCheckViewSchema.parse({
+    orderLineId: record.line.id, revision: record.line.revision,
+    sourceVersionId: record.report?.versionId ?? null, ready: issues.length === 0,
+    basis: artwork ? "manual" : "legacy_package", package: null,
+    fields: checked.fields, issues, normalizedDraft: checked.normalizedDraft,
+    notes: ["合成订单交互夹具 按实际输入核验字段与已知附件 不代表真实生产准入"],
+  });
+}
 const profile = {
   id: id(100),
   versionId: id(101),
@@ -90,6 +132,7 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
   const saves: Array<ReturnType<typeof SaveOrderWorkDraftInputSchema.parse> & { lineId: string }> =
     [];
   const unexpectedWrites: string[] = [];
+  const intakeChecks: Array<ReturnType<typeof CheckOrderIntakeInputSchema.parse> & { lineId: string }> = [];
   let workspaceReads = 0;
   let failNext = false;
   let failureMessage = "Synthetic save conflict; retry required";
@@ -252,6 +295,14 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
     const record = records.find((record) => record.line.id === lineId);
     if (!record)
       return route.fulfill({ status: 404, json: { message: "Synthetic order not found" } });
+    if (request.method() === "POST" && path === `lines/${lineId}/intake-check`) {
+      const input = CheckOrderIntakeInputSchema.parse(request.postDataJSON());
+      intakeChecks.push({ ...input, lineId });
+      const result = intakeReply(record, input);
+      return result ? route.fulfill({ json: result }) : route.fulfill({
+        status: 409, json: { message: "Synthetic order or source changed; recheck the current draft" },
+      });
+    }
     if (request.method() === "GET" && path.endsWith("/order-detail")) {
       const group = records.filter(item => item.line.orderId === record.line.orderId);
       return route.fulfill({ json: WholeOrderDetailViewSchema.parse({
@@ -309,6 +360,7 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
     records,
     saves,
     unexpectedWrites,
+    intakeChecks,
     workspaceReads: () => workspaceReads,
     failNextSave: (message = "Synthetic save conflict; retry required") => {
       failNext = true;

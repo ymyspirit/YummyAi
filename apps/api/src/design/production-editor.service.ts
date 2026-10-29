@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { assertCatalogEditorSource } from "@yummyai/catalog-core";
 import { withCatalogTenant as withTenant } from "../catalog/catalog-access.js";
 import type { ArtworkLayout } from "@yummyai/contracts/catalog/artwork";
+import type { OrderRequirementInterpretation } from "@yummyai/contracts/order/requirement-interpretation";
 import type { PrintBinding } from "@yummyai/contracts/catalog/composition";
 import { printCompositionLayer } from "@yummyai/production-editor";
 import type { CustomizationDefinition } from "@yummyai/contracts";
@@ -626,7 +627,7 @@ export class ProductionEditorService {
       .where(and(eq(projects.sourceWorkItemId, workItemId), eq(projects.sourceWorkRevisionId, revisionId), eq(projects.status, "active")));
   }
 
-  async createFromWork(context: TenantContext, input: { workItemId: string; revisionId: string; expiresAt: Date; name: string; template: ProductionEditorDetailView; originals: Array<{ name: string; bytes: Uint8Array }>; artworkOverride?: {name:string;bytes:Uint8Array}; printArtworks?: Array<{ binding: PrintBinding; name: string; bytes: Uint8Array }>; artworkMaterials?: Array<{name:string;bytes:Uint8Array;kind:"image"|"font"}>; copyTemplateLayers?: boolean; suppressAutomaticEnhancement?: boolean; automaticLayout?: {layout:ArtworkLayout;customization:CustomizationDefinition;draft:OrderWorkDraft;photoOnlyPillow?:boolean} }) {
+  async createFromWork(context: TenantContext, input: { workItemId: string; revisionId: string; expiresAt: Date; name: string; template: ProductionEditorDetailView; originals: Array<{ name: string; bytes: Uint8Array }>; artworkOverride?: {name:string;bytes:Uint8Array}; printArtworks?: Array<{ binding: PrintBinding; name: string; bytes:Uint8Array }>; artworkMaterials?: Array<{name:string;bytes:Uint8Array;kind:"image"|"font"}>; copyTemplateLayers?: boolean; suppressAutomaticEnhancement?: boolean; automaticLayout?: {layout:ArtworkLayout;customization:CustomizationDefinition;draft:OrderWorkDraft;photoOnlyPillow?:boolean;requirements?:OrderRequirementInterpretation} }) {
     authorize(context, Permission.DesignWrite); authorize(context, Permission.OrderWrite); authorize(context, Permission.OrderPiiRead);
     if (input.template.project.source || input.template.project.workSource) throw new UnprocessableEntityException("通用底稿不能包含其他买家的素材");
     const [work] = await this.inTenant(context, (tx) => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, input.workItemId)));
@@ -671,7 +672,7 @@ export class ProductionEditorService {
       }
       // Order images stay explicitly named by intended usage; the designer chooses
       // their placement instead of silently treating the first attachment as artwork.
-      const saved = await this.save(context, id, { expectedVersionId: versionId, document:input.automaticLayout ? await composeOrderArtwork(document,input.automaticLayout.layout,input.automaticLayout.customization,input.automaticLayout.draft,selectedImages,input.automaticLayout.photoOnlyPillow) : document });
+      const saved = await this.save(context, id, { expectedVersionId: versionId, document:input.automaticLayout ? await composeOrderArtwork(document,input.automaticLayout.layout,input.automaticLayout.customization,input.automaticLayout.draft,selectedImages,input.automaticLayout.photoOnlyPillow,input.automaticLayout.requirements) : document });
       if (selectedImages.length && !input.suppressAutomaticEnhancement && document.automation?.imagePolicy !== "preserve") await this.enhanceOrderImages(context, id, saved.version.id, createEntityId());
       return await this.get(context, id);
     } catch (error) { await this.erase(context, id, "deleted"); throw error; }

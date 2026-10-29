@@ -2,8 +2,10 @@ import {and,eq,inArray,sql} from "drizzle-orm";
 import {createEntityId,type TenantContext} from "@yummyai/contracts";
 import {aiBudgetLedger,orderDesignAgentRuns as runs,orderDesignAgentSteps as steps,orderDesignModelCalls as calls,withTenant,type DatabaseConnection,type TenantTransaction} from "@yummyai/database";
 import {lockWork,type DesignRun,type DesignStep} from "./repository.js";
-import {OrderDesignError,OrderDesignSubmissionNotSentError,type OrderDesignResponseReceipt} from "./types.js";
+import {OrderDesignError,OrderDesignSubmissionNotSentError,type OrderDesignModelResponseReceipt} from "./types.js";
 import {modelBillingBudgetAmount} from "@yummyai/ai-core";
+import {ModelTokenUsageSchema} from "@yummyai/contracts/ai/model-usage";
+import {isDeepStrictEqual} from "node:util";
 
 export function normalizeOrderModelCost(value:unknown):{state:"unknown"|"invalid"|"reported";amount:string|null}{
  if(value===undefined)return {state:"unknown",amount:null};
@@ -35,9 +37,12 @@ export async function registerOrderModelSubmission(tx:TenantTransaction,context:
  if(!original||original.runId!==run.id||original.requestId!==step.requestId||original.claimToken!==token||original.budgetLedgerId!==budgets[0]!.id)throw new OrderDesignSubmissionNotSentError("agent_model_call_identity_invalid");
 }
 
-/** Minimal fee capture is independent of private keys and current output-adoption authority. */
-export async function recordOrderModelResponse(database:DatabaseConnection,context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignResponseReceipt){
+/** Minimal billing capture is independent of private keys and current output-adoption authority. */
+export async function recordOrderModelResponse(database:DatabaseConnection,context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignModelResponseReceipt){
  const report=normalizeOrderModelCost(receipt.actualCostUsd);
+ const parsed=receipt.tokenUsage==null?null:ModelTokenUsageSchema.safeParse(receipt.tokenUsage);
+ if(parsed&&!parsed.success)throw new OrderDesignError("agent_model_usage_invalid");
+ const tokenUsage=parsed?.success?parsed.data:null;
  return withTenant(database.db,context,async tx=>{
   await lockWork(tx,run.workItemId);
   const [owner]=await tx.select().from(runs).where(eq(runs.id,run.id)).for("update");
@@ -46,8 +51,13 @@ export async function recordOrderModelResponse(database:DatabaseConnection,conte
   const [original]=await tx.select().from(calls).where(and(eq(calls.runId,run.id),eq(calls.stepId,step.id),eq(calls.requestId,step.requestId),eq(calls.claimToken,token))).for("update");
   // Existing encrypted checkpoints keep their original evidence; do not invent a past submission.
   if(!original){const [registered]=await tx.select({id:calls.id}).from(calls).where(and(eq(calls.runId,run.id),eq(calls.stepId,step.id))).limit(1);if(registered)throw new OrderDesignError("agent_model_call_identity_invalid");return {recorded:false,state:report.state};}
-  if(original.receivedAt){if(original.costReportState!==report.state||original.reportedCostUsd!==report.amount)throw new OrderDesignError("agent_model_cost_conflict");return {recorded:true,state:report.state};}
-  else await tx.update(calls).set({receivedAt:sql`clock_timestamp()`,costReportState:report.state,reportedCostUsd:report.amount}).where(eq(calls.id,original.id));
+  if(original.receivedAt){
+   // A legacy/local byte checkpoint may omit billing; it never replaces known provider evidence.
+   if(receipt.actualCostUsd!==undefined&&(original.costReportState!==report.state||original.reportedCostUsd!==report.amount))throw new OrderDesignError("agent_model_cost_conflict");
+   if(receipt.tokenUsage!==undefined&&!isDeepStrictEqual(original.tokenUsage??null,tokenUsage))throw new OrderDesignError("agent_model_usage_conflict");
+   return {recorded:true,state:original.costReportState};
+  }
+  else await tx.update(calls).set({receivedAt:sql`clock_timestamp()`,costReportState:report.state,reportedCostUsd:report.amount,tokenUsage}).where(eq(calls.id,original.id));
   const paid=await tx.select({id:steps.id}).from(steps).where(and(eq(steps.runId,run.id),sql`${steps.key} ~ '^(enhance_image|cutout_subject)(_|$)'`));
   const projection=await readOrderModelCostProjection(tx,run.id,paid.length);
   // Fees can change after cancellation; never change task state, lease or production outcome here.

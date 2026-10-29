@@ -7,6 +7,7 @@ import {
   type HarnessInvocationView,
 } from "@yummyai/contracts/harness";
 import "./invocation-evidence.css";
+import { ModelTokenUsageLine } from "../ai-assist/model-usage-summary";
 
 const boundaryNames = {
   legacy_missing: "历史提交证据缺失",
@@ -200,11 +201,7 @@ export function InvocationEvidence({ entries }: { entries?: HarnessInvocationVie
                           : ""}
                       </p>
                     )}
-                    {entry.usage.inputTokens !== null && entry.usage.outputTokens !== null && (
-                      <p>
-                        {entry.usage.inputTokens}/{entry.usage.outputTokens} tokens
-                      </p>
-                    )}
+                    {(entry.model || Object.values(entry.usage).some(value => value != null)) && <ModelTokenUsageLine usage={entry.usage} className="invocation-muted" />}
                     {entry.billing.needsProviderEvidence && (
                       <p className="invocation-muted">费用需结合渠道原请求及账单核对</p>
                     )}

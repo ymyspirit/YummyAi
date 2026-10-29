@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { AssistBasisViewSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema, businessAssistSelection, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
+import { AssistBasisViewSchema, AssistHistoryEntrySchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema, businessAssistSelection, type CreateAssist } from "@yummyai/contracts/ai/assist";
 import { AssistTaskBasisSchema, AssistTaskTargetsSchema, AssistTaskWorkspaceSchema } from "@yummyai/contracts/ai/task-workspace";
 import { AssistTargetPageViewSchema } from "@yummyai/contracts/ai/task-target-page";
 import { AssistAutomaticAuditReuseProofSchema, AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
@@ -9,11 +10,21 @@ export type AssistInput = CreateAssist extends infer T
     ? Omit<T, "modelId" | "requestId">
     : never
   : never;
+const assistConfigurationErrors = {
+  assist_model_changed: "模型配置已变化 请刷新模型后核对再分析 当前填写仍保留",
+  assist_pricing_changed: "模型计价已变化 请刷新价格与单次上限后再分析 当前填写仍保留",
+  assist_concurrency_limit: "当前已有 4 个分析任务 请等待完成后再发起 当前填写仍保留",
+  assist_pricing_required: "请先为所选模型填写输入单价 输出单价和单次费用上限 当前填写仍保留",
+  assist_task_budget_exceeded: "本次预估超过组织单次 AI 预算 请核对限额后再分析 当前填写仍保留",
+  assist_unpriced_usage: "本月存在未计价的 AI 调用 请先核对账单与预算 当前填写仍保留",
+  assist_monthly_budget_exceeded: "组织当月 AI 预算不足 请核对预算后再分析 当前填写仍保留",
+} as const;
+type AssistConfigurationError = keyof typeof assistConfigurationErrors;
 export class AssistRequestError extends Error {
   constructor(
     readonly status: number,
     message: string,
-    readonly code: "authority_changed" | "agent_collection_changed" | "assist_target_collection_changed" | null = null,
+    readonly code: "authority_changed" | "agent_collection_changed" | "assist_target_collection_changed" | AssistConfigurationError | null = null,
   ) {
     super(message);
   }
@@ -21,8 +32,9 @@ export class AssistRequestError extends Error {
 export function assistReadDenied(cause: unknown): cause is AssistRequestError {
   return cause instanceof AssistRequestError && ([401, 403, 404].includes(cause.status) || cause.code === "authority_changed");
 }
-const historySchema = z.array(AssistViewSchema.pick({ id: true, status: true, createdAt: true, modelLabel: true }).strict()).max(20);
+const historySchema = z.array(AssistHistoryEntrySchema).max(20);
 export function assistErrorMessage(status: number, code?: string | null) {
+  if (status === 409 && code && Object.hasOwn(assistConfigurationErrors, code)) return assistConfigurationErrors[code as AssistConfigurationError];
   return code === "authority_changed" ? "当前身份或授权范围已变化 原私有资料已隐藏 请重新核对" : code === "agent_collection_changed" || code === "assist_target_collection_changed" ? "读取期间原集合已变化 已清除旧页 请从第一页重新读取" :
     status === 401 ? "请重新登录自己的运营账户" : status === 403 || status === 404 ? "当前无法读取这笔分析或业务资料" :
       status === 400 || status === 422 ? "原填写或固定依据未通过校验 请核对原请求" : status === 409 ? "原依据或请求状态有冲突 请先读取原回执" :
@@ -48,7 +60,9 @@ export async function assistJsonRequest<T>(url: string, schema: z.ZodType<T>, bo
   let raw: unknown;
   try { const bytes = new Uint8Array(size); let offset = 0; for (const part of chunks) { bytes.set(part, offset); offset += part.byteLength; } raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
   catch { throw new AssistRequestError(response.ok ? 502 : response.status, assistErrorMessage(response.ok ? 502 : response.status)); }
-  if (!response.ok) { const code = raw && typeof raw === "object" && "code" in raw && (raw.code === "authority_changed" || raw.code === "agent_collection_changed" || raw.code === "assist_target_collection_changed") ? raw.code : null;
+  if (!response.ok) { const code = raw && typeof raw === "object" && "code" in raw && typeof raw.code === "string" &&
+    (raw.code === "authority_changed" || raw.code === "agent_collection_changed" || raw.code === "assist_target_collection_changed" || response.status === 409 && Object.hasOwn(assistConfigurationErrors, raw.code))
+      ? raw.code as NonNullable<AssistRequestError["code"]> : null;
     throw new AssistRequestError(response.status, assistErrorMessage(response.status, code), code); }
   if (authority && response.headers.get("x-yummyai-context-authority") !== authority) throw new AssistRequestError(409, assistErrorMessage(409, "authority_changed"), "authority_changed");
   const parsed = schema.safeParse(raw); if (!parsed.success) throw new AssistRequestError(502, "原响应结构无法核对 未采用不完整或替代数据");
@@ -129,7 +143,8 @@ export function sameAssistInput(request: CreateAssist | null, input: AssistInput
     return (
       request.orderLineId === input.orderLineId &&
       request.expectedRevision === input.expectedRevision &&
-      request.expectedSourceVersionId === input.expectedSourceVersionId
+      request.expectedSourceVersionId === input.expectedSourceVersionId &&
+      orderRequirementDraftInput(request.draft ?? null) === orderRequirementDraftInput(input.draft ?? null)
     );
   return (
     request.kind === "artwork_preflight" &&

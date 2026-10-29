@@ -4,7 +4,9 @@ import type { OrderDesignResponseRecoveryEvidence } from "@yummyai/contracts/ord
 import type { OrderWorkDraft } from "@yummyai/contracts/order/workspace";
 import type { ArtworkLayout } from "@yummyai/contracts/catalog/artwork";
 import type { CustomizationDefinition } from "@yummyai/contracts/catalog/product";
+import type { OrderRequirementInterpretation } from "@yummyai/contracts/order/requirement-interpretation";
 import type { DesignAutomationPlan, DesignAutomationRecipe, DesignAutomationStep } from "@yummyai/contracts/pod/design-automation";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 
 export type OrderDesignAssetPin = {
   key:string; name:string; kind:"image"|"font"; origin:"editor"|"authorized"|"work"|"report";
@@ -20,18 +22,24 @@ export type OrderDesignSnapshot = {
   layout:ArtworkLayout; customization:CustomizationDefinition; draft:OrderWorkDraft; photoOnlyPillow:boolean;
   recipe:DesignAutomationRecipe; plan:DesignAutomationPlan; model:null|{routeId:string;providerConfigId:string;model:string;endpoint:string|null};
   blockers?:string[];
+  /** Present only on new, source-interpreted runs. Legacy snapshots keep their original behavior. */
+  requirements?:OrderRequirementInterpretation;
+  preparationDiagnostics?:Array<{code:string;severity:"error"|"warning"|"manual";message:string}>;
 };
 export interface OrderDesignDispatcher { enqueue(input:{tenantId:string;requestedBy:string;runId:string;dispatchId:string}):Promise<void>; }
+/** Original provider billing metadata, independent of image validity or adoption. */
+export type OrderDesignModelResponseReceipt = {requestId:string;actualCostUsd?:number;tokenUsage?:ModelTokenUsage|null};
 export interface OrderDesignImageGateway {
-  generate(input:{context:TenantContext;requestId:string;model:NonNullable<OrderDesignSnapshot["model"]>;prompt:string;bytes:Buffer;size:string;transparent:boolean;signal:AbortSignal}):Promise<{bytes:Buffer;actualCostUsd?:number}>;
+  generate(input:{context:TenantContext;requestId:string;model:NonNullable<OrderDesignSnapshot["model"]>;prompt:string;bytes:Buffer;size:string;transparent:boolean;signal:AbortSignal;
+    onReceipt?:(receipt:OrderDesignModelResponseReceipt)=>Promise<void>}):Promise<{bytes:Buffer;actualCostUsd?:number;tokenUsage?:ModelTokenUsage|null}>;
 }
 export interface OrderDesignSuperResolutionGateway {
   validatePolicy(policy:NonNullable<DesignAutomationRecipe["pillowPipeline"]>["upscale"]):Promise<void>;
   upscale(input:{bytes:Buffer;policy:NonNullable<DesignAutomationRecipe["pillowPipeline"]>["upscale"];signal?:AbortSignal}):Promise<{bytes:Buffer;evidence:Record<string,unknown>}>;
 }
 /** Encrypted step-only evidence. Quarantined response bytes are never registered as UI assets. */
-export type OrderDesignResponseReceipt = {
-  version:1; requestId:string; checksum:string; byteSize:number; receivedAt:string; quarantined:true; actualCostUsd?:number;
+export type OrderDesignResponseReceipt = OrderDesignModelResponseReceipt & {
+  version:1; checksum:string; byteSize:number; receivedAt:string; quarantined:true;
 };
 export type OrderDesignResponseCheckpoint = OrderDesignResponseReceipt & { objectKey:string };
 export type OrderDesignStepCheckpoint = {

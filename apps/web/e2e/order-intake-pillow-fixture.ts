@@ -13,6 +13,7 @@ import {
   type OrderWorkDraft,
 } from "@yummyai/contracts/order/workspace";
 import type { ArtworkView, DevelopmentOptions, SpecificationView } from "@yummyai/contracts/catalog/development";
+import type { DesignAutomationRecipe } from "@yummyai/contracts/pod/design-automation";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { syntheticSpecificationFacts } from "../../../tools/testing/specification-fixtures.js";
 import { apiFetch } from "../src/server-api";
@@ -20,7 +21,11 @@ import { centerApi, createCenterProfile, createCenterSpu } from "./order-centers
 import { syntheticProductionPng } from "./production-editor-fixture";
 
 /** Only the parent runner owns removal of this fixture's database and private bucket. */
-export async function orderIntakePillowFixture(specialRequirements: boolean) {
+export async function orderIntakePillowFixture(specialRequirements: boolean, options: {
+  textGroups?: Array<{ label: string; value: string; font: string; colorLabel: string; colorHex?: string }>;
+  automation?: DesignAutomationRecipe;
+  operatorMessage?: boolean;
+} = {}) {
   requireDisposableIntegrationEnvironment();
   const nonce = /^\/order_daily_e2e_([a-f0-9]{32})$/.exec(
     new URL(process.env.DATABASE_URL!).pathname,
@@ -31,7 +36,7 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
   const suffix = createEntityId();
   const externalId = "SYNTHETIC-PILLOW-INTAKE-" + suffix;
   const profile = await createCenterProfile(
-    "shaped_pillow", "INTAKE-" + suffix.slice(-8), false, undefined,
+    "shaped_pillow", "INTAKE-" + suffix.slice(-8), false, options.automation,
     { longestSideInches: 10 },
   );
   // false above returns before the shared fixture's production render/Worker path.
@@ -89,6 +94,8 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
             key: "customer_notes", label: "顾客特殊要求", type: "long_text", required: false,
             validation: { maxLength: 1000 },
           },
+          ...(options.operatorMessage ? [{ key: "operator_message", label: "补充印字", type: "short_text" as const,
+            required: false, validation: { maxLength: 500 } }] : []),
         ],
       },
     },
@@ -129,6 +136,9 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
     ] satisfies Array<[string, string]> : []),
   ];
   const zip = new JSZip();
+  const textGroups = options.textGroups ?? (specialRequirements ? [{
+    label: "Custom your text", value: "", font: "Luckiest Guy", colorLabel: "CustomColor",
+  }] : []);
   zip.file("order.json", JSON.stringify({
     orderId: externalId, orderItemId: itemId,
     customizationData: {
@@ -139,9 +149,16 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
           type: "ImageCustomization", label: "Upload One Clear Photo",
           image: { imageName: "buyer.png", buyerFilename: "synthetic-pillow-buyer.png" },
         },
-        ...rawOptions.map(([label, name]) => ({
+        ...rawOptions.filter(([label]) => label !== "Font" && label !== "Font Color").map(([label, name]) => ({
           type: "OptionCustomization", label, optionSelection: { name },
         })),
+        ...textGroups.map((group, index) => ({ type: "TextContainerCustomization", label: "Synthetic text group " + index,
+          children: [
+            { type: "TextCustomization", label: group.label, inputValue: group.value },
+            { type: "FontCustomization", label: "Font", fontSelection: { family: group.font } },
+            { type: "ColorCustomization", label: "Font Color", colorSelection: { name: group.colorLabel,
+              ...(group.colorHex ? { value: group.colorHex } : {}) } },
+          ] })),
       ],
     },
   }));
@@ -215,7 +232,7 @@ export async function orderIntakePillowFixture(specialRequirements: boolean) {
     nonce, externalId, lineId: line.orderLineId, reportLineId: line.id,
     accountId: account.id, batchId: batch.id, buyer, buyerSha256, sourceVersionId: original.versionId,
     profileVersionId: profile.versionId, specificationVersionId: specification.versionId,
-    artworkVersionId: artwork.versionId, initial: detail, rawOptions,
+    artworkVersionId: artwork.versionId, initial: detail, rawOptions, textGroups,
     url: "/orders?" + new URLSearchParams({
       accountId: account.id, q: externalId, line: line.orderLineId,
     }),

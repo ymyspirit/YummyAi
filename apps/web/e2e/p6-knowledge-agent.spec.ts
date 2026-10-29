@@ -195,6 +195,12 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
     const scopeId = run.request.scopeId;
     expect(run.knowledge.some(ref => ref.entryId === card.id && ref.version === 1)).toBe(true);
     await f.model.answer(run.id);
+    const answered = AssistViewSchema.parse(await centerApi("ai-assists/runs/" + run.id));
+    const answerState = "Original knowledge answer GET " + JSON.stringify({ status: answered.status, stale: answered.stale,
+      error: answered.error, summary: answered.result?.summary ?? null });
+    expect(answered.status, answerState).toBe("completed");
+    expect(answered.stale, answerState).toBe(false);
+    expect(answered.result?.summary, answerState).toBe(answer);
     await chat.getByRole("button", { name: "刷新回答", exact: true }).click();
     await expect(chat.getByText(answer, { exact: true }).first()).toBeVisible();
     const href = "/knowledge?entry=" + card.id + "&version=1";

@@ -101,6 +101,8 @@ export class AssistTaskWorkspaceService {
           costUsd: view.costUsd,
           inputTokens: view.inputTokens,
           outputTokens: view.outputTokens,
+          tokenUsage:view.tokenUsage??null,
+          usageSummary:view.usageSummary,
           error: view.error,
           title: view.sources.find((source) => source.href)?.label ?? task.label,
           goal: view.stale ? "" : (view.request?.taskGoal ?? ""),

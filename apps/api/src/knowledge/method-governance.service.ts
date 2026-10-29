@@ -8,7 +8,7 @@ import {
 import { assistHarness } from "@yummyai/ai-core";
 import { registeredCreativeMethods, registeredPodMethods, supportedPodMethods } from "@yummyai/pod-core";
 import { registeredWorkflowMethods } from "@yummyai/workflow-core";
-import { registeredOrderDesignMethods } from "@yummyai/order-design";
+import { registeredOrderDesignMethods, supportedOrderDesignMethods } from "@yummyai/order-design";
 import {
   authorize,
   Permission,
@@ -61,7 +61,7 @@ export function registeredAssistMethods() {
   return [...original, benchmark.registry.describeSkill(benchmark.skill)];
 }
 const registeredCatalog = [...registeredAssistMethods(), ...registeredWorkflowMethods(), ...registeredPodMethods(), ...registeredOrderDesignMethods(), ...registeredCreativeMethods()];
-const supportedCatalog = [...registeredCatalog, ...supportedPodMethods()];
+const supportedCatalog = [...registeredCatalog, ...supportedPodMethods(), ...supportedOrderDesignMethods()];
 export function registeredAgentMethods() { return structuredClone(registeredCatalog); }
 const view = (row: typeof versions.$inferSelect) => ({
   id: row.id,

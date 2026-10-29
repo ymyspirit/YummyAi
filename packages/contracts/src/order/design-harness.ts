@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HarnessExecutionContractSchema } from "@yummyai/contracts/harness";
 import { AgentMethodSelectionSchema } from "@yummyai/contracts/harness/methods";
 import { DesignAutomationPlanSchema, DesignAutomationRecipeSchema } from "@yummyai/contracts/pod/design-automation";
+import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
 
 const Id=z.uuidv7(), Hash=z.string().regex(/^[a-f0-9]{64}$/);
 export const OrderDesignMethodSnapshotSchema=z.object({
@@ -50,6 +51,7 @@ export const OrderDesignModelCallViewSchema=z.object({
  id:Id,stepId:Id,requestId:Id,attempt:z.int().positive(),
  submittedAt:z.iso.datetime(),receivedAt:z.iso.datetime().nullable(),
  costReportState:z.enum(["pending","unknown","reported","invalid"]),
+ tokenUsage:ModelTokenUsageSchema.nullable().optional(),
  reportedCostUsd:z.string().regex(/^\d+\.\d{8}$/).nullable(),
  budgetState:z.enum(["reserved","committed","released"]),budgetAmountUsd:z.string().regex(/^\d+\.\d{6}$/),
 }).strict().superRefine((value,context)=>{

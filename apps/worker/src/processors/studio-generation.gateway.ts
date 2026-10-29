@@ -40,29 +40,33 @@ export class HttpStudioGateway implements StudioGateway {
     let receipt = execution.originalReceipt ?? undefined;
     const json = async (path: string, body?: object | FormData): Promise<Record<string, unknown>> => {
       const response = await call(path, body);
+      const capture = async (value: unknown, raw: string) => {
+        const data = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+        if (!receipt && (body || capability === "video")) {
+          const taskId = typeof data?.id === "string" && /^[a-zA-Z0-9_-]{1,160}$/.test(data.id) ? data.id : null;
+          receipt = podInvocationReceipt({ modelKey: model, modelVersion: data?.model, costUsd: data?.costUsd, usage: data?.usage }, hashPodResponse(raw), response.headers.get("x-request-id") ?? taskId);
+          await onReceipt?.(receipt);
+        }
+      };
       let value: unknown, raw: string;
       if (path === "/responses") {
-        value = await readResponsesPayload(response);
+        value = await readResponsesPayload(response, undefined, payload => capture(payload, JSON.stringify(payload)));
         raw = JSON.stringify(value);
       } else {
         raw = (await boundedBody(response, 30_000_000)).toString("utf8");
         try { value = JSON.parse(raw); } catch { value = null; }
       }
       const data = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-      if (!receipt && (body || capability === "video")) {
-        const taskId = typeof data?.id === "string" && /^[a-zA-Z0-9_-]{1,160}$/.test(data.id) ? data.id : null;
-        receipt = podInvocationReceipt({ modelKey: model, modelVersion: data?.model, costUsd: data?.costUsd }, hashPodResponse(raw), response.headers.get("x-request-id") ?? taskId);
-        await onReceipt?.(receipt);
-      }
+      await capture(value, raw);
       if (!data) throw new Error("studio_provider_invalid_result");
       return data;
     };
     if (capability === "text") {
       if (execution.textProtocol === "responses") {
-        const result = await json("/responses", { model, input: input.prompt, max_output_tokens: 4096, store: false, stream: false });
+        const result = await json("/responses", { model, input: input.prompt, store: false, stream: false });
         return { text: responsesText(result) };
       }
-      const result = await json("/chat/completions", { model, messages: [{ role: "user", content: input.prompt }], max_completion_tokens: 4096 });
+      const result = await json("/chat/completions", { model, messages: [{ role: "user", content: input.prompt }] });
       const choices = result.choices as Array<{ message?: { content?: unknown } }> | undefined;
       const text = choices?.[0]?.message?.content;
       if (typeof text !== "string" || !text.trim() || text.length > 100_000) throw new Error("studio_provider_invalid_result");

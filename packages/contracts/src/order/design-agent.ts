@@ -3,6 +3,7 @@ import { EntityIdSchema as Id } from "@yummyai/contracts/common/ids";
 import { OrderRuleSnapshotSchema } from "@yummyai/contracts/rules";
 import { OrderDesignMethodSnapshotSchema, OrderDesignCompletionRecordSchema, OrderDesignModelCallViewSchema } from "@yummyai/contracts/order/design-harness";
 import { PillowContourEvidenceSchema } from "@yummyai/contracts/pod/design-automation";
+import { ModelUsageSummarySchema } from "@yummyai/contracts/ai/model-usage";
 
 export const OrderDesignAgentStatusSchema = z.enum(["queued", "running", "awaiting_review", "needs_attention", "cancelled"]);
 export const OrderDesignAgentStepStatusSchema = z.enum(["pending", "running", "completed", "failed", "uncertain", "skipped"]);
@@ -44,6 +45,7 @@ export const OrderDesignAgentRunViewSchema = z.object({
   privateEvidenceOmitted:z.boolean().optional(),
   modelCalls:z.array(OrderDesignModelCallViewSchema).max(1000).optional(),
   modelCallsTruncated:z.boolean().optional(),
+  usageSummary:ModelUsageSummarySchema.optional(),
   id: Id, workItemId: Id, workRevisionId: Id, revision: z.int().positive(), status: OrderDesignAgentStatusSchema,
   executorKey: z.string(), recipeVersion: z.string(), policyVersion: z.string(), modelRouteId: Id.nullable(),
   projectId: Id.nullable(), currentEditorVersionId: Id.nullable(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
@@ -55,7 +57,7 @@ export const OrderDesignAgentRunViewSchema = z.object({
   qualityDiagnostics: z.array(z.object({ code: z.string(), severity: z.enum(["error", "warning", "manual"]), message: z.string() })),
   steps: z.array(OrderDesignAgentStepViewSchema),
 });
-export const OrderDesignAgentViewSchema = z.object({ run: OrderDesignAgentRunViewSchema.nullable() });
+export const OrderDesignAgentViewSchema = z.object({ run: OrderDesignAgentRunViewSchema.nullable(), usageSummary:ModelUsageSummarySchema.optional() });
 export type OrderDesignAgentView = z.infer<typeof OrderDesignAgentViewSchema>;
 export type OrderDesignAgentRunView = z.infer<typeof OrderDesignAgentRunViewSchema>;
 export const DesignAgentViewSchema = OrderDesignAgentViewSchema;

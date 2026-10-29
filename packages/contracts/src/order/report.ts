@@ -64,11 +64,19 @@ export const AmazonReportResumeResultSchema = z.object({ queued: z.number().int(
 
 export const AmazonReportFieldViewSchema = z.object({
   key: z.string().min(1).max(1_000),
+  // Kept when a current draft adopts a canonical template key. Raw source is immutable.
+  sourceKey: z.string().min(1).max(1_000).optional(),
   label: z.string().max(1_000),
   kind: z.enum(["text", "choice", "image", "unknown"]),
   value: z.string().max(50_000),
   font: z.string().max(1_000).optional(),
   color: z.string().max(1_000).optional(),
+  // Explicit current operator edits are distinct from legacy inherited parser styles.
+  styleOverride: z.object({
+    source: z.literal("operator"),
+    font: z.string().min(1).max(1000).optional(),
+    colorHex: z.string().regex(/^#[a-fA-F0-9]{6}$/).optional(),
+  }).strict().optional(),
 }).strict();
 
 export const AmazonReportSurfaceViewSchema = z.object({

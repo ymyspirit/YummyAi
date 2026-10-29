@@ -7,11 +7,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
-  ASSIST_INSTRUCTIONS,
   ASSIST_MAX_OUTPUT_TOKENS,
-  ASSIST_PROMPT_VERSION,
-  ASSIST_BENCHMARK_PROMPT_VERSION,
-  ASSIST_BENCHMARK_INSTRUCTIONS,
+  assistPromptVersion,
+  assistSystemInstructions,
   isBenchmarkAssist,
   assistFingerprint,
   assistExecutionPolicy,
@@ -33,12 +31,14 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   AssistModelInputSchema,
   AssistBudgetStateSchema,
+  AssistHistoryEntrySchema,
   CreateAssistSchema,
   type CreateAssist,
   type AssistKind,
   type AssistModel,
   type AssistResult,
   type AssistView,
+  type AssistHistoryEntry,
 } from "@yummyai/contracts/ai/assist";
 import { BusinessBenchmarkCaseSchema, BUSINESS_BENCHMARK_ROLES, LEGACY_BUSINESS_BENCHMARK_ROLES } from "@yummyai/contracts/knowledge/benchmark";
 import { AssistAutomaticAuditReuseProofSchema, AssistReceiptQuerySchema, AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
@@ -69,6 +69,7 @@ import { AI_ASSIST_VAULT, DATABASE_CONNECTION } from "../platform.tokens.js";
 import { AssistContextService } from "./assist-context.service.js";
 import { configuredAssistModels } from "./configured-assist-models.js";
 import { assistTaskFingerprint } from "./assist-task-fingerprint.js";
+import { readAssistUsageSummary } from "./assist-usage.js";
 
 export abstract class AssistEnqueuer {
   abstract enqueue(input: {
@@ -280,7 +281,11 @@ export class AssistService {
     const model = (await this.models(context)).find((m) => m.id === input.modelId);
     if (!model)
       throw new BadRequestException("尚未配置可用的文本模型，请先在 AI 模型配置中添加并启用");
-    const basis = admission?.prepared ? await admission.prepared(input) : await this.contexts.prepareForExecution(context, input);
+    // Native evaluation v1 keeps its sealed execution policy. Ordinary requests
+    // use provider token limits; an evaluation already requires trusted admission above.
+    const basis = admission?.prepared ? await admission.prepared(input) : await this.contexts.prepareForExecution(
+      context, input, false, input.kind === "knowledge_answer" && input.purpose === "evaluation",
+    );
     if (admission?.prepared) {
       if (assistFingerprint(basis.request) !== assistFingerprint(input)) throw new ConflictException("固定样本的原运输身份不一致");
       await this.contexts.assertExecutionCurrent(context, basis);
@@ -297,9 +302,9 @@ export class AssistService {
     if (input.expectedTaskFingerprint && assistTaskFingerprint(prepared) !== input.expectedTaskFingerprint)
       throw new ConflictException("任务依据已变化，请重新读取并核对后再开始分析");
     const estimate = model.inputUsdPerMillion !== null && model.outputUsdPerMillion !== null ? calculateCostUsd(
-      (JSON.stringify(prepared.data).length + ASSIST_INSTRUCTIONS.length + (isBenchmarkAssist(prepared) ? ASSIST_BENCHMARK_INSTRUCTIONS.length : 0) + 8000) * 3 +
+      (JSON.stringify(prepared.data).length + assistSystemInstructions(false, isBenchmarkAssist(prepared), prepared.request.kind === "order_review").length + 8000) * 3 +
         prepared.images.length * 4096,
-      ASSIST_MAX_OUTPUT_TOKENS,
+      prepared.outputTokenPolicy === "provider" ? 0 : ASSIST_MAX_OUTPUT_TOKENS,
       model.inputUsdPerMillion,
       model.outputUsdPerMillion,
     ) : null;
@@ -362,27 +367,27 @@ export class AssistService {
         !provider ||
         !["openai", "openai-compatible"].includes(provider.provider)
       )
-        throw new ConflictException("模型配置已变化，请刷新后重试");
+        throw new ConflictException({ code: "assist_model_changed", message: "模型配置已变化，请刷新后重试" });
       const currentModel = (await configuredAssistModels(tx, context.userId)).find(m => m.id === model.id);
       if (!currentModel || JSON.stringify(currentModel) !== JSON.stringify(model))
-        throw new ConflictException("模型计价配置已更新，请刷新后重试");
+        throw new ConflictException({ code: "assist_pricing_changed", message: "模型计价配置已更新，请刷新后重试" });
       const [active] = await tx.execute<{ count: string }>(sql`select (
         (select count(*) from ai_assist_runs where tenant_id=${context.tenantId}::uuid and status in('queued','running') and expires_at>clock_timestamp())+
         (select count(*) from agent_loop_runs where tenant_id=${context.tenantId}::uuid and status in('queued','running','stopping') and expires_at>clock_timestamp())+
         (select count(*) from agent_plan_runs where tenant_id=${context.tenantId}::uuid and status in('queued','running','stopping') and expires_at>clock_timestamp())
       )::text as count`);
       if (Number(active?.count ?? 4) >= 4)
-        throw new ConflictException("当前租户已有 4 个分析任务，请等待完成后再发起");
+        throw new ConflictException({ code: "assist_concurrency_limit", message: "当前租户已有 4 个分析任务，请等待完成后再发起" });
       const [policy] = await tx.select().from(aiBudgetPolicies);
       if (policy && (estimate === null || model.maxTaskCostUsd === null))
-        throw new ConflictException("组织已启用 AI 预算，请先为此模型填写渠道单价和单次费用上限");
+        throw new ConflictException({ code: "assist_pricing_required", message: "组织已启用 AI 预算，请先为此模型填写渠道单价和单次费用上限" });
       const taskCap = model.maxTaskCostUsd === null ? null : Math.min(
         model.maxTaskCostUsd,
         policy
           ? (policy.taskCapsUsd[input.kind] ?? Number(policy.defaultTaskCapUsd))
           : model.maxTaskCostUsd,
       );
-      if (estimate !== null && taskCap !== null && estimate > taskCap) throw new ConflictException("本次预估超过组织配置的单次 AI 预算");
+      if (estimate !== null && taskCap !== null && estimate > taskCap) throw new ConflictException({ code: "assist_task_budget_exceeded", message: "本次预估超过组织配置的单次 AI 预算" });
       if (policy && taskCap !== null) {
         const monthStart = new Date();
         monthStart.setUTCDate(1);
@@ -393,7 +398,7 @@ export class AssistService {
           sql`not exists (select 1 from ${executions} e where e.run_id=${runs.id} and e.submission_state='not_submitted')`,
           sql`not exists (select 1 from ${modelBillingReconciliations} b where b.owner='assist' and b.assist_run_id=${runs.id})`,
         )).limit(1);
-        if (unpriced) throw new ConflictException("本月存在未计价的 AI 调用，请先核对账单与预算，避免低估已发生费用");
+        if (unpriced) throw new ConflictException({ code: "assist_unpriced_usage", message: "本月存在未计价的 AI 调用，请先核对账单与预算，避免低估已发生费用" });
         const [sum] = await tx
           .select({ total: sql<string>`coalesce(sum(${aiBudgetLedger.amountUsd}), 0)` })
           .from(aiBudgetLedger)
@@ -404,7 +409,7 @@ export class AssistService {
             ),
           );
         if (Number(sum?.total ?? 0) + taskCap > Number(policy.monthlyCapUsd))
-          throw new ConflictException("组织当月 AI 预算不足");
+          throw new ConflictException({ code: "assist_monthly_budget_exceeded", message: "组织当月 AI 预算不足" });
       }
       const id = createEntityId();
       await this.contexts.assertMethodCurrent(tx,context,prepared,true);
@@ -423,7 +428,7 @@ export class AssistService {
           requestFingerprint,
           encryptedInput: this.vault.encrypt(JSON.stringify(prepared)),
           modelSnapshot: { ...model, maxTaskCostUsd: taskCap, providerConfigId: provider.id },
-          promptVersion: isBenchmarkAssist(prepared) ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION,
+          promptVersion: assistPromptVersion(isBenchmarkAssist(prepared), prepared.request.kind === "order_review"),
           reservedCostUsd: taskCap?.toFixed(6) ?? "0",
           // Use the same database clock as created_at, including after lock waits.
           expiresAt: sql`least(now() + ${"orderLineId" in input || input.kind === "after_sales_review" ? 1 : 30} * interval '1 day', ${prepared.expiresAt ?? null}::timestamptz)`,
@@ -440,7 +445,8 @@ export class AssistService {
         amountUsd: taskCap.toFixed(6),
         state: "reserved",
       });
-      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, policyChecksum: assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared)).checksum });
+      const executionPolicy=assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared), prepared.request.kind === "order_review", prepared.outputTokenPolicy === "provider");
+      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, contractVersion: executionPolicy.contractVersion, policyChecksum: executionPolicy.checksum });
       if (admission) await admission.created(tx, created!, prepared, this.vault);
       return created!;
     });
@@ -486,32 +492,35 @@ export class AssistService {
       policy: audit.policy, orderLineId: audit.orderLineId, revision: audit.revision, editorVersionId: audit.versionId });
   }
 
-  async list(context: TenantContext, kind: AssistKind, scope: string, automaticAudit = false) {
+  async list(context: TenantContext, kind: AssistKind, scope: string, automaticAudit = false): Promise<AssistHistoryEntry[]> {
     authorizeAssist(context, kind);
+    if(automaticAudit&&kind!=="artwork_preflight")throw new BadRequestException("自动核对仅适用于生产稿");
+    const usageSummary=await withTenant(this.database.db,context,tx=>readAssistUsageSummary(tx,context.userId,kind,scope));
     if (automaticAudit) {
-      if (kind !== "artwork_preflight") throw new BadRequestException("自动核对仅适用于生产稿");
       const candidates = await withTenant(this.database.db, context, tx => tx.select().from(runs).where(and(eq(runs.kind, kind), eq(runs.scope, scope), isNull(runs.benchmarkItemId))).orderBy(desc(runs.createdAt)).limit(50));
       const result = [];
       for (const row of candidates) {
         if (!row.encryptedInput || row.expiresAt <= new Date()) continue;
         const input = await this.vault.withSecret(row.encryptedInput, value => JSON.parse(value) as AssistContext);
-        if (input.artworkAudit) result.push({id: row.id, status: row.status, createdAt: row.createdAt, modelLabel: row.modelSnapshot.label});
+        if (input.artworkAudit) result.push({id: row.id, status: row.status, createdAt: row.createdAt, modelLabel: row.modelSnapshot.label,tokenUsage:row.tokenUsage??null,usageSummary});
       }
-      return result.slice(0, 20);
+      return result.slice(0, 20).map(row => AssistHistoryEntrySchema.parse({ ...row, createdAt: row.createdAt.toISOString() }));
     }
-    return withTenant(this.database.db, context, (tx) =>
+    const rows=await withTenant(this.database.db, context, (tx) =>
       tx
         .select({
           id: runs.id,
           status: runs.status,
           createdAt: runs.createdAt,
           modelLabel: sql<string>`${runs.modelSnapshot}->>'label'`,
+          tokenUsage:runs.tokenUsage,
         })
         .from(runs)
         .where(and(eq(runs.ownerId, context.userId), eq(runs.kind, kind), eq(runs.scope, scope), isNull(runs.benchmarkItemId)))
         .orderBy(desc(runs.createdAt))
         .limit(20),
     );
+    return rows.map(row=>AssistHistoryEntrySchema.parse({...row,createdAt:row.createdAt.toISOString(),usageSummary}));
   }
 
   /** Read an original owner/request receipt. Never enqueue, reserve or resubmit. */
@@ -620,6 +629,7 @@ export class AssistService {
         { isolationLevel: "repeatable read", accessMode: "read write" });
       if (!expired && row.expiresAt <= new Date()) throw new ConflictException("benchmark_result_expired");
     }
+    const usageSummary=await withTenant(this.database.db,readContext,tx=>readAssistUsageSummary(tx,context.userId,row.kind,row.scope,row.benchmarkItemId));
     return {
       id: row.id,
       kind: row.kind,
@@ -641,6 +651,8 @@ export class AssistService {
       stale,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
+      tokenUsage:row.tokenUsage??null,
+      usageSummary,
       costUsd: row.costUsd === null ? null : Number(row.costUsd),
       budgetState: budgets.length!==1||budgets[0]?.state==null ? null : AssistBudgetStateSchema.parse(budgets[0].state),
       error: expired
@@ -669,7 +681,7 @@ export class AssistService {
       .where(eq(knowledgeBenchmarkItems.id, row.benchmarkItemId!));
     const parsed = BusinessBenchmarkCaseSchema.safeParse(item?.fields);
     if (!item || !parsed.success || item.createdBy !== current.userId || row.ownerId !== current.userId ||
-      row.tenantId !== current.tenantId || item.caseId !== null || parsed.data.role !== row.kind || row.promptVersion !== ASSIST_PROMPT_VERSION)
+      row.tenantId !== current.tenantId || item.caseId !== null || parsed.data.role !== row.kind || row.promptVersion !== assistPromptVersion(false, row.kind === "order_review"))
       throw new ConflictException("benchmark_native_receipt_invalid");
     assertEvaluationScope(current, item.dataScope, "read");
     assertBusinessBenchmarkScope(current, item.dataScope, parsed.data.role);
@@ -764,6 +776,7 @@ function assistError(code: string) {
     assist_input_changed: "任务输入与已保存的任务类型不一致，请重新核对依据",
     assist_invalid_evidence: "模型返回了无法核验的来源，本次结果未采用",
     assist_invalid_match: "模型推荐了候选库之外的匹配，本次结果未采用",
+    assist_invalid_order_field_binding: "模型给出的字段关系与本单原始资料不一致，本次字段建议未采用",
     assist_invalid_result: "模型未返回完整的结构化结果，请检查模型是否支持结构化图文分析",
     assist_invalid_artwork_checks: "模型未完整返回三项看图核对，本次未判定通过；可重新核对或人工复核",
     assist_model_output_truncated: "模型输出达到长度限制，未返回完整核对结果",

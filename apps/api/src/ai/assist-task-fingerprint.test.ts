@@ -26,6 +26,10 @@ function packet(): AssistContext {
   };
 }
 describe("task preview checksum", () => {
+  it("keeps output token policy outside business evidence while execution policy pins it separately", () => {
+    const original = packet();
+    expect(assistTaskFingerprint({ ...original, outputTokenPolicy: "provider" })).toBe(assistTaskFingerprint(original));
+  });
   it("ignores the catalog knowledge lookup clock while retaining references and retrieval mode", () => {
     const input = {
       ...packet(),

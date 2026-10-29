@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { AssistBasisViewSchema, AssistBusinessSelectionSchema, AssistKindSchema, AssistModelInputSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { AssistBasisViewSchema, AssistBusinessSelectionSchema, AssistHistoryEntrySchema, AssistKindSchema, AssistModelInputSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
 import { AssistTaskBasisRequestSchema, AssistTaskBasisSchema, AssistTaskQuerySchema, AssistTaskTargetsSchema, AssistTaskTargetQuerySchema, AssistTaskWorkspaceSchema } from "@yummyai/contracts/ai/task-workspace";
 import { AssistTargetPageQuerySchema, AssistTargetPageViewSchema } from "@yummyai/contracts/ai/task-target-page";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
@@ -20,11 +20,23 @@ type Context = { params: Promise<{ path: string[] }> };
 const privateHeaders = { "cache-control": "private, no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 const Id = z.uuidv7();
 const historyQuery = z.object({ kind: AssistKindSchema, scope: z.string().max(200).regex(/^(?:(creative|order|template|listing|finance|case|knowledge):[0-9a-f-]{36}|procurement:[0-9a-f-]{36}:[0-9a-f-]{36})$/i), automaticAudit: z.literal("1").optional() }).strict();
-const historyView = z.array(AssistViewSchema.pick({ id: true, status: true, createdAt: true, modelLabel: true }).strict()).max(20);
+const historyView = z.array(AssistHistoryEntrySchema).max(20);
 class TooLarge extends Error {}
-function failure(status: number, code?: "authority_changed" | "assist_target_collection_changed") {
-  return Response.json({ message: code === "assist_target_collection_changed" ? "原业务集合已变化 请从第一页重新读取" : code ? "当前权限或身份已变化 请核对原回执后继续" : status === 401 ? "请重新登录自己的运营账户" : status === 403 || status === 404 ? "当前无法读取这笔分析资料" :
-    status === 400 || status === 422 ? "分析填写或原依据未通过校验 请核对原请求" : status === 409 ? "原请求或固定依据存在冲突 请先读取原回执" : "分析请求结果暂不可核对 请保留原编号 不重复发起付费任务", ...(code ? { code } : {}) }, { status, headers: privateHeaders });
+const configurationFailures = {
+  assist_model_changed: "模型配置已变化 请刷新模型后核对再分析 当前填写仍保留",
+  assist_pricing_changed: "模型计价已变化 请刷新价格与单次上限后再分析 当前填写仍保留",
+  assist_concurrency_limit: "当前已有 4 个分析任务 请等待完成后再发起 当前填写仍保留",
+  assist_pricing_required: "请先为所选模型填写输入单价 输出单价和单次费用上限 当前填写仍保留",
+  assist_task_budget_exceeded: "本次预估超过组织单次 AI 预算 请核对限额后再分析 当前填写仍保留",
+  assist_unpriced_usage: "本月存在未计价的 AI 调用 请先核对账单与预算 当前填写仍保留",
+  assist_monthly_budget_exceeded: "组织当月 AI 预算不足 请核对预算后再分析 当前填写仍保留",
+} as const;
+type FailureCode = "authority_changed" | "assist_target_collection_changed" | keyof typeof configurationFailures;
+function failure(status: number, code?: FailureCode) {
+  const configurationMessage = status === 409 && code && Object.hasOwn(configurationFailures, code)
+    ? configurationFailures[code as keyof typeof configurationFailures] : undefined;
+  return Response.json({ message: configurationMessage ?? (code === "assist_target_collection_changed" ? "原业务集合已变化 请从第一页重新读取" : code ? "当前权限或身份已变化 请核对原回执后继续" : status === 401 ? "请重新登录自己的运营账户" : status === 403 || status === 404 ? "当前无法读取这笔分析资料" :
+    status === 400 || status === 422 ? "分析填写或原依据未通过校验 请核对原请求" : status === 409 ? "原请求或固定依据存在冲突 请先读取原回执" : "分析请求结果暂不可核对 请保留原编号 不重复发起付费任务"), ...(code ? { code } : {}) }, { status, headers: privateHeaders });
 }
 async function bytes(response: Response, limit: number) {
   const reader = response.body?.getReader(); if (!reader) throw new Error("body"); const chunks: Uint8Array[] = []; let size = 0;
@@ -78,10 +90,11 @@ async function proxy(request: Request, context: Context, method: "GET" | "POST")
     const search = new URLSearchParams(query), response = await apiFetch(`${base}/v1/ai-assists/${target}${search.size ? "?" + search : ""}`, { method, ...(input ? { body: JSON.stringify(input), headers: { "content-type": "application/json" } } : {}),
       cache: "no-store", signal: method === "POST" && root !== "basis" && root !== "task-basis" ? AbortSignal.timeout(110_000) : AbortSignal.any([request.signal, AbortSignal.timeout(110_000)]) });
     if (!response.ok) {
-      let changed: "authority_changed" | "assist_target_collection_changed" | undefined;
+      let changed: FailureCode | undefined;
       if (response.status === 409) { try { const body = await json(response, 8192); if (body && typeof body === "object" && "code" in body) {
         if (body.code === "authority_changed") changed = body.code;
         else if (root === "task-target-pages" && body.code === "assist_target_collection_changed") changed = body.code;
+        else if (method === "POST" && root === "runs" && typeof body.code === "string" && Object.hasOwn(configurationFailures, body.code)) changed = body.code as keyof typeof configurationFailures;
       } } catch { /* Keep upstream text private. */ } }
       else await response.body?.cancel();
       await assertErpIdentityCurrent(identity); return failure([400, 401, 403, 404, 409, 413, 422, 503].includes(response.status) ? response.status : 502, changed);

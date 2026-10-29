@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { fixture, id, imageReviewFixture, imageUploadPng } from "./order-review-fixture";
 import { loginErp } from "./erp-identity-fixture";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
@@ -213,13 +213,29 @@ test("whole order navigation skips siblings and survives a saved order leaving t
 });
 
 test.describe("whole order image upload", () => {
+  const browserAudits = new WeakMap<Page, ReturnType<typeof imageReviewBrowserAudit>>();
   // Existing local-service review suites remain unchanged. This family's config
   // rejects missing isolation and its native runner supplies real personal OIDC.
   test.skip(process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED !== "1", "Use the dedicated personal image-upload acceptance suite");
   test.beforeEach(async ({ page }) => {
     requireDisposableIntegrationEnvironment();
     expect(process.env.WEB_AUTH_MODE).toBe("personal");
+    browserAudits.set(page, imageReviewBrowserAudit(page));
     await loginErp(page, "operator", "/orders");
+  });
+  test.afterEach(async ({ page }, testInfo) => {
+    const audit = browserAudits.get(page);
+    if (!audit) return;
+    try {
+      await testInfo.attach("order-image-upload-browser-audit", {
+        body: Buffer.from(JSON.stringify({ pageErrors: audit.pageErrors }, null, 2)),
+        contentType: "application/json",
+      });
+      expect(audit.pageErrors, "Order image review must not crash during navigation or reload").toEqual([]);
+    } finally {
+      audit.stop();
+      browserAudits.delete(page);
+    }
   });
 
   test("shows native original defaults and preserves a saved explicit empty selection", async ({ page }) => {
@@ -239,12 +255,22 @@ test.describe("whole order image upload", () => {
     expect(state.saves).toHaveLength(1);
     expect(state.saves[0]!.draft.images).toEqual([]);
     expect(state.records[0]!.versions).toHaveLength(1);
-    await page.reload();
-    await expect(first).not.toBeChecked();
-    await expect(second).not.toBeChecked();
-    expect(state.records[0]!.line.revision).toBe(1);
-    expect(state.uploads).toEqual([]);
-    expect(state.unexpectedWrites).toEqual([]);
+    for (let reload = 1; reload <= 2; reload++) {
+      await test.step(`real reload ${reload} preserves the explicit empty selection`, async () => {
+        await page.reload();
+        await expect(drawer).toBeVisible();
+        await expect(first).toBeVisible();
+        await expect(second).toBeVisible();
+        await expect(first).not.toBeChecked();
+        await expect(second).not.toBeChecked();
+        expect(state.saves).toHaveLength(1);
+        expect(state.records[0]!.versions).toHaveLength(1);
+        expect(state.records[0]!.draft.images).toEqual([]);
+        expect(state.records[0]!.line.revision).toBe(1);
+        expect(state.uploads).toEqual([]);
+        expect(state.unexpectedWrites).toEqual([]);
+      });
+    }
   });
 
   test("uploads before the first save while retaining dirty fields notes and canceled originals", async ({ page }, testInfo) => {
@@ -255,11 +281,13 @@ test.describe("whole order image upload", () => {
     const second = drawer.getByRole("checkbox", { name: "original-second.png", exact: true });
     await first.uncheck();
     await second.uncheck();
-    state.failNextSave("请补齐顾客原图");
-    await drawer.getByRole("button", { name: "确认本件审单", exact: true }).click();
-    await expect(drawer.getByRole("alert").filter({ hasText: "请补齐顾客原图" })).toBeVisible();
+    const check = drawer.getByRole("region", { name: "定制订单承接核对", exact: true });
+    await expect(check.getByRole("list", { name: "承接待办", exact: true })).toContainText("顾客原图");
+    await expect(drawer.getByRole("button", { name: "确认本件审单", exact: true })).toBeDisabled();
+    expect(state.saves).toEqual([]);
     await first.check();
-    await expect(drawer.getByRole("alert").filter({ hasText: "请补齐顾客原图" })).toHaveCount(0);
+    await expect(check.getByRole("list", { name: "承接待办", exact: true })).toHaveCount(0);
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     await drawer.getByRole("textbox", { name: "定制内容", exact: true }).fill("Unsaved buyer lettering");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Unsaved operator instructions");
     await expect(drawer.getByRole("button", { name: "上传定制图片", exact: true })).toBeEnabled();
@@ -274,10 +302,10 @@ test.describe("whole order image upload", () => {
     await expect(drawer.getByRole("textbox", { name: "定制内容", exact: true })).toHaveValue("Unsaved buyer lettering");
     await expect(drawer.getByRole("textbox", { name: "制作说明", exact: true })).toHaveValue("Unsaved operator instructions");
     expect(state.records[0]!.line.revision).toBe(0);
-    expect(state.saves).toHaveLength(1); // The failed ready attempt did not save anything.
+    expect(state.saves).toHaveLength(0); // Preflight blocked the invalid draft before any save POST.
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();
     await expect(drawer.getByRole("status").filter({ hasText: "草稿已保存" })).toBeVisible();
-    expect(state.saves[1]!.draft).toMatchObject({
+    expect(state.saves[0]!.draft).toMatchObject({
       fields: [{ key: "name", label: "Customer name", kind: "text", value: "Unsaved buyer lettering", font: "Synthetic Serif", color: "#336699" }],
       instructions: "Unsaved operator instructions",
       images: [{ origin: "report", key: "buyer-first", usage: "buyer_photo" },
@@ -300,6 +328,7 @@ test.describe("whole order image upload", () => {
     await (await chooser).setFiles([]);
     expect(state.uploads).toEqual([]);
     await expect(upload).toBeEnabled();
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     await drawer.getByRole("textbox", { name: "定制内容", exact: true }).fill("Retain after a failed upload");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Notes survive failed upload");
     const input = drawer.getByLabel("上传订单定制图片", { exact: true });
@@ -317,7 +346,8 @@ test.describe("whole order image upload", () => {
     await expect(binding).toHaveValue("");
     await expect(uploaded.getByRole("status")).toHaveText("已选此图，尚未绑定图片字段；请明确选择，原用途不会自动改写。");
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();
-    await expect(drawer.getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
+    await expect(drawer.getByRole("region", { name: "定制订单承接核对", exact: true }).getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
+    await expect(drawer.locator("footer.oc-review-footer").getByRole("alert")).toHaveText("请为已选图片选择对应图片字段，再核对或保存；暂不使用的图片可取消勾选。");
     expect(state.saves).toEqual([]);
     await binding.selectOption("back_photo");
     await drawer.getByRole("button", { name: "记录待补资料", exact: true }).click();
@@ -334,6 +364,7 @@ test.describe("whole order image upload", () => {
     const state = await imageReviewFixture(page);
     await page.goto(`/orders?line=${id(1)}`);
     const drawer = page.getByRole("dialog", { name: "整单详情", exact: true });
+    await drawer.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
     const originalFields = drawer.getByRole("textbox", { name: "定制内容", exact: true });
     await originalFields.fill("Local content must remain");
     await drawer.getByRole("textbox", { name: "制作说明", exact: true }).fill("Local note must remain");
@@ -362,3 +393,10 @@ test.describe("whole order image upload", () => {
     expect(state.unexpectedWrites).toEqual([]);
   });
 });
+
+function imageReviewBrowserAudit(page: Page) {
+  const pageErrors: string[] = [];
+  const error = (value: Error) => pageErrors.push(value.message);
+  page.on("pageerror", error);
+  return { pageErrors, stop: () => page.off("pageerror", error) };
+}

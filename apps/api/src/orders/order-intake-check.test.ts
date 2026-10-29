@@ -145,6 +145,28 @@ describe("order intake fixed-field review", () => {
 });
 
 describe("scoped photo-only pillow intake", () => {
+  it("normalizes one populated crop supplement without replacing its empty original or accepting two populated choices", () => {
+    const input = pillowDraft("");
+    input.fields.push({ key: "crop_scope", label: "裁切范围", kind: "text", value: "Only Face" });
+    const before = structuredClone(input);
+    const result = checkOrderIntakeFields(pillowDefinition(), input, true, { photoOnlyPillow: true });
+    expect(result.issues).toEqual([]);
+    expect(result.fields.find(field => field.key === "crop_scope")).toMatchObject({ status: "mapped" });
+    expect(result.normalizedDraft.fields[0]).toEqual(before.fields[0]);
+    expect(result.normalizedDraft.fields[2]).toEqual({ ...before.fields[2],
+      sourceKey: "crop_scope", label: "Crop scope", value: "head" });
+    expect(result.normalizedDraft.images).toEqual([{ ...before.images[0]!, usage: "buyer_photo" }]);
+    expect(input).toEqual(before);
+
+    const conflicting = structuredClone(input);
+    conflicting.fields[0]!.value = "Whole Body";
+    const duplicate = checkOrderIntakeFields(pillowDefinition(), conflicting, true, { photoOnlyPillow: true });
+    expect(duplicate.issues).toContainEqual(expect.objectContaining({ code: "duplicate_value", fieldKey: "crop_scope" }));
+    expect(duplicate.normalizedDraft.fields[0]).toEqual(conflicting.fields[0]);
+    expect(duplicate.normalizedDraft.fields[2]).toEqual(conflicting.fields[2]);
+    expect(input).toEqual(before);
+  });
+
   it.each([
     { crop: "Only Face", side: "Single-Sided Print", subject: "head", sides: "single_sided" },
     { crop: "Half Body", side: "Double-Sided Printing", subject: "half_body", sides: "double_sided" },
@@ -154,8 +176,8 @@ describe("scoped photo-only pillow intake", () => {
     const result = checkOrderIntakeFields(pillowDefinition(), input, true, { photoOnlyPillow: true });
     expect(result.issues).toEqual([]);
     expect(result.normalizedDraft.fields).toEqual([
-      { key: "crop_scope", label: "Crop scope", kind: "choice", value: subject },
-      { key: "print_sides", label: "Print sides", kind: "choice", value: sides },
+      { key: "crop_scope", sourceKey: "surface-0-field-0", label: "Crop scope", kind: "choice", value: subject },
+      { key: "print_sides", sourceKey: "surface-0-field-1", label: "Print sides", kind: "choice", value: sides },
     ]);
     expect(result.normalizedDraft.images).toEqual([{ ...input.images[0]!, usage: "buyer_photo" }]);
     expect(result.fields.find(field => field.key === "buyer_photo")).toMatchObject({ status: "mapped", imageCount: 1 });
@@ -301,7 +323,7 @@ describe("scoped photo-only pillow intake", () => {
     input.fields.push({ key: "provider-choice", label: "Thread color", kind: "choice", value: "Pink" });
     const result = checkOrderIntakeFields(definition, input, true);
     expect(result.issues).toEqual([]);
-    expect(result.normalizedDraft.fields[1]).toEqual({ key: "thread", label: "Thread color", kind: "choice", value: "pink" });
+    expect(result.normalizedDraft.fields[1]).toEqual({ key: "thread", sourceKey: "provider-choice", label: "Thread color", kind: "choice", value: "pink" });
     expect(input.fields[1]!.value).toBe("Pink");
   });
 });

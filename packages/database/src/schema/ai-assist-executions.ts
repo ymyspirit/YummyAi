@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -10,6 +11,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { aiAssistRuns } from "./ai-assists.js";
+const transactionId = customType<{ data: string; driverData: string }>({ dataType: () => "xid8" });
 
 /** Execution metadata belongs to the original assist owner. Legacy runs are never backfilled. */
 export const aiAssistExecutions = pgTable(
@@ -38,12 +40,15 @@ export const aiAssistExecutions = pgTable(
     providerRequestId: text("provider_request_id"),
     submittedAt: timestamp("submitted_at", { mode: "date", withTimezone: true }),
     receivedAt: timestamp("received_at", { mode: "date", withTimezone: true }),
+    /** Database-owned first receipt origin; null on historical receipts. */
+    responseReceiptTransactionId: transactionId("response_receipt_transaction_id"),
     nextAttemptAt: timestamp("next_attempt_at", { mode: "date", withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    check("ai_assist_executions_receipt_origin_check", sql`${t.responseReceiptTransactionId} is null or ${t.receivedAt} is not null`),
     foreignKey({
       columns: [t.tenantId, t.runId],
       foreignColumns: [aiAssistRuns.tenantId, aiAssistRuns.id],

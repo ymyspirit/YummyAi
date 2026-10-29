@@ -1345,6 +1345,13 @@
       "when": 1792972800002,
       "tag": "0192_creative_owner_response_adoption",
       "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1792972800003,
+      "tag": "0193_model_token_usage",
+      "breakpoints": true
     }
   ]
 }

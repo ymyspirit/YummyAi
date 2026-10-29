@@ -1,24 +1,30 @@
 import { z } from "zod";
-import { AssistResultSchema, LegacyAssistResultSchema } from "@yummyai/contracts/ai/assist";
 import {
   ASSIST_INSTRUCTIONS,
   ASSIST_MAX_OUTPUT_TOKENS,
-  ASSIST_PROMPT_VERSION,
-  ASSIST_BENCHMARK_PROMPT_VERSION,
   ASSIST_BENCHMARK_INSTRUCTIONS,
+  ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS,
+  assistPromptVersion,
+  assistResultSchema,
   assistFingerprint,
 } from "./assist.js";
 import { ARTWORK_AUDIT_INSTRUCTIONS } from "./artwork-audit.js";
 
-export function assistExecutionPolicy(artworkAudit: boolean, benchmark = false) {
+export function assistSystemInstructions(artworkAudit: boolean, benchmark = false, orderReview = false) {
+  if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
+  return ASSIST_INSTRUCTIONS + (artworkAudit ? `\n${ARTWORK_AUDIT_INSTRUCTIONS}` : "") +
+    (benchmark ? `\n${ASSIST_BENCHMARK_INSTRUCTIONS}` : "") + (orderReview ? `\n${ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS}` : "");
+}
+
+export function assistExecutionPolicy(artworkAudit: boolean, benchmark = false, orderReview = false, unlimited = false) {
+  if (benchmark && unlimited) throw new Error("assist_execution_version_unsupported");
   return {
-    contractVersion: "assist-execution-v1",
+    contractVersion: unlimited ? "assist-execution-v2" : "assist-execution-v1",
     checksum: assistFingerprint({
-      promptVersion: benchmark ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION,
-      systemInstructions:
-        ASSIST_INSTRUCTIONS + (artworkAudit ? `\n${ARTWORK_AUDIT_INSTRUCTIONS}` : "") + (benchmark ? `\n${ASSIST_BENCHMARK_INSTRUCTIONS}` : ""),
-      maxOutputTokens: ASSIST_MAX_OUTPUT_TOKENS,
-      outputSchema: z.toJSONSchema(benchmark ? AssistResultSchema : LegacyAssistResultSchema),
+      promptVersion: assistPromptVersion(benchmark, orderReview),
+      systemInstructions: assistSystemInstructions(artworkAudit, benchmark, orderReview),
+      maxOutputTokens: unlimited ? null : ASSIST_MAX_OUTPUT_TOKENS,
+      outputSchema: z.toJSONSchema(assistResultSchema(benchmark, orderReview)),
     }),
   };
 }

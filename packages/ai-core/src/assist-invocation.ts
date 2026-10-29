@@ -5,6 +5,7 @@ import {
   type HarnessInvocationView,
   type ModelBillingAcknowledgment,
 } from "@yummyai/contracts/harness";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 
 const money = (v: string | null) => {
   if (v === null || !/^\d{1,12}(\.\d{1,8})?$/.test(v)) return null;
@@ -21,6 +22,7 @@ export function assistInvocationView(
     costUsd: string | null;
     inputTokens: number | null;
     outputTokens: number | null;
+    tokenUsage?: ModelTokenUsage | null;
     modelSnapshot: {
       model: string;
       inputUsdPerMillion: number | null;
@@ -75,7 +77,9 @@ export function assistInvocationView(
     responseChecksum: execution?.responseChecksum ?? null,
     model: { key: run.modelSnapshot.model, version: null },
     artifact: null,
-    usage: { inputTokens: run.inputTokens, outputTokens: run.outputTokens },
+    usage: { inputTokens: run.inputTokens, outputTokens: run.outputTokens,
+      ...(run.tokenUsage ? { cachedInputTokens: run.tokenUsage.cachedInputTokens, totalTokens: run.tokenUsage.totalTokens } : {}) },
+    ...(run.tokenUsage !== undefined ? { tokenUsage: run.tokenUsage } : {}),
     billing: {
       basis,
       amountUsd: price,

@@ -1,6 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
-  ASSIST_PROMPT_VERSION, authenticateKnowledgeEvaluation, gradeBenchmark, gradeBusinessBenchmark, openBenchmarkValue, runBenchmarkBaseline, runBusinessBenchmarkBaseline,
+  assistPromptVersion, authenticateKnowledgeEvaluation, gradeBenchmark, gradeBusinessBenchmark, openBenchmarkValue, runBenchmarkBaseline, runBusinessBenchmarkBaseline,
   sealBenchmarkValue, runRoleBenchmarkBaseline, gradeRoleBenchmark, type SecretVault,
 } from "@yummyai/ai-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
@@ -169,7 +169,7 @@ export class KnowledgeBenchmarkExperimentService {
         } else if (row.evaluationRunId || item.caseId !== null || !business || business.native.benchmarkItemId !== item.id ||
           business.native.ownerId !== current.userId || business.native.tenantId !== current.tenantId || business.native.kind !== item.fields.role ||
           business.native.scope !== businessBenchmarkTaskScope(item.fields) || business.native.requestId !== row.requestId || business.native.modelSnapshot.id !== value.row.modelId ||
-          business.native.promptVersion !== ASSIST_PROMPT_VERSION || business.native.expiresAt > item.expiresAt ||
+          business.native.promptVersion !== assistPromptVersion(false, business.native.kind === "order_review") || business.native.expiresAt > item.expiresAt ||
           business.native.status === "completed" && !sealed)
           throw new ConflictException("benchmark_native_receipt_invalid");
       } else if (row.nativeRunId || row.evaluationRunId) throw new ConflictException("benchmark_attempt_receipt_invalid");

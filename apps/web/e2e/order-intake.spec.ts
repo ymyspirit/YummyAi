@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { expect, test, type Page, type Request, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type Request, type Response, type TestInfo } from "@playwright/test";
 import {
   type AmazonReportBatchView,
   type AmazonReportWorkspaceView,
@@ -10,6 +10,7 @@ import {
 import {
   OrderIntakeCheckViewSchema,
   OrderWorkDetailViewSchema,
+  SaveOrderWorkDraftInputSchema,
   type OrderIntakeCheck,
   type OrderWorkDetail,
   type OrderWorkDraft,
@@ -26,11 +27,11 @@ import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/
 
 test("controlled order intake preserves sealed configuration, blocks mismatches and resumes corrected orders", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(300000);
   page.setDefaultTimeout(25000);
   const fixture = await salesLaunchFixture({ pillow: true, orderIntake: true });
-  const proofDir = new URL("../../../tmp/order-intake-e2e/", import.meta.url);
+  const proofDir = testInfo.outputPath("sealed-intake");
   mkdirSync(proofDir, { recursive: true });
   const proof: Record<string, unknown> = {
     fixtureIds: fixture.ids,
@@ -258,37 +259,38 @@ test("controlled order intake preserves sealed configuration, blocks mismatches 
     });
     expect(invalidSave.status).toBe(409);
     await page.setViewportSize({ width: 1440, height: 1000 });
+    if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page);
     await page.goto(`/orders?q=${externalIds[0]}`);
     await page.getByRole("button", { name: externalIds[0], exact: true }).click();
     const region = page.getByRole("region", { name: "定制订单承接核对", exact: true });
-    await region.getByRole("button", { name: "核对当前需求" }).click();
     await expect(region).toContainText("请补齐必填定制内容：Portrait");
-    await page.getByRole("combobox", { name: "对应定制字段", exact: true }).selectOption("name");
-    await expect(page.getByLabel("字段名称", { exact: true })).toHaveValue("Name");
-    await expect(page.getByLabel("定制内容", { exact: true })).toHaveValue("Synthetic Alex");
+    await page.locator("summary").filter({ hasText: /^高级修改与原始字段/ }).click();
+    await page.locator('.oc-custom-field[data-review-field="provider-name"]')
+      .getByRole("combobox", { name: "对应定制字段", exact: true }).selectOption("name");
+    const nameRow = page.locator('.oc-custom-field[data-review-field="name"]');
+    await expect(nameRow.getByLabel("字段名称", { exact: true })).toHaveValue("Name");
+    await expect(nameRow.getByLabel("定制内容", { exact: true })).toHaveValue("Synthetic Alex");
+    await page.locator("summary").filter({ hasText: /^手动指定印花或改选制作依据/ }).click();
     await page
       .getByRole("combobox", { name: "销售 SKU 制作版本", exact: true })
       .selectOption(sibling.recipe.id);
-    await region.getByRole("button", { name: "核对当前需求" }).click();
     await expect(region).toContainText("本单渠道已有封存定制资料");
     await page.getByRole("button", { name: "使用下单时渠道映射", exact: true }).click();
     await expect(
       page.getByRole("combobox", { name: "销售 SKU 制作版本", exact: true }),
     ).toHaveValue(fixture.recipe.id);
-    await page.getByRole("checkbox", { name: "synthetic-buyer-original.png", exact: true }).check();
-    await page.getByLabel("制作用途", { exact: true }).fill("Portrait");
-    await expect(region).toContainText("需求或订单状态已变化");
-    await region.getByRole("button", { name: "核对当前需求" }).click();
-    await expect(region).toContainText("字段与版本核对通过");
-    await region.getByRole("button", { name: "应用唯一字段匹配" }).click();
-    await region.getByRole("button", { name: "核对当前需求" }).click();
-    await expect(region).toContainText("字段与版本核对通过");
-    await page.getByText("处理与交接", { exact: true }).click();
-    const requests: string[] = [];
+    const originalImage = page.getByRole("checkbox", { name: "synthetic-buyer-original.png", exact: true });
+    await expect(originalImage).not.toBeChecked();
+    await originalImage.check();
+    await page.locator(".oc-image").filter({ has: originalImage })
+      .getByRole("combobox", { name: "对应图片字段", exact: true }).selectOption("portrait");
+    await expect(region).toContainText("可以确认审单");
+    const requests: string[] = [], requestBodies: string[] = [];
     let drop = true;
     await page.route(`**/api/order-centers/lines/${first.line.id}/draft`, async (route) => {
       if (route.request().method() !== "POST") return route.continue();
       requests.push(route.request().postDataJSON().idempotencyKey);
+      requestBodies.push(route.request().postData()!);
       const response = await route.fetch();
       if (drop && response.ok()) {
         drop = false;
@@ -296,7 +298,7 @@ test("controlled order intake preserves sealed configuration, blocks mismatches 
       }
       return route.fulfill({ response });
     });
-    const saveButton = page.getByRole("button", { name: "确认审单并保存", exact: true });
+    const saveButton = page.getByRole("button", { name: "确认本件审单", exact: true });
     await saveButton.click();
     await expect
       .poll(
@@ -304,20 +306,28 @@ test("controlled order intake preserves sealed configuration, blocks mismatches 
           (await centerApi<OrderWorkDetail>(`order-centers/lines/${first.line.id}`)).line.revision,
       )
       .toBe(first.line.revision + 1);
-    await expect(saveButton).toBeEnabled();
-    await saveButton.click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "审单已保存，可以推送制图" }),
-    ).toBeVisible();
+    await expect(saveButton).toBeDisabled();
+    const recovery = page.getByRole("button", { name: "核对上次保存结果", exact: true });
+    await expect(recovery).toBeEnabled();
+    await recovery.click();
+    await expect(region).toContainText("审单已确认");
     expect(requests).toHaveLength(2);
     expect(requests[0]).toBe(requests[1]);
+    expect(requestBodies[0]).toBe(requestBodies[1]);
+    expect(JSON.parse(requestBodies[0]!)).toEqual(JSON.parse(requestBodies[1]!));
     first = await centerApi<OrderWorkDetail>(`order-centers/lines/${first.line.id}`);
     expect(first.versions).toHaveLength(2);
     expect(first.draft.fields[0]!.key).toBe("name");
     expect(first.draft.images[0]!.usage).toBe("portrait");
-    await region.getByRole("button", { name: "核对当前需求" }).click();
-    await expect(region).toContainText("字段与版本核对通过");
-    await region.getByText("查看本单固定版本引用", { exact: true }).click();
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname ===
+      `/api/order-centers/lines/${first.line.id}/intake-check` && response.request().method() === "POST");
+    await region.getByRole("button", { name: "核对当前需求", exact: true }).click();
+    const refreshedResponse = await refreshed;
+    expect(refreshedResponse.ok()).toBe(true);
+    const refreshedCheck = OrderIntakeCheckViewSchema.parse(await refreshedResponse.json());
+    expect(refreshedCheck.ready).toBe(true);
+    expect(refreshedCheck.package?.id).toBe(packs[0]!.packageId);
+    await region.locator("summary").filter({ hasText: /^查看自动匹配与核对详情/ }).click();
     await expect(region).toContainText(packs[0]!.packageId);
     for (const [name, width, dark] of [
       ["desktop", 1440, false],
@@ -333,10 +343,10 @@ test("controlled order intake preserves sealed configuration, blocks mismatches 
         await region.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
       ).toBe(true);
       await region.screenshot({
-        path: new URL(`${name}.png`, proofDir).pathname.replace(/^\/(.:)/, "$1"),
+        path: testInfo.outputPath("sealed-intake", `${name}.png`),
       });
       await page.screenshot({
-        path: new URL(`page-${name}.png`, proofDir).pathname.replace(/^\/(.:)/, "$1"),
+        path: testInfo.outputPath("sealed-intake", `page-${name}.png`),
         fullPage: true,
       });
     }
@@ -389,7 +399,7 @@ test("controlled order intake preserves sealed configuration, blocks mismatches 
     proof.pageErrors = errors;
   } finally {
     writeFileSync(
-      new URL(`proof-${fixture.planId}.json`, proofDir),
+      testInfo.outputPath("sealed-intake", `proof-${fixture.planId}.json`),
       JSON.stringify(proof, null, 2),
     );
     await fixture.close();
@@ -534,7 +544,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
     try {
       fixture = await orderIntakePillowFixture(false);
       const whole = await openPillowIntake(page, fixture);
-      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      await expect(whole.getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
       const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
       await expect(image).toHaveCount(1);
       await expect(image.getByRole("checkbox")).toBeChecked();
@@ -552,8 +562,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
       expect(check.normalizedDraft.fields.find(field => field.key === "print_sides")?.value)
         .toBe("double_sided");
       assertPillowSizePreserved(check.normalizedDraft);
-      await applyOfferedPillowMatch(page);
-      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      await expect(whole.getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveCount(0);
       const response = await savePillowIntake(page, fixture, "确认本件审单");
       expect(response.ok()).toBe(true);
       const request = response.request().postDataJSON() as {
@@ -588,7 +597,7 @@ test.describe("controlled order intake pillow personal regressions", () => {
     }
   });
 
-  test("controlled order intake pillow preserves special requirements and changes to human only after an explicit choice", async ({ page }, testInfo) => {
+  test("controlled order intake pillow preserves special requirements for Agent-first intake without a premature human switch", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     let fixture: OrderIntakePillowFixture | undefined;
     let completed = false;
@@ -596,57 +605,51 @@ test.describe("controlled order intake pillow personal regressions", () => {
     try {
       fixture = await orderIntakePillowFixture(true);
       let whole = await openPillowIntake(page, fixture);
-      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      await expect(whole.getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
       const image = whole.locator(".oc-image").filter({ has: page.getByRole("checkbox") });
       await expect(image).toHaveCount(1);
       await expect(image.getByRole("checkbox")).toBeChecked();
       const binding = image.getByRole("combobox", { name: "对应图片字段", exact: true });
       await expect(binding).toHaveValue("buyer_photo");
       await expect(binding.locator("option:checked")).toHaveText("顾客原图（必填）");
-      const blocked = await previewPillowIntake(page, fixture);
-      expect(blocked.ready).toBe(false);
-      const automatic = blocked.issues.find(issue => issue.code === "automatic_artwork_not_ready");
-      expect(automatic).toBeDefined();
-      expect(automatic!.message).toMatch(/顾客特殊要求|标准裁切|字体/);
-      expect(automatic!.action).toMatch(/人工|美工/);
-      expect(blocked.normalizedDraft.designExecutor).toBe("agent");
-      expect(blocked.normalizedDraft.images).toEqual(fixture.initial.draft.images);
-      assertSpecialPillowRequirements(blocked.normalizedDraft);
-      assertPillowSizePreserved(blocked.normalizedDraft);
-      await applyOfferedPillowMatch(page);
-      const rejected = await savePillowIntake(page, fixture, "确认本件审单");
-      expect(rejected.status()).toBe(409);
-      expect((await rejected.json() as { message: string }).message).toBe(automatic!.message);
-      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
+      const ready = await previewPillowIntake(page, fixture);
+      expect(ready.ready, JSON.stringify(ready.issues)).toBe(true);
+      expect(ready.normalizedDraft.designExecutor).toBe("agent");
+      expect(ready.normalizedDraft.images).toEqual(fixture.initial.draft.images);
+      assertSpecialPillowRequirements(ready.normalizedDraft);
+      assertPillowSizePreserved(ready.normalizedDraft);
+      await expect(whole.getByRole("button", { name: "确认本件审单", exact: true })).toBeEnabled();
+      await expect(whole.getByRole("combobox", { name: "设计执行方式", exact: true })).toHaveCount(0);
       const unchanged = await fixture.readDetail();
       expect(unchanged.line.revision).toBe(fixture.initial.line.revision);
       expect(unchanged.draft).toEqual(fixture.initial.draft);
-      await page.screenshot({ path: testInfo.outputPath("special-requirements-agent-explicitly-blocked.png") });
+      await page.screenshot({ path: testInfo.outputPath("special-requirements-agent-first-ready.png") });
       const pendingResponse = await savePillowIntake(page, fixture, "记录待补资料");
       expect(pendingResponse.ok()).toBe(true);
       const pending = OrderWorkDetailViewSchema.parse(await pendingResponse.json());
       expect(pending.line.preparation).toBe("needs_information");
+      expect(pending.line.revision).toBe(fixture.initial.line.revision + 1);
       expect(pending.draft.designExecutor).toBe("agent");
-      assertSpecialPillowRequirements(pending.draft);
+      const pendingRequest = SaveOrderWorkDraftInputSchema.parse(pendingResponse.request().postDataJSON());
+      expect(pendingRequest.expectedRevision).toBe(fixture.initial.line.revision);
+      expect(pendingRequest.expectedSourceVersionId).toBe(fixture.sourceVersionId);
+      expect(pendingRequest.status).toBe("needs_information");
+      expect(pendingRequest.draft).toEqual(fixture.initial.draft);
+      expect(pending.draft).toEqual(fixture.initial.draft);
+      for (const [label, value] of fixture.rawOptions)
+        expect(pending.draft.fields.filter(field => field.label === label).map(field => field.value)).toEqual([value]);
       assertPillowSizePreserved(pending.draft);
+      expect((await fixture.readDetail()).draft).toEqual(pending.draft);
+      await fixture.assertOriginalPreserved();
 
       whole = await openPillowIntake(page, fixture);
-      await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveValue("agent");
-      await whole.getByLabel("设计执行方式", { exact: true }).selectOption("human");
-      const manualCrop = "Custom manual crop retaining ears";
-      const cropRow = whole.locator(".oc-custom-field").filter({
-        has: page.locator('select[aria-label="对应定制字段"] option[value="crop_scope"]:checked'),
-      });
-      await expect(cropRow).toHaveCount(1);
-      await cropRow.getByLabel("定制内容", { exact: true }).fill(manualCrop);
-      const human = await previewPillowIntake(page, fixture);
-      expect(human.ready, JSON.stringify(human.issues)).toBe(true);
-      expect(human.normalizedDraft.designExecutor).toBe("human");
-      expect(human.normalizedDraft.fields.find(field => field.key === "crop_scope")?.value)
-        .toBe(manualCrop);
-      assertSpecialPillowRequirements(human.normalizedDraft);
-      assertPillowSizePreserved(human.normalizedDraft);
-      await applyOfferedPillowMatch(page);
+      await expect(whole.getByText("先由 Agent 出稿", { exact: true })).toBeVisible();
+      const current = await previewPillowIntake(page, fixture);
+      expect(current.ready, JSON.stringify(current.issues)).toBe(true);
+      expect(current.normalizedDraft.designExecutor).toBe("agent");
+      expect(current.normalizedDraft.fields.find(field => field.key === "crop_scope")?.value).toBe("head");
+      assertSpecialPillowRequirements(current.normalizedDraft);
+      assertPillowSizePreserved(current.normalizedDraft);
       const finalResponse = await savePillowIntake(page, fixture, "确认本件审单");
       expect(finalResponse.ok()).toBe(true);
       const final = OrderWorkDetailViewSchema.parse(await finalResponse.json());
@@ -655,9 +658,9 @@ test.describe("controlled order intake pillow personal regressions", () => {
         preparation: "ready_to_push", artwork: "not_pushed",
         production: "not_released", editorProjectId: null, shippedQuantity: 0,
       });
-      expect(final.draft.designExecutor).toBe("human");
+      expect(final.draft.designExecutor).toBe("agent");
       expect(final.draft.images).toEqual(fixture.initial.draft.images);
-      expect(final.draft.fields.find(field => field.key === "crop_scope")?.value).toBe(manualCrop);
+      expect(final.draft.fields.find(field => field.key === "crop_scope")?.value).toBe("head");
       assertSpecialPillowRequirements(final.draft);
       assertPillowSizePreserved(final.draft);
       expect(final.draft.fields).toHaveLength(fixture.initial.draft.fields.length);
@@ -675,23 +678,26 @@ test.describe("controlled order intake pillow personal regressions", () => {
         .map(field => field.value)).toEqual(["10 inch-Mini Keepsake"]);
       expect(audit.forbiddenMutations).toEqual([]);
       expect(audit.pageErrors).toEqual([]);
-      await page.screenshot({ path: testInfo.outputPath("explicit-human-review-saved-requirements-preserved.png") });
+      await page.screenshot({ path: testInfo.outputPath("agent-first-review-saved-requirements-preserved.png") });
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(whole).toBeVisible();
-      await expect(cropRow.getByLabel("定制内容", { exact: true })).toHaveValue(manualCrop);
+      await expect(whole.getByRole("region", { name: "顾客定制要求", exact: true })).toContainText("头部");
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
         .toBe(true);
-      await page.screenshot({ path: testInfo.outputPath("explicit-human-manual-crop-390.png") });
+      await page.screenshot({ path: testInfo.outputPath("agent-first-requirements-390.png") });
       completed = true;
     } finally {
       audit.stop();
-      writePillowIntakeProof(testInfo, fixture, completed, "explicit_human_after_block", audit);
+      writePillowIntakeProof(testInfo, fixture, completed, "agent_first_special_requirements_preserved", audit);
     }
   });
 });
 
+const pillowIntakeChecks = new WeakMap<Page, OrderIntakeCheck[]>();
 function watchPillowIntake(page: Page, lineId: () => string | undefined) {
   const forbiddenMutations: string[] = [], pageErrors: string[] = [];
+  const checks: OrderIntakeCheck[] = [];
+  pillowIntakeChecks.set(page, checks);
   const request = (value: Request) => {
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(value.method())) return;
     const pathname = new URL(value.url()).pathname;
@@ -704,10 +710,16 @@ function watchPillowIntake(page: Page, lineId: () => string | undefined) {
     forbiddenMutations.push(value.method() + " " + pathname);
   };
   const error = (value: Error) => pageErrors.push(value.message);
-  page.on("request", request); page.on("pageerror", error);
+  const response = async (value: Response) => {
+    if (new URL(value.url()).pathname !== "/api/order-centers/lines/" + lineId() + "/intake-check"
+      || value.request().method() !== "POST" || !value.ok()) return;
+    try { checks.push(OrderIntakeCheckViewSchema.parse(await value.json())); }
+    catch (cause) { pageErrors.push(cause instanceof Error ? cause.message : "Invalid native intake receipt"); }
+  };
+  page.on("request", request); page.on("pageerror", error); page.on("response", response);
   return {
     forbiddenMutations, pageErrors,
-    stop: () => { page.off("request", request); page.off("pageerror", error); },
+    stop: () => { page.off("request", request); page.off("pageerror", error); page.off("response", response); pillowIntakeChecks.delete(page); },
   };
 }
 
@@ -721,25 +733,15 @@ async function openPillowIntake(page: Page, fixture: OrderIntakePillowFixture) {
 }
 
 async function previewPillowIntake(page: Page, fixture: OrderIntakePillowFixture) {
-  const result = page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/api/order-centers/lines/" + fixture.lineId + "/intake-check"
-    && response.request().method() === "POST",
-  );
   const panel = page.getByRole("region", { name: "定制订单承接核对", exact: true });
-  await panel.getByRole("button", { name: "核对当前需求", exact: true }).click();
-  const response = await result;
-  expect(response.ok()).toBe(true);
-  const check = OrderIntakeCheckViewSchema.parse(await response.json());
-  await expect(panel).toContainText(
-    check.ready ? "字段与版本核对通过" : "存在待补资料或待确认项",
-  );
-  return check;
-}
-
-async function applyOfferedPillowMatch(page: Page) {
-  const apply = page.getByRole("region", { name: "定制订单承接核对", exact: true })
-    .getByRole("button", { name: "应用唯一字段匹配", exact: true });
-  if (await apply.isVisible()) await apply.click();
+  await expect(panel.getByRole("status")).toHaveText(/^(可以确认审单|还有 \d+ 项需要处理)$/);
+  await expect.poll(() => pillowIntakeChecks.get(page)?.at(-1)?.normalizedDraft.designExecutor ?? "agent")
+    .toBe("agent");
+  const check = pillowIntakeChecks.get(page)?.at(-1);
+  expect(check).toBeDefined();
+  expect(check!.orderLineId).toBe(fixture.lineId);
+  expect(check!.sourceVersionId).toBe(fixture.sourceVersionId);
+  return check!;
 }
 
 async function savePillowIntake(page: Page, fixture: OrderIntakePillowFixture, button: string) {

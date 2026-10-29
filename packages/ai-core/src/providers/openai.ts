@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { readResponsesPayload } from "./responses-payload.js";
+import { modelReceipt } from "./model-receipt.js";
+import type { ModelResponseCheckpoint } from "../response-checkpoint.js";
 
 import {
   calculateCostUsd,
@@ -53,7 +55,7 @@ export class OpenAiProvider implements ModelProvider {
           { type: "input_text", text: untrustedUserMessage(request.untrustedSourceData) },
           ...request.images.flatMap(image => [{ type: "input_text", text: `Evidence image: ${image.sourceId}` }, { type: "input_image", image_url: image.dataUrl, detail: "auto" }]),
         ] : untrustedUserMessage(request.untrustedSourceData) }],
-        max_output_tokens: request.maxOutputTokens ?? 1_024,
+        ...(request.maxOutputTokens === null ? {} : { max_output_tokens: request.maxOutputTokens ?? 1_024 }),
         store: false,
         stream: false,
         text: {
@@ -67,48 +69,35 @@ export class OpenAiProvider implements ModelProvider {
       }),
     });
     if (!response.ok) await throwProviderResponseError(response, this.providerId);
-    const payload = (await readResponsesPayload(response)) as {
-      id?: string;
-      usage?: { input_tokens?: number; output_tokens?: number };
-    };
-    const inputTokens = payload.usage?.input_tokens ?? 0;
-    const outputTokens = payload.usage?.output_tokens ?? 0;
-    const usageKnown = Number.isSafeInteger(payload.usage?.input_tokens) && inputTokens >= 0
-      && Number.isSafeInteger(payload.usage?.output_tokens) && outputTokens >= 0;
-    if (request.onResponseCheckpoint) await request.onResponseCheckpoint({
-      version: "model-response-v1", providerId: this.providerId, modelKey: request.modelKey,
-      providerRequestId: response.headers.get("x-request-id") ?? payload.id ?? null, payload,
-      inputTokens: usageKnown ? inputTokens : null, outputTokens: usageKnown ? outputTokens : null,
-      costUsd: usageKnown && this.config.pricing ? calculateCostUsd(inputTokens, outputTokens,
-        this.config.pricing.inputUsdPerMillion, this.config.pricing.outputUsdPerMillion) : null,
-      receivedAt: new Date().toISOString(),
+    let receipt: ModelResponseCheckpoint | undefined;
+    const payload = await readResponsesPayload(response, undefined, async received => {
+      receipt = modelReceipt({ providerId: this.providerId, modelKey: request.modelKey,
+        requestId: response.headers.get("x-request-id"), payload: received, pricing: this.config.pricing });
+      await request.onResponseCheckpoint?.(receipt);
     });
+    if (!receipt) throw new Error("model_response_invalid");
     const value = parseStructuredOutput(payload, request.outputSchema);
     return {
       providerId: this.providerId,
       modelKey: request.modelKey,
       value,
-      inputTokens,
-      outputTokens,
-      usageReported: typeof payload.usage?.input_tokens === "number" && typeof payload.usage?.output_tokens === "number",
-      costUsd: this.config.pricing ? calculateCostUsd(
-        inputTokens,
-        outputTokens,
-        this.config.pricing.inputUsdPerMillion,
-        this.config.pricing.outputUsdPerMillion,
-      ) : null,
-      providerRequestId: response.headers.get("x-request-id") ?? payload.id,
+      inputTokens: receipt.inputTokens ?? 0,
+      outputTokens: receipt.outputTokens ?? 0,
+      usageReported: receipt.inputTokens !== null && receipt.outputTokens !== null,
+      tokenUsage: receipt.tokenUsage,
+      costUsd: receipt.costUsd,
+      providerRequestId: receipt.providerRequestId ?? undefined,
       completedAt: new Date(),
     };
   }
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
     const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData) + (request.images?.length ?? 0) * 4096;
-    const maxOutputTokens = request.maxOutputTokens ?? 1_024;
+    const maxOutputTokens = request.maxOutputTokens === null ? null : request.maxOutputTokens ?? 1_024;
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: this.config.pricing ? calculateCostUsd(
+      costUsd: this.config.pricing && maxOutputTokens !== null ? calculateCostUsd(
         estimatedInputTokens,
         maxOutputTokens,
         this.config.pricing.inputUsdPerMillion,

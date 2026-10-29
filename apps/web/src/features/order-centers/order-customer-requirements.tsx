@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageOff, Maximize2, RotateCcw, X } from "lucide-react";
 import type { OrderWorkDetail, OrderWorkDraft } from "@yummyai/contracts/order/workspace";
+import { OrderRequirementsView } from "./order-requirements-view";
 import "./order-customer-requirements.css";
 
 type ReferenceImage = { key: string; src: string | null; label: string; caption: string };
+const keepReadOnly = () => {};
 
 /** Read-only evidence: an updated report must never replace the source used for this draft. */
 export function OrderCustomerRequirements({ detail, revisionId }: { detail: OrderWorkDetail; revisionId?: string }) {
@@ -47,10 +49,16 @@ export function OrderCustomerRequirements({ detail, revisionId }: { detail: Orde
         <dl>
           <div><dt>订单 / 数量</dt><dd>{detail.line.externalOrderId} · {detail.line.quantity} 件</dd></div>
           <div><dt>规格</dt><dd>{specification?.name ?? "未匹配具体规格"}</dd></div>
-          {detail.draft.fields.map(field => <div key={field.key}><dt>{field.label || "未命名定制项"}</dt><dd>{fieldValue(field)}<FieldStyle field={field} /></dd></div>)}
-          <div><dt>制作说明</dt><dd>{detail.draft.instructions || "未填写额外制作说明"}</dd></div>
+          <div><dt>制作说明</dt><dd>{detail.draft.instructions.trim() ? detail.draft.instructions : "未填写额外制作说明"}</dd></div>
           <div><dt>客户确认校样</dt><dd>{detail.draft.customerApprovalRequired ? "需要客户确认" : "本单未要求客户确认"}</dd></div>
         </dl>
+        {detail.requirementInterpretation?.sources.length ? <div className="oc-review-requirements">
+          <OrderRequirementsView key={`${detail.line.id}:${detail.line.revision}`} detail={detail} draft={detail.draft} check={null}
+            disabled readOnly onChange={keepReadOnly} onPending={keepReadOnly} />
+        </div> : <p className="oc-notice" role="status">本单尚无可核对的文字分组说明 原始制作要求与顾客选项完整保留在下方详情 请人工核对 不按旧字段附带的样式猜测归属</p>}
+        <details className="oc-review-reference" aria-label="原制作需求字段详情"><summary>原制作需求字段 · {detail.draft.fields.length} 项</summary>
+          <dl>{detail.draft.fields.map(field => <div key={field.key}><dt>{field.label || "未命名定制项"}</dt><dd>{fieldValue(field)}</dd></div>)}</dl>
+        </details>
       </section>
       <div className="oc-customer-image-comparison">
         <section aria-label="本次选用原图">
@@ -64,16 +72,16 @@ export function OrderCustomerRequirements({ detail, revisionId }: { detail: Orde
             : <p className="oc-hint">本次来源资料没有可用的平台预览。</p>}
         </section>
       </div>
-      <section aria-label="顾客原始选项">
-        <h4>顾客原始选项 {source && <span className="oc-badge">附件 V{source.line.versionNumber}</span>}</h4>
+      <details className="oc-review-reference" aria-label="顾客原始选项">
+        <summary>顾客原始选项 {source && <span className="oc-badge">附件 V{source.line.versionNumber}</span>}</summary>
         {!source ? <p className="oc-notice">本次制作的原始定制资料暂不可用；请补齐核对依据，不能仅凭图稿判断正确。</p>
           : source.surfaces.length ? source.surfaces.map(surface => <div className="oc-customer-surface" key={surface.key}>
             <strong>{surface.label}</strong>
-            {surface.fields.length ? <dl>{surface.fields.map(field => <div key={field.key}><dt>{field.label || "未命名定制项"}{field.kind === "unknown" && <small>未识别类型</small>}</dt><dd>{field.value || "（空）"}<FieldStyle field={field} /></dd></div>)}</dl>
+            {surface.fields.length ? <dl>{surface.fields.map(field => <div key={field.key}><dt>{field.label || "未命名定制项"}{field.kind === "unknown" && <small>未识别类型</small>}</dt><dd>{field.value.trim() ? field.value : "未填写"}</dd></div>)}</dl>
               : <p className="oc-hint">此定制面没有文字或选项。</p>}
           </div>) : <p className="oc-hint">来源附件未提供可展示的定制选项。</p>}
         {!!source?.warnings.length && <ul className="oc-customer-warnings">{source.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
-      </section>
+      </details>
     </>}
     <dialog ref={dialog} className="oc-customer-image-dialog" aria-label="定制图片放大预览"
       onCancel={event => { event.stopPropagation(); setEnlarged(null); }}
@@ -85,12 +93,10 @@ export function OrderCustomerRequirements({ detail, revisionId }: { detail: Orde
 }
 
 function fieldValue(field: OrderWorkDraft["fields"][number]) {
-  if (field.key === "crop_scope") return ({ head: "仅头部", half_body: "半身", body: "全身" } as Record<string, string>)[field.value] ?? (field.value || "（空）");
-  if (field.key === "print_sides") return ({ single_sided: "单面印刷（背面镜像空白）", double_sided: "双面印刷（背面镜像，文字正读）" } as Record<string, string>)[field.value] ?? (field.value || "（空）");
-  return field.value || "（空）";
-}
-function FieldStyle({ field }: { field: OrderWorkDraft["fields"][number] }) {
-  return field.font || field.color ? <small>{field.font && `字体：${field.font}`}{field.font && field.color && " · "}{field.color && `颜色：${field.color}`}</small> : null;
+  const value = field.value.trim() ? field.value : "未填写";
+  if (field.key === "crop_scope") return ({ head: "仅头部", half_body: "半身", body: "全身" } as Record<string, string>)[field.value] ?? value;
+  if (field.key === "print_sides") return ({ single_sided: "单面印刷（背面镜像空白）", double_sided: "双面印刷（背面镜像，文字正读）" } as Record<string, string>)[field.value] ?? value;
+  return value;
 }
 function Reference({ image, onOpen }: { image: ReferenceImage; onOpen: (image: ReferenceImage) => void }) {
   return <figure><ReferenceImageView key={image.src} image={image} onOpen={() => onOpen(image)} />

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Permission, ForbiddenError, ASSIST_ACCESS_POLICY_VERSION, requiredAssistPermissions } from "@yummyai/authz";
-import { SecretVault, OpenAiCompatibleProvider, assistFingerprint, ASSIST_PROMPT_VERSION, assistExecutionPolicy, assistHarness } from "@yummyai/ai-core";
+import { SecretVault, OpenAiCompatibleProvider, assistFingerprint, ASSIST_PROMPT_VERSION, assistExecutionPolicy, assistHarness, ModelResponseCheckpointSchema } from "@yummyai/ai-core";
 import {
   CaptureDraftSchema,
   createEntityId,
@@ -13,7 +13,8 @@ import {
 } from "@yummyai/contracts";
 import { CreativeRequirementsSchema } from "@yummyai/contracts/catalog/artwork";
 import { CANVAS_WORKFLOW_TEMPLATES } from "@yummyai/contracts/pod/canvas-bridge";
-import { AssistResultSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { AssistHistoryEntrySchema, AssistResultSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import {
   aiAssistRuns,
   orderWorkItems,
@@ -331,6 +332,72 @@ describe("AI assists use real tenant services and immutable background tasks", (
     prompt: "使用合成资料分析原创方向",
   });
 
+  async function importPrivateNameOrder() {
+    const externalOrderId = `AI-${createEntityId()}`, externalLineId = `LINE-${createEntityId()}`;
+    const batch = await reports.importReport(context, {
+      accountId, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic.txt",
+      content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\tcustomized-url\n${externalOrderId}\t${externalLineId}\t${new Date().toISOString()}\tSYNTHETIC-AI\tSynthetic gift\t1\tUSD\t20\thttps://zme-caps.amazon.com/synthetic`,
+    });
+    const report = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalOrderId, orderItemId: externalLineId,
+      customizationData: { type: "PageContainerCustomization", children: [
+        { type: "TextPrintingCustomization", label: "名字", inputValue: "PRIVATE-SYNTHETIC-NAME" },
+      ] } }));
+    await reports.process(context, report.id, null, await zip.generateAsync({ type: "nodebuffer" }));
+    return report.orderLineId;
+  }
+
+  let manualSalesBasis: { artworkVersionId: string; specificationVersionId: string } | undefined;
+  async function legacyManualSalesBasis() {
+    if (manualSalesBasis) return manualSalesBasis;
+    const { artwork } = await development.registerArtwork(context, {
+      code: `SYNTHETIC-AI-MANUAL-${createEntityId()}`, name: "Synthetic manual text preflight scheme",
+      mode: "personalized_text", customization: { version: 1, fields: [
+        { key: "name", label: "名字", type: "short_text", required: true, validation: { maxLength: 100 } },
+      ] }, layout: [], instructions: "Synthetic manual editor fixture; the missing text layer must remain visible to preflight",
+      expectedVersion: 0, idempotencyKey: randomUUID(),
+    });
+    const { spu } = await development.createSpu(context, { code: `SYNTHETIC-AI-MANUAL-${createEntityId()}`,
+      name: "Synthetic manual preflight product", idempotencyKey: randomUUID() });
+    const { specification } = await development.saveSpecification(context, {
+      spuId: spu.id, code: "MANUAL-12IN", name: "Synthetic 12 inch manual specification", attributes: { size: "12 inch" },
+      processProfileVersionId: profileId, facts: syntheticSpecificationFacts({
+        dimensions: "12 inch", physicalDimensions: { basis: "artwork_longest", unit: "mm", length: 304.8, width: null, height: null },
+      }), expectedVersion: 0, idempotencyKey: randomUUID(),
+    });
+    manualSalesBasis = { artworkVersionId: artwork.versionId, specificationVersionId: specification.versionId };
+    return manualSalesBasis;
+  }
+
+  async function privateManualEditor() {
+    const lineId = await importPrivateNameOrder();
+    let detail = await workspace.detail(context, lineId);
+    detail = await workspace.save(context, lineId, {
+      expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion,
+      expectedSourceVersionId: detail.report!.versionId,
+      draft: { ...detail.draft, ...await legacyManualSalesBasis(), printProfileVersionId: profileId, designExecutor: "human",
+        fields: [{ key: "name", kind: "text", label: "名字", value: "PRIVATE-SYNTHETIC-NAME" }], instructions: "保留买家原文" },
+      status: "ready_to_push", reason: "Synthetic operator confirms this manual preflight fixture only", idempotencyKey: randomUUID(),
+    });
+    expect(detail.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", editorProjectId: null });
+    for (const action of ["push", "start_artwork"] as const)
+      detail = await workspace.action(context, lineId, { action, expectedRevision: detail.line.revision,
+        expectedProjectionVersion: detail.line.projectionVersion, reason: "Synthetic controlled manual handoff", idempotencyKey: randomUUID() });
+    let file = await editor.get(context, detail.line.editorProjectId!);
+    // This registered scheme has no fixed master. Add actual synthetic pixels to
+    // its own private version instead of relying on the empty-catalog fallback.
+    const asset = await editor.upload(context, file.project.id, `synthetic-editor-${file.project.id}.png`, await image()) as ProductionEditorImageView;
+    file = await editor.save(context, file.project.id, { expectedVersionId: file.version.id,
+      document: { ...file.version.document, layers: [{ id: "print", kind: "image", name: "Synthetic print", assetId: asset.id,
+        assetVersion: asset.version, xMm: 5, yMm: 5, widthMm: 40, heightMm: 40, rotationDeg: 0, opacity: 1,
+        visible: true, locked: false, flipX: false, flipY: false }] } });
+    expect(file.version.reviewed).toBe(false);
+    expect(file.version.document.confirmations.visualReview).toBe(false);
+    expect(file.version.document.layers.some(layer => layer.kind === "text")).toBe(false);
+    return { lineId, detail, file };
+  }
+
   const methods = new MethodGovernanceService(database, audit);
   const governedTasks = new Map<string, {
     request: CreateAssist;
@@ -542,47 +609,118 @@ describe("AI assists use real tenant services and immutable background tasks", (
         idempotencyKey: randomUUID(),
       })
     )[0]!.versionId;
-    const externalOrderId = `AI-${createEntityId()}`,
-      externalLineId = `LINE-${createEntityId()}`;
-    const batch = await reports.importReport(context, {
-      accountId,
-      marketplaceId: "ATVPDKIKX0DER",
-      fileName: "synthetic.txt",
-      content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\tcustomized-url\n${externalOrderId}\t${externalLineId}\t${new Date().toISOString()}\tSYNTHETIC-AI\tSynthetic gift\t1\tUSD\t20\thttps://zme-caps.amazon.com/synthetic`,
-    });
-    const report = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
-    lineId = report.orderLineId;
-    const zip = new JSZip();
-    zip.file(
-      "order.json",
-      JSON.stringify({
-        orderId: externalOrderId,
-        orderItemId: externalLineId,
-        customizationData: {
-          type: "PageContainerCustomization",
-          children: [
-            {
-              type: "TextPrintingCustomization",
-              label: "名字",
-              inputValue: "PRIVATE-SYNTHETIC-NAME",
-            },
-          ],
-        },
-      }),
-    );
-    await reports.process(
-      context,
-      report.id,
-      null,
-      await zip.generateAsync({ type: "nodebuffer" }),
-    );
+    lineId = await importPrivateNameOrder();
   }, 60000);
   afterAll(async () => {
     objects.clear();
     await database.client.end();
   });
 
+  it("order requirement analysis pins the actual dirty draft and rejects invented or cross-group model bindings without rewriting an order", async () => {
+    const externalOrderId = "SYNTHETIC-REQUIREMENT-AI-" + createEntityId(), externalLineId = "SYNTHETIC-LINE-" + createEntityId();
+    const batch = await reports.importReport(context, { accountId, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-requirement-analysis.txt",
+      content: ["order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price",
+        [externalOrderId, externalLineId, new Date().toISOString(), "SYNTHETIC", "Synthetic custom shaped pillow", "1", "USD", "20"].join("\t")].join("\n") });
+    const sourceLine = (await reports.workspace(context, { batchId: batch.id })).lines[0]!;
+    const zip = new JSZip();
+    zip.file("order.json", JSON.stringify({ orderId: externalOrderId, orderItemId: externalLineId, customizationData: {
+      type: "PageContainerCustomization", children: [
+        ...["Alpha", "Beta"].map(name => ({ type: "TextContainerCustomization", label: "Synthetic " + name, children: [
+          { type: "TextCustomization", label: name === "Alpha" ? "First name" : "Second name", inputValue: "Synthetic " + name },
+          { type: "FontCustomization", label: "Font", fontSelection: { family: name + " Font" } },
+        ] })),
+      ],
+    } }));
+    await reports.process(context, sourceLine.id, null, await zip.generateAsync({ type: "nodebuffer" }));
+    const { artwork } = await development.registerArtwork(context, { code: "SYNTHETIC-REQUIREMENT-" + createEntityId(),
+      name: "Synthetic grouped text scheme", mode: "customer_image", expectedVersion: 0, idempotencyKey: randomUUID(),
+      customization: { version: 1, fields: [
+        { key: "front_message", label: "Front message", type: "short_text", required: true },
+        { key: "back_message", label: "Back message", type: "short_text", required: false },
+        { key: "operator_message", label: "Operator message", type: "short_text", required: false },
+      ] }, layout: [], instructions: "Synthetic analysis classification only No production approval" });
+    const original = await workspace.detail(context, sourceLine.orderLineId), sources = original.requirementSources!;
+    const alpha = sources.find(row => row.role === "text" && row.value === "Synthetic Alpha")!;
+    const beta = sources.find(row => row.role === "text" && row.value === "Synthetic Beta")!;
+    const font = sources.find(row => row.role === "font" && row.groupKey === alpha.groupKey)!;
+    expect(alpha.groupKey).not.toBe(beta.groupKey);
+    // Historical zero-based keys may collide with a current raw ordinal. Only
+    // unique original label/value evidence may recover the legacy source link.
+    const legacyField = { key: alpha.sourceFieldKey, label: "Second name", kind: "text" as const, value: beta.value };
+    const linked = await workspace.intakeCheck(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+      expectedSourceVersionId: original.report!.versionId, draft: { ...original.draft, fields: [legacyField] } });
+    expect(linked.normalizedDraft.fields[0]!.sourceKey).toBe(beta.sourceFieldKey);
+    expect(linked.normalizedDraft.fields[0]!.font).toBe("Beta Font");
+    const unmatched = { ...legacyField, value: "Synthetic unmatched legacy text" };
+    const inputLegacy = { expectedRevision: original.line.revision, expectedSourceVersionId: original.report!.versionId,
+      draft: { ...original.draft, fields: [unmatched] } };
+    const isolated = await workspace.intakeCheck(context, sourceLine.orderLineId, inputLegacy);
+    const stableKey = "operator-legacy:" + createHash("sha256").update(orderRequirementDraftInput({
+      key: unmatched.key, label: unmatched.label, value: unmatched.value,
+    })).digest("hex");
+    expect(isolated.normalizedDraft.fields[0]).toMatchObject({ value: unmatched.value, sourceKey: stableKey });
+    expect(isolated.normalizedDraft.fields[0]!.font).toBeUndefined(); expect(isolated.normalizedDraft.fields[0]!.color).toBeUndefined();
+    expect(isolated.requirements!.sources.find(row => row.sourceFieldKey === stableKey)).toMatchObject({ origin: "operator", value: unmatched.value });
+    expect(isolated.requirements!.sources.find(row => row.sourceFieldKey === alpha.sourceFieldKey)!.value).toBe(alpha.value);
+    expect((await workspace.intakeCheck(context, sourceLine.orderLineId, inputLegacy)).normalizedDraft.fields[0]!.sourceKey).toBe(stableKey);
+    expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+    const dirty = { ...original.draft, artworkVersionId: artwork.versionId,
+      instructions: "Synthetic unsaved operator instruction", fields: [
+        ...original.draft.fields.map(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey ? { ...row, value: "Synthetic dirty Alpha" } : row),
+        { key: "operator-new", label: "Synthetic extra text", kind: "text" as const, value: "Synthetic unsaved extra text" },
+      ] };
+    const changedAlpha = dirty.fields.filter(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey);
+    expect(changedAlpha).toHaveLength(1);
+    expect(changedAlpha[0]!.value).toBe("Synthetic dirty Alpha");
+    expect(original.draft.fields.find(row => (row.sourceKey ?? row.key) === alpha.sourceFieldKey)!.value).toBe(alpha.value);
+    const checked = await workspace.intakeCheck(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+      expectedSourceVersionId: original.report!.versionId, draft: dirty });
+    expect(checked.requirements!.sources.find(row => row.sourceFieldKey === "operator-new")).toMatchObject({
+      origin: "operator", value: "Synthetic unsaved extra text", role: "text" });
+    const sourceId = (key: string) => "order-field:" + createHash("sha256").update(JSON.stringify(key)).digest("hex");
+    const binding = (key: string, target: string, role: "text" | "font" = "text") => ({ sourceFieldKey: key, targetFieldKey: target,
+      role, confidence: 0.98, reason: "Synthetic original-source classification", evidence: [{ sourceId: sourceId(key), detail: "Actual source field" }] });
+    const good = [binding(alpha.sourceFieldKey, "front_message"), binding(beta.sourceFieldKey, "back_message"),
+      binding("operator-new", "operator_message"), binding(font.sourceFieldKey, "front_message", "font")];
+    const input = CreateAssistSchema.parse({ kind: "order_review", orderLineId: sourceLine.orderLineId,
+      expectedRevision: original.line.revision, expectedSourceVersionId: original.report!.versionId, draft: dirty,
+      requestId: randomUUID(), modelId });
+    try {
+      templateOutput = AssistResultSchema.parse({ summary: "Synthetic current-source classification only", findings: [], directions: [],
+        matches: [], missingInformation: [], orderFieldBindings: good });
+      const task = await assists.create(context, input);
+      const callsBefore = modelFetch.mock.calls.length;
+      await processor.process(envelope(task.id));
+      const done = await assists.get(context, task.id);
+      expect(done).toMatchObject({ status: "completed", stale: false, request: input });
+      expect(done.result!.orderFieldBindings).toEqual(good);
+      expect(JSON.stringify(observedBody)).toContain("Synthetic dirty Alpha");
+      expect(JSON.stringify(observedBody)).toContain("Synthetic unsaved extra text");
+      expect(JSON.stringify(observedBody)).toContain(sourceId("operator-new"));
+      expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+      expect((await workspace.detail(context, sourceLine.orderLineId)).line.revision).toBe(original.line.revision);
+      await processor.process(envelope(task.id));
+      expect(modelFetch).toHaveBeenCalledTimes(callsBefore + 1);
+      for (const invalid of [
+        good.map(row => row.role === "font" ? { ...row, targetFieldKey: "back_message" } : row),
+        good.map((row, index) => index ? row : { ...row, evidence: [{ sourceId: sourceId(beta.sourceFieldKey), detail: "Wrong original source" }] }),
+      ]) {
+        templateOutput = AssistResultSchema.parse({ ...templateOutput, orderFieldBindings: invalid });
+        const denied = await assists.create(context, { ...input, requestId: randomUUID() });
+        await processor.process(envelope(denied.id));
+        expect(await assists.get(context, denied.id)).toMatchObject({ status: "failed", result: null });
+        expect((await workspace.detail(context, sourceLine.orderLineId)).draft).toEqual(original.draft);
+      }
+      const changed = await workspace.save(context, sourceLine.orderLineId, { expectedRevision: original.line.revision,
+        expectedSourceVersionId: original.report!.versionId, draft: { ...dirty, instructions: "Synthetic newer operator input" },
+        status: "needs_information", reason: "Synthetic explicit save after the earlier analysis", idempotencyKey: randomUUID() });
+      expect(changed.draft.instructions).toBe("Synthetic newer operator input");
+      expect(await assists.get(context, task.id)).toMatchObject({ stale: true, result: null });
+    } finally { templateOutput = undefined; }
+  }, 60_000);
+
   it("uses configured models, sends actual research images and rejects tenant/owner access and mutation", async () => {
+    enqueue.mockClear();
     expect(await assists.models(other)).toEqual([]);
     const input = creativeRequest(),
       task = await createGovernedTask(input);
@@ -613,6 +751,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
     await processor.process(envelope(task.id));
     const done = await verifyGovernedTask(task.id);
     expect(done.status).toBe("completed");
+    const historyEntry = AssistHistoryEntrySchema.parse(
+      (await assists.list(context, done.kind, done.scope)).find(entry => entry.id === task.id),
+    );
+    expect(historyEntry).toEqual({
+      id: done.id, status: done.status, createdAt: new Date(done.createdAt).toISOString(),
+      modelLabel: done.modelLabel, tokenUsage: done.tokenUsage, usageSummary: done.usageSummary,
+    });
     expect(done.result?.directions).toHaveLength(3);
     expect(done.costUsd).toBeGreaterThan(0);
     expect(done.invocations?.[0]).toMatchObject({owner:"assist",boundary:"received",billing:{basis:"configured_rate",needsProviderEvidence:true},responseChecksum:expect.stringMatching(/^[a-f0-9]{64}$/)});
@@ -818,6 +963,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("does not push an order or rewrite customer fields, and marks the result stale after a save", async () => {
+    const lineId = await importPrivateNameOrder();
     let detail = await workspace.detail(context, lineId);
     const task = await assists.create(context, {
       kind: "order_review",
@@ -835,10 +981,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
     });
     detail = await workspace.save(context, lineId, {
       expectedRevision: 0,
+      expectedProjectionVersion: detail.line.projectionVersion,
       expectedSourceVersionId: detail.report?.versionId ?? null,
       draft: {
         ...detail.draft,
+        ...await legacyManualSalesBasis(),
         printProfileVersionId: profileId,
+        designExecutor: "human",
         fields: [{ key: "name", kind: "text", label: "名字", value: "PRIVATE-SYNTHETIC-NAME" }],
         instructions: "保留买家原文",
       },
@@ -860,16 +1009,7 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("preflights actual production pixels without export or approval, then invalidates an old editor version", async () => {
-    let detail = await workspace.detail(context, lineId);
-    for (const action of ["push", "start_artwork"] as const)
-      detail = await workspace.action(context, lineId, {
-        action,
-        expectedRevision: detail.line.revision,
-        expectedProjectionVersion: detail.line.projectionVersion,
-        reason: "Synthetic controlled handoff",
-        idempotencyKey: randomUUID(),
-      });
-    const file = await editor.get(context, detail.line.editorProjectId!);
+    const { lineId, detail, file } = await privateManualEditor();
     const task = await createGovernedTask({
       kind: "artwork_preflight",
       orderLineId: lineId,
@@ -892,8 +1032,8 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it("pins and shares automatic artwork evidence, deduplicates calls, and never approves or reuses stale checks", async () => {
-    const detail = await workspace.detail(context, lineId);
-    let file = await editor.get(context, detail.line.editorProjectId!);
+    const { lineId, detail, file: originalFile } = await privateManualEditor();
+    let file = originalFile;
     const confirmations = {physicalSize: false, visualReview: false, narrowParts: false, whiteBorderRule: false, barcodeTab: false, backText: false};
     file = await editor.save(context, file.project.id, {expectedVersionId: file.version.id, document: {...file.version.document, confirmations}});
     const input = {kind: "artwork_preflight" as const, automaticAudit: true as const, orderLineId: lineId, expectedRevision: detail.line.revision, expectedEditorVersionId: file.version.id, modelId, requestId: randomUUID()};
@@ -908,6 +1048,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
       await processor.process(envelope(task.id));
       const completed = await verifyGovernedTask(task.id);
       expect(completed.status).toBe("completed");
+      const historyEntry = AssistHistoryEntrySchema.parse(
+        (await assists.list(context, "artwork_preflight", completed.scope, true)).find(entry => entry.id === task.id),
+      );
+      expect(historyEntry).toEqual({
+        id: completed.id, status: completed.status, createdAt: new Date(completed.createdAt).toISOString(),
+        modelLabel: completed.modelLabel, tokenUsage: completed.tokenUsage, usageSummary: completed.usageSummary,
+      });
       expect(completed.artworkAudit?.checks.find(c => c.code === "visualReview")?.status).toBe("needs_review"); // No customer image in this fixture.
       expect(completed.artworkAudit?.checks.find(c => c.code === "barcodeTab")?.status).toBe("passed");
       expect(await repository.current(context, file.project.id, file.version.id)).toEqual(completed.artworkAudit);
@@ -1613,7 +1760,8 @@ describe("AI assists use real tenant services and immutable background tasks", (
   });
 
   it.each(["missing", "unknown_tool", "wrong_method", "unsupported_version"] as const)("rejects a historical %s tool contract before replay, model submission or reservation use", async kind => {
-    const request = CreateAssistSchema.parse(creativeRequest()), input = await contexts.prepareForExecution(context, request), id = createEntityId();
+    // This stored historical run uses the original finite-output execution policy.
+    const request = CreateAssistSchema.parse(creativeRequest()), input = await contexts.prepareForExecution(context, request, false, true), id = createEntityId();
     if (kind === "missing") delete input.executionContract;
     else if (kind === "unknown_tool") input.executionContract!.tools[0]!.key = "marketplace.publish";
     else if (kind === "wrong_method") input.executionContract!.skill.key = "yummyai.assist.knowledge_answer.review";
@@ -1697,23 +1845,107 @@ describe("AI assists use real tenant services and immutable background tasks", (
     expect(execution).toMatchObject({ phase: "completed", attemptCount: 2, leaseToken: null });
   });
 
+  async function lateAssistEvidence(id: string) {
+    return withTenant(database.db, context, async tx => {
+      const [run] = await tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, id));
+      const [execution] = await tx.select().from(aiAssistExecutions).where(eq(aiAssistExecutions.runId, id));
+      const [ledger] = await tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, id));
+      expect(run).toBeDefined(); expect(execution).toBeDefined(); expect(ledger).toBeDefined();
+      return { run: run!, execution: execution!, ledger: ledger! };
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  }
+  const lateResponseUsage = {
+    version: "model-token-usage-v1" as const, inputTokens: 120, outputTokens: 300, cachedInputTokens: null,
+    totalTokens: 420, totalTokensBasis: "reported_components" as const, inputTextTokens: null, inputImageTokens: null,
+    outputTextTokens: null, outputImageTokens: null, reasoningTokens: null,
+  };
+  function originalLateReceipt(evidence: Awaited<ReturnType<typeof lateAssistEvidence>>, providerPayload: unknown, model: string) {
+    expect(evidence.execution.encryptedResponse).toEqual(expect.stringMatching(/^v1\./));
+    expect(evidence.execution.responseReceiptTransactionId).toMatch(/^[1-9]\d*$/);
+    expect(evidence.execution.responseReceiptTransactionId).not.toBe(evidence.run.creationTransactionId);
+    expect(providerPayload).toMatchObject({ usage: { prompt_tokens: 120, completion_tokens: 300 } });
+    return contentVault.withSecret(evidence.execution.encryptedResponse!, raw => {
+      const saved = JSON.parse(raw) as { response: unknown };
+      const response = ModelResponseCheckpointSchema.parse(saved.response);
+      const checksum = createHash("sha256").update(raw).digest("hex");
+      expect(evidence.execution.responseChecksum).toBe(checksum);
+      expect(response).toMatchObject({ providerId, modelKey: model, providerRequestId: null,
+        payload: providerPayload, inputTokens: 120, outputTokens: 300, tokenUsage: lateResponseUsage });
+      expect(response.payload).toEqual(providerPayload);
+      expect(response.costUsd).toBeGreaterThan(0);
+      expect(evidence.execution.receivedAt).toEqual(new Date(response.receivedAt));
+      return { response, checksum };
+    });
+  }
+
   it("rejects a late response from an expired lease after uncertainty has been recorded", async () => {
     const task = await assists.create(context, creativeRequest()), before = modelFetch.mock.calls.length;
     const original = modelFetch.getMockImplementation()!;
     const started = executionGate(), gate = executionGate();
-    modelFetch.mockImplementationOnce(async (...args) => { started.resolve(); await gate.promise; return original(...args); });
+    let providerPayload: unknown, uncertain: Awaited<ReturnType<typeof lateAssistEvidence>> | undefined;
+    modelFetch.mockImplementationOnce(async (...args) => {
+      started.resolve(); await gate.promise;
+      const response = await original(...args); providerPayload = await response.clone().json(); return response;
+    });
     const running = processor.process(envelope(task.id));
     try {
       await started.promise;
       await withTenant(database.db, context, tx => tx.update(aiAssistExecutions).set({ leaseExpiresAt: sql`clock_timestamp()-interval '1 second'` }).where(eq(aiAssistExecutions.runId, task.id)));
       await processor.process(envelope(task.id));
+      uncertain = await lateAssistEvidence(task.id);
+      expect(uncertain.run).toMatchObject({ status: "failed", errorCode: "assist_submission_unknown", encryptedOutput: null,
+        tokenUsage: null, inputTokens: null, outputTokens: null, costUsd: null });
+      expect(uncertain.execution).toMatchObject({ phase: "uncertain", submissionState: "submitted", attemptCount: 1,
+        leaseToken: null, leaseExpiresAt: null, encryptedResponse: null, responseChecksum: null, receivedAt: null, responseReceiptTransactionId: null });
+      expect(uncertain.ledger.state).toBe("reserved");
     } finally { gate.resolve(); await running; }
     expect(modelFetch).toHaveBeenCalledTimes(before + 1);
-    const [stored] = await withTenant(database.db, context, tx => tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, task.id)));
-    const [execution] = await withTenant(database.db, context, tx => tx.select().from(aiAssistExecutions).where(eq(aiAssistExecutions.runId, task.id)));
-    const [ledger] = await withTenant(database.db, context, tx => tx.select().from(aiBudgetLedger).where(eq(aiBudgetLedger.requestId, task.id)));
-    expect(stored).toMatchObject({ status: "failed", errorCode: "assist_submission_unknown", encryptedOutput: null });
-    expect(execution).toMatchObject({ phase: "uncertain", encryptedResponse: null }); expect(ledger?.state).toBe("reserved");
+    expect(uncertain).toBeDefined();
+    const received = await lateAssistEvidence(task.id), receipt = originalLateReceipt(received, providerPayload, task.model);
+    expect(received.run).toEqual({ ...uncertain!.run, tokenUsage: lateResponseUsage });
+    expect(received.execution).toEqual({ ...uncertain!.execution, submissionState: "received",
+      encryptedResponse: expect.any(String), responseChecksum: receipt.checksum, providerRequestId: receipt.response.providerRequestId,
+      receivedAt: new Date(receipt.response.receivedAt), responseReceiptTransactionId: expect.stringMatching(/^[1-9]\d*$/), updatedAt: expect.any(Date) });
+    expect(received.ledger).toEqual(uncertain!.ledger);
+    expect(await processor.process(envelope(task.id))).toMatchObject({ disposition: "skipped" });
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(await lateAssistEvidence(task.id)).toEqual(received);
+  });
+
+  it("fences an expired lease's late response before any second delivery without adoption or settlement", async () => {
+    const task = await assists.create(context, creativeRequest()), before = modelFetch.mock.calls.length;
+    const original = modelFetch.getMockImplementation()!;
+    const started = executionGate(), gate = executionGate();
+    let providerPayload: unknown, expired: Awaited<ReturnType<typeof lateAssistEvidence>> | undefined;
+    modelFetch.mockImplementationOnce(async (...args) => {
+      started.resolve(); await gate.promise;
+      const response = await original(...args); providerPayload = await response.clone().json(); return response;
+    });
+    const running = processor.process(envelope(task.id));
+    try {
+      await started.promise;
+      await withTenant(database.db, context, tx => tx.update(aiAssistExecutions).set({ leaseExpiresAt: sql`clock_timestamp()-interval '1 second'` }).where(eq(aiAssistExecutions.runId, task.id)));
+      expired = await lateAssistEvidence(task.id);
+      expect(expired.run).toMatchObject({ status: "running", encryptedOutput: null,
+        tokenUsage: null, inputTokens: null, outputTokens: null, costUsd: null });
+      expect(expired.execution).toMatchObject({ phase: "preparing", submissionState: "submitted", attemptCount: 1,
+        encryptedResponse: null, responseChecksum: null, receivedAt: null, responseReceiptTransactionId: null });
+      expect(expired.execution.leaseToken).not.toBeNull(); expect(expired.ledger.state).toBe("reserved");
+      // Deliberately release the original response before any second delivery can fence it.
+    } finally { gate.resolve(); await running; }
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(expired).toBeDefined();
+    const received = await lateAssistEvidence(task.id), receipt = originalLateReceipt(received, providerPayload, task.model);
+    expect(received.run).toEqual({ ...expired!.run, status: "failed", errorCode: "assist_submission_unknown",
+      completedAt: expect.any(Date), tokenUsage: lateResponseUsage });
+    expect(received.execution).toEqual({ ...expired!.execution, phase: "uncertain", submissionState: "received",
+      leaseToken: null, leaseExpiresAt: null, encryptedResponse: expect.any(String), responseChecksum: receipt.checksum,
+      providerRequestId: receipt.response.providerRequestId, receivedAt: new Date(receipt.response.receivedAt),
+      responseReceiptTransactionId: expect.stringMatching(/^[1-9]\d*$/), updatedAt: expect.any(Date) });
+    expect(received.ledger).toEqual(expired!.ledger);
+    expect(await processor.process(envelope(task.id))).toMatchObject({ disposition: "skipped" });
+    expect(modelFetch).toHaveBeenCalledTimes(before + 1);
+    expect(await lateAssistEvidence(task.id)).toEqual(received);
   });
 
   it("retains an uncertain submitted request without another provider call or budget release", async () => {

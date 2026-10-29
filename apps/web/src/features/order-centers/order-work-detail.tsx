@@ -1,16 +1,22 @@
 "use client";
 import { OrderLifecycleProgress } from "./order-lifecycle";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { z } from "zod";
 import Link from "next/link";
 import { ArrowLeft, Plus, Save, Send, Upload, X } from "lucide-react";
 import { orderOperatorTask } from "@yummyai/contracts/order/workbench";
+import { pillowCropSubject } from "@yummyai/contracts/order/production-requirements";
+import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import {
   OrderWorkDetailViewSchema,
+  orderDesignExecutor,
   type OrderWorkDetail,
   type OrderWorkDraft,
   type OrderWorkspaceModule,
   type OrderCenterOptions,
   type OrderWorkActionInput,
+  type OrderIntakeCheck,
+  type SaveOrderWorkDraftInputSchema,
 } from "@yummyai/contracts/order/workspace";
 import {
   ProductionEditorDetailViewSchema,
@@ -24,10 +30,13 @@ import { OrderPlatformDeadline } from "./order-platform-deadline";
 import { OrderDesignAgentPanel } from "./order-design-agent-panel";
 import { getProductionProductDefinition, productionExportDefaults } from "@yummyai/production-editor/products";
 import { AssistPanel } from "../ai-assist/assist-panel";
-import { adoptOrderMatch } from "../ai-assist/assist-adoption";
+import { adoptOrderFieldBindings, adoptOrderMatch } from "../ai-assist/assist-adoption";
 import { OrderArtworkBasis, OrderArtworkMaterials } from "./order-artwork-basis";
 import { OrderTemplatePlanPanel } from "./order-template-plan";
 import { OrderIntakeCheckPanel } from "./order-intake-check";
+import { OrderRequirementsView } from "./order-requirements-view";
+import { orderRequirementAdoptionSources } from "./order-requirements-model";
+import { orderReviewCheckCurrent, orderReviewConfirmedCurrent, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
 import { OrderWorkImageBinding } from "./order-work-image-binding";
 import { defaultOrderImageUsage, mergeOrderImageUpload, ORDER_IMAGE_LIMIT, orderImageBindingField,
   orderImageSelectionProblem, orderImageUploadBasis, orderImageUploadBasisMatches, orderImageUploadProblem,
@@ -37,12 +46,18 @@ import { OrderArtworkReview } from "./order-artwork-review";
 import { artworkPreviewPending } from "./order-artwork-review-model";
 import { useWorkflowReturn } from "../navigation/use-workflow-return";
 import { useInTaskDrawer } from "../navigation/task-drawer";
-import { centerRequest, centers, dateTime, fileBase64, label } from "./order-center-model";
+import { useErpAccess } from "../identity/erp-access";
+import { centerRequest, centers, dateTime, fileBase64, label, orderCommandUncertain, OrderCenterRequestError } from "./order-center-model";
 import "../orders/amazon-report-workspace.css";
 import "./order-centers.css";
 import "../product-development/artwork-workflow.css";
 
 export type OrderReviewState = { dirty: boolean; busy: boolean; loading: boolean };
+type OrderSaveAttempt = {
+  orderLineId: string; orderId: string; authority: string; scope: string | null;
+  input: string; lineState: string; advance: boolean; authorityChanged?: boolean;
+  body: z.infer<typeof SaveOrderWorkDraftInputSchema>;
+};
 
 export function OrderWorkDetailPanel({
   id,
@@ -82,6 +97,7 @@ export function OrderWorkDetailPanel({
   };
 }) {
   const inDrawer = useInTaskDrawer();
+  const access = useErpAccess();
   const workflow = useWorkflowReturn();
   const journeyHref = (path: string) => {
     const origin = workflow.back && new URL(workflow.back, "https://erp.invalid");
@@ -98,6 +114,8 @@ export function OrderWorkDetailPanel({
   const [uploading, setUploading] = useState(false);
   const uploadRequest = useRef<{ orderLineId: string; abort: AbortController } | null>(null);
   const [saveError, setSaveError] = useState<{ orderLineId: string; input: string; message: string } | null>(null);
+  const [pendingSave, setPendingSave] = useState<OrderSaveAttempt | null>(null);
+  const saveFlight = useRef<OrderSaveAttempt | null>(null);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [reason, setReason] = useState(""),
@@ -112,47 +130,134 @@ export function OrderWorkDetailPanel({
   });
   const [advanceOperation, setAdvanceOperation] = useState(false);
   const [deadlineState, setDeadlineState] = useState<OrderReviewState>({ dirty: false, busy: false, loading: false });
-  const [agentState, setAgentState] = useState({ workItemId: id, busy: false, blocked: false, checking: true });
+  const [agentState, setAgentState] = useState({ workItemId: id, busy: false, blocked: false, checking: true, manualTakeover: false });
   const [pendingAgentRefresh, setPendingAgentRefresh] = useState<string | null>(null);
   const [pendingDetailRefresh, setPendingDetailRefresh] = useState<string | null>(null);
+  const [reviewCheck, setReviewCheck] = useState<OrderReviewCheckState | null>(null);
+  const [reviewFieldMap, setReviewFieldMap] = useState<{ orderLineId: string; artworkVersionId: string | null;
+    reportVersionId: string | null; fields: OrderIntakeCheck["fields"] } | null>(null);
+  const [supplementalFields, setSupplementalFields] = useState<{ orderLineId: string; keys: string[] }>({ orderLineId: id, keys: [] });
+  const locateState = useRef(reviewCheck);
+  locateState.current = reviewCheck;
+  const reviewRoot = useRef<HTMLElement | null>(null);
+  const reportReviewCheck = useCallback((state: OrderReviewCheckState) => setReviewCheck(state), []);
+  const locateReview = useCallback((target: OrderReviewTarget, fieldKey?: string | null) => {
+    const root = reviewRoot.current;
+    if (!root) return;
+    const keys = fieldKey ? [fieldKey, ...(locateState.current?.check?.fields.find(field => field.key === fieldKey)?.sourceKeys ?? [])] : [];
+    const rows = [...root.querySelectorAll<HTMLElement>("[data-review-field]")];
+    const field = keys.map(key => rows.find(node => node.dataset.reviewField === key && node.matches("label,fieldset"))).find(Boolean)
+      || keys.map(key => rows.find(node => node.dataset.reviewField === key)).find(Boolean);
+    const node = target === "images" ? root.querySelector<HTMLElement>(".oc-image input[type=checkbox]") ||
+      root.querySelector<HTMLElement>('[data-review-target="images"]') : field || root.querySelector<HTMLElement>(`[data-review-target="${target}"]`);
+    if (!node) return;
+    let parent: HTMLElement | null = node;
+    while (parent && root.contains(parent)) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true;
+      parent = parent.parentElement;
+    }
+    node.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    window.requestAnimationFrame(() => {
+      const control = node.matches("input,select,textarea,button") ? node : node.querySelector<HTMLElement>('[aria-label="定制内容"]') ||
+        node.querySelector<HTMLElement>("input:not([type=hidden]):not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled),summary");
+      let container = control?.parentElement;
+      while (container && root.contains(container)) {
+        if (container instanceof HTMLDetailsElement) container.open = true;
+        container = container.parentElement;
+      }
+      (control ?? node).focus({ preventScroll: true });
+    });
+  }, []);
   const [advanceArtwork, setAdvanceArtwork] = useState(review?.autoAdvance ?? false);
   const [reviewFooter, setReviewFooter] = useState<HTMLDivElement | null>(null);
   const [artworkToolsOpen, setArtworkToolsOpen] = useState(false);
+  const [orderAssistOpen, setOrderAssistOpen] = useState(false);
+  const [styleEditsPending, setStyleEditsPending] = useState(false);
   const draftDirty = !!draft && !!detail && JSON.stringify(draft) !== JSON.stringify(detail.draft);
   const customizationFields = detail?.catalog?.artworks.find(
     art => art.id === draft?.artworkVersionId,
   )?.customization.fields ?? [];
   const textCustomizationFields = customizationFields.filter(field => field.type !== "image");
   const otherUnsaved = useRef(false);
-  otherUnsaved.current = draftDirty || !!reason.trim() || !!artworkReason.trim() || deadlineState.dirty;
-  const dirty = draftDirty || !!reason.trim() || !!artworkReason.trim() || operationState.dirty || deadlineState.dirty;
+  otherUnsaved.current = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || deadlineState.dirty;
+  const pendingSaveHere = pendingSave?.orderLineId === id;
+  const dirty = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || operationState.dirty || deadlineState.dirty || pendingSaveHere;
   const navigationBusy = busy || operationState.busy || deadlineState.busy || agentState.workItemId === id && agentState.busy;
   const navigationLoading = loading || operationState.loading;
   const agentApplies = (module === "orders" || module === "artwork") && detail?.line.preparation === "pushed";
   const agentArtworkBlocked = agentApplies && (agentState.workItemId !== id || agentState.blocked || agentState.checking);
   const editable =
     module === "orders" && detail?.line.id === id && detail.line.preparation !== "pushed" && !detail.line.held;
-  const live = useRef({ id, detail, draft, dirty, navigationBusy, navigationLoading, editable });
-  live.current = { id, detail, draft, dirty, navigationBusy, navigationLoading, editable };
+  const live = useRef({ id, detail, draft, reason, dirty, navigationBusy, navigationLoading, editable,
+    authority: access.authority, scope: access.preferenceScope, styleEditsPending });
+  live.current = { id, detail, draft, reason, dirty, navigationBusy, navigationLoading, editable,
+    authority: access.authority, scope: access.preferenceScope, styleEditsPending };
+  function saveScopeCurrent(attempt: OrderSaveAttempt) {
+    const current = live.current;
+    return current.id === attempt.orderLineId && current.detail?.line.id === attempt.orderLineId &&
+      current.detail.line.orderId === attempt.orderId && current.authority === attempt.authority && current.scope === attempt.scope;
+  }
+  function saveInputCurrent(attempt: OrderSaveAttempt) {
+    const current = live.current;
+    return saveScopeCurrent(attempt) && !!current.detail && !!current.draft && !attempt.authorityChanged &&
+      attempt.input === JSON.stringify({ draft: current.draft, reason: current.reason }) &&
+      attempt.lineState === orderReviewLineState(current.detail);
+  }
+  const canRecoverSave = !!pendingSave && saveInputCurrent(pendingSave) && editable && !navigationBusy &&
+    !navigationLoading && !operationState.dirty && !deadlineState.dirty && !styleEditsPending;
   const visibleError = error || (saveError?.orderLineId === id && saveError.input === JSON.stringify(draft) ? saveError.message : "");
+  const currentReviewCheck = detail && draft && reviewCheck && orderReviewCheckCurrent(reviewCheck, detail, draft) ? reviewCheck : null;
+  const missingTextKeys = currentReviewCheck?.check?.fields.filter(field => field.type !== "image" && field.status === "missing").map(field => field.key) ?? [];
+  const supplementalKeys = [...(supplementalFields.orderLineId === id ? supplementalFields.keys : []), ...missingTextKeys];
+  // The last source-key mapping is only for display/editing continuity, never for submit authorization.
+  const shownFieldMap = currentReviewCheck?.check?.fields ?? (reviewFieldMap?.orderLineId === id &&
+    reviewFieldMap.artworkVersionId === (draft?.artworkVersionId ?? null) && reviewFieldMap.reportVersionId === (detail?.report?.versionId ?? null)
+    ? reviewFieldMap.fields : []);
+  const reviewReady = !pendingSaveHere && !styleEditsPending && currentReviewCheck?.status === "ready" && currentReviewCheck.check?.ready === true;
+  const savedReviewConfirmed = !!detail && !!draft && orderReviewConfirmedCurrent(currentReviewCheck, detail, draft, dirty);
+  const confirmHint = pendingSaveHere ? "上次保存结果尚未确认 请先核对上次保存结果"
+    : styleEditsPending ? "请先采用或取消本组样式调整 再确认审单"
+    : !currentReviewCheck || currentReviewCheck.status === "checking" ? "正在核对当前资料 完成后才能确认审单"
+    : currentReviewCheck.status === "failed" ? "本次核对未完成 请在待办区重新核对 当前填写仍保留"
+      : savedReviewConfirmed ? "审单已确认 可推送设计"
+      : !reviewReady ? currentReviewCheck.check?.issues.length
+        ? `还有 ${currentReviewCheck.check.issues.length} 项待处理 请先处理上方待办`
+        : "本单仍有待核对事项 请先处理上方待办"
+      : "核对通过 可确认审单";
   const onReviewStateChange = review?.onStateChange ?? onStateChange;
   const Container = review || inline ? "section" : "main";
   useEffect(() => {
     onReviewStateChange?.({ dirty, busy: navigationBusy, loading: navigationLoading });
   }, [dirty, navigationBusy, navigationLoading, onReviewStateChange]);
   useEffect(() => {
+    const missing = currentReviewCheck?.check?.fields.filter(field => field.type !== "image" && field.status === "missing").map(field => field.key) ?? [];
+    setSupplementalFields(previous => {
+      const keys = [...new Set([...(previous.orderLineId === id ? previous.keys : []), ...missing])];
+      return previous.orderLineId === id && keys.length === previous.keys.length ? previous : { orderLineId: id, keys };
+    });
+  }, [id, currentReviewCheck]);
+  useEffect(() => {
+    if (!currentReviewCheck?.check || !draft || !detail) return;
+    setReviewFieldMap({ orderLineId: id, artworkVersionId: draft.artworkVersionId ?? null,
+      reportVersionId: detail.report?.versionId ?? null, fields: currentReviewCheck.check.fields });
+  }, [id, currentReviewCheck, draft, detail]);
+  useEffect(() => {
     setSaveError(previous => previous && (previous.orderLineId !== id || previous.input !== JSON.stringify(draft)) ? null : previous);
   }, [id, draft]);
   useEffect(() => {
     setUploading(false);
     setBusy(false);
+    setPendingSave(null);
+    setOrderAssistOpen(false);
+    setStyleEditsPending(false);
     return () => {
+      saveFlight.current = null;
       if (uploadRequest.current?.orderLineId === id) {
         uploadRequest.current.abort.abort();
         uploadRequest.current = null;
       }
     };
-  }, [id]);
+  }, [id, access.authority, access.preferenceScope]);
   useEffect(() => {
     if (pendingDetailRefresh !== id || dirty || navigationBusy || navigationLoading || editorOpen || error) return;
     setPendingDetailRefresh(null);
@@ -272,42 +377,76 @@ export function OrderWorkDetailPanel({
     status: "pending_review" | "needs_information" | "ready_to_push",
     advance = false,
   ) {
-    if (!detail || !draft || navigationBusy || loading) return;
+    if (!detail || !draft || !editable || navigationBusy || loading || saveFlight.current) return;
+    if (pendingSaveHere) { locateReview("status"); return; }
+    if (styleEditsPending) { setError("请先采用或取消本组样式调整 再保存当前需求"); locateReview("requirements"); return; }
+    if (!access.authority) { setError("当前身份尚未核对，请稍后重试。"); return; }
     if (deadlineState.dirty) { setError("请先保存平台交期核对，再保存制作需求。"); return; }
-    const imageProblem = orderImageSelectionProblem(customizationFields, draft.images);
+    if (status === "ready_to_push" && !reviewReady) { locateReview("status"); return; }
+    const submittedDraft = status === "ready_to_push" ? currentReviewCheck!.check!.normalizedDraft : draft;
+    const imageProblem = orderImageSelectionProblem(customizationFields, submittedDraft.images);
     if (imageProblem) { setSaveError({ orderLineId: id, input: JSON.stringify(draft), message: imageProblem }); return; }
-    setBusy(true);
-    setError("");
-    setSaveError(null);
-    setNotice("");
     const payload = {
       expectedRevision: detail.line.revision,
       expectedProjectionVersion: detail.line.projectionVersion,
       expectedSourceVersionId: detail.report?.versionId ?? null,
-      draft,
+      draft: submittedDraft,
       status,
       reason: reason.trim() || "运营更新订单制作需求",
     };
+    const attempt: OrderSaveAttempt = {
+      orderLineId: id, orderId: detail.line.orderId, authority: access.authority, scope: access.preferenceScope,
+      input: JSON.stringify({ draft, reason }), lineState: orderReviewLineState(detail), advance,
+      body: structuredClone({ ...payload, idempotencyKey: requestKey(payload) }),
+    };
+    await submitSaveAttempt(attempt, false);
+  }
+  async function submitSaveAttempt(attempt: OrderSaveAttempt, recovering: boolean) {
+    if (saveFlight.current || !saveInputCurrent(attempt) || !live.current.editable ||
+      live.current.navigationBusy || live.current.navigationLoading) return;
+    saveFlight.current = attempt;
+    setBusy(true);
+    setError("");
+    setSaveError(null);
+    setNotice("");
     try {
-      update(
-        OrderWorkDetailViewSchema.parse(
-          await centerRequest(`lines/${id}/draft`, {
-            ...payload,
-            idempotencyKey: requestKey(payload),
-          }),
-        ),
-      );
-      setNotice(status === "ready_to_push" ? "审单已保存，可以推送制图。" : "草稿已保存。");
+      const next = OrderWorkDetailViewSchema.parse(await centerRequest(`lines/${attempt.orderLineId}/draft`, attempt.body));
+      if (next.line.id !== attempt.orderLineId || next.line.orderId !== attempt.orderId)
+        throw new Error("保存回执与本单不一致，请核对原保存结果。");
+      if (!saveScopeCurrent(attempt)) return;
+      setPendingSave(null);
+      if (!saveInputCurrent(attempt)) {
+        setNotice("原保存已有结果，当前填写已变化并保留；请核对订单状态后再继续。");
+        return;
+      }
+      update(next);
+      setNotice(recovering ? "上次保存结果已核对。" : attempt.body.status === "ready_to_push" ? "审单已保存，可以推送制图。" : "草稿已保存。");
       setReason("");
-      if (advance) review?.onSavedNext();
+      if (!recovering && attempt.advance) review?.onSavedNext();
     } catch (cause) {
-      setSaveError({ orderLineId: id, input: JSON.stringify(draft), message: cause instanceof Error ? cause.message : "保存失败" });
+      if (!saveScopeCurrent(attempt)) return;
+      const denied = cause instanceof OrderCenterRequestError && (cause.code === "authority_changed" || [401, 403].includes(cause.status));
+      if (orderCommandUncertain(cause)) {
+        setPendingSave({ ...attempt, ...(denied ? { authorityChanged: true } : {}) });
+      } else {
+        if (recovering && denied) setPendingSave({ ...attempt, authorityChanged: true });
+        if (saveInputCurrent(attempt)) setSaveError({ orderLineId: attempt.orderLineId, input: JSON.stringify(live.current.draft),
+          message: cause instanceof Error ? cause.message : "保存失败" });
+      }
     } finally {
-      setBusy(false);
+      if (saveFlight.current === attempt) {
+        saveFlight.current = null;
+        if (saveScopeCurrent(attempt)) setBusy(false);
+      }
     }
+  }
+  async function recoverSave() {
+    if (!pendingSave || !canRecoverSave) return;
+    await submitSaveAttempt(pendingSave, true);
   }
   async function action(action: OrderWorkActionInput["action"], advance = false) {
     if (!detail || navigationBusy || navigationLoading) return;
+    if (pendingSaveHere) { locateReview("status"); return; }
     if (agentArtworkBlocked && ["start_artwork", "submit_artwork", "approve_artwork", "reject_artwork", "approve_proof", "reject_proof"].includes(action)) {
       setError("请先核对自动制作状态；制作中的任务需先停止并接管，再编辑或审核。");
       return;
@@ -316,7 +455,7 @@ export function OrderWorkDetailPanel({
       setError("订单已归档，请先恢复记录。");
       return;
     }
-    if (draftDirty || operationState.dirty || deadlineState.dirty) {
+    if (draftDirty || styleEditsPending || operationState.dirty || deadlineState.dirty) {
       setError("请先保存当前修改，再执行流转操作。");
       return;
     }
@@ -361,7 +500,7 @@ export function OrderWorkDetailPanel({
     }
   }
   async function archive(archived: boolean) {
-    if (!detail || navigationBusy || navigationLoading || draftDirty || operationState.dirty || deadlineState.dirty)
+    if (!detail || navigationBusy || navigationLoading || draftDirty || styleEditsPending || operationState.dirty || deadlineState.dirty)
       return;
     if (!reason.trim()) {
       setError("请填写归档或恢复原因。");
@@ -530,7 +669,7 @@ export function OrderWorkDetailPanel({
             >
               重试读取
             </button>
-            {module==="artwork"&&<OrderDesignAgentPanel key={id} workItemId={id} refreshKey={refresh} disabled financialOnly onChanged={()=>{}} onStateChange={()=>{}} />}
+            {module==="artwork"&&<OrderDesignAgentPanel key={id} workItemId={id} refreshKey={refresh} disabled financialOnly approvedEditorVersionId={null} onChanged={()=>{}} onStateChange={()=>{}} />}
           </>
         ) : (
           <p role="status">正在读取订单资料…</p>
@@ -579,6 +718,7 @@ export function OrderWorkDetailPanel({
         : [];
   return (
     <Container
+      ref={reviewRoot}
       className={
         review ? "oc-page oc-review-detail" : inline ? "oc-page oc-inline-detail" : "oc-page"
       }
@@ -634,9 +774,9 @@ export function OrderWorkDetailPanel({
             onClick={() => onModuleChange(target)}>{text}</button> : <Link key={target} href={journeyHref(path)}>{text}</Link>)}
         </nav>
         </details>}
-        {detail.line.platform === "amazon" && <OrderPlatformDeadline detail={detail}
+        {detail.line.platform === "amazon" && <div data-review-target="deadline"><OrderPlatformDeadline detail={detail}
           disabled={busy || loading || operationState.busy || operationState.dirty || draftDirty}
-          onChanged={(next) => { setDetail(next); onChanged(); }} onStateChange={setDeadlineState} />}
+          onChanged={(next) => { setDetail(next); onChanged(); }} onStateChange={setDeadlineState} /></div>}
         {detail.line.sourceChanged && (
           <p className="oc-notice">
             新导入资料与当前制作需求的来源版本不同。已保存的需求继续保留，请对照原始资料核对差异。
@@ -660,6 +800,11 @@ export function OrderWorkDetailPanel({
         )}
         {pendingAgentRefresh === id && (dirty || navigationBusy || editorOpen) && <p className="oc-notice" role="status">自动制作状态已有更新，当前备注和修改仍保留。保存或清空修改后，将刷新稿件与审核信息。</p>}
         {pendingDetailRefresh === id && <p className="oc-notice" role="status">订单资料有更新，当前未保存内容仍保留；完成当前操作并保存或清空修改后再刷新。</p>}
+        {detail.line.designCandidateReview && module === "orders" && <div className="oc-notice"><strong>无人设计稿待审核</strong>
+          <p>先核对 Agent 的本单候选稿 不通过时填写理由交美工修改</p>
+          {onModuleChange ? <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading || dirty} onClick={() => onModuleChange("artwork")}>审核无人设计稿</button>
+            : dirty ? <p className="oc-hint">当前修改仍保留 请先处理未保存内容 再打开稿件审核</p> : <Link href={journeyHref("/order-artwork")}>审核无人设计稿</Link>}
+        </div>}
         {module === "artwork" && editor && (
           <OrderArtworkReview
             key={editor.version.id}
@@ -681,114 +826,45 @@ export function OrderWorkDetailPanel({
         )}
         {agentApplies && (
           <OrderDesignAgentPanel key={id} workItemId={id} refreshKey={detail.line.projectionVersion}
+            preparation={detail.line.preparation}
+            designExecutor={orderDesignExecutor(detail.draft)}
+            editorProjectId={detail.line.editorProjectId} onOpen={projectId => {
+              const current = live.current;
+              if (current.id !== id || current.detail?.line.id !== id || current.detail.line.editorProjectId !== projectId ||
+                current.dirty || current.navigationBusy || current.navigationLoading || agentState.workItemId !== id || !agentState.manualTakeover) return;
+              openEditor();
+            }}
+            approvedEditorVersionId={detail.line.artwork === "approved" && editor?.version.reviewed === true &&
+              editor.version.id === editor.project.currentVersionId ? editor.version.id : null}
             disabled={navigationBusy || navigationLoading || dirty} onStateChange={state => setAgentState({ ...state, workItemId: id })}
             onChanged={() => { setPendingAgentRefresh(id); onChanged(); }} />
         )}
-        {options && !inline && !detail.line.archivedAt && (
-          <OrderOperationsPanel
-            key={id + ":" + module}
-            onSelectItem={onSelectItem}
-            refreshToken={refreshToken}
-            module={module}
-            detail={detail}
-            editor={editor}
-            onPrepareProduction={() => void renderProduction()}
-            loading={loading || busy || deadlineState.busy || deadlineState.dirty || draftDirty}
-            options={options}
-            onStateChange={setOperationState}
-            onCompleted={
-              advanceOperation && review
-                ? () => {
-                    if (!otherUnsaved.current) review.onSavedNext();
-                  }
-                : undefined
-            }
-            onChanged={() => {
-              setRefresh((value) => value + 1);
-              onChanged();
-            }}
-          />
-        )}
-        {(module === "orders" || module === "artwork") && (
-          <details
-            className="oc-section"
-            open={artworkToolsOpen}
-            onToggle={(event) => {
-              setArtworkToolsOpen(event.currentTarget.open);
-            }}
-          >
-            <summary>{module === "artwork" ? "AI 分析与制图工具" : "AI 分析与模板制图"}</summary>
-            {!detail.line.archivedAt &&
-              artworkToolsOpen && (
-                <AssistPanel
-                  key={`${id}:${module}`}
-                  kind={module === "orders" ? "order_review" : "artwork_preflight"}
-                  scope={`order:${id}`}
-                  input={
-                    module === "orders"
-                      ? {
-                          kind: "order_review",
-                          orderLineId: id,
-                          expectedRevision: detail.line.revision,
-                          expectedSourceVersionId: detail.report?.versionId ?? null,
-                        }
-                      : editor && detail.line.revision > 0
-                        ? {
-                            kind: "artwork_preflight",
-                            orderLineId: id,
-                            expectedRevision: detail.line.revision,
-                            expectedEditorVersionId: editor.project.currentVersionId,
-                          }
-                        : null
-                  }
-                  disabledReason={
-                    busy
-                      ? "请等待当前操作完成"
-                      : dirty
-                        ? "请先保存订单修改，再基于已保存资料分析"
-                        : detail.line.held
-                          ? "订单已暂停，请恢复后再分析"
-                          : module === "artwork" && (!editor || editorOpen)
-                            ? "请先保存并关闭生产文件编辑器，再进行预检"
-                            : undefined
-                  }
-                  onMatch={
-                    module === "orders" && editable
-                      ? (match) => {
-                          try {
-                            setDraft(adoptOrderMatch(draft, detail, match));
-                            setNotice("已填入匹配候选，请核对后保存需求。");
-                            return true;
-                          } catch (cause) {
-                            setError(cause instanceof Error ? cause.message : "候选填入失败");
-                            return false;
-                          }
-                        }
-                      : undefined
-                  }
-                />
-              )}
-            {!detail.line.archivedAt &&
-              (module === "orders" || (module === "artwork" && artworkToolsOpen)) && (
-                <OrderTemplatePlanPanel
-                  key={id}
-                  id={id}
-                  revision={detail.line.revision}
-                  sourceVersionId={detail.report?.versionId ?? null}
-                  disabled={dirty || busy}
-                />
-              )}
-          </details>
-        )}
-        <details className="oc-section" open={module === "orders"}>
+        <details className="oc-section oc-review-intake" open={module === "orders"}>
           <summary className="oc-section-heading">
             <span>
-              制作需求 <small>V{detail.line.revision || "未保存"}</small>
+              本件审单 <small>{detail.line.revision ? "已有保存版本" : "尚未保存"}</small>
             </span>
             {dirty && <span className="oc-badge warning">有未保存修改</span>}
           </summary>
+          <div data-review-target="status" tabIndex={-1}>
+            {pendingSaveHere && <section className="oc-notice" aria-label="本次保存结果恢复">
+              <strong role="status">上次保存结果尚未确认</strong>
+              <p>当前填写仍保留 请先核对这次原保存 再继续审单</p>
+              {pendingSave && !saveInputCurrent(pendingSave) && <p>{pendingSave.authorityChanged
+                ? "当前身份或授权范围已变化 原保存请求暂不可重放 请重新核对身份与订单"
+                : "当前填写或订单状态已变化 不能套用原保存请求 请保留当前内容并核对原订单"}</p>}
+              <button type="button" className="oc-button" disabled={!canRecoverSave} aria-busy={busy}
+                onClick={() => void recoverSave()}>核对上次保存结果</button>
+            </section>}
+            <div hidden={pendingSaveHere}>
+            <OrderIntakeCheckPanel key={detail.line.id} detail={detail} draft={draft}
+              disabled={navigationBusy || navigationLoading || pendingSaveHere} editable={editable} onChange={setDraft}
+              onStateChange={reportReviewCheck} onLocate={locateReview} />
+            </div>
+          </div>
           <fieldset disabled={!editable || navigationBusy} className="oc-fields">
-            <OrderArtworkBasis detail={detail} draft={draft} onChange={setDraft}>
+            <OrderArtworkBasis detail={detail} draft={draft} onChange={setDraft} manualTakeover={detail.line.preparation === "pushed" && agentState.workItemId === id && agentState.manualTakeover}
+              routePending={agentApplies && (agentState.workItemId !== id || agentState.checking)}>
             <label>
               通用工艺底稿
               <select
@@ -842,14 +918,12 @@ export function OrderWorkDetailPanel({
             </label>
           </fieldset>
           <OrderArtworkMaterials detail={detail} draft={draft} dirty={dirty} />
-          <OrderIntakeCheckPanel key={detail.line.id} detail={detail} draft={draft}
-            disabled={busy || navigationBusy || navigationLoading} editable={editable} onChange={setDraft} />
           {detail.profile && (
-            <p className="oc-hint">
+            <details className="oc-review-reference"><summary>本单工艺说明</summary><p className="oc-hint">
               当前底稿：{detail.profile.name} ·{" "}
               {getProductionProductDefinition(detail.profile.productType).label}。
               {detail.profile.instructions}
-            </p>
+            </p></details>
           )}
           {!profiles.length && !detail.profile && (
             <p className="oc-hint">
@@ -857,21 +931,106 @@ export function OrderWorkDetailPanel({
               登记经过确认的底稿，再选择制作依据。
             </p>
           )}
+          <section className="oc-review-requirements" aria-label="顾客定制要求" data-review-target="requirements" tabIndex={-1}>
+            <h3>顾客定制要求</h3>
+            <p className="oc-hint">按文字组与制作选项整理 原始要求完整保留 先由 Agent 出稿 运营审核不通过后再交美工修改</p>
+            {module === "orders" && !detail.line.archivedAt && <details className="oc-review-ai oc-review-reference" open={orderAssistOpen} onToggle={event => setOrderAssistOpen(event.currentTarget.open)}>
+              <summary>AI 辅助填写字段对应关系</summary>
+              {orderAssistOpen && <AssistPanel key={`requirements:${id}`} kind="order_review" scope={`order:${id}`}
+                input={{ kind: "order_review", orderLineId: id, expectedRevision: detail.line.revision,
+                  expectedSourceVersionId: detail.report?.versionId ?? null, draft }}
+                disabledReason={!editable ? "当前阶段只能读取已有分析 不能改写本单制作需求" : navigationBusy || navigationLoading
+                  ? "请等待当前操作完成" : pendingSaveHere ? "请先核对上次保存结果" : styleEditsPending ? "请先采用或取消本组样式调整" : detail.line.held ? "订单已暂停 请恢复后再分析" : undefined}
+                onMatch={editable && !pendingSaveHere ? match => {
+                  const current = live.current;
+                  if (!current.detail || !current.draft || !current.editable || current.navigationBusy || current.navigationLoading || current.styleEditsPending) return false;
+                  try { setDraft(adoptOrderMatch(current.draft, current.detail, match)); setNotice("已填入当前资料库中的候选 原始要求保留 请核对后确认审单"); return true; }
+                  catch (cause) { setError(cause instanceof Error ? cause.message : "候选未能填写 当前内容保留"); return false; }
+                } : undefined}
+                onOrderFieldBindings={async (bindings, request, view) => {
+                  const current = live.current;
+                  if (!current.detail || !current.draft || !current.editable || current.navigationBusy || current.navigationLoading || current.styleEditsPending ||
+                    current.id !== request.orderLineId || current.detail.line.revision !== request.expectedRevision ||
+                    (current.detail.report?.versionId ?? null) !== request.expectedSourceVersionId || !request.draft ||
+                    orderRequirementDraftInput(current.draft) !== orderRequirementDraftInput(request.draft)) return false;
+                  const captured = orderRequirementDraftInput(current.draft), state = orderReviewLineState(current.detail), authority = current.authority;
+                  try {
+                    const sources = await orderRequirementAdoptionSources(current.detail, current.draft, locateState.current,
+                      bindings.map(binding => binding.sourceFieldKey));
+                    const result = await adoptOrderFieldBindings(current.draft, current.detail, bindings, sources, view.sources.map(source => source.id));
+                    const latest = live.current;
+                    if (!latest.detail || !latest.draft || !latest.editable || latest.navigationBusy || latest.navigationLoading || latest.styleEditsPending ||
+                      latest.id !== current.id || latest.authority !== authority || latest.scope !== current.scope ||
+                      orderReviewLineState(latest.detail) !== state || orderRequirementDraftInput(latest.draft) !== captured) return false;
+                    setDraft(result.draft);
+                    setNotice(result.unresolved.length ? `已整理 ${result.applied} 个有依据的对应项 仍需核对：${result.unresolved.join("；")}`
+                      : `已整理 ${result.applied} 个有依据的对应项 原文字和样式均已保留 请核对后确认审单`);
+                    return result.applied > 0;
+                  } catch (cause) {
+                    const latest = live.current;
+                    if (latest.id === current.id && latest.authority === authority && latest.scope === current.scope && latest.draft &&
+                      orderRequirementDraftInput(latest.draft) === captured) setError(cause instanceof Error ? cause.message : "字段建议未能采用 当前填写仍保留");
+                    return false;
+                  }
+                }} />}
+            </details>}
+            <OrderRequirementsView key={`${id}:${access.authority}`} detail={detail} draft={draft} check={currentReviewCheck?.check ?? null} disabled={!editable || navigationBusy || pendingSaveHere}
+              onChange={setDraft} onPending={setStyleEditsPending}>
+            {!detail.requirementSources && !currentReviewCheck?.check?.requirements && <dl>{(textCustomizationFields.length || shownFieldMap.length ? [
+              ...textCustomizationFields.map(field => ({ key: field.key, label: field.label })),
+              ...shownFieldMap.filter(field => field.type !== "image" && !textCustomizationFields.some(value => value.key === field.key))
+                .map(field => ({ key: field.key, label: field.label })),
+            ] : draft.fields.filter(field => field.kind !== "image").map(field => ({ key: field.key, label: field.label }))).map(field => {
+              const definition = customizationFields.find(value => value.key === field.key);
+              const mapping = shownFieldMap.find(value => value.key === field.key);
+              const checked = currentReviewCheck?.check?.fields.find(value => value.key === field.key);
+              const normalized = currentReviewCheck?.check?.normalizedDraft.fields.find(value => value.key === field.key);
+              const raw = draft.fields.filter(value => value.key === field.key || mapping?.sourceKeys.includes(value.key));
+              const text = normalized?.value ?? [...new Set(raw.map(value => value.value).filter(value => value.trim()))].join(" / ");
+              const subject = field.key === "crop_scope" ? pillowCropSubject(text) : null;
+              const value = subject ? { head: "头部", body: "全身", half_body: "半身" }[subject]
+                : definition?.type === "single_choice" ? definition.options.find(option => option.value === text)?.label ?? text : text;
+              const empty = checked?.status === "missing" && checked.required ? "待补齐"
+                : checked && (!checked.required || checked.status === "optional") ? "未填写（选填）"
+                  : currentReviewCheck?.status === "failed" ? "尚未识别" : "正在识别";
+              return <div key={field.key} data-review-field={field.key} tabIndex={-1}><dt>{field.label}</dt><dd>{checked?.status === "inactive" ? "本单不适用" : value || empty}</dd></div>;
+            })}</dl>}
+            {customizationFields.filter(field => field.type !== "image" && supplementalKeys.includes(field.key)).map(field => {
+              const mapping = shownFieldMap.find(value => value.key === field.key);
+              const source = draft.fields.find(item => item.key === field.key) ?? draft.fields.find(item => mapping?.sourceKeys.length === 1 && mapping.sourceKeys[0] === item.key);
+              const value = source?.value ?? "";
+              const missing = missingTextKeys.includes(field.key);
+              const change = (text: string) => setDraft({ ...draft, fields: source
+                ? draft.fields.map(item => item.key === source.key ? { ...item, value: text } : item)
+                : [...draft.fields, { key: field.key, label: field.label, kind: field.type === "single_choice" ? "choice" : "text", value: text }] });
+              return <label key={field.key} className="oc-review-required" data-review-field={field.key}>{field.label} <small>必填</small>
+                {field.type === "single_choice" ? <select aria-label={`补充${field.label}`} aria-required={field.required} aria-invalid={missing} disabled={!editable || navigationBusy} value={value} onChange={event => change(event.target.value)}>
+                  <option value="">请选择{field.label}</option>{field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select> : <textarea aria-label={`补充${field.label}`} aria-required={field.required} aria-invalid={missing} disabled={!editable || navigationBusy} rows={2} value={value} onChange={event => change(event.target.value)} />}
+              </label>;
+            })}
+            </OrderRequirementsView>
+          </section>
+          <details className="oc-review-reference oc-review-raw-fields"><summary>高级修改与原始字段</summary>
+          <p className="oc-hint">仅在需要修改内容或调整对应关系时使用 原始要求请完整保留</p>
           <div className="oc-custom-fields">
             {draft.fields.map((field, index) => {
               const choiceOptions = orderSingleChoiceOptions(customizationFields, field);
+              const source = (currentReviewCheck?.check?.requirements?.sources ?? detail.requirementSources ?? []).find(row => row.sourceFieldKey === (field.sourceKey ?? field.key));
+              const style = source?.role === "font" || source?.role === "color";
+              const retained = style || source?.role === "size" || source?.role === "enhancement" || source?.role === "option" || source?.role === "text" && !field.value.trim();
               return (
-              <fieldset key={field.key} disabled={!editable || navigationBusy} className="oc-custom-field">
-                {field.kind !== "image" && textCustomizationFields.length > 0 ? <label>
+              <fieldset key={field.key} disabled={!editable || navigationBusy} className="oc-custom-field" data-review-field={field.key}>
+                {retained ? <p className="oc-hint">{style ? source?.targetTextKey ? "文字样式 随原文字组保留" : "文字样式原文已保留 归属需核对" : source?.role === "text" ? "无需印字 原始选项已保留" : "原始选项已保留 无需逐项匹配"}</p> : field.kind !== "image" && textCustomizationFields.length > 0 ? <label>
                   对应定制字段
                   <select aria-label="对应定制字段" value={field.key} onChange={event => {
                     const target = textCustomizationFields.find(item => item.key === event.target.value);
-                    if (target) setDraft({ ...draft, fields: draft.fields.map((item, i) => i === index ? { ...item, key: target.key, label: target.label } : item) });
+                    if (target) setDraft({ ...draft, fields: draft.fields.map((item, i) => i === index ? { ...item, sourceKey: item.sourceKey ?? item.key, key: target.key, label: target.label } : item) });
                   }}>
                     {!textCustomizationFields.some(item => item.key === field.key) &&
-                      <option value={field.key}>待匹配 · {field.label}</option>}
+                      <option value={field.key}>保留原始信息 · {field.label}</option>}
                     {textCustomizationFields.map(item =>
-                      <option key={item.key} value={item.key} disabled={draft.fields.some((other, i) => i !== index && other.key === item.key)}>{item.label} · {item.key}{draft.fields.some((other, i) => i !== index && other.key === item.key && !other.value.trim()) ? " · 已有空白填写项，请先核对" : ""}</option>)}
+                      <option key={item.key} value={item.key} disabled={draft.fields.some((other, i) => i !== index && other.key === item.key)}>{item.label}{draft.fields.some((other, i) => i !== index && other.key === item.key && !other.value.trim()) ? " · 已有空白填写项，请先核对" : ""}</option>)}
                   </select>
                 </label> : null}
                 <label>
@@ -910,38 +1069,7 @@ export function OrderWorkDetailPanel({
                     }
                   />}
                 </label>
-                {field.font !== undefined && (
-                  <label>
-                    字体
-                    <input
-                      value={field.font}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          fields: draft.fields.map((value, i) =>
-                            i === index ? { ...value, font: event.target.value } : value,
-                          ),
-                        })
-                      }
-                    />
-                  </label>
-                )}
-                {field.color !== undefined && (
-                  <label>
-                    颜色
-                    <input
-                      value={field.color}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          fields: draft.fields.map((value, i) =>
-                            i === index ? { ...value, color: event.target.value } : value,
-                          ),
-                        })
-                      }
-                    />
-                  </label>
-                )}
+                {!style && (field.font !== undefined || field.color !== undefined) && <p className="oc-hint">原字段附带样式：{field.font ?? "未记录字体"} · {field.color ?? "未记录颜色"} 此记录可能由旧解析继承 本组有效样式以上方来源为准</p>}
                 <button
                   type="button"
                   aria-label={`移除字段 ${field.label}`}
@@ -979,7 +1107,8 @@ export function OrderWorkDetailPanel({
               添加定制字段
             </button>
           )}
-          <label className="oc-full-field">
+          </details>
+          <label className="oc-full-field" data-review-field="instructions">
             制作说明
             <textarea
               aria-label="制作说明"
@@ -990,6 +1119,7 @@ export function OrderWorkDetailPanel({
               onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
             />
           </label>
+          <section className="oc-review-images" aria-label="顾客原图与制作图片" data-review-target="images" tabIndex={-1}>
           <div className="oc-section-heading">
             <h3>订单图片与用途</h3>
             <small>{draft.images.length} 张已选{customizationFields.some(field => field.type === "image")
@@ -1064,7 +1194,83 @@ export function OrderWorkDetailPanel({
               );
             })}
           </div>
+          </section>
         </details>
+        {options && !inline && !detail.line.archivedAt && (
+          <OrderOperationsPanel
+            key={id + ":" + module}
+            onSelectItem={onSelectItem}
+            refreshToken={refreshToken}
+            module={module}
+            detail={detail}
+            editor={editor}
+            onPrepareProduction={() => void renderProduction()}
+            loading={loading || busy || deadlineState.busy || deadlineState.dirty || draftDirty}
+            options={options}
+            onStateChange={setOperationState}
+            onCompleted={
+              advanceOperation && review
+                ? () => {
+                    if (!otherUnsaved.current) review.onSavedNext();
+                  }
+                : undefined
+            }
+            onChanged={() => {
+              setRefresh((value) => value + 1);
+              onChanged();
+            }}
+          />
+        )}
+        {(module === "orders" || module === "artwork") && (
+          <details
+            className="oc-section"
+            open={artworkToolsOpen}
+            onToggle={(event) => {
+              setArtworkToolsOpen(event.currentTarget.open);
+            }}
+          >
+            <summary>{module === "artwork" ? "AI 分析与制图工具" : "模板制图与原任务"}</summary>
+            {!detail.line.archivedAt && module === "artwork" &&
+              artworkToolsOpen && (
+                <AssistPanel
+                  key={`${id}:${module}`}
+                  kind="artwork_preflight"
+                  scope={`order:${id}`}
+                  input={
+                    editor && detail.line.revision > 0
+                        ? {
+                            kind: "artwork_preflight",
+                            orderLineId: id,
+                            expectedRevision: detail.line.revision,
+                            expectedEditorVersionId: editor.project.currentVersionId,
+                          }
+                        : null
+                  }
+                  disabledReason={
+                    busy
+                      ? "请等待当前操作完成"
+                      : dirty
+                        ? "请先保存订单修改，再基于已保存资料分析"
+                        : detail.line.held
+                          ? "订单已暂停，请恢复后再分析"
+                          : !editor || editorOpen
+                            ? "请先保存并关闭生产文件编辑器，再进行预检"
+                            : undefined
+                  }
+                />
+              )}
+            {!detail.line.archivedAt &&
+              (module === "orders" || (module === "artwork" && artworkToolsOpen)) && (
+                <OrderTemplatePlanPanel
+                  key={id}
+                  id={id}
+                  revision={detail.line.revision}
+                  sourceVersionId={detail.report?.versionId ?? null}
+                  disabled={dirty || busy}
+                />
+              )}
+          </details>
+        )}
         <details className="oc-section" open={!review && module !== "artwork" || detail.line.held || detail.line.sourceChanged || detail.line.artwork === "approved" && detail.line.proof !== "not_required"}>
           <summary>处理与交接</summary>
           <label className="oc-full-field">
@@ -1085,7 +1291,7 @@ export function OrderWorkDetailPanel({
                 {!review && (
                   <button
                     className="oc-button"
-                    disabled={busy}
+                    disabled={busy || pendingSaveHere}
                     onClick={() => void save("pending_review")}
                   >
                     <Save size={15} />
@@ -1094,24 +1300,25 @@ export function OrderWorkDetailPanel({
                 )}
                 <button
                   className="oc-button"
-                  disabled={busy}
+                  disabled={busy || pendingSaveHere}
                   onClick={() => void save("needs_information")}
                 >
                   保存为待补资料
                 </button>
                 <button
                   className="oc-button primary"
-                  disabled={busy || !draft.printProfileVersionId}
+                    disabled={busy || navigationLoading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push")}
                 >
                   确认审单并保存
                 </button>
+                <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>
             )}
             {module === "orders" && detail.line.preparation === "ready_to_push" && (
               <button
                 className="oc-button primary"
-                disabled={busy || draftDirty || detail.line.held}
+                disabled={busy || draftDirty || detail.line.held || pendingSaveHere}
                 onClick={() => void action("push")}
               >
                 <Send size={15} />
@@ -1286,7 +1493,7 @@ export function OrderWorkDetailPanel({
             {module === "orders" && detail.line.preparation === "ready_to_push" && !draftDirty ? (
               <>
                 <span className="oc-hint">审单已确认，派发后进入制图。</span>
-                <button className="oc-button primary" disabled={navigationBusy || navigationLoading || detail.line.held || operationState.dirty || deadlineState.dirty}
+                <button className="oc-button primary" disabled={navigationBusy || navigationLoading || detail.line.held || operationState.dirty || deadlineState.dirty || pendingSaveHere}
                   onClick={() => void action("push", true)}>
                   <Send size={15} />{unified ? "推送本件设计" : review.hasNext ? "推送设计并下一单" : "推送设计并返回列表"}
                 </button>
@@ -1295,7 +1502,7 @@ export function OrderWorkDetailPanel({
               <>
                 <button
                   className="oc-button"
-                  disabled={busy || loading}
+                  disabled={busy || loading || pendingSaveHere}
                   onClick={() => void save("pending_review")}
                 >
                   <Save size={15} />
@@ -1303,18 +1510,19 @@ export function OrderWorkDetailPanel({
                 </button>
                 <button
                   className="oc-button"
-                  disabled={busy || loading}
+                  disabled={busy || loading || pendingSaveHere}
                   onClick={() => void save("needs_information", true)}
                 >
                   {unified ? "记录待补资料" : review.hasNext ? "待补资料并下一单" : "待补资料并返回列表"}
                 </button>
                 <button
                   className="oc-button primary"
-                  disabled={busy || loading || !draft.printProfileVersionId}
+                  disabled={busy || loading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push", true)}
                 >
                   {busy ? "正在保存…" : unified ? "确认本件审单" : review.hasNext ? "确认审单并下一单" : "确认审单并返回列表"}
                 </button>
+                <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>
             ) : module === "artwork" ? (
               <>

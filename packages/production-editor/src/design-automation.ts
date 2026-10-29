@@ -29,8 +29,8 @@ export function evaluateDesignAutomationBudget(raw: EvaluateDesignAutomationBudg
     if (!recipe.allowOrderImageTransfer) blockers.push("order_image_transfer_not_allowed");
     if (!recipe.modelRouteId) blockers.push("model_route_missing");
     if (plannedModelCalls > recipe.modelCallLimit) blockers.push("model_call_limit_exceeded");
-    if (unitPrice === null) blockers.push("model_price_missing");
-    if (recipe.maxEstimatedCostUsd === null) blockers.push("model_budget_missing");
+    if (unitPrice === null && recipe.costPolicy !== "unlimited") blockers.push("model_price_missing");
+    if (recipe.maxEstimatedCostUsd === null && recipe.costPolicy !== "unlimited") blockers.push("model_budget_missing");
     if (estimatedCostUsd !== null && recipe.maxEstimatedCostUsd !== null && estimatedCostUsd > recipe.maxEstimatedCostUsd) blockers.push("model_budget_exceeded");
   }
   return DesignAutomationBudgetSchema.parse({
