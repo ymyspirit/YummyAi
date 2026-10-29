@@ -46,6 +46,32 @@ it("preserves cursor and scope queries and keeps financial reads private", async
   expect(response.headers.get("cache-control")).toBe("private, no-store");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
 });
+it("reads an original order design call privately without changing its server payload", async () => {
+  const original = { owner: "order_design", subjectId: id, canConfirm: false };
+  upstream.mockResolvedValueOnce(Response.json(original));
+  const response = await GET(
+    new Request("http://web.test/api/model-billing/order_design/" + id),
+    context(["order_design", id]),
+  );
+  expect(upstream).toHaveBeenCalledTimes(1);
+  expect(String(upstream.mock.calls[0]?.[0])).toBe(
+    "http://api.test/v1/model-billing/order_design/" + id,
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(original);
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+});
+it("never forwards an order design confirmation or an invalid read subject", async () => {
+  const write = await POST(request(), context(["order_design", id, "confirm"]));
+  expect(write.status).toBe(404);
+  const invalid = await GET(
+    new Request("http://web.test/api/model-billing/order_design/not-an-id"),
+    context(["order_design", "not-an-id"]),
+  );
+  expect(invalid.status).toBe(404);
+  expect(upstream).not.toHaveBeenCalled();
+});
 it("retains conflict feedback and never retries a possibly committed correction", async () => {
   upstream.mockResolvedValueOnce(
     Response.json({ message: "调用或预算依据已变化" }, { status: 409 }),

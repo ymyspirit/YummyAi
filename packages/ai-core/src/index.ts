@@ -1,5 +1,9 @@
 export * from "./budget.js";
-export { assessPaidRequestRecovery, type PaidRequestRecovery, type PaidRequestRecoveryEvidence } from "./request-recovery.js";
+export {
+  assessPaidRequestRecovery,
+  type PaidRequestRecovery,
+  type PaidRequestRecoveryEvidence,
+} from "./request-recovery.js";
 export * from "./assist.js";
 export * from "./assist-execution-policy.js";
 export * from "./harness-registry.js";
@@ -7,6 +11,7 @@ export * from "./assist-harness.js";
 export * from "./assist-invocation.js";
 export * from "./model-billing.js";
 export * from "./model-usage.js";
+export * from "./official-api-pricing.js";
 export * from "./artwork-audit.js";
 export * from "./image-provider.js";
 export * from "./provider.js";

@@ -166,6 +166,198 @@
 .model-billing-list li {
   animation: model-billing-enter 200ms ease-out;
 }
+.model-billing-price-catalog {
+  margin: 20px 0 26px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.model-billing-price-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.model-billing-price-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.model-billing-price-heading :is(p, a),
+.model-billing-price-meta,
+.model-billing-price-notes,
+.model-billing-price-boundary {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.model-billing-price-heading p,
+.model-billing-price-meta {
+  margin: 4px 0;
+  color: var(--muted-ink);
+}
+.model-billing-page :is(.model-billing-price-heading, .model-billing-price-table) a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--blue);
+  text-underline-offset: 3px;
+}
+.model-billing-page :is(.model-billing-price-heading, .model-billing-price-table) a:hover {
+  color: var(--action, #2859d6);
+  transform: translateY(-1px);
+}
+.model-billing-page :is(.model-billing-price-heading, .model-billing-price-table) a:active {
+  transform: scale(0.98);
+}
+.model-billing-price-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-top: 10px;
+  overscroll-behavior-inline: contain;
+}
+.model-billing-price-scroll:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.model-billing-price-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.model-billing-price-table caption {
+  padding-bottom: 8px;
+  color: var(--muted-ink);
+  text-align: left;
+  font-size: 11px;
+}
+.model-billing-price-table :is(th, td) {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.model-billing-price-table thead th {
+  background: var(--surface-muted, #f5f7fa);
+  color: var(--muted-ink);
+  font-weight: 500;
+}
+.model-billing-price-table th[scope="row"] {
+  min-width: 160px;
+  max-width: 250px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.model-billing-price-table th[scope="row"] :is(strong, small),
+.model-billing-rate-term {
+  display: block;
+}
+.model-billing-rate-term {
+  white-space: nowrap;
+}
+.model-billing-money,
+.model-billing-price-total dd {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.model-billing-price-rules {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.model-billing-price-rules summary {
+  color: var(--blue);
+  cursor: pointer;
+  width: fit-content;
+  transition: color 160ms ease, transform 160ms ease;
+}
+.model-billing-price-rules summary:hover {
+  transform: translateX(1px);
+}
+.model-billing-price-rules summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.model-billing-price-rules::details-content {
+  block-size: 0;
+  opacity: 0;
+  overflow: clip;
+  interpolate-size: allow-keywords;
+  transition: block-size 180ms ease, opacity 180ms ease, content-visibility 180ms allow-discrete;
+}
+.model-billing-price-rules[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+.model-billing-price-rules :is(p, ul) {
+  margin: 6px 0 0;
+}
+.model-billing-price-rules ul,
+.model-billing-price-notes {
+  padding-left: 18px;
+}
+.model-billing-price-check {
+  padding: 16px 0;
+  margin: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.model-billing-price-status {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 500;
+}
+.model-billing-price-usage {
+  font-size: 12px;
+  line-height: 1.8;
+  font-variant-numeric: tabular-nums;
+}
+.model-billing-detail .model-billing-price-components {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 14px 0;
+  list-style: none;
+}
+.model-billing-price-components li {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.model-billing-price-components code {
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.model-billing-price-total {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.model-billing-price-total > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+.model-billing-price-total dd {
+  margin: 0;
+  font-weight: 600;
+}
+.model-billing-price-notes,
+.model-billing-price-boundary {
+  color: var(--muted-ink);
+}
+.model-billing-price-catalog,
+.model-billing-price-catalog tbody tr,
+.model-billing-price-check > * {
+  animation: model-billing-enter 200ms ease-out;
+}
 @keyframes model-billing-enter {
   from {
     opacity: 0;

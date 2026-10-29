@@ -8,7 +8,12 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
-import { assistInvocationView, modelBillingBudgetAmount } from "@yummyai/ai-core";
+import {
+  assistInvocationView,
+  modelBillingBudgetAmount,
+  checkOfficialApiPrice,
+  OFFICIAL_API_PRICE_CATALOG,
+} from "@yummyai/ai-core";
 import { podInvocationViews } from "@yummyai/pod-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
@@ -25,6 +30,8 @@ import {
   aiAssistRuns as runs,
   aiAssistExecutions as executions,
   aiBudgetLedger as ledger,
+  orderDesignModelCalls,
+  orderDesignAgentRuns,
   modelProviderConfigs,
   podArtworkInvocations as invocations,
   podArtworkTasks as podTasks,
@@ -113,10 +120,18 @@ export class ModelBillingService {
             exists(select 1 from ${receipts} b where b.owner='pod' and b.pod_invocation_id=i.id) as reconciled
           from ${invocations} i join ${podTasks} p on p.id=i.task_id and p.tenant_id=i.tenant_id
           where i.phase in ('completed','failed','uncertain') and i.submitted_at is not null and p.status not in ('queued','running')
+          union all
+          select 'order_design'::text,c.id,case when c.received_at is null then 'uncertain' else 'received' end,
+            c.submitted_at,coalesce(b.model_key,'未记录模型'),false
+          from ${orderDesignModelCalls} c
+          join ${ledger} b on b.id=c.budget_ledger_id and b.tenant_id=c.tenant_id
+          join ${orderDesignAgentRuns} r on r.id=c.run_id and r.tenant_id=c.tenant_id
+          where r.status not in ('queued','running')
         ) q where ${filter} and ${after} order by q.created_at desc,q.id desc,q.owner desc limit 21`);
         const items = Array.from(rows).slice(0, 20),
           last = items.at(-1);
         return ModelBillingWorkspaceSchema.parse({
+          officialPriceCatalog: OFFICIAL_API_PRICE_CATALOG,
           items,
           nextCursor:
             rows.length > 20 && last
@@ -130,7 +145,12 @@ export class ModelBillingService {
     );
   }
 
-  private async load(tx: TenantTransaction, owner: ModelBillingOwner, id: string, lock = false) {
+  private async load(
+    tx: TenantTransaction,
+    owner: Exclude<ModelBillingOwner, "order_design">,
+    id: string,
+    lock = false,
+  ) {
     const history = await tx
       .select()
       .from(receipts)
@@ -153,6 +173,7 @@ export class ModelBillingService {
           costUsd: runs.costUsd,
           inputTokens: runs.inputTokens,
           outputTokens: runs.outputTokens,
+          tokenUsage: runs.tokenUsage,
           modelSnapshot: runs.modelSnapshot,
         })
         .from(runs)
@@ -221,6 +242,11 @@ export class ModelBillingService {
           latest ? acknowledgment(latest) : null,
         ),
         history,
+        officialPriceCheck: checkOfficialApiPrice({
+          modelId: run.modelSnapshot.model,
+          tokenUsage: run.tokenUsage,
+          endpointKind: "responses",
+        }),
         assist: { run, budget: budgets[0] ?? null, provider: provider?.provider },
       };
       const fingerprint = checksum({
@@ -281,6 +307,11 @@ export class ModelBillingService {
         latest ? new Map([[id, acknowledgment(latest)]]) : new Map(),
       )[0]!,
       history,
+      officialPriceCheck: checkOfficialApiPrice({
+        modelId: invocation.modelKey ?? "未记录模型",
+        tokenUsage: invocation.tokenUsage,
+        endpointKind: "unknown",
+      }),
       assist: null,
       fingerprint: checksum({
         owner,
@@ -298,6 +329,50 @@ export class ModelBillingService {
       context,
       async (tx) => {
         await this.current(tx, context);
+        if (owner === "order_design") {
+          const [row] = await tx
+            .select({
+              call: orderDesignModelCalls,
+              budget: ledger,
+              state: orderDesignAgentRuns.status,
+            })
+            .from(orderDesignModelCalls)
+            .innerJoin(
+              ledger,
+              and(
+                eq(ledger.id, orderDesignModelCalls.budgetLedgerId),
+                eq(ledger.tenantId, orderDesignModelCalls.tenantId),
+              ),
+            )
+            .innerJoin(
+              orderDesignAgentRuns,
+              and(
+                eq(orderDesignAgentRuns.id, orderDesignModelCalls.runId),
+                eq(orderDesignAgentRuns.tenantId, orderDesignModelCalls.tenantId),
+              ),
+            )
+            .where(eq(orderDesignModelCalls.id, id));
+          if (!row) throw new NotFoundException("原无人设计调用不存在");
+          return ModelBillingBasisSchema.parse({
+            owner,
+            subjectId: id,
+            fingerprint: checksum(row),
+            modelLabel: row.budget.modelKey,
+            state: row.call.receivedAt ? "received" : "uncertain",
+            createdAt: row.call.submittedAt.toISOString(),
+            providerRequestId: null,
+            canConfirm: false,
+            blockers: ["无人设计调用在此只读核价 渠道账单及实际结果继续从原订单核实"],
+            originalInvocation: null,
+            history: [],
+            hasMoreHistory: false,
+            officialPriceCheck: checkOfficialApiPrice({
+              modelId: row.budget.modelKey,
+              tokenUsage: row.call.tokenUsage,
+              endpointKind: "images",
+            }),
+          });
+        }
         const source = await this.load(tx, owner, id);
         return ModelBillingBasisSchema.parse({
           owner,
@@ -312,6 +387,7 @@ export class ModelBillingService {
           originalInvocation: source.originalInvocation,
           history: source.history.slice(0, 20).map(receiptView),
           hasMoreHistory: source.history.length > 20,
+          officialPriceCheck: source.officialPriceCheck,
         });
       },
       { isolationLevel: "repeatable read", accessMode: "read only" },
@@ -319,6 +395,8 @@ export class ModelBillingService {
   }
 
   async confirm(context: TenantContext, owner: ModelBillingOwner, id: string, raw: unknown) {
+    if (owner === "order_design")
+      throw new BadRequestException("无人设计官方核价为只读 不生成渠道账单确认");
     const parsed = ModelBillingConfirmSchema.safeParse(raw);
     if (!parsed.success)
       throw new BadRequestException(

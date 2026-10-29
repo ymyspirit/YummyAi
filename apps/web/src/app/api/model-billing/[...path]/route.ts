@@ -3,7 +3,7 @@ import { isSameOriginRequest } from "../../../../same-origin-request";
 
 export const dynamic = "force-dynamic";
 const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const readPath = new RegExp(`^(workspace|(assist|pod)/${id})$`, "i");
+const readPath = new RegExp(`^(workspace|(assist|pod|order_design)/${id})$`, "i");
 const writePath = new RegExp(`^(assist|pod)/${id}/confirm$`, "i");
 type Context = { params: Promise<{ path: string[] }> };
 

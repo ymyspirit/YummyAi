@@ -9,13 +9,19 @@ import {
   aiAssistRuns,
   aiAssistExecutions,
   aiBudgetLedger,
+  modelBillingReconciliations,
   modelProviderConfigs,
   roles,
   membershipRoles,
   memberships,
 } from "@yummyai/database";
-import { and, eq } from "drizzle-orm";
-import type { ModelBillingBasis } from "@yummyai/contracts/ai/model-billing";
+import { and, eq, inArray } from "drizzle-orm";
+import {
+  ModelBillingBasisSchema,
+  ModelBillingWorkspaceSchema,
+  type ModelBillingBasis,
+} from "@yummyai/contracts/ai/model-billing";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 import type { AssistView } from "@yummyai/contracts/ai/assist";
 import { getApiHeaders } from "../src/server-api";
 import { centerApi } from "./order-centers-fixture";
@@ -59,6 +65,27 @@ test("manual model fee review preserves original evidence, keeps conflict drafts
     proofChecksum = createHash("sha256").update(proof).digest("hex"),
     errors: string[] = [],
     posts: string[] = [];
+  const priceRecords: Array<{
+    id: string;
+    scenario: "known" | "partial" | "unknown";
+    model: string;
+    usage: ModelTokenUsage | null;
+    status: "calculated" | "partial" | "usage_missing";
+    amountUsd: string | null;
+    knownSubtotalUsd: string | null;
+  }> = [
+    { id: createEntityId(), scenario: "known", model: "gpt-6.1-sol",
+      usage: { version: "model-token-usage-v1", inputTokens: 1000, outputTokens: 100,
+        cachedInputTokens: 400, totalTokens: 1100, totalTokensBasis: "provider",
+        cacheWriteInputTokens: 0 },
+      status: "calculated", amountUsd: "0.00224000", knownSubtotalUsd: "0.00224000" },
+    { id: createEntityId(), scenario: "partial", model: "gpt-image-2.5-flare",
+      usage: { version: "model-token-usage-v1", inputTokens: 100, outputTokens: 300,
+        cachedInputTokens: null, totalTokens: 400, totalTokensBasis: "provider", outputImageTokens: 300 },
+      status: "partial", amountUsd: null, knownSubtotalUsd: "0.00900000" },
+    { id: createEntityId(), scenario: "unknown", model: "gpt-6.1-sol", usage: null,
+      status: "usage_missing", amountUsd: null, knownSubtotalUsd: null },
+  ];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     if (request.method() === "POST") posts.push(request.postData() ?? "");
@@ -120,6 +147,89 @@ test("manual model fee review preserves original evidence, keeps conflict drafts
         amountUsd: "1",
         state: "released",
       });
+      // Original submitted-call evidence only. No quote, budget, invoice or approval is created.
+      for (const record of priceRecords) {
+        await tx.insert(aiAssistRuns).values({
+          id: record.id, tenantId: context.tenantId, ownerId: context.userId, requestId: createEntityId(),
+          kind: "knowledge_answer", scope: "synthetic-official-billing", status: "failed",
+          inputFingerprint: "a".repeat(64), requestFingerprint: "b".repeat(64),
+          modelSnapshot: { id: createEntityId(), label: "Synthetic official billing " + record.scenario,
+            model: record.model, providerLabel: "Synthetic provider", providerConfigId: provider.id,
+            inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 },
+          promptVersion: "synthetic-official-billing", costUsd: null,
+          inputTokens: record.usage?.inputTokens ?? null, outputTokens: record.usage?.outputTokens ?? null,
+          tokenUsage: record.usage, reservedCostUsd: "1", startedAt: now, completedAt: now,
+          expiresAt: new Date(Date.now() + 86400000),
+        });
+        await tx.insert(aiAssistExecutions).values({
+          tenantId: context.tenantId, runId: record.id, inputFingerprint: "a".repeat(64),
+          policyChecksum: "b".repeat(64), phase: "failed", submissionState: "submitted", submittedAt: now,
+          providerRequestId: "synthetic-official-request-" + record.id,
+        });
+      }
+    });
+    const workspace = ModelBillingWorkspaceSchema.parse(await centerApi("model-billing/workspace?scope=all"));
+    expect(workspace.officialPriceCatalog).toBeDefined();
+    expect(workspace.officialPriceCatalog!.rates.map(rate => rate.modelId)).toEqual([
+      "gpt-6.1-sol", "gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    ]);
+    const readPosts = posts.length;
+    for (const record of priceRecords) {
+      const original = ModelBillingBasisSchema.parse(await centerApi("model-billing/assist/" + record.id));
+      expect(original.subjectId).toBe(record.id);
+      expect(original.officialPriceCheck).toMatchObject({
+        status: record.status, modelId: record.model, endpointKind: "responses", usage: record.usage,
+        amountUsd: record.amountUsd, knownSubtotalUsd: record.knownSubtotalUsd,
+      });
+      expect(original.history).toEqual([]);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.goto("/model-billing?owner=assist&id=" + record.id);
+      const catalog = page.getByRole("region", { name: "官方标准 API 价表", exact: true });
+      await expect(catalog.getByRole("heading", { name: "官方标准 API 价表", exact: true })).toBeVisible();
+      await expect(catalog).toContainText("USD / 1,000,000 token");
+      await expect(catalog).toContainText(workspace.officialPriceCatalog!.checkedAt.slice(0, 10));
+      await expect(catalog.locator("tbody tr")).toHaveCount(4);
+      for (const rate of workspace.officialPriceCatalog!.rates) {
+        await expect(catalog.getByText(rate.modelId, { exact: true })).toBeVisible();
+        await expect(catalog.getByRole("link", { name: rate.modelId + " 官方价格来源", exact: true }))
+          .toHaveAttribute("href", rate.sourceUrl);
+      }
+      const price = page.getByRole("region", { name: "原调用官方核价", exact: true });
+      await expect(price).toHaveAttribute("data-price-state", record.status);
+      if (record.scenario === "known") {
+        await expect(price.getByText("$0.00224000", { exact: true })).toBeVisible();
+        await expect(price).toContainText("600 token × $2.00000000 ÷ 1,000,000 = $0.00120000");
+        await expect(price).toContainText("合计 1,100");
+        await expect(price.getByText("已知小计", { exact: true })).toHaveCount(0);
+      } else {
+        await expect(price.getByText("暂无法核算总额", { exact: true })).toBeVisible();
+        if (record.scenario === "partial") {
+          await expect(price.getByText("已知小计", { exact: true })).toBeVisible();
+          await expect(price.getByText("$0.00900000", { exact: true })).toBeVisible();
+          await expect(price.getByRole("list", { name: "官方核价缺项", exact: true })).toBeVisible();
+        } else {
+          await expect(price).toContainText("原调用用量未返回");
+          await expect(price.getByText("已知小计", { exact: true })).toHaveCount(0);
+          await expect(price.getByText("$0.00000000", { exact: true })).toHaveCount(0);
+        }
+      }
+      await expect(price).toContainText("渠道实际费用仍以原账单和凭证核对为准");
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await expect.poll(() => page.locator(".model-billing-page").evaluate(root =>
+          root.getAnimations({ subtree: true }).filter(animation => animation.playState === "running").length,
+        )).toBe(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath("billing-official-" + record.scenario + "-" + width + ".png"), fullPage: true });
+      }
+    }
+    expect(posts).toHaveLength(readPosts);
+    const readOnlyIds = priceRecords.map(record => record.id);
+    await withTenant(database.db, context, async tx => {
+      expect(await tx.select().from(aiBudgetLedger).where(inArray(aiBudgetLedger.requestId, readOnlyIds))).toEqual([]);
+      expect(await tx.select().from(modelBillingReconciliations)
+        .where(inArray(modelBillingReconciliations.subjectId, readOnlyIds))).toEqual([]);
     });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`/model-billing?owner=assist&id=${id}`);

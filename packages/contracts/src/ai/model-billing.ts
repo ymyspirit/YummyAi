@@ -1,10 +1,15 @@
 import { z } from "zod";
 import {
+  OfficialApiPriceCatalogSchema,
+  OfficialApiPriceCheckSchema,
+} from "@yummyai/contracts/ai/official-model-pricing";
+import {
   HarnessInvocationViewSchema,
   ModelBillingAcknowledgmentSchema,
 } from "@yummyai/contracts/harness";
 
-export const ModelBillingOwnerSchema = z.enum(["assist", "pod"]);
+export const ModelBillingOwnerSchema = z.enum(["assist", "pod", "order_design"]);
+export const ModelBillingConfirmOwnerSchema = z.enum(["assist", "pod"]);
 export const ModelBillingSubjectIdSchema = z.uuidv7();
 const Checksum = z.string().regex(/^[a-f0-9]{64}$/);
 const Reference = z
@@ -56,7 +61,7 @@ export const ModelBillingBudgetImpactSchema = z
   })
   .strict();
 export const ModelBillingReceiptViewSchema = ModelBillingAcknowledgmentSchema.extend({
-  owner: ModelBillingOwnerSchema,
+  owner: ModelBillingConfirmOwnerSchema,
   subjectId: z.uuidv7(),
   evidenceKind: z.enum(["provider_invoice", "provider_usage", "provider_support"]),
   invoiceReference: Reference,
@@ -78,6 +83,7 @@ export const ModelBillingBasisSchema = z
     originalInvocation: HarnessInvocationViewSchema.nullable(),
     history: z.array(ModelBillingReceiptViewSchema).max(20),
     hasMoreHistory: z.boolean(),
+    officialPriceCheck: OfficialApiPriceCheckSchema.optional(),
   })
   .strict();
 export const ModelBillingCursorSchema = z
@@ -96,6 +102,7 @@ export const ModelBillingListQuerySchema = z
 export const ModelBillingWorkspaceSchema = z
   .object({
     nextCursor: z.string().nullable(),
+    officialPriceCatalog: OfficialApiPriceCatalogSchema.optional(),
     items: z
       .array(
         z
