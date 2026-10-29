@@ -14,7 +14,7 @@ if (!nonce || !["localhost", "127.0.0.1", "[::1]"].includes(database.hostname) |
 
 const servers = Array.isArray(base.webServer) ? base.webServer : [];
 export default defineConfig({
-  ...base, testMatch: "agent-read.spec.ts", grep: undefined, workers: 1, fullyParallel: false, retries: 0, timeout: 240_000,
+  ...base, testMatch: ["agent-read.spec.ts", "agent-chat.spec.ts"], grep: undefined, workers: 1, fullyParallel: false, retries: 0, timeout: 240_000,
   use: { ...base.use, baseURL: "http://localhost:3130", trace: "off", video: "off", screenshot: "off" },
   webServer: servers.map(server => ({ ...server, env: { ...server.env, NODE_OPTIONS: "", TSX_DISABLE_CACHE: "1",
     TSX_TSCONFIG_PATH: String(server.url).includes(":8130") ? fileURLToPath(new URL("../api/tsconfig.json", import.meta.url)) : "" } })),

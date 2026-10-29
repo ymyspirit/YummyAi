@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./assist/ai-assist-execution": "./src/assist/ai-assist-execution.ts",
+    "./assist/knowledge-evaluation-execution": "./src/assist/knowledge-evaluation-execution.ts",
+    "./assist/knowledge-benchmark-execution": "./src/assist/knowledge-benchmark-execution.ts",
+    "./assist/business-benchmark-execution": "./src/assist/business-benchmark-execution.ts"
+  },
   "scripts": {
     "test": "vitest run --no-file-parallelism",
     "typecheck": "tsc -p tsconfig.json"

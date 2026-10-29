@@ -4,7 +4,14 @@ import { authorize, authorizeAssistRequest, ForbiddenError, Permission } from "@
 import { catalogOwnerFilter, currentCatalogContext } from "@yummyai/catalog-core";
 import type { TenantContext } from "@yummyai/contracts";
 import type { CreateAssist } from "@yummyai/contracts/ai/assist";
-import { aiAssistRuns, knowledgeDocuments, knowledgeEvaluationRuns, marketplaceAccounts, withTenant, type DatabaseConnection } from "@yummyai/database";
+import {
+  aiAssistRuns,
+  knowledgeDocuments,
+  knowledgeEvaluationRuns,
+  marketplaceAccounts,
+  withTenant,
+  type DatabaseConnection,
+} from "@yummyai/database";
 import type { KnowledgeReference } from "@yummyai/contracts/knowledge";
 import { redactKnowledgeText, knowledgeProductsVisible } from "@yummyai/knowledge-core";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
@@ -23,48 +30,82 @@ export class KnowledgeAnswerContextService {
     @Inject(KnowledgeImportService) private readonly imports: KnowledgeImportService,
   ) {}
   async currentReadContext(
-    ceiling: TenantContext, request: Extract<CreateAssist, { kind: "knowledge_answer" }>,
+    ceiling: TenantContext,
+    request: Extract<CreateAssist, { kind: "knowledge_answer" }>,
     references: readonly KnowledgeReference[] = [],
   ) {
-    return withTenant(this.database.db, ceiling, async tx => {
+    return withTenant(this.database.db, ceiling, async (tx) => {
       const current = await currentCatalogContext(tx, ceiling);
       authorize(current, Permission.WorkflowRead);
-      if (!await knowledgeProductsVisible(tx, current, request.search.spuIds, { lock: true }))
+      if (!(await knowledgeProductsVisible(tx, current, request.search.spuIds, { lock: true })))
         throw new NotFoundException("原知识适用产品不存在或不可访问");
       if (request.purpose === "evaluation") {
         // The run snapshot is immutable. Today's editable case must never
         // replace the original fixed bibliography when authorizing an answer.
-        const [evaluation] = await tx.select({ snapshot: knowledgeEvaluationRuns.caseSnapshot })
-          .from(knowledgeEvaluationRuns).where(and(eq(knowledgeEvaluationRuns.requestId, request.requestId),
-            eq(knowledgeEvaluationRuns.caseId, request.scopeId), eq(knowledgeEvaluationRuns.createdBy, current.userId)));
+        const [evaluation] = await tx
+          .select({ snapshot: knowledgeEvaluationRuns.caseSnapshot })
+          .from(knowledgeEvaluationRuns)
+          .where(
+            and(
+              eq(knowledgeEvaluationRuns.requestId, request.requestId),
+              eq(knowledgeEvaluationRuns.caseId, request.scopeId),
+              eq(knowledgeEvaluationRuns.createdBy, current.userId),
+            ),
+          );
         if (!evaluation) throw new NotFoundException("原评测记录不存在或不可访问");
         await assertKnowledgeScope(tx, current, {
-          entryIds: evaluation.snapshot.requiredEntryIds, spuIds: evaluation.snapshot.search.spuIds,
+          entryIds: evaluation.snapshot.requiredEntryIds,
+          spuIds: evaluation.snapshot.search.spuIds,
         });
       }
-      const account = references.filter(reference => reference.sourceId.startsWith("account:"));
-      if (account.length && !request.evidenceStoreId) throw new NotFoundException("原账户证据不可访问");
+      const account = references.filter((reference) => reference.sourceId.startsWith("account:"));
+      if (account.length && !request.evidenceStoreId)
+        throw new NotFoundException("原账户证据不可访问");
       if (request.evidenceStoreId) {
         authorizeKnowledgeAccount(current);
-        const [store] = await tx.select({ id: marketplaceAccounts.id }).from(marketplaceAccounts)
-          .where(and(eq(marketplaceAccounts.id, request.evidenceStoreId),
-            catalogOwnerFilter(current, Permission.StoreRead, marketplaceAccounts.createdBy),
-            catalogOwnerFilter(current, Permission.FinanceRead, marketplaceAccounts.createdBy))).for("share");
+        const [store] = await tx
+          .select({ id: marketplaceAccounts.id })
+          .from(marketplaceAccounts)
+          .where(
+            and(
+              eq(marketplaceAccounts.id, request.evidenceStoreId),
+              catalogOwnerFilter(current, Permission.StoreRead, marketplaceAccounts.createdBy),
+              catalogOwnerFilter(current, Permission.FinanceRead, marketplaceAccounts.createdBy),
+            ),
+          )
+          .for("share");
         if (!store) throw new NotFoundException("原账户店铺不存在或不可访问");
         const productIds: string[] = [];
-        for (const reference of [...account].sort((a, b) => a.versionId.localeCompare(b.versionId))) {
-          const [document] = await tx.select({ id: knowledgeDocuments.id, kind: knowledgeDocuments.kind,
-            storeId: knowledgeDocuments.storeId, spuId: sql<string | null>`${knowledgeDocuments.fields}->>'spuId'` })
-            .from(knowledgeDocuments).where(and(eq(knowledgeDocuments.id, reference.versionId),
-              catalogOwnerFilter(current, Permission.StoreRead, knowledgeDocuments.createdBy),
-              catalogOwnerFilter(current, Permission.FinanceRead, knowledgeDocuments.createdBy))).for("share");
-          if (!document || document.kind !== "account" || document.storeId !== store.id ||
+        for (const reference of [...account].sort((a, b) =>
+          a.versionId.localeCompare(b.versionId),
+        )) {
+          const [document] = await tx
+            .select({
+              id: knowledgeDocuments.id,
+              kind: knowledgeDocuments.kind,
+              storeId: knowledgeDocuments.storeId,
+              spuId: sql<string | null>`${knowledgeDocuments.fields}->>'spuId'`,
+            })
+            .from(knowledgeDocuments)
+            .where(
+              and(
+                eq(knowledgeDocuments.id, reference.versionId),
+                catalogOwnerFilter(current, Permission.StoreRead, knowledgeDocuments.createdBy),
+                catalogOwnerFilter(current, Permission.FinanceRead, knowledgeDocuments.createdBy),
+              ),
+            )
+            .for("share");
+          if (
+            !document ||
+            document.kind !== "account" ||
+            document.storeId !== store.id ||
             document.id.toLowerCase() !== reference.entryId.toLowerCase() ||
-            reference.sourceId.toLowerCase() !== `account:${document.id}:r${reference.version}`)
+            reference.sourceId.toLowerCase() !== `account:${document.id}:r${reference.version}`
+          )
             throw new NotFoundException("原账户证据不存在或不可访问");
           if (document.spuId) productIds.push(document.spuId);
         }
-        if (!await knowledgeProductsVisible(tx, current, productIds, { lock: true }))
+        if (!(await knowledgeProductsVisible(tx, current, productIds, { lock: true })))
           throw new NotFoundException("原账户证据适用产品不存在或不可访问");
       }
       return current;
@@ -99,7 +140,11 @@ export class KnowledgeAnswerContextService {
         continue;
       seen.add(row.scope);
       try {
-        const current = await this.currentReadContext(context, input.request, input.knowledge ?? []);
+        const current = await this.currentReadContext(
+          context,
+          input.request,
+          input.knowledge ?? [],
+        );
         authorizeAssistRequest(current, input.request, "read", {
           hasKnowledge: assistUsesReviewedGuidance(input),
           pinnedDataScope: input.accessPolicy?.dataScope ?? "tenant",
@@ -127,7 +172,10 @@ export class KnowledgeAnswerContextService {
     authorize(context, Permission.WorkflowRead);
     authorize(context, Permission.WorkflowRun);
     if (request.purpose === "evaluation") authorize(context, Permission.WorkflowManage);
-    if (redactKnowledgeText(request.search.query).text !== request.search.query)
+    if (
+      redactKnowledgeText(request.search.query).text !== request.search.query ||
+      (request.taskGoal && redactKnowledgeText(request.taskGoal).text !== request.taskGoal)
+    )
       throw new BadRequestException("问题含可识别的身份或凭证信息，请先移除");
     const search = await this.knowledge.search(context, request.search);
     const account = request.evidenceStoreId
@@ -135,14 +183,20 @@ export class KnowledgeAnswerContextService {
       : [];
     const references = [...search.references.slice(0, account.length ? 4 : 6), ...account];
     const conversation: Array<{ question: string; answer: string }> = [];
-    if (request.previousRunId) {
+    let previousRunId = request.previousRunId;
+    const visited = new Set<string>();
+    while (previousRunId && conversation.length < 8) {
+      if (visited.has(previousRunId))
+        throw new BadRequestException("原会话引用存在循环 请核对原任务");
+      visited.add(previousRunId);
       const [row] = await withTenant(this.database.db, context, (tx) =>
-        tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, request.previousRunId!)),
+        tx.select().from(aiAssistRuns).where(eq(aiAssistRuns.id, previousRunId!)),
       );
       if (
         !row ||
         row.ownerId !== context.userId ||
         row.kind !== "knowledge_answer" ||
+        row.status !== "completed" ||
         row.scope !== "knowledge:" + request.scopeId ||
         !row.encryptedInput ||
         !row.encryptedOutput ||
@@ -169,19 +223,21 @@ export class KnowledgeAnswerContextService {
         hasKnowledge: assistUsesReviewedGuidance(prior),
         pinnedDataScope: prior.accessPolicy?.dataScope ?? "tenant",
       });
+      await this.currentReadContext(context, prior.request, prior.knowledge ?? []);
       const output = this.vault.withSecret(
         row.encryptedOutput,
         (value) => JSON.parse(value) as { result?: { summary: string } },
       );
-      conversation.push({
-        question: prior.request.search.query,
+      conversation.unshift({
+        question: prior.request.taskGoal || prior.request.search.query,
         answer: output.result?.summary.slice(0, 4000) ?? "",
       });
+      previousRunId = prior.request.previousRunId;
     }
     return {
       request,
       data: {
-        question: request.search.query,
+        question: request.taskGoal || request.search.query,
         scope: request.search,
         conversation,
         operatingKnowledge: references.map((r) => ({
@@ -200,7 +256,10 @@ export class KnowledgeAnswerContextService {
         href: r.href,
       })),
       checks: [],
-      diagnostics: search.diagnostics,
+      diagnostics: [
+        ...search.diagnostics,
+        ...(previousRunId ? ["本轮携带最近八轮问答 更早记录仍保留在原会话"] : []),
+      ],
       knowledge: references,
       images: [],
       allowedArtworkIds: [],

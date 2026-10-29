@@ -79,7 +79,7 @@ test("P6 product-scoped knowledge and original stock requisition use actual pers
   try {
     await loginErp(page, "operator", "/knowledge");
     const card = await knowledge(page, f, "native original"); entryId = card.id;
-    await page.goto("/ai-tasks");
+    await page.goto("/ai-tasks?tools=1");
     const native = page.locator("section.agent-native-task-frame").filter({ hasText: "独立 v4" });
     await expect(native).toHaveCount(1);
     const composer = native.locator("details.an-composer");

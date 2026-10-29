@@ -38,7 +38,10 @@ export class OpenAiProvider implements ModelProvider {
     this.request = config.fetch ?? globalThis.fetch;
   }
 
-  async generate<T>(request: ResolvedModelRequest<T>, signal: AbortSignal): Promise<ModelResult<T>> {
+  async generate<T>(
+    request: ResolvedModelRequest<T>,
+    signal: AbortSignal,
+  ): Promise<ModelResult<T>> {
     const response = await this.request(normalizeEndpoint(this.endpoint, "/v1/responses"), {
       method: "POST",
       redirect: "error",
@@ -46,18 +49,30 @@ export class OpenAiProvider implements ModelProvider {
       headers: {
         authorization: `Bearer ${this.config.apiKey}`,
         "content-type": "application/json",
-        accept: "application/json",
+        accept: request.onTextDelta ? "text/event-stream, application/json" : "application/json",
       },
       body: JSON.stringify({
         model: request.providerModel,
         instructions: request.systemInstructions,
-        input: [{ role: "user", content: request.images?.length ? [
-          { type: "input_text", text: untrustedUserMessage(request.untrustedSourceData) },
-          ...request.images.flatMap(image => [{ type: "input_text", text: `Evidence image: ${image.sourceId}` }, { type: "input_image", image_url: image.dataUrl, detail: "auto" }]),
-        ] : untrustedUserMessage(request.untrustedSourceData) }],
-        ...(request.maxOutputTokens === null ? {} : { max_output_tokens: request.maxOutputTokens ?? 1_024 }),
+        input: [
+          {
+            role: "user",
+            content: request.images?.length
+              ? [
+                  { type: "input_text", text: untrustedUserMessage(request.untrustedSourceData) },
+                  ...request.images.flatMap((image) => [
+                    { type: "input_text", text: `Evidence image: ${image.sourceId}` },
+                    { type: "input_image", image_url: image.dataUrl, detail: "auto" },
+                  ]),
+                ]
+              : untrustedUserMessage(request.untrustedSourceData),
+          },
+        ],
+        ...(request.maxOutputTokens === null
+          ? {}
+          : { max_output_tokens: request.maxOutputTokens ?? 1_024 }),
         store: false,
-        stream: false,
+        stream: Boolean(request.onTextDelta),
         text: {
           format: {
             type: "json_schema",
@@ -70,11 +85,21 @@ export class OpenAiProvider implements ModelProvider {
     });
     if (!response.ok) await throwProviderResponseError(response, this.providerId);
     let receipt: ModelResponseCheckpoint | undefined;
-    const payload = await readResponsesPayload(response, undefined, async received => {
-      receipt = modelReceipt({ providerId: this.providerId, modelKey: request.modelKey,
-        requestId: response.headers.get("x-request-id"), payload: received, pricing: this.config.pricing });
-      await request.onResponseCheckpoint?.(receipt);
-    });
+    const payload = await readResponsesPayload(
+      response,
+      undefined,
+      async (received) => {
+        receipt = modelReceipt({
+          providerId: this.providerId,
+          modelKey: request.modelKey,
+          requestId: response.headers.get("x-request-id"),
+          payload: received,
+          pricing: this.config.pricing,
+        });
+        await request.onResponseCheckpoint?.(receipt);
+      },
+      request.onTextDelta,
+    );
     if (!receipt) throw new Error("model_response_invalid");
     const value = parseStructuredOutput(payload, request.outputSchema);
     return {
@@ -92,17 +117,24 @@ export class OpenAiProvider implements ModelProvider {
   }
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
-    const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData) + (request.images?.length ?? 0) * 4096;
-    const maxOutputTokens = request.maxOutputTokens === null ? null : request.maxOutputTokens ?? 1_024;
+    const estimatedInputTokens =
+      estimateTokens(request.systemInstructions) +
+      estimateTokens(request.untrustedSourceData) +
+      (request.images?.length ?? 0) * 4096;
+    const maxOutputTokens =
+      request.maxOutputTokens === null ? null : (request.maxOutputTokens ?? 1_024);
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: this.config.pricing && maxOutputTokens !== null ? calculateCostUsd(
-        estimatedInputTokens,
-        maxOutputTokens,
-        this.config.pricing.inputUsdPerMillion,
-        this.config.pricing.outputUsdPerMillion,
-      ) : null,
+      costUsd:
+        this.config.pricing && maxOutputTokens !== null
+          ? calculateCostUsd(
+              estimatedInputTokens,
+              maxOutputTokens,
+              this.config.pricing.inputUsdPerMillion,
+              this.config.pricing.outputUsdPerMillion,
+            )
+          : null,
     };
   }
 
@@ -111,9 +143,17 @@ export class OpenAiProvider implements ModelProvider {
       const response = await this.request(normalizeEndpoint(this.endpoint, "/v1/models"), {
         headers: { authorization: `Bearer ${this.config.apiKey}` },
       });
-      return { available: response.ok, checkedAt: new Date(), message: response.ok ? undefined : `HTTP ${response.status}` };
+      return {
+        available: response.ok,
+        checkedAt: new Date(),
+        message: response.ok ? undefined : `HTTP ${response.status}`,
+      };
     } catch (error) {
-      return { available: false, checkedAt: new Date(), message: error instanceof Error ? error.message : "Network error" };
+      return {
+        available: false,
+        checkedAt: new Date(),
+        message: error instanceof Error ? error.message : "Network error",
+      };
     }
   }
 }

@@ -65,7 +65,10 @@ import { AgentNativeV4Service } from "./ai/agent-native-v4.service.js";
 import { AgentReadinessController } from "./ai/agent-readiness.controller.js";
 import { AgentReadinessService } from "./ai/agent-readiness.service.js";
 import { AgentRuntimeReadinessController } from "./ai/agent-runtime-readiness.controller.js";
-import { AgentRuntimeReadinessService, AGENT_RUNTIME_PRESENCE_READER } from "./ai/agent-runtime-readiness.service.js";
+import {
+  AgentRuntimeReadinessService,
+  AGENT_RUNTIME_PRESENCE_READER,
+} from "./ai/agent-runtime-readiness.service.js";
 import { RedisAgentRuntimePresence } from "@yummyai/jobs";
 import { RedisAgentPlanDispatcher } from "./ai/redis-agent-plan-dispatcher.js";
 import { AssistTargetPageController } from "./ai/assist-target-page.controller.js";
@@ -76,6 +79,8 @@ import { ModelBillingService } from "./ai/model-billing.service.js";
 import { AssistTaskWorkspaceController } from "./ai/assist-task-workspace.controller.js";
 import { AssistTaskWorkspaceService } from "./ai/assist-task-workspace.service.js";
 import { AssistService, AssistEnqueuer } from "./ai/assist.service.js";
+import { AgentChatService } from "./ai/agent-chat.service.js";
+import { AgentChatController } from "./ai/agent-chat.controller.js";
 import { AssistContextService } from "./ai/assist-context.service.js";
 import { AssistCatalogContextService } from "./ai/assist-catalog-context.service.js";
 import { AssistBusinessContextService } from "./ai/assist-business-context.service.js";
@@ -220,7 +225,10 @@ import { DrizzleListingRepository, ListingService } from "./listings/listing.ser
 import { MarketplaceAccountController } from "./marketplaces/marketplace-account.controller.js";
 import { MarketplaceAccountService } from "./marketplaces/marketplace-account.service.js";
 import { MarketplaceAuthorityWorkspaceService } from "./marketplaces/marketplace-authority-workspace.service.js";
-import { StoreNodeController, StoreNodeEnrollmentController } from "./marketplaces/store-node.controller.js";
+import {
+  StoreNodeController,
+  StoreNodeEnrollmentController,
+} from "./marketplaces/store-node.controller.js";
 import { StoreNodeService } from "./marketplaces/store-node.service.js";
 import { StoreNodeCertificateIssuer } from "./marketplaces/store-node.types.js";
 import { StoreNodePki } from "./marketplaces/store-node-pki.js";
@@ -340,7 +348,10 @@ import { OrderProductionDeliveryController } from "./orders/order-production-del
 import { OrderProductionDeliveryService } from "./orders/order-production-delivery.service.js";
 import { FactoryErpImportController } from "./orders/factory-erp-import.controller.js";
 import { FactoryErpImportService } from "./orders/factory-erp-import.service.js";
-import { FactoryErpSourceGateway, FACTORY_ERP_SOURCE_SCANNER } from "./orders/factory-erp-source.gateway.js";
+import {
+  FactoryErpSourceGateway,
+  FACTORY_ERP_SOURCE_SCANNER,
+} from "./orders/factory-erp-source.gateway.js";
 import { FactoryCollaborationService } from "./orders/factory-collaboration.service.js";
 import {
   FactoryCollaborationController,
@@ -447,6 +458,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     AgentNativeV2Controller,
     AgentNativeV3Controller,
     AgentNativeV4Controller,
+    AgentChatController,
     AgentReadinessController,
     AgentRuntimeReadinessController,
     AssistTargetPageController,
@@ -573,6 +585,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     StudioGenerationService,
     ModelConfigurationService,
     AssistService,
+    AgentChatService,
     AgentReadService,
     AgentToolOwners,
     AgentResourceOwners,
@@ -594,10 +607,13 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     AgentNativeV4Service,
     AgentReadinessService,
     AgentRuntimeReadinessService,
-    { provide: AGENT_RUNTIME_PRESENCE_READER, useFactory: () => {
-      const reader = new RedisAgentRuntimePresence();
-      return { inspect: reader.inspect.bind(reader), onModuleDestroy: () => reader.close() };
-    } },
+    {
+      provide: AGENT_RUNTIME_PRESENCE_READER,
+      useFactory: () => {
+        const reader = new RedisAgentRuntimePresence();
+        return { inspect: reader.inspect.bind(reader), onModuleDestroy: () => reader.close() };
+      },
+    },
     { provide: AgentPlanDispatcher, useClass: RedisAgentPlanDispatcher },
     AssistTargetPageOwner,
     AssistTargetPageService,
@@ -740,7 +756,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     AdvertisingService,
     AdvertisingCommandOwnerAdapter,
     AdvertisingCommandService,
-    {provide:ADVERTISING_COMMAND_VAULT,useFactory:createAdvertisingCommandVault},
+    { provide: ADVERTISING_COMMAND_VAULT, useFactory: createAdvertisingCommandVault },
     AdSourceGateway,
     { provide: AD_SOURCE_SCANNER, useFactory: () => new ClamAvScanner() },
     CustomProductPackageService,
@@ -829,7 +845,12 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     FactoryCapacityService,
     ShiposService,
     LogisticsService,
-    { provide: LogisticsReadOwner, useFactory: (database: DatabaseConnection, pii: SecretVault) => new LogisticsReadOwner(database, pii), inject: [DATABASE_CONNECTION, ORDER_PII_VAULT] },
+    {
+      provide: LogisticsReadOwner,
+      useFactory: (database: DatabaseConnection, pii: SecretVault) =>
+        new LogisticsReadOwner(database, pii),
+      inject: [DATABASE_CONNECTION, ORDER_PII_VAULT],
+    },
     { provide: HttpLogisticsGateway, useFactory: () => new HttpLogisticsGateway() },
     { provide: LogisticsEnqueuer, useClass: RedisLogisticsEnqueuer },
     { provide: ShiposReadGateway, useFactory: () => createShiposReadGateway() },

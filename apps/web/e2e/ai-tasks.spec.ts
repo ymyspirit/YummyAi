@@ -70,7 +70,7 @@ test("AI task workspace runs a pinned business task and recovers it on desktop a
       expect(Array.isArray(targets.items)).toBe(true);
     }
     await page.setViewportSize({ width: 1440, height: 960 });
-    await page.goto("/ai-tasks");
+    await page.goto("/ai-tasks?tools=1");
     await expect(page.getByRole("heading", { name: "AI 任务工作台", exact: true })).toBeVisible();
     await expect(page.getByLabel("要完成的任务").locator("option")).toHaveCount(9);
     await expect(page.getByText("暂无匹配的业务对象。", { exact: false })).toBeVisible();

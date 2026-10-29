@@ -404,7 +404,7 @@ test("a committed personal Assist request survives a lost response and refresh u
 
     await fixture.model.answer(originalRun.id); expect(fixture.model.modelCalls()).toBe(1);
     // Refresh to the root route again. The only recovery action is a real GET.
-    await page.goto("/ai-tasks");
+    await page.goto("/ai-tasks?tools=1");
     const completedResponse = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/ai-assists/receipts");
     await requestRow(page, requestId).getByRole("button", { name: "只读取原请求回执", exact: true }).click();
     expect(AssistReceiptViewSchema.parse(await (await completedResponse).json())).toMatchObject({ state: "found", run: { id: originalRun.id, status: "completed", result: { summary: "先核对资料并保留复核记录。" } } });
@@ -418,7 +418,7 @@ test("a committed personal Assist request survives a lost response and refresh u
 
     const unknown: AssistIntent = { ...marker, requestId: randomUUID(), requestChecksum: "f".repeat(64), runId: null };
     await page.evaluate(({ prefix, value }) => sessionStorage.setItem(prefix + value.ownerScope + ":" + value.requestId, JSON.stringify(value)), { prefix: ASSIST_INTENT_PREFIX, value: unknown });
-    await page.goto("/ai-tasks");
+    await page.goto("/ai-tasks?tools=1");
     const unknownResponse = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/ai-assists/receipts");
     await requestRow(page, unknown.requestId).getByRole("button", { name: "只读取原请求回执", exact: true }).click();
     expect(AssistReceiptViewSchema.parse(await (await unknownResponse).json())).toMatchObject({ state: "not_found", run: null, requestId: unknown.requestId });
