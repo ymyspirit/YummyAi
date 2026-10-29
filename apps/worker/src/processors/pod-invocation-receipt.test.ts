@@ -23,4 +23,14 @@ describe("bounded POD response receipt",()=>{
     expect(podInvocationReceipt({modelKey:"model",modelVersion:"v1",costUsd:0.0000004},"a".repeat(64)).costUsd).toBe("0.00000040");
     expect(podInvocationReceipt({modelKey:"model",modelVersion:"v1"},"a".repeat(64),"unsafe\nreference")).toMatchObject({providerRequestId:null,metadataValid:false});
   });
+  it("keeps reported token components separate from cached, image and reasoning subsets",()=>{
+    const receipt=podInvocationReceipt({modelKey:"model",modelVersion:"v1",usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130,
+      prompt_tokens_details:{cached_tokens:20,image_tokens:80,text_tokens:20},completion_tokens_details:{reasoning_tokens:10}},prompt:"private"},"a".repeat(64));
+    expect(receipt.tokenUsage).toMatchObject({version:"model-token-usage-v1",inputTokens:100,outputTokens:30,cachedInputTokens:20,totalTokens:130,
+      totalTokensBasis:"provider",inputImageTokens:80,inputTextTokens:20,reasoningTokens:10});
+    expect(JSON.stringify(receipt)).not.toContain("private");
+    expect(podInvocationReceipt({modelKey:"model",modelVersion:"v1"},"a".repeat(64)).tokenUsage).toBeNull();
+    expect(podInvocationReceipt({modelKey:"model",modelVersion:"v1",usage:{input_tokens:-1,output_tokens:"30"}},"a".repeat(64)).tokenUsage).toBeNull();
+    expect(podInvocationReceipt({modelKey:"model",modelVersion:"v1",tokenUsage:receipt.tokenUsage},"a".repeat(64)).tokenUsage).toEqual(receipt.tokenUsage);
+  });
 });

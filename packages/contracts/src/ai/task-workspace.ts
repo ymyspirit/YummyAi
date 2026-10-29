@@ -160,6 +160,8 @@ export const AssistTaskRowSchema = AssistViewSchema.pick({
   costUsd: true,
   inputTokens: true,
   outputTokens: true,
+  tokenUsage: true,
+  usageSummary: true,
   error: true,
 })
   .extend({ title: z.string(), goal: z.string(), href: z.string() })

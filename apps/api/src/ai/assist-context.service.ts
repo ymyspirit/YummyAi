@@ -61,7 +61,7 @@ export class AssistContextService {
     @Optional() @Inject(BENCHMARK_RESEARCH_IMAGE_READER) private readonly benchmarkImageReader?: BenchmarkResearchImageReader,
   ) {}
 
-  async prepareForExecution(context: TenantContext, request: CreateAssist, benchmark = false): Promise<AssistContext> {
+  async prepareForExecution(context: TenantContext, request: CreateAssist, benchmark = false, legacyOutputPolicy = false): Promise<AssistContext> {
     const before = await withTenant(this.database.db, context, tx => captureAssistInputAuthority(tx, context, request), { isolationLevel: "repeatable read", accessMode: "read only" });
     const prepared = await this.prepare(context, request, benchmark);
     const after = await withTenant(this.database.db, context, async tx => captureAssistInputAuthority(tx, context, prepared.request,
@@ -75,7 +75,7 @@ export class AssistContextService {
     const executionContract = harness.registry.pin(harness.skill);
     try { harness.registry.checkInput(executionContract, harness.skill, harness.toolKey, prepared.request); }
     catch (error) { if (error instanceof HarnessContractError) throw new BadRequestException("分析输入不满足已注册工具契约"); throw error; }
-    return { ...prepared, inputAuthority: after, executionContract };
+    return { ...prepared, ...(!benchmark && !legacyOutputPolicy ? { outputTokenPolicy: "provider" as const } : {}), inputAuthority: after, executionContract };
   }
 
   async assertMethodCurrent(tx: TenantTransaction, context: TenantContext, input: AssistContext, admission=false) {
@@ -113,7 +113,7 @@ export class AssistContextService {
   async preparePinnedBusiness(context: TenantContext, request: CreateAssist): Promise<AssistContext> {
     if (!BUSINESS_BENCHMARK_ROLES.some(role => role === request.kind) || request.kind === "artwork_preflight" && (request.automaticAudit || request.retryAudit))
       throw new BadRequestException("benchmark_business_role_invalid");
-    const prepared = LEGACY_BUSINESS_BENCHMARK_ROLES.some(role => role === request.kind) ? await this.prepareForExecution(context, request) : await this.prepareRoleBenchmark(context, request);
+    const prepared = LEGACY_BUSINESS_BENCHMARK_ROLES.some(role => role === request.kind) ? await this.prepareForExecution(context, request, false, true) : await this.prepareRoleBenchmark(context, request);
     if (prepared.benchmarkExecutionVersion || !request.expectedTaskFingerprint ||
       assistTaskFingerprint(prepared) !== request.expectedTaskFingerprint)
       throw new ConflictException("benchmark_task_changed");
@@ -124,7 +124,7 @@ export class AssistContextService {
   async prepareRoleBenchmark(context: TenantContext, request: CreateAssist): Promise<AssistContext> {
     if (!BUSINESS_BENCHMARK_ROLES.some(role => role === request.kind) || LEGACY_BUSINESS_BENCHMARK_ROLES.some(role => role === request.kind) ||
       request.kind === "artwork_preflight" && (request.automaticAudit || request.retryAudit)) throw new BadRequestException("benchmark_business_role_invalid");
-    let prepared = await this.prepareForExecution(context, request);
+    let prepared = await this.prepareForExecution(context, request, false, true);
     prepared = await freezeBenchmarkRoleMedia(prepared, this.benchmarkImageReader);
     prepared.accessPolicy = { version: ASSIST_ACCESS_POLICY_VERSION, dataScope: context.dataScope,
       requiredPermissions: requiredAssistRequestPermissions(prepared.request, "run", { hasKnowledge: assistUsesReviewedGuidance(prepared) }) };

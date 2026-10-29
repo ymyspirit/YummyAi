@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { normalizeModelTokenUsage } from "@yummyai/ai-core";
+import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
 import {
   HarnessUsdSchema,
   PodInvocationReceiptSchema,
@@ -30,6 +32,8 @@ export function podInvocationReceipt(
       ? HarnessUsdSchema.safeParse(data.costUsd.toFixed(8))
       : null;
   const amountKnown=amount?.success && (data.costUsd===0 || Number(amount.data)>0);
+  const normalized=data.tokenUsage===undefined?null:ModelTokenUsageSchema.safeParse(data.tokenUsage);
+  const tokenUsage=data.tokenUsage===undefined?normalizeModelTokenUsage(data.usage):normalized?.success?normalized.data:null;
   return PodInvocationReceiptSchema.parse({
     version: "pod-response-v1",
     responseChecksum,
@@ -37,6 +41,7 @@ export function podInvocationReceipt(
     modelKey,
     modelVersion,
     costUsd: amountKnown ? amount.data : null,
+    tokenUsage,
     metadataValid: Boolean(
       modelKey &&
       modelVersion &&

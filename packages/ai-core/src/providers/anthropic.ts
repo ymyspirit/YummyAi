@@ -8,6 +8,7 @@ import {
   type ModelResult,
   type ProviderHealth,
   type ResolvedModelRequest,
+  ProviderError,
 } from "../provider.js";
 import {
   extractJsonText,
@@ -35,6 +36,8 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   async generate<T>(request: ResolvedModelRequest<T>, signal: AbortSignal): Promise<ModelResult<T>> {
+    if (request.maxOutputTokens === null)
+      throw new ProviderError("This provider requires an explicit output token limit", this.providerId, false);
     const response = await this.request(normalizeEndpoint(this.endpoint, "/v1/messages"), {
       method: "POST",
       signal,
@@ -78,11 +81,11 @@ export class AnthropicProvider implements ModelProvider {
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
     const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData);
-    const maxOutputTokens = request.maxOutputTokens ?? 1_024;
+    const maxOutputTokens = request.maxOutputTokens === null ? null : request.maxOutputTokens ?? 1_024;
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: calculateCostUsd(
+      costUsd: maxOutputTokens === null ? null : calculateCostUsd(
         estimatedInputTokens,
         maxOutputTokens,
         this.config.pricing.inputUsdPerMillion,

@@ -10,6 +10,9 @@ import { OrderDesignResponseRecoveryForm } from "./order-design-response-recover
 import { MethodEvidence } from "../ai-assist/method-evidence";
 import {observeViewTransition} from "../navigation/view-transition";
 import { designAgentRecoveryGuidance } from "./order-design-recovery-model";
+import type { ModelUsageSummary } from "@yummyai/contracts/ai/model-usage";
+import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
+import { ModelTokenUsageLine, ModelUsageSummaryLine } from "../ai-assist/model-usage-summary";
 
 const ruleVerificationLabels = { automatic: "系统自动核验", manual: "需人工核验", unavailable: "尚未接入" } as const;
 
@@ -162,9 +165,23 @@ export function designAgentCurrentVersionApproved(run: Pick<DesignAgentRunView, 
   return run?.status === "awaiting_review" && !!approvedEditorVersionId && run.currentEditorVersionId === approvedEditorVersionId;
 }
 
-export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false, approvedEditorVersionId, editorProjectId, onOpen }: {
+export function designAgentNoRunMessage({ preparation, designExecutor, financialOnly = false, readFailed = false }: {
+  preparation?: OrderWorkDetail["line"]["preparation"];
+  designExecutor?: "human" | "agent";
+  financialOnly?: boolean;
+  readFailed?: boolean;
+}) {
+  if (readFailed) return "尚无法确认自动制图任务状态。请刷新进度。";
+  if (preparation === "pushed" && designExecutor === "agent")
+    return "尚未创建无人设计任务 请核对工艺模板的无人设计配置";
+  return financialOnly ? "尚无独立的自动制图费用记录。" : "暂无自动制图任务。使用已配置自动制图的工艺底稿，审单并派发后开始执行。";
+}
+
+export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChanged, onStateChange,financialOnly=false, preparation, designExecutor, approvedEditorVersionId, editorProjectId, onOpen }: {
   workItemId: string; refreshKey: number; disabled: boolean; onChanged: () => void;
   financialOnly?:boolean;
+  preparation?: OrderWorkDetail["line"]["preparation"];
+  designExecutor?: "human" | "agent";
   editorProjectId?: string | null;
   onOpen?: (projectId: string) => void;
   /** Passed only for the work's current approved state; the run's historical status is unchanged. */
@@ -172,6 +189,7 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
   onStateChange: (state: { busy: boolean; blocked: boolean; checking: boolean; manualTakeover: boolean }) => void;
 }) {
   const [run, setRun] = useState<DesignAgentRunView | null>(null);
+  const [workUsage, setWorkUsage] = useState<ModelUsageSummary>();
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
@@ -202,9 +220,9 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
       clearTimeout(timer);
       const revision=++readRevision;
       try {
-        const next = DesignAgentViewSchema.parse(await centerRequest(`lines/${workItemId}/design-agent${financialOnly?"?view=financial":""}`, undefined, abort.signal)).run;
+        const view = DesignAgentViewSchema.parse(await centerRequest(`lines/${workItemId}/design-agent${financialOnly?"?view=financial":""}`, undefined, abort.signal)), next = view.run;
         if (abort.signal.aborted || current !== epoch.current || revision!==readRevision) return;
-        costTransition.current?.skipTransition();setRun(next); setError(""); failures = 0;
+        costTransition.current?.skipTransition();setRun(next); setWorkUsage(view.usageSummary); setError(""); failures = 0;
         const output = next ? `${next.id}:${next.projectId}:${next.currentEditorVersionId}:${next.status}:${next.privateEvidenceState??"available"}` : null;
         const { polling } = designAgentActivity(next?.status ?? null);
         if (!polling && (notifyAfterRead.current || previousOutput.current !== output)) callbacks.current.onChanged();
@@ -214,7 +232,7 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
         else if(next)timer=setTimeout(()=>void read(),30_000);
       } catch (cause) {
         if (!abort.signal.aborted && current === epoch.current && revision===readRevision) {
-          costTransition.current?.skipTransition();setRun(null);
+          costTransition.current?.skipTransition();setRun(null); setWorkUsage(undefined);
           const delay = designAgentReadRetryDelay(cause, ++failures);
           setError(delay === null ? "制图进度暂时无法读取，当前状态尚未核对。请刷新进度后再编辑或审核。" : `制图进度暂时无法读取，${delay / 1000} 秒后重试（${failures}/3）。当前状态尚未核对。`);
           if (delay !== null) timer = setTimeout(() => void read(), delay);
@@ -256,7 +274,8 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
     <div className="oc-actions"><h3>{financialOnly?"制作与费用记录":"无人设计"}</h3><button type="button" className="oc-button" disabled={busy || loading} onClick={() => { notifyAfterRead.current = true; setReload(value => value + 1); }}><RefreshCw size={14} />刷新进度</button></div>
     {error && <p role="alert" className="oc-error">{error}</p>}
     {notice && <p role="status" className="oc-notice">{notice}</p>}
-    {loading && !run ? <p className="oc-hint">正在读取制图任务…</p> : !run ? <p className="oc-hint">{error ? "尚无法确认自动制图任务状态。请刷新进度。" : financialOnly?"尚无独立的自动制图费用记录。":"暂无自动制图任务。使用已配置自动制图的工艺底稿，审单并派发后开始执行。"}</p> : <>
+    {!loading && <ModelUsageSummaryLine summary={workUsage} label="本件无人设计累计 Token" className="oc-hint" />}
+    {loading && !run ? <p className="oc-hint">正在读取制图任务…</p> : !run ? <p className="oc-hint">{designAgentNoRunMessage({ preparation, designExecutor, financialOnly, readFailed: !!error })}</p> : <>
       <p><strong>{manualTakeover ? "已交美工修改" : approvedCurrent ? "本版本已审核" : statusLabels[run.status] ?? "状态待核对"}</strong><span className="oc-hint"> · 更新于 {dateTime(run.updatedAt)}</span></p>
       {manualTakeover && <p className="oc-hint">自动制作已停止 原素材 版本与费用记录完整保留 美工在本单原项目继续修改后重新送审</p>}
       {run.privateEvidenceState==="expired"?<p className="oc-hint">订单私有资料已到期 历史方法和产物交接不再展示</p>:financialOnly||run.privateEvidenceOmitted?<p className="oc-hint">当前仅显示制作状态与费用依据。</p>:<>
@@ -271,12 +290,14 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
         实际费用：{run.actualCostUsd === null ? "尚无完整费用依据" : `${run.actualCostUsd.toLocaleString("zh-CN", { maximumFractionDigits: 8 })} USD`}。
         {designAgentBillingNotice(run.costStatus, run.steps)}
       </>}</p>
+      <ModelUsageSummaryLine summary={run.usageSummary} label="本次无人设计累计 Token" className="oc-hint" />
       {!!run.modelCalls?.length&&<details key={run.id} className="oc-section oc-model-costs" aria-label="原调用费用依据" style={{viewTransitionName:costTransitionName}} onClick={toggleCostEvidence}><summary>原调用费用依据 · {run.modelCalls.length} 次</summary>
         <p className="oc-hint">模型服务报告与预算占用分别保留，仍需核对提供方账单。此处不包含原图或提示词。</p>
-        {run.modelCallsTruncated&&<p className="oc-hint">仅显示最近 1000 次调用；费用汇总仍使用完整账本。</p>}
+        {run.modelCallsTruncated&&<p className="oc-hint">仅显示最近 1000 次调用；费用与用量累计仍使用完整账本。</p>}
         <ul>{run.modelCalls.map(call=><li key={call.id}>
           <strong>{call.costReportState==="reported"?`${Number(call.reportedCostUsd).toLocaleString("zh-CN",{maximumFractionDigits:8})} USD`:call.costReportState==="pending"?run.status==="running"?"等待模型响应":"模型结果待核对":call.costReportState==="invalid"?"费用报告需核对":"模型未报告费用"}</strong>
           <span className="oc-hint"> · 提交于 {dateTime(call.submittedAt)}{call.receivedAt?` · 返回于 ${dateTime(call.receivedAt)}`:""} · 记录 {call.id.slice(-8)}</span>
+          <ModelTokenUsageLine usage={call.tokenUsage} className="oc-hint" />
           <p className="oc-hint">{call.budgetState==="released"?"预算预留已释放":call.budgetState==="reserved"?"当前预算预留":"已计入预算"}：{call.budgetAmountUsd} USD</p>
         </li>)}</ul>
       </details>}

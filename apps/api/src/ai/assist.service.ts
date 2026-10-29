@@ -67,6 +67,7 @@ import { AI_ASSIST_VAULT, DATABASE_CONNECTION } from "../platform.tokens.js";
 import { AssistContextService } from "./assist-context.service.js";
 import { configuredAssistModels } from "./configured-assist-models.js";
 import { assistTaskFingerprint } from "./assist-task-fingerprint.js";
+import { readAssistUsageSummary } from "./assist-usage.js";
 
 export abstract class AssistEnqueuer {
   abstract enqueue(input: {
@@ -297,7 +298,7 @@ export class AssistService {
     const estimate = model.inputUsdPerMillion !== null && model.outputUsdPerMillion !== null ? calculateCostUsd(
       (JSON.stringify(prepared.data).length + assistSystemInstructions(false, isBenchmarkAssist(prepared), prepared.request.kind === "order_review").length + 8000) * 3 +
         prepared.images.length * 4096,
-      ASSIST_MAX_OUTPUT_TOKENS,
+      prepared.outputTokenPolicy === "provider" ? 0 : ASSIST_MAX_OUTPUT_TOKENS,
       model.inputUsdPerMillion,
       model.outputUsdPerMillion,
     ) : null;
@@ -438,7 +439,8 @@ export class AssistService {
         amountUsd: taskCap.toFixed(6),
         state: "reserved",
       });
-      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, policyChecksum: assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared), prepared.request.kind === "order_review").checksum });
+      const executionPolicy=assistExecutionPolicy(!!prepared.artworkAudit, isBenchmarkAssist(prepared), prepared.request.kind === "order_review", prepared.outputTokenPolicy === "provider");
+      await tx.insert(executions).values({ runId: id, tenantId: context.tenantId, inputFingerprint: created!.inputFingerprint, contractVersion: executionPolicy.contractVersion, policyChecksum: executionPolicy.checksum });
       if (admission) await admission.created(tx, created!, prepared, this.vault);
       return created!;
     });
@@ -486,30 +488,33 @@ export class AssistService {
 
   async list(context: TenantContext, kind: AssistKind, scope: string, automaticAudit = false) {
     authorizeAssist(context, kind);
+    if(automaticAudit&&kind!=="artwork_preflight")throw new BadRequestException("自动核对仅适用于生产稿");
+    const usageSummary=await withTenant(this.database.db,context,tx=>readAssistUsageSummary(tx,context.userId,kind,scope));
     if (automaticAudit) {
-      if (kind !== "artwork_preflight") throw new BadRequestException("自动核对仅适用于生产稿");
       const candidates = await withTenant(this.database.db, context, tx => tx.select().from(runs).where(and(eq(runs.kind, kind), eq(runs.scope, scope), isNull(runs.benchmarkItemId))).orderBy(desc(runs.createdAt)).limit(50));
       const result = [];
       for (const row of candidates) {
         if (!row.encryptedInput || row.expiresAt <= new Date()) continue;
         const input = await this.vault.withSecret(row.encryptedInput, value => JSON.parse(value) as AssistContext);
-        if (input.artworkAudit) result.push({id: row.id, status: row.status, createdAt: row.createdAt, modelLabel: row.modelSnapshot.label});
+        if (input.artworkAudit) result.push({id: row.id, status: row.status, createdAt: row.createdAt, modelLabel: row.modelSnapshot.label,tokenUsage:row.tokenUsage??null,usageSummary});
       }
       return result.slice(0, 20);
     }
-    return withTenant(this.database.db, context, (tx) =>
+    const rows=await withTenant(this.database.db, context, (tx) =>
       tx
         .select({
           id: runs.id,
           status: runs.status,
           createdAt: runs.createdAt,
           modelLabel: sql<string>`${runs.modelSnapshot}->>'label'`,
+          tokenUsage:runs.tokenUsage,
         })
         .from(runs)
         .where(and(eq(runs.ownerId, context.userId), eq(runs.kind, kind), eq(runs.scope, scope), isNull(runs.benchmarkItemId)))
         .orderBy(desc(runs.createdAt))
         .limit(20),
     );
+    return rows.map(row=>({...row,usageSummary}));
   }
 
   /** Read an original owner/request receipt. Never enqueue, reserve or resubmit. */
@@ -618,6 +623,7 @@ export class AssistService {
         { isolationLevel: "repeatable read", accessMode: "read write" });
       if (!expired && row.expiresAt <= new Date()) throw new ConflictException("benchmark_result_expired");
     }
+    const usageSummary=await withTenant(this.database.db,readContext,tx=>readAssistUsageSummary(tx,context.userId,row.kind,row.scope,row.benchmarkItemId));
     return {
       id: row.id,
       kind: row.kind,
@@ -639,6 +645,8 @@ export class AssistService {
       stale,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
+      tokenUsage:row.tokenUsage??null,
+      usageSummary,
       costUsd: row.costUsd === null ? null : Number(row.costUsd),
       budgetState: budgets.length!==1||budgets[0]?.state==null ? null : AssistBudgetStateSchema.parse(budgets[0].state),
       error: expired

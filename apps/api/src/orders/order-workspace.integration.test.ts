@@ -18,6 +18,7 @@ import {
   OrderWorkDetailViewSchema,
   OrderWorkSummariesSchema,
   OrderBulkPreviewSchema,
+  OrderWorkActionInputSchema,
   ORDER_WORK_IMAGE_PENDING_USAGE,
   type OrderWorkDetail,
   type OrderWorkActionInput,
@@ -83,6 +84,7 @@ import { FinanceService } from "../finance/finance.service.js";
 import { OrderProductionDeliveryService } from "./order-production-delivery.service.js";
 import { OrderReviewService } from "./order-review.service.js";
 import { OrderDesignRepository } from "@yummyai/order-design";
+import { sealWork } from "@yummyai/order-core";
 
 describe("order centers explicit handoff and independent fulfillment", () => {
   const database = connectDatabase(),
@@ -2518,6 +2520,85 @@ describe("order centers explicit handoff and independent fulfillment", () => {
     expect(mixed.failures).toHaveLength(1);
   });
 
+  it("blocks an explicit Agent handoff without template automation while preserving the saved human workflow", async () => {
+    const source = await imported(), initial = await work.detail(context, source.lineId);
+    const basis = await matchingBasis(source.lineId, true);
+    const saved = await work.save(context, source.lineId, {
+      expectedRevision: initial.line.revision,
+      expectedProjectionVersion: initial.line.projectionVersion,
+      expectedSourceVersionId: initial.report?.versionId ?? null,
+      draft: {
+        ...initial.draft,
+        ...basis,
+        printProfileVersionId: profileVersionId,
+        designExecutor: "agent",
+        instructions: "",
+        fields: [],
+        images: initial.report!.files.filter(file => file.role === "buyer_image")
+          .map(file => ({ origin: "report", key: file.key, usage: "正面" })),
+      },
+      status: "ready_to_push",
+      reason: "Synthetic explicit Agent admission without automation",
+      idempotencyKey: randomUUID(),
+    });
+    expect(saved.draft).toMatchObject({ ...basis, printProfileVersionId: profileVersionId, designExecutor: "agent" });
+    expect(saved.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", production: "not_released", editorProjectId: null });
+    expect(saved.profile).not.toBeNull();
+    const template = await editor.get(context, saved.profile!.projectId, saved.profile!.sourceVersionId);
+    expect(template.version.document.automation).toBeUndefined();
+    const plan = await work.templatePlan(context, source.lineId);
+    expect(plan).toMatchObject({
+      ready: false,
+      templateVersionId: template.version.id,
+      artworkVersionId: basis.artworkVersionId,
+      specificationVersionId: basis.specificationVersionId,
+      blockers: ["当前工艺模板尚未配置无人设计，不能创建自动任务。请配置并审核自动制图配方后重新保存本单制作需求"],
+    });
+    const [before] = await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)));
+    expect(before).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", pushedRevisionId: null, editorProjectId: null });
+    const generated = generate.mock.calls.length, enqueued = enqueue.mock.calls.length;
+    await expect(work.action(context, source.lineId, {
+      action: "push",
+      expectedRevision: saved.line.revision,
+      expectedProjectionVersion: saved.line.projectionVersion,
+      reason: "Synthetic rejected Agent handoff",
+      idempotencyKey: randomUUID(),
+    })).rejects.toThrow(/当前工艺模板尚未配置无人设计/);
+    const rejected = await work.detail(context, source.lineId);
+    const [after] = await withTenant(database.db, context, tx => tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)));
+    expect(after).toEqual(before);
+    expect(rejected.line).toEqual(saved.line);
+    expect(rejected.draft).toEqual(saved.draft);
+    expect(rejected.versions).toEqual(saved.versions);
+    expect(rejected.events).toEqual(saved.events);
+    expect(await withTenant(database.db, context, tx => tx.select().from(orderDesignAgentRuns).where(eq(orderDesignAgentRuns.workItemId, source.lineId)))).toEqual([]);
+
+    const human = await work.save(context, source.lineId, {
+      expectedRevision: rejected.line.revision,
+      expectedProjectionVersion: rejected.line.projectionVersion,
+      expectedSourceVersionId: rejected.report?.versionId ?? null,
+      draft: { ...rejected.draft, designExecutor: "human" },
+      status: "ready_to_push",
+      reason: "Synthetic explicit saved human continuation",
+      idempotencyKey: randomUUID(),
+    });
+    expect(human.draft).toEqual({ ...saved.draft, designExecutor: "human" });
+    expect(await work.templatePlan(context, source.lineId)).toMatchObject({ ready: true, blockers: [], templateVersionId: template.version.id });
+    const pushed = await work.action(context, source.lineId, {
+      action: "push",
+      expectedRevision: human.line.revision,
+      expectedProjectionVersion: human.line.projectionVersion,
+      reason: "Synthetic explicit human handoff",
+      idempotencyKey: randomUUID(),
+    });
+    expect(pushed.line).toMatchObject({ preparation: "pushed", artwork: "queued", production: "not_released", editorProjectId: null });
+    expect(pushed.draft.designExecutor).toBe("human");
+    expect(pushed.events.filter(event => event.action === "push")).toHaveLength(1);
+    expect(await withTenant(database.db, context, tx => tx.select().from(orderDesignAgentRuns).where(eq(orderDesignAgentRuns.workItemId, source.lineId)))).toEqual([]);
+    expect(generate.mock.calls).toHaveLength(generated);
+    expect(enqueue.mock.calls).toHaveLength(enqueued);
+  });
+
   async function enhancementOrder(choice: string, transparent = false) {
     const source = await imported();
     let detail = await work.detail(context, source.lineId);
@@ -2528,7 +2609,7 @@ describe("order centers explicit handoff and independent fulfillment", () => {
       draft: {
         ...detail.draft,
         ...await matchingBasis(source.lineId, true),
-        designExecutor: undefined,
+        designExecutor: "agent",
         printProfileVersionId: profileVersionId,
         fields: [
           {
@@ -2574,14 +2655,51 @@ describe("order centers explicit handoff and independent fulfillment", () => {
       idempotencyKey: randomUUID(),
     });
     expect(detail.draft.designExecutor).toBe("agent");
-    const action = {
+    const action = OrderWorkActionInputSchema.parse({
       action: "push",
       expectedRevision: detail.line.revision,
       expectedProjectionVersion: detail.line.projectionVersion,
-      reason: "Synthetic default Agent",
+      reason: "Synthetic historical Agent handoff before durable runs",
       idempotencyKey: randomUUID(),
-    };
-    detail = await work.action(context, source.lineId, action);
+    });
+    // Disposable historical compatibility fixture: the real saved Agent revision
+    // predates durable runs. New Agent pushes without automation remain refused.
+    const revision = detail.versions.find(row => row.revision === detail.line.revision)!;
+    expect(revision).toBeDefined();
+    await withTenant(database.db, context, async tx => {
+      const [saved] = await tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, source.lineId)).for("update");
+      expect(saved).toMatchObject({ revision: detail.line.revision, preparation: "ready_to_push", artwork: "not_pushed", editorProjectId: null });
+      const key = vault.withSecret(saved!.encryptedDataKey!, secret => Buffer.from(secret, "base64"));
+      try {
+        await tx.update(orderWorkItems).set({
+          preparation: "pushed", artwork: "queued", pushedRevisionId: revision.id,
+          projectionVersion: saved!.projectionVersion + 1, updatedAt: new Date(),
+        }).where(eq(orderWorkItems.id, source.lineId));
+        await tx.insert(orderWorkEvents).values({
+          id: createEntityId(), tenantId, workItemId: source.lineId, action: "push",
+          fromState: "not_pushed", toState: "queued", revision: saved!.revision,
+          encryptedReason: sealWork(key, action.reason), idempotencyKey: action.idempotencyKey,
+          requestHash: createHash("sha256").update(JSON.stringify(action)).digest("hex"), actorId: userId,
+        });
+      } finally { key.fill(0); }
+    });
+    detail = await work.detail(context, source.lineId);
+    expect(detail.line).toMatchObject({ preparation: "pushed", artwork: "queued", editorProjectId: null, production: "not_released" });
+    expect(detail.events).toContainEqual(expect.objectContaining({ action: "push", reason: action.reason }));
+    const historical = detail;
+    await expect(work.action(context, source.lineId, action)).rejects.toThrow(/这次历史派单没有创建无人设计任务/);
+    expect(await work.detail(context, source.lineId)).toEqual({
+      ...historical,
+      shippingTime: { ...historical.shippingTime, computedAt: expect.any(String) },
+    });
+    expect(await withTenant(database.db, context, tx => tx.select().from(orderDesignAgentRuns).where(eq(orderDesignAgentRuns.workItemId, source.lineId)))).toEqual([]);
+    detail = await work.action(context, source.lineId, {
+      action: "start_artwork",
+      expectedRevision: detail.line.revision,
+      expectedProjectionVersion: detail.line.projectionVersion,
+      reason: "Synthetic explicit historical Agent artwork start",
+      idempotencyKey: randomUUID(),
+    });
     const project = await editor.get(context, detail.line.editorProjectId!);
     const job = project.renders.find((job) => job.purpose === "order_image_enhancement")!;
     return { source, detail, project, job, action };

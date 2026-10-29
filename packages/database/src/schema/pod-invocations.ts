@@ -11,7 +11,9 @@ import {
   uniqueIndex,
   uuid,
   boolean,
+  jsonb,
 } from "drizzle-orm/pg-core";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 import { podArtworkTasks } from "./pod.js";
 import { designVersions } from "./design.js";
 
@@ -36,6 +38,7 @@ export const podArtworkInvocations = pgTable(
     modelVersion: text("model_version"),
     reportedCostUsd: numeric("reported_cost_usd", { precision: 20, scale: 8 }),
     metadataValid: boolean("metadata_valid"),
+    tokenUsage: jsonb("token_usage").$type<ModelTokenUsage>(),
     resultVersionId: uuid("result_version_id"),
   },
   (t) => [
@@ -50,6 +53,7 @@ export const podArtworkInvocations = pgTable(
     index("pod_invocations_task_idx").on(t.tenantId, t.taskId, t.startedAt),
     check("pod_invocations_id_check", sql`substring(${t.id}::text from 15 for 1)='7'`),
     check("pod_invocations_attempt_check", sql`${t.attemptNumber} between 1 and 20`),
+    check("pod_invocations_token_usage_check", sql`${t.tokenUsage} is null or (${t.receivedAt} is not null and jsonb_typeof(${t.tokenUsage})='object' and coalesce(${t.tokenUsage}->>'version','')='model-token-usage-v1')`),
     check(
       "pod_invocations_phase_check",
       sql`${t.phase} in ('pending','submitted','received','completed','failed','uncertain')`,

@@ -14,6 +14,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { AssistKind, AssistModel } from "@yummyai/contracts/ai/assist";
+import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
 import { organizations, users } from "./identity.js";
 import { orderLines } from "./order.js";
 
@@ -51,6 +52,7 @@ export const aiAssistRuns = pgTable(
     errorCode: text("error_code"),
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
+    tokenUsage: jsonb("token_usage").$type<ModelTokenUsage>(),
     costUsd: numeric("cost_usd", { precision: 14, scale: 6 }),
     reservedCostUsd: numeric("reserved_cost_usd", { precision: 14, scale: 6 }).notNull(),
     // Legacy rows remain null. The database records every future insert's full transaction ID.
@@ -64,6 +66,7 @@ export const aiAssistRuns = pgTable(
     uniqueIndex("ai_assist_runs_tenant_id_unique").on(t.tenantId, t.id),
     uniqueIndex("ai_assist_runs_request_unique").on(t.tenantId, t.ownerId, t.requestId),
     index("ai_assist_runs_scope_idx").on(t.tenantId, t.ownerId, t.scope, t.kind, t.createdAt),
+    check("ai_assist_runs_token_usage_check", sql`${t.tokenUsage} is null or (${t.status}<>'queued' and jsonb_typeof(${t.tokenUsage})='object' and coalesce(${t.tokenUsage}->>'version','')='model-token-usage-v1')`),
     check(
       "ai_assist_runs_kind_check",
       sql`${t.kind} in ('creative','order_review','artwork_preflight','template_config','sku_package','business_review','procurement_review','after_sales_review','knowledge_answer')`,

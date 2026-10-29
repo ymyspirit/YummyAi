@@ -26,7 +26,9 @@ export const ASSIST_BENCHMARK_PROMPT_VERSION = "erp-benchmark-2026-10-21-v1";
 export const ASSIST_BENCHMARK_INSTRUCTIONS = "这是固定数据集的独立评测执行契约。仅根据本次固定输入和原来源回答。benchmarkCalculations仅包含给定操作数而无预期答案。存在计算题时必须输出typedAnswers，逐项保留key、unit、currency、规定scale的十进制value及原benchmark-input:key或本次知识来源引用。不得从其他文字的短语匹配代替结构化数值，也不得执行任意代码。";
 export const ASSIST_ORDER_REQUIREMENTS_INSTRUCTIONS = `${ASSIST_ORDER_REQUIREMENTS_VERSION}
 order_review补充：requirementSources是原始定制字段的有来源投影；可以用orderFieldBindings建议它对应当前customization中的哪个字段，只能引用已有sourceFieldKey和targetFieldKey，并保留原role及原值，每条引用requirementSourceIds中该字段的sourceId证据。字体、字号、颜色选择器不是可印文字；空文字不生成印字要求。字体和颜色只能归属targetTextKey指向的同group文字，不跨面或跨组；颜色标签与实际hex不同，不能把CustomColor猜成黑色。原备注完整保留并用于后续制作，不因存在备注就建议强制改人工。未确认或有冲突的来源保持targetFieldKey=null并说明，不能把未知要求标为已执行。`;
-export const ASSIST_MAX_OUTPUT_TOKENS = 6000;
+/** Kept for already frozen executions and benchmark reproducibility. */
+export const ASSIST_LEGACY_MAX_OUTPUT_TOKENS = 6000;
+export const ASSIST_MAX_OUTPUT_TOKENS = ASSIST_LEGACY_MAX_OUTPUT_TOKENS;
 export function assistPromptVersion(benchmark = false, orderReview = false) {
   if (benchmark && orderReview) throw new Error("assist_execution_version_unsupported");
   return benchmark ? ASSIST_BENCHMARK_PROMPT_VERSION : ASSIST_PROMPT_VERSION;
@@ -40,6 +42,8 @@ export function assistUsesReviewedGuidance(input: {knowledge?: readonly unknown[
   return !!input.knowledge?.length || input.methodSelection?.mode === "published";
 }
 export interface AssistContext {
+  /** New ordinary executions omit the provider output cap. Absence retains historical policy. */
+  outputTokenPolicy?: "provider";
   benchmarkExecutionVersion?: "knowledge-benchmark-execution-v1";
   /** Server-only IDs for fixed role evaluation; never an authority grant. */
   benchmarkResources?: BenchmarkResourceBindings;

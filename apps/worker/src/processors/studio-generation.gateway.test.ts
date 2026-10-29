@@ -72,7 +72,7 @@ describe("studio HTTP gateway", () => {
     expect(url).toBe("http://localhost:8080/v1/responses");
     expect(init).toMatchObject({ method: "POST", redirect: "error", headers: { authorization: "Bearer synthetic", "content-type": "application/json" } });
     expect(JSON.parse(String(init!.body))).toEqual({ model: "synthetic-text", input: execution.input.prompt,
-      max_output_tokens: 4096, store: false, stream: false });
+      store: false, stream: false });
     expect(remember).not.toHaveBeenCalled();
     expect(checkpoint).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(checkpoint.mock.calls)).not.toContain(execution.input.prompt);
@@ -141,7 +141,31 @@ describe("studio HTTP gateway", () => {
     await expect(new HttpStudioGateway(transport).generate(execution, vi.fn())).resolves.toEqual({ text: "Synthetic legacy answer" });
     expect(transport).toHaveBeenCalledTimes(1);
     expect(transport.mock.calls[0]![0]).toBe("http://localhost:8080/v1/chat/completions");
-    expect(JSON.parse(String(transport.mock.calls[0]![1]!.body))).toMatchObject({ messages: [{ role: "user", content: execution.input.prompt }], max_completion_tokens: 4096 });
+    expect(JSON.parse(String(transport.mock.calls[0]![1]!.body))).toEqual({ model: execution.model, messages: [{ role: "user", content: execution.input.prompt }] });
+  });
+
+  it("records actual image usage before rejecting invalid image bytes without another request", async () => {
+    const transport = vi.fn<typeof fetch>(async () => Response.json({ model: "image-v1", costUsd: 0.04,
+      usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300, input_tokens_details: { cached_tokens: 20, image_tokens: 80, text_tokens: 20 } },
+      data: [{ b64_json: "invalid base64" }] }));
+    const checkpoint = vi.fn();
+    await expect(new HttpStudioGateway(transport).generate(request(), vi.fn(), checkpoint)).rejects.toThrow("studio_provider_requires_base64_result");
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(checkpoint.mock.calls[0]![0]).toMatchObject({ costUsd: "0.04000000", tokenUsage: {
+      inputTokens: 100, outputTokens: 200, totalTokens: 300, cachedInputTokens: 20, inputImageTokens: 80,
+    } });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a refused or incomplete text response's reported usage without adopting its text", async () => {
+    const transport = vi.fn<typeof fetch>(async () => Response.json({ status: "incomplete", model: "text-v1",
+      usage: { input_tokens: 50, output_tokens: 12, total_tokens: 62 }, output_text: "private partial text" }));
+    const checkpoint = vi.fn();
+    await expect(new HttpStudioGateway(transport).generate(textRequest(), vi.fn(), checkpoint)).rejects.toThrow("model_response_incomplete");
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(checkpoint.mock.calls[0]![0]).toMatchObject({ tokenUsage: { inputTokens: 50, outputTokens: 12, totalTokens: 62 } });
+    expect(JSON.stringify(checkpoint.mock.calls)).not.toContain("private partial text");
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   it("uses only a complete SSE Responses result and never adopts deltas as the answer", async () => {

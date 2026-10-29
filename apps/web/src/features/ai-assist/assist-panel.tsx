@@ -32,6 +32,7 @@ import { ActionResults } from "./action-results";
 import { useWorkflowReturn } from "../navigation/use-workflow-return";
 import { workflowHref } from "../navigation/workflow-href";
 import { InvocationEvidence } from "../execution/invocation-evidence";
+import { ModelTokenUsageLine, ModelUsageSummaryLine } from "./model-usage-summary";
 
 const names = {
   knowledge_answer: "知识对话",
@@ -78,6 +79,13 @@ type HistoryRow = {
   modelLabel: string;
   createdAt: string;
 };
+
+export function assistOrderPriceReady(model: Pick<AssistModel, "inputUsdPerMillion" | "outputUsdPerMillion" | "maxTaskCostUsd"> | undefined): boolean {
+  return !!model && (model.maxTaskCostUsd === null ||
+    model.inputUsdPerMillion !== null && Number.isFinite(model.inputUsdPerMillion) && model.inputUsdPerMillion >= 0 &&
+    model.outputUsdPerMillion !== null && Number.isFinite(model.outputUsdPerMillion) && model.outputUsdPerMillion >= 0 &&
+    Number.isFinite(model.maxTaskCostUsd) && model.maxTaskCostUsd > 0);
+}
 
 function EvidenceImage({ image }: { image: AssistView["images"][number] }) {
   const [failed, setFailed] = useState(false);
@@ -399,9 +407,7 @@ function AssistPanelContent({
   }
   const intentLocked = intentState.markers.length > 0 || intentState.allMarkers.some(item => item.kind === kind && item.runId === null);
   const model = models.find((m) => m.id === modelId);
-  const orderPriceReady = !!model && model.inputUsdPerMillion !== null && Number.isFinite(model.inputUsdPerMillion) && model.inputUsdPerMillion >= 0 &&
-    model.outputUsdPerMillion !== null && Number.isFinite(model.outputUsdPerMillion) && model.outputUsdPerMillion >= 0 &&
-    model.maxTaskCostUsd !== null && Number.isFinite(model.maxTaskCostUsd) && model.maxTaskCostUsd > 0;
+  const orderPriceReady = assistOrderPriceReady(model);
   const sourceLabel = (id: string) => view?.sources.find((s) => s.id === id)?.label ?? id;
   if (privateDenied) return <section className="ai-assist" aria-label={names[kind]}><p role="status">当前分析读取权限已变化 原结果和填写已隐藏 重新核对权限后可只读恢复原回执</p></section>;
   return (
@@ -483,10 +489,9 @@ function AssistPanelContent({
           </button>
           {model && (
             <small>
-              {orderAnalysis ? orderPriceReady ? `输入 $${model.inputUsdPerMillion}/百万 tokens 输出 $${model.outputUsdPerMillion}/百万 tokens 单次费用上限 $${model.maxTaskCostUsd}。组织余额与预算由服务器在发起时核对。` : "本模型缺少有效输入单价 输出单价或单次费用上限 请到 AI 模型配置补齐后再分析。" : model.maxTaskCostUsd === null
-                ? "共用已保存的文本模型；价格未填写，费用以渠道账单为准。"
+              {model.maxTaskCostUsd === null ? "不限费用 记录实际用量；实际费用以渠道账单为准。组织余额与预算由服务器在发起时核对。" : orderAnalysis ? orderPriceReady ? `输入 $${model.inputUsdPerMillion}/百万 tokens 输出 $${model.outputUsdPerMillion}/百万 tokens 单次费用上限 $${model.maxTaskCostUsd}。组织余额与预算由服务器在发起时核对。` : "本模型缺少有效输入单价 输出单价或单次费用上限 请到 AI 模型配置补齐后再分析。"
                 : `单次预估上限 $${model.maxTaskCostUsd}。`}{" "}
-              每次分析最多输出 6000 tokens；{orderAnalysis ? "点击分析会实际调用所选模型。" : "重新分析会调用渠道。"}
+              本次不设置输出 token 上限，记录实际用量；{orderAnalysis ? "点击分析会实际调用所选模型。" : "重新分析会调用渠道。"}
               {orderAnalysis && !orderPriceReady && <Link href={workflowHref("/settings/ai", workflow.current)}>核对模型价格与限额</Link>}
             </small>
           )}
@@ -553,11 +558,10 @@ function AssistPanelContent({
                   ? "费用预留已释放"
                   : "费用待渠道确认"
                 : `按配置估算 $${view.costUsd.toFixed(4)}`}
-              {view.inputTokens !== null &&
-                view.outputTokens !== null &&
-                ` · ${view.inputTokens}/${view.outputTokens} tokens`}
             </span>
           </div>
+          <ModelTokenUsageLine usage={view.tokenUsage ?? view} />
+          <ModelUsageSummaryLine summary={view.usageSummary} label="本类分析累计 Token" />
           {active && (
             <p>
               任务在后台运行，可以离开此页，稍后查看记录。

@@ -9,6 +9,7 @@ import { AgentMethodSelectionSchema } from "@yummyai/contracts/harness/methods";
 import { BenchmarkTypedAnswerSchema } from "@yummyai/contracts/knowledge/benchmark-values";
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
 import { OrderRequirementRoleSchema } from "@yummyai/contracts/order/requirement-interpretation";
+import { ModelTokenUsageSchema, ModelUsageSummarySchema } from "@yummyai/contracts/ai/model-usage";
 
 export const AssistKindSchema = z.enum([
   "creative",
@@ -314,6 +315,8 @@ export const AssistViewSchema = z
     request: CreateAssistSchema.nullable(),
     inputTokens: z.int().nonnegative().nullable(),
     outputTokens: z.int().nonnegative().nullable(),
+    tokenUsage: ModelTokenUsageSchema.nullable().optional(),
+    usageSummary: ModelUsageSummarySchema.optional(),
     costUsd: z.number().nonnegative().nullable(),
     budgetState: AssistBudgetStateSchema.nullable().optional(),
     error: z.string().nullable(),

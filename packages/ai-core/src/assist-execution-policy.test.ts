@@ -54,4 +54,13 @@ describe("Assist execution contract selection", () => {
     expect(() => assistSystemInstructions(false, true, true)).toThrow("assist_execution_version_unsupported");
     expect(() => assistExecutionPolicy(false, true, true)).toThrow("assist_execution_version_unsupported");
   });
+  it("pins a distinct unlimited output policy without changing old frozen executions", () => {
+    const policy = assistExecutionPolicy(false, false, true, true);
+    expect(policy).toEqual({ contractVersion: "assist-execution-v2", checksum: createHash("sha256").update(JSON.stringify({
+      promptVersion: "erp-assist-2026-10-06-v6", systemInstructions: assistSystemInstructions(false, false, true),
+      maxOutputTokens: null, outputSchema: z.toJSONSchema(OrderReviewAssistResultSchema),
+    })).digest("hex") });
+    expect(policy.checksum).not.toBe(assistExecutionPolicy(false, false, true).checksum);
+    expect(() => assistExecutionPolicy(false, true, false, true)).toThrow("assist_execution_version_unsupported");
+  });
 });

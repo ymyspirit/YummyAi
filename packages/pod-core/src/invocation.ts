@@ -82,7 +82,8 @@ export function podInvocationViews(
       artifact: row.resultVersionId
         ? { kind: "design_version", id: row.resultVersionId, checksum: null }
         : null,
-      usage: { inputTokens: null, outputTokens: null },
+      usage: { inputTokens: row.tokenUsage?.inputTokens??null, outputTokens: row.tokenUsage?.outputTokens??null },
+      tokenUsage:row.tokenUsage??null,
       billing: {
         basis:
           row.reportedCostUsd !== null

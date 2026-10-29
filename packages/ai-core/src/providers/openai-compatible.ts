@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { modelReceipt } from "./model-receipt.js";
 
 import {
   calculateCostUsd,
@@ -47,7 +48,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       body: JSON.stringify({
         model: request.providerModel,
         stream: false,
-        ...(/^(gpt-[5-9]|o[1-9])/.test(request.providerModel)
+        ...(request.maxOutputTokens === null ? {} : /^(gpt-[5-9]|o[1-9])/.test(request.providerModel)
           ? { max_completion_tokens: request.maxOutputTokens ?? 1_024 }
           : { max_tokens: request.maxOutputTokens ?? 1_024 }),
         messages: [
@@ -68,48 +69,32 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       }),
     });
     if (!response.ok) await throwProviderResponseError(response, this.providerId);
-    const payload = (await response.json()) as {
-      id?: string;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    const inputTokens = payload.usage?.prompt_tokens ?? 0;
-    const outputTokens = payload.usage?.completion_tokens ?? 0;
-    const usageKnown = Number.isSafeInteger(payload.usage?.prompt_tokens) && inputTokens >= 0
-      && Number.isSafeInteger(payload.usage?.completion_tokens) && outputTokens >= 0;
-    if (request.onResponseCheckpoint) await request.onResponseCheckpoint({
-      version: "model-response-v1", providerId: this.providerId, modelKey: request.modelKey,
-      providerRequestId: response.headers.get("x-request-id") ?? payload.id ?? null, payload,
-      inputTokens: usageKnown ? inputTokens : null, outputTokens: usageKnown ? outputTokens : null,
-      costUsd: usageKnown && this.config.pricing ? calculateCostUsd(inputTokens, outputTokens,
-        this.config.pricing.inputUsdPerMillion, this.config.pricing.outputUsdPerMillion) : null,
-      receivedAt: new Date().toISOString(),
-    });
+    const payload = await response.json() as Record<string, unknown>;
+    const receipt = modelReceipt({ providerId: this.providerId, modelKey: request.modelKey,
+      requestId: response.headers.get("x-request-id"), payload, pricing: this.config.pricing });
+    await request.onResponseCheckpoint?.(receipt);
     const value = parseStructuredOutput(payload, request.outputSchema);
     return {
       providerId: this.providerId,
       modelKey: request.modelKey,
       value,
-      inputTokens,
-      outputTokens,
-      usageReported: typeof payload.usage?.prompt_tokens === "number" && typeof payload.usage?.completion_tokens === "number",
-      costUsd: this.config.pricing ? calculateCostUsd(
-        inputTokens,
-        outputTokens,
-        this.config.pricing.inputUsdPerMillion,
-        this.config.pricing.outputUsdPerMillion,
-      ) : null,
-      providerRequestId: response.headers.get("x-request-id") ?? payload.id,
+      inputTokens: receipt.inputTokens ?? 0,
+      outputTokens: receipt.outputTokens ?? 0,
+      usageReported: receipt.inputTokens !== null && receipt.outputTokens !== null,
+      tokenUsage: receipt.tokenUsage,
+      costUsd: receipt.costUsd,
+      providerRequestId: receipt.providerRequestId ?? undefined,
       completedAt: new Date(),
     };
   }
 
   async estimate<T>(request: ResolvedModelRequest<T>): Promise<CostEstimate> {
     const estimatedInputTokens = estimateTokens(request.systemInstructions) + estimateTokens(request.untrustedSourceData) + (request.images?.length ?? 0) * 4096;
-    const maxOutputTokens = request.maxOutputTokens ?? 1_024;
+    const maxOutputTokens = request.maxOutputTokens === null ? null : request.maxOutputTokens ?? 1_024;
     return {
       estimatedInputTokens,
       maxOutputTokens,
-      costUsd: this.config.pricing ? calculateCostUsd(
+      costUsd: this.config.pricing && maxOutputTokens !== null ? calculateCostUsd(
         estimatedInputTokens,
         maxOutputTokens,
         this.config.pricing.inputUsdPerMillion,

@@ -98,10 +98,10 @@ export class PodArtworkRecovery {
       const [row] = await tx.select().from(invocations).where(and(eq(invocations.taskId, taskId), eq(invocations.attemptNumber, attempt + 1))).for("update");
       if (!task || task.requestedBy !== base.userId || task.status !== "running" || task.attemptCount !== attempt + 1 || !row) throw new Error("POD_INVOCATION_CLAIM_LOST");
       if (row.receivedAt) {
-        if (row.responseChecksum !== receipt.responseChecksum || row.reportedCostUsd !== receipt.costUsd || row.providerRequestId !== receipt.providerRequestId || row.modelKey !== receipt.modelKey || row.modelVersion !== receipt.modelVersion || row.metadataValid !== receipt.metadataValid) throw new Error("POD_INVOCATION_RESPONSE_CHANGED");
+        if (row.responseChecksum !== receipt.responseChecksum || row.reportedCostUsd !== receipt.costUsd || row.providerRequestId !== receipt.providerRequestId || row.modelKey !== receipt.modelKey || row.modelVersion !== receipt.modelVersion || row.metadataValid !== receipt.metadataValid || !isDeepStrictEqual(row.tokenUsage??null,receipt.tokenUsage??null)) throw new Error("POD_INVOCATION_RESPONSE_CHANGED");
       } else {
         if (row.phase !== "submitted") throw new Error("POD_INVOCATION_SUBMISSION_MISSING");
-        await tx.update(invocations).set({ phase: "received", receivedAt: new Date(receipt.receivedAt), responseChecksum: receipt.responseChecksum, providerRequestId: receipt.providerRequestId, modelKey: receipt.modelKey, modelVersion: receipt.modelVersion, reportedCostUsd: receipt.costUsd, metadataValid: receipt.metadataValid }).where(eq(invocations.id, row.id));
+        await tx.update(invocations).set({ phase: "received", receivedAt: new Date(receipt.receivedAt), responseChecksum: receipt.responseChecksum, providerRequestId: receipt.providerRequestId, modelKey: receipt.modelKey, modelVersion: receipt.modelVersion, reportedCostUsd: receipt.costUsd, metadataValid: receipt.metadataValid,tokenUsage:receipt.tokenUsage??null }).where(eq(invocations.id, row.id));
       }
       if (!execution || !prepared || execution.responseObjectKey) return null;
       const body = Buffer.from(this.vault().encrypt(JSON.stringify({ version: 1, tenantId: base.tenantId, taskId, inputFingerprint: execution.inputFingerprint, checkpoint: prepared })));

@@ -4,6 +4,7 @@ import { Check, CircleAlert, LoaderCircle, ScanSearch } from "lucide-react";
 import { AssistViewSchema, type AssistModel, type AssistView } from "@yummyai/contracts/ai/assist";
 import type { ArtworkAuditReport } from "@yummyai/contracts/ai/artwork-audit";
 import { assistApi } from "../ai-assist/assist-client";
+import { ModelTokenUsageLine, ModelUsageSummaryLine } from "../ai-assist/model-usage-summary";
 
 const names = {passed: "通过", failed: "需修改", needs_review: "需复核"};
 export function OrderArtworkAudit({ orderId, revision, versionId, disabled, onReport, onBusy }: {
@@ -66,8 +67,6 @@ export function OrderArtworkAudit({ orderId, revision, versionId, disabled, onRe
     finally { submitting.current = false; if (alive.current) setSending(false); }
   }
   const passed = report?.checks.filter(c => c.status === "passed").length ?? 0;
-  const totalTokens = view?.inputTokens != null && view.outputTokens != null ? view.inputTokens + view.outputTokens : null;
-  const tokenCount = (value: number | null | undefined) => value == null ? pending ? "待返回" : "未返回" : value.toLocaleString("zh-CN");
   return <section className="oc-artwork-audit" aria-label="自动核对" aria-busy={loading || pending || sending}>
     <div className="oc-section-heading"><h3>自动核对 · 6 项</h3>
       <button type="button" className="oc-button primary" disabled={disabled || loading || pending || sending || !modelId} onClick={() => void start()}>
@@ -99,8 +98,9 @@ export function OrderArtworkAudit({ orderId, revision, versionId, disabled, onRe
       </li>)}</ul>
       <details className="oc-audit-basis"><summary>本次使用的资料和核对记录</summary>
         <p className="oc-hint">顾客需求 V{report.revision} · 生产稿 V{report.versionNumber} · {view?.modelLabel}</p>
-        <p aria-label="本次调用 Token 用量">本次调用 Token：输入 <strong>{tokenCount(view?.inputTokens)}</strong> · 输出 <strong>{tokenCount(view?.outputTokens)}</strong> · 合计 <strong>{tokenCount(totalTokens)}</strong></p>
-        <p className="oc-hint">每次调用分别记录；以上仅为本次用量，未返回的用量不按 0 计算。{view?.costUsd != null ? `费用按配置估算 $${view.costUsd.toFixed(4)}，以渠道账单为准。` : "费用待渠道账单确认。"}</p>
+        <ModelTokenUsageLine usage={view?.tokenUsage ?? view} />
+        <ModelUsageSummaryLine summary={view?.usageSummary} label="本类核对累计 Token" className="oc-hint" />
+        <p className="oc-hint">按原调用记录实际用量 缓存已计入输入 未返回的用量不按 0 计算。{view?.costUsd != null ? `费用按配置估算 $${view.costUsd.toFixed(4)}，以渠道账单为准。` : "费用待渠道账单确认。"}</p>
         <p className="oc-hint">{report.ruleBasis}</p>
         <p className="oc-hint">细窄处按生产稿两侧裁线间距核对。结果仅适用于本次资料和稿件；改图后重新核对。</p>
         {view?.diagnostics.map((d, i) => <p key={i} className="oc-error">{d}</p>)}

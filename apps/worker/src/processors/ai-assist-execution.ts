@@ -3,7 +3,7 @@ import {
   assistHarness,
   assistUsesReviewedGuidance,
   HarnessContractError,
-  ASSIST_MAX_OUTPUT_TOKENS,
+  ASSIST_LEGACY_MAX_OUTPUT_TOKENS,
   assistPromptVersion,
   assistResultSchema,
   isBenchmarkAssist,
@@ -13,13 +13,16 @@ import {
   assessPaidRequestRecovery,
   decodeModelResponse,
   ModelResponseCheckpointSchema,
+  normalizeModelTokenUsage,
   validateAssistResult,
   type AssistContext,
   type ModelProvider,
+  type ModelResult,
   type ModelResponseCheckpoint,
   type SecretVault,
   KnowledgeEvaluationProofError,
 } from "@yummyai/ai-core";
+import { isDeepStrictEqual } from "node:util";
 import { CreateAssistSchema } from "@yummyai/contracts/ai/assist";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
@@ -161,8 +164,6 @@ export class DurableAssistExecution {
     const { run, execution, token } = claim;
     try {
       if (!run.encryptedInput) throw new Error("assist_expired");
-      if (execution.contractVersion !== "assist-execution-v1")
-        throw new Error("assist_execution_version_unsupported");
       const input = await this.options.contentVault.withSecret(
         run.encryptedInput,
         async (raw) => JSON.parse(raw) as AssistContext,
@@ -175,7 +176,8 @@ export class DurableAssistExecution {
         execution.inputFingerprint !== run.inputFingerprint
       )
         throw new Error("assist_input_changed");
-      if (assistExecutionPolicy(!!input.artworkAudit, benchmark, run.kind === "order_review").checksum !== execution.policyChecksum)
+      const policy=assistExecutionPolicy(!!input.artworkAudit, benchmark, run.kind === "order_review", input.outputTokenPolicy === "provider");
+      if (policy.contractVersion !== execution.contractVersion || policy.checksum !== execution.policyChecksum)
         throw new Error("assist_execution_version_unsupported");
       input.request = CreateAssistSchema.parse(input.request);
       if (input.request.kind !== run.kind) throw new Error("assist_input_changed");
@@ -221,6 +223,7 @@ export class DurableAssistExecution {
           }
         }
         const model = await this.options.provider(context, run, input);
+        const submittedAt=new Date();
         await withTenant(this.options.database.db, context, async (tx) => {
           await this.assertClaim(tx, run, token);
           await assertEvaluationExecution(tx, context, run, input, this.options.contentVault);
@@ -229,7 +232,7 @@ export class DurableAssistExecution {
             .update(executions)
             .set({
               submissionState: "submitted",
-              submittedAt: new Date(),
+              submittedAt,
               leaseExpiresAt: sql`clock_timestamp()+interval '5 minutes'`,
               updatedAt: new Date(),
             })
@@ -260,33 +263,23 @@ export class DurableAssistExecution {
             outputSchema,
             outputSchemaName: "erp_assist",
             maxCostUsd: run.modelSnapshot.maxTaskCostUsd,
-            maxOutputTokens: ASSIST_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: input.outputTokenPolicy === "provider" ? null : ASSIST_LEGACY_MAX_OUTPUT_TOKENS,
             onResponseCheckpoint: async (response) => {
               const value: SavedResponse = {
                 response: ModelResponseCheckpointSchema.parse(response),
                 images,
                 diagnostics,
               };
-              const raw = JSON.stringify(value);
+              if(response.modelKey!==run.modelSnapshot.model || response.providerId!==model.providerId)throw new Error("assist_response_identity_invalid");
+              let raw:string|undefined;
+              try {raw=JSON.stringify(value);} catch { /* Usage still belongs to the original submitted call. */ }
+              const responseChecksum=checksum(raw??JSON.stringify({...value.response,payload:null}));
+              await this.captureResponse(context,run,execution,token,submittedAt,value.response,responseChecksum);
+              if(raw===undefined)throw new Error("assist_response_invalid");
               if (Buffer.byteLength(raw) > 8 * 1024 * 1024)
                 throw new Error("assist_response_too_large");
               const encryptedResponse = this.options.contentVault.encrypt(raw);
-              await withTenant(this.options.database.db, context, async (tx) => {
-                await this.assertClaim(tx, run, token);
-                await tx
-                  .update(executions)
-                  .set({
-                    phase: "response_ready",
-                    submissionState: "received",
-                    receivedAt: new Date(response.receivedAt),
-                    providerRequestId: response.providerRequestId,
-                    encryptedResponse,
-                    responseChecksum: checksum(raw),
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(executions.runId, id));
-                await settleResponse(tx, run, response);
-              });
+              await this.captureResponse(context,run,execution,token,submittedAt,value.response,responseChecksum,encryptedResponse);
               checkpoint = value;
             },
           },
@@ -325,7 +318,7 @@ export class DurableAssistExecution {
       );
       await withTenant(this.options.database.db, context, async (tx) => {
         await this.assertClaim(tx, run, token);
-        await settleResponse(tx, run, saved.response);
+        await settleAssistResponse(tx, run, saved.response);
         const currentContext=await loadCurrentMembershipContext(tx,context,{lock:true});
         authorizeAssistRequest(currentContext,input.request,"run",{hasKnowledge:assistUsesReviewedGuidance(input),pinnedDataScope:input.accessPolicy?.dataScope??"tenant"});
         const method=await assertAgentMethodSelection(tx,harness.registry.describeSkill(harness.skill),input.methodSelection,{lock:true});
@@ -359,6 +352,8 @@ export class DurableAssistExecution {
               : cause instanceof Error &&
                   /^model_output_(truncated|missing|invalid_json)$/.test(cause.message)
                 ? `assist_${cause.message}`
+                : cause instanceof Error && /^model_response_(incomplete|invalid)$/.test(cause.message)
+                  ? `assist_${cause.message}`
                 : cause instanceof Error && /^assist_[a-z_]+$/.test(cause.message)
                   ? cause.message
                   : null;
@@ -419,6 +414,28 @@ export class DurableAssistExecution {
     }
   }
 
+  /** The original submission can report usage after cancellation; it cannot regain adoption authority. */
+  private async captureResponse(context:TenantContext,run:Run,original:Execution,token:string,submittedAt:Date,response:ModelResponseCheckpoint,responseChecksum:string,encryptedResponse?:string) {
+    await withTenant(this.options.database.db,context,async tx=>{
+      const [currentRun]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.ownerId,context.userId))).for("update");
+      const [current]=await tx.select().from(executions).where(eq(executions.runId,run.id)).for("update");
+      if(!currentRun || currentRun.requestId!==run.requestId || currentRun.inputFingerprint!==run.inputFingerprint || !current
+        || current.inputFingerprint!==original.inputFingerprint || current.policyChecksum!==original.policyChecksum || current.contractVersion!==original.contractVersion
+        || current.submissionState==="not_submitted" || current.submittedAt?.getTime()!==submittedAt.getTime())throw new Error("assist_response_identity_invalid");
+      if(current.receivedAt && (current.responseChecksum!==responseChecksum || current.providerRequestId!==response.providerRequestId
+        || current.receivedAt.getTime()!==Date.parse(response.receivedAt)))throw new Error("assist_response_changed");
+      const now=await leaseClock(tx);
+      const active=currentRun.status==="running"&&!terminal(current.phase)&&current.leaseToken===token&&!!current.leaseExpiresAt&&current.leaseExpiresAt>now;
+      const retainPrivate=currentRun.expiresAt>now&&currentRun.encryptedInput!==null;
+      await tx.update(executions).set({
+        ...(!current.receivedAt?{submissionState:"received" as const,receivedAt:new Date(response.receivedAt),providerRequestId:response.providerRequestId,responseChecksum}:{}),
+        ...(encryptedResponse&&retainPrivate&&!current.encryptedResponse?{encryptedResponse}:{}),
+        ...(active&&encryptedResponse&&retainPrivate?{phase:"response_ready" as const}:{}),updatedAt:new Date(),
+      }).where(eq(executions.runId,run.id));
+      await settleAssistResponse(tx,run,response,true);
+    });
+  }
+
   private async currentClaim(tx: TenantTransaction, run: Run, token: string) {
     const [currentRun] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
     const [execution] = await tx
@@ -446,7 +463,16 @@ async function releaseReservation(tx: TenantTransaction, id: string) {
     .set({ state: "released" })
     .where(and(eq(aiBudgetLedger.requestId, id), eq(aiBudgetLedger.state, "reserved")));
 }
-async function settleResponse(tx: TenantTransaction, run: Run, response: ModelResponseCheckpoint) {
+export async function settleAssistResponse(tx: TenantTransaction, run: Run, response: ModelResponseCheckpoint, allowTerminalUsage=false) {
+  const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.ownerId,run.ownerId))).for("update");
+  if(!current || current.requestId!==run.requestId || current.inputFingerprint!==run.inputFingerprint)throw new Error("assist_response_identity_invalid");
+  if(current.tokenUsage!==null && response.tokenUsage!==undefined && !isDeepStrictEqual(current.tokenUsage,response.tokenUsage))throw new Error("assist_usage_conflict");
+  const tokenUsage=current.tokenUsage===null&&response.tokenUsage!=null?{tokenUsage:response.tokenUsage}:{};
+  if(["completed","failed","cancelled"].includes(current.status)) {
+    if(allowTerminalUsage&&"tokenUsage" in tokenUsage)await tx.update(runs).set(tokenUsage).where(eq(runs.id,run.id));
+    return;
+  }
+  if(current.status!=="running")throw new Error("assist_lease_lost");
   const usageKnown = response.inputTokens !== null && response.outputTokens !== null;
   const costKnown =
     usageKnown &&
@@ -459,6 +485,7 @@ async function settleResponse(tx: TenantTransaction, run: Run, response: ModelRe
       inputTokens: usageKnown ? response.inputTokens : null,
       outputTokens: usageKnown ? response.outputTokens : null,
       costUsd: costKnown ? response.costUsd!.toFixed(6) : null,
+      ...tokenUsage,
     })
     .where(eq(runs.id, run.id));
   if (costKnown)
@@ -466,6 +493,13 @@ async function settleResponse(tx: TenantTransaction, run: Run, response: ModelRe
       .update(aiBudgetLedger)
       .set({ state: "committed", amountUsd: response.costUsd!.toFixed(6) })
       .where(and(eq(aiBudgetLedger.requestId, run.id), eq(aiBudgetLedger.state, "reserved")));
+}
+/** Compatibility adapters may return usage without implementing a response checkpoint callback. */
+export function assistResultReceipt(result:ModelResult<unknown>):ModelResponseCheckpoint {
+  const known=result.usageReported===true&&Number.isSafeInteger(result.inputTokens)&&result.inputTokens>=0&&Number.isSafeInteger(result.outputTokens)&&result.outputTokens>=0;
+  return ModelResponseCheckpointSchema.parse({version:"model-response-v1",providerId:result.providerId,modelKey:result.modelKey,providerRequestId:result.providerRequestId??null,payload:result.value,
+    inputTokens:known?result.inputTokens:null,outputTokens:known?result.outputTokens:null,costUsd:result.costUsd!==null&&Number.isFinite(result.costUsd)&&result.costUsd>=0?result.costUsd:null,
+    tokenUsage:result.tokenUsage??(known?normalizeModelTokenUsage({input_tokens:result.inputTokens,output_tokens:result.outputTokens}):null),receivedAt:result.completedAt.toISOString()});
 }
 export async function expireAssistInTransaction(
   tx: TenantTransaction,

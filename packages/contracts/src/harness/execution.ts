@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
 import { TenantContextSchema } from "@yummyai/contracts/tenant/tenant-context";
 
 const Key = z.string().regex(/^[a-z][a-z0-9_.-]{2,159}$/);
@@ -110,8 +111,11 @@ export const HarnessInvocationViewSchema = z
       .object({
         inputTokens: z.int().nonnegative().nullable(),
         outputTokens: z.int().nonnegative().nullable(),
+        cachedInputTokens: z.int().nonnegative().nullable().optional(),
+        totalTokens: z.int().nonnegative().nullable().optional(),
       })
       .strict(),
+    tokenUsage: ModelTokenUsageSchema.nullable().optional(),
     billing: z
       .object({
         basis: z.enum([
@@ -177,6 +181,7 @@ export const PodInvocationReceiptSchema = z
     modelVersion: z.string().min(1).max(160).nullable(),
     costUsd: HarnessUsdSchema.nullable(),
     metadataValid: z.boolean(),
+    tokenUsage: ModelTokenUsageSchema.nullable().optional(),
     receivedAt: z.iso.datetime(),
   })
   .strict();

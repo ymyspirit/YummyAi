@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vitest";
 
-import { designAgentActivity, designAgentBillingNotice, designAgentCurrentVersionApproved, designAgentErrorMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
+import { designAgentActivity, designAgentBillingNotice, designAgentCurrentVersionApproved, designAgentErrorMessage, designAgentNoRunMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
+
+describe("design agent absent-run context", () => {
+  it("distinguishes a successfully read pushed Agent order without claiming a specific configuration defect", () => {
+    expect(designAgentNoRunMessage({ preparation: "pushed", designExecutor: "agent" }))
+      .toBe("尚未创建无人设计任务 请核对工艺模板的无人设计配置");
+  });
+
+  it("preserves the existing human and unknown-executor paths instead of inferring an Agent dispatch", () => {
+    const original = designAgentNoRunMessage({});
+    expect(original).toContain("审单并派发后开始执行");
+    expect(designAgentNoRunMessage({ preparation: "pushed", designExecutor: "human" })).toBe(original);
+    expect(designAgentNoRunMessage({ preparation: "pushed" })).toBe(original);
+  });
+
+  it("does not describe an unpushed Agent order as a missing dispatched task", () => {
+    for (const preparation of ["pending_review", "needs_information", "ready_to_push"] as const)
+      expect(designAgentNoRunMessage({ preparation, designExecutor: "agent" })).toBe(designAgentNoRunMessage({}));
+  });
+
+  it("does not turn a failed read into evidence that a task was never created", () => {
+    const message = designAgentNoRunMessage({ preparation: "pushed", designExecutor: "agent", readFailed: true });
+    expect(message).toBe("尚无法确认自动制图任务状态。请刷新进度。");
+    expect(message).not.toContain("尚未创建");
+  });
+
+  it("keeps the financial-only fallback compatible when dispatch context is unavailable", () => {
+    expect(designAgentNoRunMessage({ financialOnly: true })).toBe("尚无独立的自动制图费用记录。");
+    expect(designAgentNoRunMessage({ financialOnly: true, readFailed: true })).toContain("尚无法确认");
+  });
+});
 
 describe("design agent manual handoff boundary", () => {
   it("requires takeover for paused work while stopping its automatic polling", () => {

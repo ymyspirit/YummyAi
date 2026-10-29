@@ -1281,6 +1281,8 @@ export class OrderWorkspaceService {
       );
       if (template.project.source || template.project.workSource)
         throw new ConflictException("买家订单素材不能作为通用模板");
+      if (orderDesignExecutor(detail.draft) === "agent" && !template.version.document.automation)
+        throw new ConflictException("当前工艺模板尚未配置无人设计，不能创建自动任务。请配置并审核自动制图配方后重新保存本单制作需求");
       // A dry layout validates text glyphs and configured regions without saving buyer data.
       await composeOrderArtwork(
         template.version.document,
@@ -1635,14 +1637,7 @@ export class OrderWorkspaceService {
             .limit(1),
         );
         if (!durableRun)
-          return this.startArtwork(context, id, {
-            ...input,
-            action: "start_artwork",
-            expectedRevision: detail.line.revision,
-            expectedProjectionVersion: detail.line.projectionVersion,
-            idempotencyKey: createEntityId(),
-            reason: "恢复已接受派单的素材准备，沿用原需求版本",
-          });
+          throw new ConflictException("这次历史派单没有创建无人设计任务，请核对原工艺模板的自动制图配置后重新保存并派单");
       }
       return detail;
     }
@@ -1655,6 +1650,8 @@ export class OrderWorkspaceService {
         expectedSourceVersionId: detail.report?.versionId ?? null, draft: pinnedDraft });
       agentSnapshot = await prepareOrderDesignSnapshot(this.database, this.editor, context,
         { ...detail, draft: pinnedDraft, requirementInterpretation: checked.requirements });
+      if (!agentSnapshot)
+        throw new ConflictException("当前工艺模板尚未配置无人设计，不能创建自动任务。请配置并审核自动制图配方后重新保存本单制作需求");
     }
     const editor =
       input.expectedEditorVersionId && detail.line.editorProjectId

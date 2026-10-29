@@ -1,4 +1,4 @@
-import { assessPaidRequestRecovery, type SecretVault } from "@yummyai/ai-core";
+import { assessPaidRequestRecovery, summarizeModelUsage, type SecretVault } from "@yummyai/ai-core";
 import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { OrderDesignAgentViewSchema, OrderDesignAgentActionSchema, OrderDesignResponseRecoveryEvidenceSchema,
@@ -159,11 +159,16 @@ export class OrderDesignRepository {
       const [work]=await authority();
       if(!work) throw new OrderDesignError("agent_work_not_found");
       const [run]=await tx.select().from(runs).where(eq(runs.workItemId,workItemId)).orderBy(desc(runs.createdAt)).limit(1);
-      if(!run) return {run:null};
+      // The detail list is bounded below; billing totals cover every original call,
+      // including cancelled and superseded runs, without reading private content.
+      const usageRows=await tx.select({runId:modelCalls.runId,tokenUsage:modelCalls.tokenUsage}).from(modelCalls)
+        .innerJoin(runs,eq(runs.id,modelCalls.runId)).where(eq(runs.workItemId,workItemId));
+      const usageSummary=summarizeModelUsage(usageRows.map(call=>call.tokenUsage),"order_design_work_item");
+      if(!run) return OrderDesignAgentViewSchema.parse({run:null,usageSummary});
       const rows=includePrivate&&work.privateAvailable?await tx.select().from(steps).where(eq(steps.runId,run.id)).orderBy(steps.position):[];
       if(includePrivate&&run.methodSnapshot?.methodSelection.mode==="published")authorize(context,Permission.WorkflowRead);
       const callRows=await tx.select({id:modelCalls.id,stepId:modelCalls.stepId,requestId:modelCalls.requestId,attempt:modelCalls.attempt,
-        submittedAt:modelCalls.submittedAt,receivedAt:modelCalls.receivedAt,costReportState:modelCalls.costReportState,reportedCostUsd:modelCalls.reportedCostUsd,
+        submittedAt:modelCalls.submittedAt,receivedAt:modelCalls.receivedAt,costReportState:modelCalls.costReportState,reportedCostUsd:modelCalls.reportedCostUsd,tokenUsage:modelCalls.tokenUsage,
         budgetState:aiBudgetLedger.state,budgetAmountUsd:aiBudgetLedger.amountUsd}).from(modelCalls).innerJoin(aiBudgetLedger,eq(aiBudgetLedger.id,modelCalls.budgetLedgerId))
         .where(eq(modelCalls.runId,run.id)).orderBy(desc(modelCalls.submittedAt),desc(modelCalls.id)).limit(1001);
       let ruleSnapshot=null;
@@ -198,7 +203,8 @@ export class OrderDesignRepository {
       }
       const [latest]=await authority();const privateEvidenceState=latest?.privateAvailable?"available":"expired";
       const exposePrivate=includePrivate&&work.privateAvailable&&latest?.privateAvailable&&work.encryptedDataKey===latest.encryptedDataKey;
-      return OrderDesignAgentViewSchema.parse({run:{...run,ruleSnapshot:exposePrivate?ruleSnapshot:null,methodSnapshot:exposePrivate?run.methodSnapshot:null,completion:exposePrivate?completion:null,privateEvidenceState,privateEvidenceOmitted:!exposePrivate,createdAt:run.createdAt.toISOString(),updatedAt:run.updatedAt.toISOString(),
+      return OrderDesignAgentViewSchema.parse({usageSummary,run:{...run,ruleSnapshot:exposePrivate?ruleSnapshot:null,methodSnapshot:exposePrivate?run.methodSnapshot:null,completion:exposePrivate?completion:null,privateEvidenceState,privateEvidenceOmitted:!exposePrivate,createdAt:run.createdAt.toISOString(),updatedAt:run.updatedAt.toISOString(),
+        usageSummary:summarizeModelUsage(usageRows.filter(call=>call.runId===run.id).map(call=>call.tokenUsage),"order_design_run"),
         modelCalls:callRows.slice(0,1000).map(call=>({...call,submittedAt:call.submittedAt.toISOString(),receivedAt:call.receivedAt?.toISOString()??null})),modelCallsTruncated:callRows.length>1000,
         responseRecoveryTarget:exposePrivate?recoveryTarget:null,responseRecoveryBlockedCode:exposePrivate?recoveryBlockedCode:null,qualityDiagnostics:exposePrivate?run.qualityDiagnostics:[],
         estimatedCostUsd:run.estimatedCostUsd===null?null:Number(run.estimatedCostUsd),actualCostUsd:run.actualCostUsd===null?null:Number(run.actualCostUsd),

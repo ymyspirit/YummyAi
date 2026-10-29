@@ -9,6 +9,7 @@ import { pillowCropSubject } from "@yummyai/contracts/order/production-requireme
 import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import {
   OrderWorkDetailViewSchema,
+  orderDesignExecutor,
   type OrderWorkDetail,
   type OrderWorkDraft,
   type OrderWorkspaceModule,
@@ -825,6 +826,8 @@ export function OrderWorkDetailPanel({
         )}
         {agentApplies && (
           <OrderDesignAgentPanel key={id} workItemId={id} refreshKey={detail.line.projectionVersion}
+            preparation={detail.line.preparation}
+            designExecutor={orderDesignExecutor(detail.draft)}
             editorProjectId={detail.line.editorProjectId} onOpen={projectId => {
               const current = live.current;
               if (current.id !== id || current.detail?.line.id !== id || current.detail.line.editorProjectId !== projectId ||

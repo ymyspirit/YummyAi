@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./ai/model-usage": "./src/ai/model-usage.ts",
     "./order/automatic-basis": "./src/order/automatic-basis.ts",
     "./ai/studio-image-pricing": "./src/ai/studio-image-pricing.ts",
     "./harness/creative-response": "./src/harness/creative-response.ts",

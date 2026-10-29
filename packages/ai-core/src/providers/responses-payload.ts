@@ -1,7 +1,7 @@
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const invalid = (): never => { throw new Error("model_response_invalid"); };
-function assertComplete(payload: Record<string, unknown>) {
+export function assertResponsesPayloadComplete(payload: Record<string, unknown>) {
   if (payload.status !== undefined && payload.status !== "completed" || payload.error || payload.incomplete_details)
     throw new Error("model_response_incomplete");
   if (payload.output !== undefined && !Array.isArray(payload.output)) return invalid();
@@ -18,7 +18,7 @@ function assertComplete(payload: Record<string, unknown>) {
 }
 
 /** Some Responses relays always stream. Only the complete final envelope is usable. */
-export async function readResponsesPayload(response: Response, maxBytes = DEFAULT_LIMIT): Promise<Record<string, unknown>> {
+export async function readResponsesPayload(response: Response, maxBytes = DEFAULT_LIMIT, onPayload?: (payload: Record<string, unknown>) => Promise<void>): Promise<Record<string, unknown>> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TypeError("Invalid response limit");
   const reader = response.body?.getReader();
   if (!reader) return invalid();
@@ -26,7 +26,13 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let bytes = 0, buffer = "";
   let completed: Record<string, unknown> | undefined;
-  function event(block: string) {
+  let observed = false;
+  async function observe(payload: Record<string, unknown>) {
+    if (observed) return;
+    observed = true;
+    await onPayload?.(payload);
+  }
+  async function event(block: string) {
     const lines = block.split(/\r\n|\n|\r/);
     const data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return;
@@ -36,11 +42,15 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
     const label = lines.find(line => line.startsWith("event:"))?.slice(6).trim();
     const type = typeof parsed.type === "string" ? parsed.type : label;
     if (label && label !== type) return invalid();
-    if (["error", "response.failed", "response.incomplete"].includes(type ?? "")) throw new Error("model_response_incomplete");
+    if (["error", "response.failed", "response.incomplete"].includes(type ?? "")) {
+      if (record(parsed.response)) await observe(parsed.response);
+      throw new Error("model_response_incomplete");
+    }
     if (type === "response.completed") {
       const final = parsed.response;
+      if (record(final)) await observe(final);
       if (!record(final) || final.status !== "completed" || final.error || final.incomplete_details) throw new Error("model_response_incomplete");
-      assertComplete(final);
+      assertResponsesPayloadComplete(final);
       completed = final;
     }
   }
@@ -56,20 +66,21 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
         while ((boundary = /\r\n\r\n|\n\n|\r\r/.exec(buffer))) {
           const block = buffer.slice(0, boundary.index);
           buffer = buffer.slice(boundary.index + boundary[0].length);
-          event(block);
+          await event(block);
           if (completed) return completed;
         }
       }
     }
     if (streaming) {
-      if (buffer.trim()) event(buffer);
+      if (buffer.trim()) await event(buffer);
       if (!completed) throw new Error("model_response_incomplete");
       return completed;
     }
     let payload: unknown;
     try { payload = JSON.parse(buffer); } catch { return invalid(); }
     if (!record(payload)) return invalid();
-    assertComplete(payload);
+    await observe(payload);
+    assertResponsesPayloadComplete(payload);
     return payload;
   } finally {
     await reader.cancel().catch(() => {});

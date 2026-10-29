@@ -21,7 +21,7 @@ import { pinnedRuleDiagnostics } from "./rules.js";
 import { pillowCutoutPrompt } from "./pillow-cutout-prompt.js";
 import { runPillowContourWorkflow } from "./pillow-contour-workflow.js";
 import type { DesignRun,DesignStep } from "./repository.js";
-import { OrderDesignError,type DesignStepInput,type OrderDesignSnapshot,type OrderDesignAssetPin,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
+import { OrderDesignError,type DesignStepInput,type OrderDesignSnapshot,type OrderDesignAssetPin,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignModelResponseReceipt,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
 
 type AssetMetadata={kind:"image"|"font";name:string;mediaType:string;width:number;height:number;hasAlpha:boolean;actualAlpha:boolean;scan:{result:string;signatureVersion:string};buyerOriginal?:boolean;operatorRecovery?:OrderDesignResponseRecoveryEvidence;modelEdit?:{renderId:string;sourceImageId:string;model:string;operation:string;enhancementPolicy?:string;promptVersion?:string;subjectPromptVersion?:string};superResolution?:Record<string,unknown>;sourcePinKey?:string;sourceWidth?:number;sourceHeight?:number};
 export type StepResult={assets?:Array<typeof images.$inferInsert>;document?:ProductionEditorDocument;output?:unknown;outputAssetId?:string;actualCostUsd?:number;
@@ -29,6 +29,7 @@ export type StepResult={assets?:Array<typeof images.$inferInsert>;document?:Prod
   proof?:{files:Array<{key:string;name:string;mediaType:string;byteSize:number;objectKey:string;checksumSha256:string}>;preflight:ProductionEditorPreflight};proofBackground?:"transparent"|"white";proofFormat?:"png"|"jpeg"};
 type Execution={context:TenantContext;run:DesignRun;step:DesignStep;input:DesignStepInput;snapshot:OrderDesignSnapshot;signal:AbortSignal;
   responseCheckpoint?:OrderDesignResponseCheckpoint;responseRecovery?:OrderDesignResponseRecoveryEvidence;assertActive:()=>Promise<void>;markSubmitted:()=>Promise<void>;
+  markProviderReceived:(receipt:OrderDesignModelResponseReceipt)=>Promise<void>;
   markReceived:(receipt:OrderDesignResponseReceipt)=>Promise<void>;checkpointResponse:(checkpoint:OrderDesignResponseCheckpoint)=>Promise<void>};
 
 /** Narrow tool registry: recipe steps select deterministic operations, never code
@@ -107,7 +108,7 @@ export class OrderDesignExecutor {
           const prompt=job.input.tool==="cutout_subject"?pillowCutoutPrompt(job.input,pipeline,job.snapshot.requirements)
             :`${ORDER_IMAGE_ENHANCEMENT_INSTRUCTION}只做照片保真美化，保留整张画面的主体、背景、边缘和已有透明区域；不抠图，不加描边、裁剪线、条码或装饰。`;
           await job.assertActive();
-          let result:{bytes:Buffer;actualCostUsd?:number};
+          let result:Awaited<ReturnType<OrderDesignImageGateway["generate"]>>;
           let responseCheckpoint=job.responseCheckpoint;
           if(responseCheckpoint) {
             const checkpoint=responseCheckpoint;
@@ -118,7 +119,8 @@ export class OrderDesignExecutor {
               const bytes=decryptProductionBytes(key,encrypted);
               if(checkpoint.requestId!==job.step.requestId || checkpoint.quarantined!==true || bytes.length!==checkpoint.byteSize || fingerprint(bytes)!==checkpoint.checksum)
                 throw new OrderDesignError("agent_model_response_checkpoint_invalid");
-              result={bytes,...(checkpoint.actualCostUsd!==undefined?{actualCostUsd:checkpoint.actualCostUsd}:{})};
+              result={bytes,...(checkpoint.actualCostUsd!==undefined?{actualCostUsd:checkpoint.actualCostUsd}:{}),
+                ...(checkpoint.tokenUsage!==undefined?{tokenUsage:checkpoint.tokenUsage}:{})};
             } catch(error) {
               if(error instanceof OrderDesignError)throw error;
               throw new OrderDesignError("agent_model_response_checkpoint_invalid");
@@ -126,10 +128,12 @@ export class OrderDesignExecutor {
           } else {
             await job.markSubmitted();
             result=await this.gateway.generate({context:job.context,requestId:job.step.requestId,model:job.snapshot.model,prompt,bytes:source,
-              size:sourceInfo.width/sourceInfo.height>1.25?"1536x1024":sourceInfo.height/sourceInfo.width>1.25?"1024x1536":"2048x2048",transparent:cutout || sourceInfo.actualAlpha,signal:job.signal});
+              size:sourceInfo.width/sourceInfo.height>1.25?"1536x1024":sourceInfo.height/sourceInfo.width>1.25?"1024x1536":"2048x2048",transparent:cutout || sourceInfo.actualAlpha,signal:job.signal,
+              onReceipt:job.markProviderReceived});
             // Persist receipt before scanning/decoding. A known response must never be sent again.
             const receipt:OrderDesignResponseReceipt={version:1,requestId:job.step.requestId,checksum:fingerprint(result.bytes),byteSize:result.bytes.length,
-              receivedAt:new Date().toISOString(),quarantined:true,...(result.actualCostUsd!==undefined?{actualCostUsd:result.actualCostUsd}:{})};
+              receivedAt:new Date().toISOString(),quarantined:true,...(result.actualCostUsd!==undefined?{actualCostUsd:result.actualCostUsd}:{}),
+              ...(result.tokenUsage!==undefined?{tokenUsage:result.tokenUsage}:{})};
             try {
               try{await job.markReceived(receipt);}catch(error){result.bytes.fill(0);throw error;}
               if(!result.bytes.length || result.bytes.length>64*1024*1024)throw new OrderDesignError("agent_asset_size_invalid");
@@ -138,7 +142,7 @@ export class OrderDesignExecutor {
               responseCheckpoint={...receipt,objectKey:stored.objectKey};
               await job.checkpointResponse(responseCheckpoint);
             } catch(error) {
-              if(error instanceof OrderDesignError&&["agent_source_expired","agent_claim_lost","agent_model_cost_report_invalid","agent_model_cost_conflict","agent_model_call_identity_invalid"].includes(error.code))throw error;
+              if(error instanceof OrderDesignError&&["agent_source_expired","agent_claim_lost","agent_model_cost_report_invalid","agent_model_cost_conflict","agent_model_usage_invalid","agent_model_usage_conflict","agent_model_call_identity_invalid"].includes(error.code))throw error;
               throw new OrderDesignError("agent_model_response_uncheckpointed");
             }
           }

@@ -481,8 +481,8 @@ function OrderBulkPanelContent({
             <p className="oc-notice">尚未配置分析模型，请先在 AI 设置中添加渠道和模型。</p>
           ) : (
             <p className="oc-hint">
-              {model?.maxTaskCostUsd != null ? `逐件提交预审，单件费用上限 $${model.maxTaskCostUsd}，本批上限 $${(model.maxTaskCostUsd * selected.length).toFixed(2)}` : `逐件提交 ${selected.length} 次预审，每次最多输出 6000 tokens；未配置单价，整批费用以渠道账单为准`}
-              。关闭页面后停止提交后续商品，已提交的任务继续运行。
+              {model?.maxTaskCostUsd != null ? `逐件提交预审，单件费用上限 $${model.maxTaskCostUsd}，本批上限 $${(model.maxTaskCostUsd * selected.length).toFixed(2)}` : `逐件提交 ${selected.length} 次预审；未配置单价，整批费用以渠道账单为准`}
+              。本次不设置输出 token 上限，记录实际用量。关闭页面后停止提交后续商品，已提交的任务继续运行。
             </p>
           ))}
         <div className="oc-actions">
