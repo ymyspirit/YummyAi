@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ForbiddenError, Permission } from "@yummyai/authz";
 import { erpSessionAuthority, type ErpSessionView } from "@yummyai/contracts/auth/session";
 import { StudioWorkspaceSchema } from "@yummyai/contracts/pod/studio-personal";
+import { ConfigurationSnapshotSchema, publicModelConfigurationError } from "@yummyai/contracts/ai/model-configuration";
 import { PersonalSessionError } from "./identity/core";
 import type * as ErpServer from "./erp-auth/server";
 
@@ -264,5 +265,70 @@ describe("bounded personal Studio JSON reads", () => {
     expect(denied.status).toBe(403); expect(await denied.text()).not.toContain("asset:read");
     const failure = studioPersonalFailure(500);
     expect(failure.status).toBe(502); expect(failure.headers.get("cache-control")).toBe("private, no-store");
+  });
+});
+
+describe("personal model configuration removal failures", () => {
+  const cases = [
+    ["model_configuration_revision_conflict", 409], ["model_configuration_channel_referenced", 409],
+    ["model_configuration_channel_busy", 409], ["model_configuration_model_busy", 409],
+    ["model_configuration_channel_missing", 404], ["model_configuration_model_missing", 404],
+  ] as const;
+  const configurationRequest = () => new Request("https://erp.example.test/api/creative-studio/configuration", {
+    method: "POST", headers: { "content-type": "application/json", "x-yummyai-context-authority": stamp },
+  });
+  const configurationCall = () => studioPersonalCall(configurationRequest(), identity, "ai/configuration", {
+    method: "POST", body: JSON.stringify({ operation: "channel.remove", id: actor.userId, revision: "synthetic-revision" }),
+  }, ConfigurationSnapshotSchema, 2 * 1024 * 1024);
+
+  it.each(cases)("returns only fixed %s presentation and the verified current authority at HTTP %i", async (code, status) => {
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code, message: "PRIVATE_REMOVAL_DIAGNOSTIC", route: { label: "PRIVATE_ROUTE", credential: "PRIVATE_CREDENTIAL" } }, { status }));
+    const response = await configurationCall();
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ code, error: publicModelConfigurationError(code, status)!.message });
+    expect(response.headers.get("x-yummyai-context-authority")).toBe(stamp);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.upstream).toHaveBeenCalledTimes(1);
+    expect(mocks.current).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not pass wrong-status codes, unknown codes or arbitrary diagnostic text as configuration owner failures", async () => {
+    for (const [code, status] of [["model_configuration_channel_busy", 503], ["model_configuration_channel_missing", 409], ["model_configuration_unknown", 409]] as const) {
+      mocks.upstream.mockResolvedValueOnce(Response.json({ code, message: "渠道诊断 PRIVATE_REMOVAL_DIAGNOSTIC", apiKey: "PRIVATE_CREDENTIAL" }, { status }));
+      const response = await configurationCall(), body = await response.json();
+      expect(response.status).toBe(status);
+      expect(body.code).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain("PRIVATE");
+    }
+    expect(mocks.upstream).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["creative-studio/workspace?scope=unassigned", "creative-studio/invoke"])("does not reuse configuration deletion codes for %s", async target => {
+    const code = "model_configuration_channel_busy";
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code, message: "PRIVATE_CONFIG_OWNER_DIAGNOSTIC" }, { status: 409 }));
+    const response = await studioPersonalCall(request(), identity, target, { method: "GET" }, StudioWorkspaceSchema, 4096), body = await response.json();
+    expect(response.status).toBe(409);
+    expect(body.code).toBeUndefined();
+    expect(body.error).not.toBe(publicModelConfigurationError(code, 409)!.message);
+    expect(JSON.stringify(body)).not.toContain("PRIVATE");
+    expect(mocks.upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks withdrawn authority before forwarding an otherwise known configuration rejection", async () => {
+    mocks.upstream.mockResolvedValueOnce(Response.json({ code: "model_configuration_channel_busy", message: "PRIVATE" }, { status: 409 }));
+    mocks.current.mockResolvedValueOnce().mockRejectedValueOnce(new PersonalSessionError(409, "authority_changed"));
+    const response = await configurationCall().catch(error => studioPersonalException(error, configurationRequest()));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toHaveProperty("code", "authority_changed");
+    expect(mocks.upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a lost configuration outcome unknown and never resends the removal", async () => {
+    mocks.upstream.mockRejectedValueOnce(new TypeError("PRIVATE_LOST_ACK_DIAGNOSTIC"));
+    const response = await configurationCall().catch(error => studioPersonalException(error, configurationRequest())), body = await response.json();
+    expect(response.status).toBe(502);
+    expect(body.code).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain("PRIVATE");
+    expect(mocks.upstream).toHaveBeenCalledTimes(1);
   });
 });

@@ -44,10 +44,10 @@ export class ModelConfigurationService {
       }
       else if (input.operation === "model.remove") {
         const current = (await this.snapshot(tx, context)).channels.find(channel => channel.id === input.channelId);
-        if (!current) throw new NotFoundException("模型渠道不存在");
-        if (current.revision !== input.revision) throw new ConflictException("模型配置已被修改，请刷新配置后重试");
+        if (!current) throw new NotFoundException({ code: "model_configuration_channel_missing", message: "模型渠道不存在" });
+        if (current.revision !== input.revision) throw new ConflictException({ code: "model_configuration_revision_conflict", message: "模型配置已被修改，请刷新配置后重试" });
         const [route] = await tx.select().from(modelRoutes).where(and(eq(modelRoutes.id, input.modelId), inArray(modelRoutes.taskType, [...studioTypes, "studio_analysis"]), eq(modelRoutes.status, "enabled")));
-        if (!route || route.targets.length !== 1 || route.targets[0]!.providerConfigId !== current.id) throw new NotFoundException("此渠道中没有该模型");
+        if (!route || route.targets.length !== 1 || route.targets[0]!.providerConfigId !== current.id) throw new NotFoundException({ code: "model_configuration_model_missing", message: "此渠道中没有该模型" });
         await this.removeModels(tx, context, [route.id]);
       }
       else if (input.operation === "channel.status") {
@@ -134,13 +134,13 @@ export class ModelConfigurationService {
 
   private async removeChannel(tx: TenantTransaction, context: TenantContext, input: Extract<ConfigurationRpc, { operation: "channel.remove" }>) {
     const current = (await this.snapshot(tx, context)).channels.find(channel => channel.id === input.id);
-    if (!current) throw new NotFoundException("模型渠道不存在或已删除");
-    if (current.revision !== input.revision) throw new ConflictException("渠道或模型已被修改，请刷新配置后重新确认删除");
-    if (current.dependentRoutes.length) throw new ConflictException(`该渠道仍被业务路由引用，请先调整：${current.dependentRoutes.map(route => route.label).join("、")}`);
+    if (!current) throw new NotFoundException({ code: "model_configuration_channel_missing", message: "模型渠道不存在或已删除" });
+    if (current.revision !== input.revision) throw new ConflictException({ code: "model_configuration_revision_conflict", message: "渠道或模型已被修改，请刷新配置后重新确认删除" });
+    if (current.dependentRoutes.length) throw new ConflictException({ code: "model_configuration_channel_referenced", message: `该渠道仍被业务路由引用，请先调整：${current.dependentRoutes.map(route => route.label).join("、")}` });
     // Include other members' tasks and snapshots whose route was disabled.
     const [assist] = await tx.select({ id: aiAssistRuns.id }).from(aiAssistRuns).where(and(inArray(aiAssistRuns.status, ["queued", "running"]), sql`${aiAssistRuns.modelSnapshot}->>'providerConfigId' = ${input.id}`)).limit(1);
     const [generation] = await tx.select({ id: creativeStudioGenerations.id }).from(creativeStudioGenerations).where(and(inArray(creativeStudioGenerations.status, ["queued", "running"]), sql`${creativeStudioGenerations.modelSnapshot}->>'providerConfigId' = ${input.id}`)).limit(1);
-    if (assist || generation) throw new ConflictException("该渠道仍有排队或进行中的任务，请等待完成或取消任务后再删除");
+    if (assist || generation) throw new ConflictException({ code: "model_configuration_channel_busy", message: "该渠道仍有排队或进行中的任务，请等待完成或取消任务后再删除" });
     const routes = await tx.select().from(modelRoutes);
     const ownedIds = routes.filter(route => route.targets.length === 1 && route.targets[0]!.providerConfigId === input.id).map(route => route.id);
     if (ownedIds.length) await this.removeModels(tx, context, ownedIds);
@@ -159,7 +159,7 @@ export class ModelConfigurationService {
       inArray(creativeStudioGenerations.status, ["queued", "running"]),
       sql`${creativeStudioGenerations.input}->>'modelId' in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`,
     )).limit(1);
-    if (assist || generation) throw new ConflictException("该模型仍有排队或进行中的任务，请等待完成或取消任务后再删除");
+    if (assist || generation) throw new ConflictException({ code: "model_configuration_model_busy", message: "该模型仍有排队或进行中的任务，请等待完成或取消任务后再删除" });
     await tx.update(modelRoutes).set({ status: "disabled", updatedAt: sql`clock_timestamp()` }).where(inArray(modelRoutes.id, ids));
     // Preferences are user-owned by RLS; another user's saved choices are never rewritten.
     const [preferences] = await tx.select().from(modelPreferences).where(eq(modelPreferences.userId, context.userId));

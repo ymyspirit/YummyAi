@@ -8,25 +8,28 @@ function snapshot(): ConfigurationSnapshot {
   return { channels: [{ id: channelId, name: "QA OpenAI", provider: "openai", baseUrl: "https://api.openai.com/v1", hasCredential: true, status: "enabled", revision: "a".repeat(64), analysisModels: [], dependentRoutes: [], models: [{ id: imageId, label: "QA Image", name: "gpt-image-fixture", capability: "image" }] }], analysisModels: [], defaults: emptyModelDefaults(), defaultsRevision: 0 };
 }
 async function fixture(page: Page) {
-  const state = { snapshot: snapshot(), failSave: false, failDiscover: false, failRemove: false, holdRemoval: null as Promise<void> | null, requests: [] as ConfigurationRpc[], externalCalls: [] as string[] };
+  const state = { snapshot: snapshot(), failSave: false, failDiscover: false, failRemove: false, unknownRemoval: null as "unchanged" | "saved" | null, holdRemoval: null as Promise<void> | null, requests: [] as ConfigurationRpc[], externalCalls: [] as string[] };
   // The actual ERP page and vendored runtime render; this fixture owns only the
   // configuration HTTP boundary. No live tenant configuration or provider is used.
   await page.route("https://api.openai.com/**", async route => { state.externalCalls.push(route.request().url()); await route.abort(); });
   await page.route("**/api/creative-studio/configuration", async route => {
     const input = route.request().postDataJSON() as ConfigurationRpc;
     state.requests.push(input);
+    const authority = route.request().headers()["x-yummyai-context-authority"];
+    const headers: Record<string, string> = authority ? { "x-yummyai-context-authority": authority } : {};
     let result: unknown = state.snapshot;
     if (input.operation === "channel.discover") {
-      if (state.failDiscover) { await route.fulfill({ status: 502, json: { error: "渠道不提供模型目录，请手动填写模型名称" } }); return; }
+      if (state.failDiscover) { await route.fulfill({ status: 502, headers, json: { error: "渠道不提供模型目录，请手动填写模型名称 PRIVATE_DISCOVERY_DIAGNOSTIC" } }); return; }
       result = { models: ["gpt-image-fixture", "gpt-text-fixture", "gpt-text-second"], fetchedAt: "2026-09-14T08:00:00Z", source: "provider", skipped: 0 };
     } else if (input.operation === "channel.save") {
-      if (state.failSave) { await route.fulfill({ status: 409, json: { error: "渠道已被修改，请刷新配置后重试" } }); return; }
+      if (state.failSave) { await route.fulfill({ status: 409, headers, json: { error: "渠道已被修改，请刷新配置后重试 PRIVATE_SAVE_DIAGNOSTIC" } }); return; }
       state.snapshot.channels = [{ ...state.snapshot.channels[0]!, name: input.name, baseUrl: input.baseUrl, revision: "b".repeat(64), models: input.models.map((model, index) => ({ ...model, id: model.id ?? `019a0000-0000-7000-8000-${String(index + 10).padStart(12, "0")}`, label: model.label ?? model.name })) }];
     } else if (input.operation === "defaults.save") {
       state.snapshot.defaults = input.defaults; state.snapshot.defaultsRevision++;
     } else if (input.operation === "channel.remove") {
       if (state.holdRemoval) await state.holdRemoval;
-      if (state.failRemove) { await route.fulfill({ status: 409, json: { error: "该渠道仍有排队或进行中的任务，请等待完成或取消任务后再删除" } }); return; }
+      if (state.failRemove) { await route.fulfill({ status: 409, headers, json: { code: "model_configuration_channel_busy", error: "PRIVATE_CHANNEL_BUSY_DIAGNOSTIC" } }); return; }
+      if (state.unknownRemoval === "unchanged") { await route.fulfill({ status: 502, headers, json: { error: "PRIVATE_REMOVAL_DIAGNOSTIC" } }); return; }
       const removed = state.snapshot.channels.find(channel => channel.id === input.id)!;
       const ids = [...removed.models, ...removed.analysisModels].map(model => model.id);
       state.snapshot.channels = state.snapshot.channels.filter(channel => channel.id !== input.id);
@@ -36,7 +39,8 @@ async function fixture(page: Page) {
     } else if (input.operation === "channel.status") state.snapshot.channels[0]!.status = input.status;
     else if (input.operation === "model.remove") {
       if (state.holdRemoval) await state.holdRemoval;
-      if (state.failRemove) { await route.fulfill({ status: 409, json: { error: "该模型仍有排队或进行中的任务，请等待完成或取消任务后再删除" } }); return; }
+      if (state.failRemove) { await route.fulfill({ status: 409, headers, json: { code: "model_configuration_model_busy", error: "PRIVATE_MODEL_BUSY_DIAGNOSTIC" } }); return; }
+      if (state.unknownRemoval === "unchanged") { await route.fulfill({ status: 502, headers, json: { error: "PRIVATE_REMOVAL_DIAGNOSTIC" } }); return; }
       const channel = state.snapshot.channels.find(item => item.id === input.channelId)!;
       channel.models = channel.models.filter(item => item.id !== input.modelId);
       channel.revision = "c".repeat(64);
@@ -44,7 +48,10 @@ async function fixture(page: Page) {
       for (const capability of ["image", "video", "text", "analysis"] as const) if (state.snapshot.defaults[capability] === input.modelId) state.snapshot.defaults[capability] = null;
       state.snapshot.defaultsRevision++;
     }
-    await route.fulfill({ status: 200, json: result });
+    if ((input.operation === "channel.remove" || input.operation === "model.remove") && state.unknownRemoval === "saved") {
+      await route.fulfill({ status: 502, headers, json: { error: "PRIVATE_LOST_ACK_DIAGNOSTIC" } }); return;
+    }
+    await route.fulfill({ status: 200, headers, json: result });
   });
   await page.route("**/api/ai-assists/models", async route => {
     await route.fulfill({ json: state.snapshot.analysisModels.map(model => ({ ...model, inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 })) });
@@ -74,9 +81,14 @@ test("upstream configuration discovers using saved credentials, selects models a
   expect(state.requests.find(request => request.operation === "channel.discover")).toEqual({ operation: "channel.discover", id: channelId, baseUrl: "https://api.openai.com/v1" });
   state.failSave = true;
   await drawer.getByRole("button", { name: "保存渠道", exact: true }).click();
-  await expect(frame.getByText("渠道已被修改，请刷新配置后重试", { exact: true })).toBeVisible();
+  await expect(frame.getByText("配置结果尚未核对 请读取原配置确认 未自动重试", { exact: true })).toBeVisible();
+  await expect(drawer).not.toContainText("PRIVATE");
+  await expect(drawer).not.toContainText("渠道已被修改，请刷新配置后重试");
   await expect(drawer).toBeVisible();
-  await expect(drawer).toContainText("custom-image-manual");
+  await expect(drawer.getByLabel("渠道名称", { exact: true })).toHaveValue("QA OpenAI");
+  await expect(drawer.getByLabel("接口地址", { exact: true })).toHaveValue("https://api.openai.com/v1");
+  await expect(drawer.getByLabel("API Key", { exact: true })).toHaveValue("");
+  for (const selected of ["gpt-image-fixture", "gpt-text-fixture", "gpt-text-second", "custom-image-manual"]) await expect(drawer).toContainText(selected);
   state.failSave = false;
   await drawer.getByRole("button", { name: "保存渠道", exact: true }).click();
   await expect(drawer).toBeHidden();
@@ -92,6 +104,8 @@ test("upstream configuration discovers using saved credentials, selects models a
 
 test("model deletion confirms, keeps failed removals visible, clears defaults and persists after reload", async ({ page }, testInfo) => {
   const { frame, state } = await fixture(page);
+  const removals = () => state.requests.filter((input): input is Extract<ConfigurationRpc, { operation: "model.remove" }> => input.operation === "model.remove");
+  const reads = () => state.requests.filter(input => input.operation === "configuration.get");
   state.snapshot.defaults.image = imageId;
   await frame.getByRole("button", { name: "刷新配置", exact: true }).click();
   await frame.getByRole("tab", { name: "模型管理", exact: true }).click();
@@ -100,24 +114,53 @@ test("model deletion confirms, keeps failed removals visible, clears defaults an
   const confirmation = frame.getByRole("dialog", { name: "删除模型“gpt-image-fixture”？", exact: true });
   await expect(confirmation).toContainText("历史任务和生成文件保留");
   await confirmation.getByRole("button", { name: /^取\s*消$/ }).click();
-  expect(state.requests.filter(input => input.operation === "model.remove")).toHaveLength(0);
+  expect(removals()).toHaveLength(0);
   await expect(remove).toBeVisible();
   state.failRemove = true;
   await remove.click();
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(frame.getByRole("alert")).toContainText("仍有排队或进行中的任务");
+  await expect(confirmation).not.toContainText("PRIVATE");
   await expect(confirmation).toBeVisible();
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
   expect(state.snapshot.channels[0]!.models).toHaveLength(1);
+  expect(removals()).toHaveLength(1);
+  expect(removals()[0]).toEqual({ operation: "model.remove", channelId, modelId: imageId, revision: "a".repeat(64) });
   state.failRemove = false;
+  state.snapshot.channels[0]!.revision = "b".repeat(64);
+  let priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
+  await expect(confirmation.getByRole("status")).toContainText("已读取最新配置 该模型仍在 请重新确认删除");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeEnabled();
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(1);
+  state.unknownRemoval = "unchanged";
+  await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(confirmation.getByRole("alert")).toContainText("删除结果尚未核对 请读取原配置确认 未自动重试");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
+  expect(removals()).toHaveLength(2);
+  expect(removals().at(-1)).toEqual({ operation: "model.remove", channelId, modelId: imageId, revision: "b".repeat(64) });
+  expect(state.snapshot.channels[0]!.models.map(model => model.id)).toEqual([imageId]);
+  expect(state.snapshot.defaults.image).toBe(imageId);
+  state.snapshot.channels[0]!.revision = "d".repeat(64);
+  priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
+  await expect(confirmation.getByRole("status")).toContainText("已读取最新配置 该模型仍在 请重新确认删除");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeEnabled();
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(2);
+  state.unknownRemoval = null;
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(confirmation).toBeHidden();
   await frame.getByRole("tab", { name: "渠道管理", exact: true }).click();
   await expect(frame.locator(".settings-channel")).toContainText("0 个创作模型");
   expect(state.snapshot.defaults.image).toBeNull();
-  expect(state.requests.filter(input => input.operation === "model.remove").at(-1)).toEqual({ operation: "model.remove", channelId, modelId: imageId, revision: "a".repeat(64) });
+  expect(removals()).toHaveLength(3);
+  expect(removals().at(-1)).toEqual({ operation: "model.remove", channelId, modelId: imageId, revision: "d".repeat(64) });
   await page.reload();
   await expect(frame.locator(".settings-channel")).toContainText("0 个创作模型", { timeout: 30_000 });
   await expect(remove).toHaveCount(0);
+  expect(removals()).toHaveLength(3);
   expect(state.externalCalls).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("configuration-model-deleted-desktop.png") });
 });
@@ -127,6 +170,8 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   // must be a real page element even when window.confirm cannot be used.
   await page.addInitScript(() => { window.confirm = () => { throw new Error("Native confirmation is unavailable in this browser"); }; });
   const { frame, state } = await fixture(page);
+  const removals = () => state.requests.filter((input): input is Extract<ConfigurationRpc, { operation: "model.remove" }> => input.operation === "model.remove");
+  const reads = () => state.requests.filter(input => input.operation === "configuration.get");
   await page.setViewportSize({ width: 390, height: 844 });
   state.snapshot.analysisModels = [{ id: analysisId, label: "QA 图文分析", model: "qa-vision-model", providerLabel: "QA OpenAI", providerConfigId: channelId }];
   state.snapshot.defaults.analysis = analysisId;
@@ -146,13 +191,24 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   await confirmation.getByRole("button", { name: "取消", exact: true }).click();
   await expect(confirmation).toBeHidden();
   await expect(remove).toBeFocused();
-  expect(state.requests.some(input => input.operation === "model.remove")).toBe(false);
+  expect(removals()).toHaveLength(0);
   state.failRemove = true;
   await remove.click();
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(confirmation.getByRole("alert")).toContainText("仍有排队或进行中的任务");
+  await expect(confirmation).not.toContainText("PRIVATE");
   await expect(confirmation).toBeVisible();
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
+  expect(removals()).toHaveLength(1);
+  expect(removals()[0]).toEqual({ operation: "model.remove", channelId, modelId: analysisId, revision: "a".repeat(64) });
   state.failRemove = false;
+  state.snapshot.channels[0]!.revision = "b".repeat(64);
+  const priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
+  await expect(confirmation.getByRole("status")).toContainText("已读取最新配置 该模型仍在 请重新确认删除");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeEnabled();
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(1);
   let finishRemoval!: () => void;
   state.holdRemoval = new Promise<void>(resolve => { finishRemoval = resolve; });
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
@@ -162,9 +218,12 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   await expect(confirmation).toBeVisible();
   finishRemoval();
   await expect(confirmation).toBeHidden();
+  expect(removals()).toHaveLength(2);
+  expect(removals().at(-1)).toEqual({ operation: "model.remove", channelId, modelId: analysisId, revision: "b".repeat(64) });
   await expect(page.getByText("模型已删除，历史分析结果保留。", { exact: true })).toBeVisible();
   await expect(remove).toHaveCount(0);
   await expect(page.getByText("尚未配置图文分析模型。", { exact: true })).toBeVisible();
+  expect(removals()).toHaveLength(2);
   expect(state.snapshot.defaults.analysis).toBeNull();
   await frame.getByRole("tab", { name: "默认模型", exact: true }).click();
   await expect(frame.locator(".settings-analysis-select")).toContainText("跟随默认文本模型");
@@ -172,6 +231,7 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   await frame.getByRole("tab", { name: "模型管理", exact: true }).click();
   await page.getByText("图文分析模型与费用设置", { exact: true }).click();
   await expect(page.getByText("尚未配置图文分析模型。", { exact: true })).toBeVisible();
+  expect(removals()).toHaveLength(2);
   expect(state.externalCalls).toEqual([]);
 });
 
@@ -204,6 +264,31 @@ test("channel removal shows its models, handles conflicts and pending state, and
   await frame.getByRole("button", { name: "刷新配置", exact: true }).click();
   await expect(frame.getByRole("button", { name: "删除模型 gpt-image-fixture", exact: true })).toBeHidden();
   await expect(page.getByText("图文分析模型与费用设置", { exact: true })).toBeHidden();
+  // Only this leaf owns these synthetic HTTP outcomes. Provider credentials and
+  // real tenant settings are never touched, and every reconcile stays a read.
+  let outcome: "busy" | "unknown_unchanged" | "unknown_saved" = "busy";
+  await page.route("**/api/creative-studio/configuration", async route => {
+    const input = route.request().postDataJSON() as ConfigurationRpc;
+    if (input.operation !== "channel.remove" && input.operation !== "configuration.get") { await route.fallback(); return; }
+    state.requests.push(input);
+    const authority = route.request().headers()["x-yummyai-context-authority"];
+    const headers: Record<string, string> = authority ? { "x-yummyai-context-authority": authority } : {};
+    if (input.operation === "configuration.get") { await route.fulfill({ status: 200, headers, json: state.snapshot }); return; }
+    if (state.holdRemoval) await state.holdRemoval;
+    if (outcome === "busy") {
+      await route.fulfill({ status: 409, headers, json: { code: "model_configuration_channel_busy", error: "PRIVATE_OWNER_DIAGNOSTIC" } });
+      return;
+    }
+    if (outcome === "unknown_saved") {
+      state.snapshot.channels = [];
+      state.snapshot.analysisModels = [];
+      state.snapshot.defaults = emptyModelDefaults();
+      state.snapshot.defaultsRevision++;
+    }
+    await route.fulfill({ status: 502, headers, json: { error: "PRIVATE_LOST_ACK_DIAGNOSTIC" } });
+  });
+  const removals = () => state.requests.filter((input): input is Extract<ConfigurationRpc, { operation: "channel.remove" }> => input.operation === "channel.remove");
+  const reads = () => state.requests.filter(input => input.operation === "configuration.get");
   const remove = frame.getByRole("button", { name: "删除渠道 QA OpenAI", exact: true });
   await remove.click();
   const confirmation = frame.getByRole("dialog", { name: "删除渠道“QA OpenAI”？", exact: true });
@@ -215,26 +300,63 @@ test("channel removal shows its models, handles conflicts and pending state, and
   await confirmation.getByRole("button", { name: /^取\s*消$/ }).click();
   await expect(confirmation).toBeHidden();
   expect(state.requests.some(input => input.operation === "channel.remove")).toBe(false);
-  state.failRemove = true;
   await remove.click();
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
-  await expect(confirmation.getByRole("alert")).toContainText("仍有排队或进行中的任务");
+  await expect(confirmation.getByRole("alert")).toContainText("该渠道仍有排队或进行中的任务 本次未删除");
+  await expect(confirmation).not.toContainText("PRIVATE");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
   expect(state.snapshot.channels).toHaveLength(1);
-  state.failRemove = false;
+  expect(removals()).toHaveLength(1);
+  await confirmation.getByRole("button", { name: /^取\s*消$/ }).click();
+  await remove.click();
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
+  state.snapshot.channels[0]!.revision = "b".repeat(64);
+  let priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
+  await expect(confirmation.getByRole("status")).toContainText("已读取最新配置 该渠道仍在 请重新确认删除");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeEnabled();
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(1);
+
+  outcome = "unknown_unchanged";
+  await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(confirmation.getByRole("alert")).toContainText("删除结果尚未核对 请读取原配置确认 未自动重试");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
+  expect(removals()).toHaveLength(2);
+  expect(removals().at(-1)).toEqual({ operation: "channel.remove", id: channelId, revision: "b".repeat(64) });
+  state.snapshot.channels[0]!.revision = "c".repeat(64);
+  priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
+  await expect(confirmation.getByRole("status")).toContainText("已读取最新配置 该渠道仍在 请重新确认删除");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeEnabled();
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(2);
+
+  outcome = "unknown_saved";
   let finish!: () => void;
   state.holdRemoval = new Promise<void>(resolve => { finish = resolve; });
   await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(confirmation.getByRole("button", { name: "正在删除", exact: true })).toBeDisabled();
   await expect(confirmation.getByRole("button", { name: /^取\s*消$/ })).toBeDisabled();
-  await frame.locator(".ant-modal").press("Escape");
+  await confirmation.press("Escape");
   await expect(confirmation).toBeVisible();
   finish();
+  await expect(confirmation.getByRole("alert")).toContainText("删除结果尚未核对 请读取原配置确认 未自动重试");
+  await expect(confirmation.getByRole("button", { name: "确认删除", exact: true })).toBeDisabled();
+  expect(removals()).toHaveLength(3);
+  expect(removals().at(-1)).toEqual({ operation: "channel.remove", id: channelId, revision: "c".repeat(64) });
+  priorReads = reads().length;
+  await confirmation.getByRole("button", { name: "读取原配置核对", exact: true }).click();
   await expect(confirmation).toBeHidden();
+  await expect(frame.getByRole("status").filter({ hasText: "已核对 当前渠道已不在配置中 未再次执行删除" })).toBeVisible();
   await expect(remove).toHaveCount(0);
+  expect(reads()).toHaveLength(priorReads + 1);
+  expect(removals()).toHaveLength(3);
   expect(state.snapshot.defaults).toEqual(emptyModelDefaults());
-  expect(state.requests.filter(input => input.operation === "channel.remove").at(-1)).toEqual({ operation: "channel.remove", id: channelId, revision: "a".repeat(64) });
   await page.reload();
   await expect(frame.getByText(/已配置 0 个渠道/)).toBeVisible({ timeout: 30_000 });
   await expect(remove).toHaveCount(0);
+  expect(removals()).toHaveLength(3);
   expect(state.externalCalls).toEqual([]);
 });
 
@@ -285,7 +407,9 @@ test("manual fallback and OpenAI defaults remain usable at mobile width", async 
   const modal = frame.getByRole("dialog", { name: /选择渠道模型/ });
   state.failDiscover = true;
   await modal.getByRole("button", { name: "拉取模型列表", exact: true }).click();
-  await expect(frame.getByText("渠道不提供模型目录，请手动填写模型名称", { exact: true })).toBeVisible();
+  await expect(frame.getByText("配置结果尚未核对 请读取原配置确认 未自动重试", { exact: true })).toBeVisible();
+  await expect(modal).not.toContainText("PRIVATE");
+  await expect(modal).not.toContainText("渠道不提供模型目录，请手动填写模型名称");
   await modal.getByPlaceholder("输入模型名称", { exact: true }).fill("gpt-image-fixture");
   await modal.getByRole("button", { name: "增加模型", exact: true }).click();
   await expect(modal.getByRole("checkbox", { name: "gpt-image-fixture", exact: true })).toBeChecked();

@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ConfigurationRpcSchema } from "@yummyai/contracts/ai/model-configuration";
+import { ConfigurationRpcSchema, publicModelConfigurationError } from "@yummyai/contracts/ai/model-configuration";
 import { Permission } from "@yummyai/authz/permissions";
-import { studioApi, studioScopeUnavailable, useStudioAccessFence, type StudioRequestContext } from "./studio-api";
+import { StudioApiError, studioApi, studioScopeUnavailable, useStudioAccessFence, type StudioRequestContext } from "./studio-api";
 
 export function ModelConfigurationFrame({ runtimeUrl, onState, onSaved, onView }: { runtimeUrl: string; onState: (value: { dirty: boolean; busy: boolean }) => void; onSaved: () => void; onView: (tab: "channels" | "models" | "defaults") => void }) {
   const access = useStudioAccessFence("configuration"), { capture } = access;
@@ -45,7 +45,9 @@ export function ModelConfigurationFrame({ runtimeUrl, onState, onSaved, onView }
         if (current()) send({ type: "studio.response", id: data.id, result });
       } catch (cause) {
         if (current()) {
-          if (studioScopeUnavailable(cause)) { live = false; controller.abort(); setSource(""); setLoaded(false); setError("当前模型配置权限已变化 已清除配置界面与填写 请重新核对本人权限"); stateCallback.current({ dirty: false, busy: false }); }
+          const configurationError = cause instanceof StudioApiError ? publicModelConfigurationError(cause.code, cause.status) : null;
+          if (configurationError) send({ type: "studio.response", id: data.id, error: configurationError.message });
+          else if (studioScopeUnavailable(cause)) { live = false; controller.abort(); setSource(""); setLoaded(false); setError("当前模型配置权限已变化 已清除配置界面与填写 请重新核对本人权限"); stateCallback.current({ dirty: false, busy: false }); }
           else send({ type: "studio.response", id: data.id, error: parsed.data.operation === "configuration.get"
             ? "模型配置读取失败 请重新读取原配置"
             : "配置结果尚未核对 请读取原配置确认 未自动重试" });

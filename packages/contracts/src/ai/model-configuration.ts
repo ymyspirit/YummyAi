@@ -31,6 +31,30 @@ export const ConfigurationRpcSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("defaults.save"), revision: z.int().nonnegative(), defaults: ModelDefaultsSchema }).strict(),
 ]);
 export type ConfigurationRpc = z.infer<typeof ConfigurationRpcSchema>;
+
+/** Fixed owner failures only; provider text and arbitrary diagnostics never cross the bridge. */
+const configurationRemovalFailures = {
+  model_configuration_revision_conflict: { status: 409, outcome: "rejected", message: "渠道或模型配置已变化 本次未删除 请读取最新配置后重新确认" },
+  model_configuration_channel_referenced: { status: 409, outcome: "rejected", message: "该渠道仍被业务路由使用 本次未删除 请先调整关联路由" },
+  model_configuration_channel_busy: { status: 409, outcome: "rejected", message: "该渠道仍有排队或进行中的任务 本次未删除 请先完成或取消相关任务" },
+  model_configuration_model_busy: { status: 409, outcome: "rejected", message: "该模型仍有排队或进行中的任务 本次未删除 请先完成或取消相关任务" },
+  model_configuration_channel_missing: { status: 404, outcome: "missing", message: "当前渠道不存在或已删除 请读取原配置核对" },
+  model_configuration_model_missing: { status: 404, outcome: "missing", message: "当前模型不存在或已删除 请读取原配置核对" },
+} as const;
+export type ModelConfigurationRemovalCode = keyof typeof configurationRemovalFailures;
+export function publicModelConfigurationError(code: unknown, status: number) {
+  if (typeof code !== "string" || !Object.hasOwn(configurationRemovalFailures, code)) return null;
+  const value = configurationRemovalFailures[code as ModelConfigurationRemovalCode];
+  return value.status === status ? { code: code as ModelConfigurationRemovalCode, ...value } : null;
+}
+/** The iframe receives presentation strings; classify only our exact fixed messages. */
+export function modelConfigurationRemovalFailure(message: unknown) {
+  if (typeof message !== "string") return null;
+  for (const [code, value] of Object.entries(configurationRemovalFailures)) {
+    if (value.message === message) return { code: code as ModelConfigurationRemovalCode, ...value };
+  }
+  return null;
+}
 export type ConfiguredChannelModel = z.infer<typeof ChannelModelSchema> & { id: string; label: string; imagePricing?: StudioImagePricing };
 export type ConfiguredChannel = {
   id: string; name: string; baseUrl: string; provider: string; hasCredential: boolean;

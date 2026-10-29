@@ -7,7 +7,9 @@
 .studio-analysis-settings[open]::details-content { opacity: 1; block-size: auto; }
 .studio-analysis-settings :is(.studio-alert, .studio-record, form) { animation: studio-analysis-enter 160ms ease-out; }
 .studio-analysis-settings input[type="number"] { font-variant-numeric: tabular-nums; }
+.studio-model-removal-dialog .studio-reconcile-removal { margin-right: auto; min-height: 40px; }
+.studio-model-removal-dialog footer { flex-wrap: wrap; }
 .studio-settings-runtime { min-width: 0; margin-block: 16px; animation: studio-analysis-enter 160ms ease-out; }
 @keyframes studio-analysis-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 600px) { .studio-analysis-settings :is(summary, button, input, select) { min-height: 44px; } .studio-analysis-settings .studio-analysis-model { align-items: flex-start; flex-wrap: wrap; } }
+@media (max-width: 600px) { .studio-analysis-settings :is(summary, button, input, select) { min-height: 44px; } .studio-analysis-settings .studio-analysis-model { align-items: flex-start; flex-wrap: wrap; } .studio-model-removal-dialog .studio-reconcile-removal { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .studio-analysis-settings, .studio-settings-runtime, .studio-analysis-settings :is(.studio-alert, .studio-record, form) { animation: none; } .studio-analysis-settings :is(button, input, select, summary), .studio-analysis-settings::details-content { transition: none; } .studio-analysis-settings button:active:enabled { transform: none; } }
