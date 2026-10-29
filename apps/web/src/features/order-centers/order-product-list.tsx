@@ -1,5 +1,6 @@
 "use client";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { AlertCircle, Archive, ChevronDown, ChevronUp, CircleHelp, FileClock, FileX2, LoaderCircle, RefreshCw, ScanSearch, Sparkles, X } from "lucide-react";
 import { Permission } from "@yummyai/authz/permissions";
@@ -16,8 +17,8 @@ import {
   orderOperatorTask,
   orderOperatorException,
 } from "@yummyai/contracts/order/workbench";
-import { OrderWorkDetailPanel, type OrderReviewState } from "./order-work-detail";
-import { OrderBulkPanel, type BulkOperation } from "./order-bulk-panel";
+import type { OrderReviewState } from "./order-work-detail";
+import type { BulkOperation } from "./order-bulk-panel";
 import { centerRequest, dateTime, OrderCenterRequestError } from "./order-center-model";
 import { OrderDeadlineSummary } from "./order-deadline-summary";
 import { OrderLifecycleBadge } from "./order-lifecycle";
@@ -25,6 +26,13 @@ import { useErpAccess } from "../identity/erp-access";
 import { orderSummaryMessages, orderSummaryState, type OrderSummaryState } from "./order-summary-state";
 import { orderCustomizationHighlights, orderFieldLabel, orderFieldPriority, orderFieldValue, orderLineUnits, orderProductLabel } from "./order-operations-summary";
 import { reconcileOrderProductSelection } from "./order-product-selection-model";
+
+const OrderWorkDetailPanel = dynamic(() => import("./order-work-detail").then(module => module.OrderWorkDetailPanel), {
+  loading: () => <p className="oc-notice" role="status">正在打开本件订单编辑…</p>,
+});
+const OrderBulkPanel = dynamic(() => import("./order-bulk-panel").then(module => module.OrderBulkPanel), {
+  loading: () => <p className="oc-notice" role="status">正在打开所选商品批量操作…</p>,
+});
 
 const initialState: OrderReviewState = { dirty: false, busy: false, loading: false };
 type ProductListProps = {

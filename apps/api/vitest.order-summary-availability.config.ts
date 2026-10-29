@@ -4,6 +4,6 @@ import { requireOrderSummaryEnvironment } from "../../tools/testing/require-orde
 requireOrderSummaryEnvironment(process.env);
 export default defineConfig({
   ...(process.env.YUMMYAI_TEST_CACHE_DIR ? { cacheDir: process.env.YUMMYAI_TEST_CACHE_DIR } : {}),
-  test: { include: ["src/orders/order-summary-availability.integration.test.ts"],
+  test: { include: ["src/orders/order-summary-availability.integration.test.ts", "src/orders/order-center-performance.integration.test.ts"],
     maxWorkers: 1, fileParallelism: false, testTimeout: 120_000, hookTimeout: 120_000 },
 });

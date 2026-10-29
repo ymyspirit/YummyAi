@@ -44,7 +44,7 @@ import {
   type DatabaseConnection,
   type TenantTransaction,
 } from "@yummyai/database";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
 
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT } from "../platform.tokens.js";
@@ -63,6 +63,25 @@ import { orderSummaryAvailability, orderSummaryUnavailableReason } from "./order
 import { amazonReportDeadlineEvidence, refreshAmazonReportPlatformDeadlines } from "./order-report-shipping.js";
 
 type ReportLine = typeof reportLines.$inferSelect;
+
+type SummaryReportLine = Omit<ReportLine, "encryptedSource">;
+type SummarySource = {
+  row: { report: SummaryReportLine; order: typeof orders.$inferSelect; line: typeof orderLines.$inferSelect };
+  report: SummaryReportLine;
+  availability: OrderWorkSummaryAvailability;
+  pin: string;
+  retentionDeadlines: Date[];
+};
+function summaryColumns<T extends Record<string, unknown>, K extends keyof T>(columns: T, omitted: readonly K[]): Omit<T, K> {
+  const result = { ...columns }; for (const key of omitted) delete result[key]; return result;
+}
+const summaryReportColumns = summaryColumns(getTableColumns(reportLines), ["encryptedSource"]);
+const summaryVersionColumns = summaryColumns(getTableColumns(versions), ["encryptedDocument", "encryptedArchive"]);
+const summaryPrivacyColumns = summaryColumns(getTableColumns(orderProtectedDetails), ["encryptedEnvelope"]);
+// Built-in PostgreSQL SHA-256 retains byte-level change detection without
+// transferring full encrypted photos, ZIPs or address envelopes for a header check.
+const summaryCiphertextHash = (column: SQL) => sql<string | null>`encode(sha256(convert_to(${column},'UTF8')),'hex')`;
+
 export type OrderSummaryReportSelection = { id: string; versionId: string | null; pinned: boolean };
 export type OrderSummaryReportRead = {
   selection: OrderSummaryReportSelection;
@@ -71,6 +90,8 @@ export type OrderSummaryReportRead = {
   detail: AmazonReportDetailView | null;
   /** Internal proof only. It is never part of the order summary wire DTO. */
   sourcePin: string | null;
+  /** Request-local deadlines let the coordinator reject a source that expires during catalog work. */
+  retentionDeadlines?: readonly Date[];
 };
 @Injectable()
 export class AmazonOrderReportService {
@@ -549,54 +570,113 @@ export class AmazonOrderReportService {
     if (selections.length > 100) throw new UnprocessableEntityException("每次最多读取 100 条定制资料");
     await withTenant(this.database.db, context, tx => currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true }));
     await this.cleanupExpired(context);
-    const result: OrderSummaryReportRead[] = [];
-    const unique = new Map(selections.map(selection => [canonicalJson(selection), selection]));
-    for (const selection of unique.values()) {
-      try {
-        result.push(await withTenant(this.database.db, context, async tx => {
-          await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
-          const source = await this.summarySource(tx, selection);
-          if (source.availability !== "available") return this.unavailableSummaryReport(selection, source.availability);
-          const stored = await this.readModel(tx, source.report, source.row.order.addressStatus);
-          // A ready immutable version must actually retain its private document.
-          if (source.report.currentVersionId && ["ready", "partial"].includes(source.report.state) && !stored)
-            return this.unavailableSummaryReport(selection, "cleared");
-          await this.access(tx, context, source.row.report.orderId);
-          const report = source.report.currentVersionId && stored && selection.pinned
-            ? { ...source.report, state: stored.metadata.warnings.length ? "partial" : "ready", hasPreview: stored.metadata.files.some(file => file.role === "preview") }
-            : source.report;
-          const detail = AmazonReportDetailViewSchema.parse({ line: toLine(report, source.row.order, source.row.line),
-            surfaces: stored?.metadata.surfaces ?? [], files: stored?.metadata.files ?? [], warnings: stored?.metadata.warnings ?? [],
-            versionId: source.report.currentVersionId });
-          const current = await this.summarySource(tx, selection);
-          if (current.availability !== "available") return this.unavailableSummaryReport(selection, current.availability);
-          if (current.pin !== source.pin) return this.unavailableSummaryReport(selection, "failed", "定制资料已变化 请重新读取");
-          return { selection, availability: "available" as const, error: null, detail, sourcePin: source.pin };
-        }));
-      } catch (error) {
-        if (error instanceof ForbiddenError) throw error;
-        result.push(this.unavailableSummaryReport(selection, "failed"));
+    const unique = [...new Map(selections.map(selection => [canonicalJson(selection), selection])).values()];
+    if (!unique.length) return [];
+    try {
+      return await withTenant(this.database.db, context, async tx => {
+        await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
+        const sources = await this.summarySources(tx, unique);
+        const versionIds = [...new Set([...sources.values()].filter(source => source.availability === "available")
+          .flatMap(source => source.report.currentVersionId ? [source.report.currentVersionId] : []))];
+        const projections = versionIds.length ? await tx.select({ versionId: readModels.versionId, encryptedMetadata: readModels.encryptedMetadata })
+          .from(readModels).where(inArray(readModels.versionId, versionIds)) : [];
+        const byVersion = new Map(projections.map(projection => [projection.versionId, projection]));
+        const result: OrderSummaryReportRead[] = [], auditRows: Array<typeof orderProtectedAccessEvents.$inferInsert> = [];
+        for (const selection of unique) {
+          const source = sources.get(canonicalJson(selection));
+          if (!source) { result.push(this.unavailableSummaryReport(selection, "failed")); continue; }
+          if (source.availability !== "available") { result.push(this.unavailableSummaryReport(selection, source.availability)); continue; }
+          try {
+            const projection = source.report.currentVersionId ? byVersion.get(source.report.currentVersionId) : undefined;
+            // Only legacy versions without a derived model use the original,
+            // isolated read/derive path. Normal list reads never fetch full media.
+            const stored = projection ? projection.encryptedMetadata ? {
+              metadata: this.vault.withSecret(projection.encryptedMetadata, raw => JSON.parse(raw) as ReviewMetadata), thumbnails: [],
+            } : null : await tx.transaction(inner => this.readModel(inner, source.report, source.row.order.addressStatus));
+            if (source.report.currentVersionId && ["ready", "partial"].includes(source.report.state) && !stored) {
+              result.push(this.unavailableSummaryReport(selection, "cleared")); continue;
+            }
+            auditRows.push({ id: createEntityId(), tenantId: context.tenantId, orderId: source.row.report.orderId,
+              purpose: "fulfillment", actorUserId: context.userId, granted: true });
+            const report = source.report.currentVersionId && stored && selection.pinned
+              ? { ...source.report, state: stored.metadata.warnings.length ? "partial" : "ready", hasPreview: stored.metadata.files.some(file => file.role === "preview") }
+              : source.report;
+            const detail = AmazonReportDetailViewSchema.parse({ line: toLine(report, source.row.order, source.row.line),
+              surfaces: stored?.metadata.surfaces ?? [], files: stored?.metadata.files ?? [], warnings: stored?.metadata.warnings ?? [],
+              versionId: source.report.currentVersionId });
+            result.push({ selection, availability: "available", error: null, detail, sourcePin: source.pin, retentionDeadlines: source.retentionDeadlines });
+          } catch (error) {
+            if (error instanceof ForbiddenError) throw error;
+            result.push(this.unavailableSummaryReport(selection, "failed"));
+          }
+        }
+        if (auditRows.length) await tx.insert(orderProtectedAccessEvents).values(auditRows);
+        const current = await this.summarySources(tx, unique);
+        for (let index = 0; index < result.length; index++) {
+          const read = result[index]!, source = current.get(canonicalJson(read.selection));
+          if (!source) result[index] = this.unavailableSummaryReport(read.selection, "failed");
+          else if (source.availability !== "available") result[index] = this.unavailableSummaryReport(read.selection, source.availability);
+          else if (read.availability === "available" && source.pin !== read.sourcePin)
+            result[index] = this.unavailableSummaryReport(read.selection, "failed", "定制资料已变化 请重新读取");
+        }
+        await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
+        return result;
+      });
+    } catch (error) {
+      if (error instanceof ForbiddenError) throw error;
+      // A database fault rolls the batch back first. Retry its local read in
+      // isolated transactions, never re-download/reprocess an archive or write a
+      // replacement version. A damaged row cannot suppress healthy peer rows.
+      const result: OrderSummaryReportRead[] = [];
+      for (const selection of unique) {
+        try {
+          result.push(await withTenant(this.database.db, context, async tx => {
+            await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
+            const source = await this.summarySource(tx, selection);
+            if (source.availability !== "available") return this.unavailableSummaryReport(selection, source.availability);
+            const stored = await this.readModel(tx, source.report, source.row.order.addressStatus);
+            if (source.report.currentVersionId && ["ready", "partial"].includes(source.report.state) && !stored)
+              return this.unavailableSummaryReport(selection, "cleared");
+            await this.access(tx, context, source.row.report.orderId);
+            const report = source.report.currentVersionId && stored && selection.pinned
+              ? { ...source.report, state: stored.metadata.warnings.length ? "partial" : "ready", hasPreview: stored.metadata.files.some(file => file.role === "preview") }
+              : source.report;
+            const detail = AmazonReportDetailViewSchema.parse({ line: toLine(report, source.row.order, source.row.line),
+              surfaces: stored?.metadata.surfaces ?? [], files: stored?.metadata.files ?? [], warnings: stored?.metadata.warnings ?? [],
+              versionId: source.report.currentVersionId });
+            const current = await this.summarySource(tx, selection);
+            if (current.availability !== "available") return this.unavailableSummaryReport(selection, current.availability);
+            if (current.pin !== source.pin) return this.unavailableSummaryReport(selection, "failed", "定制资料已变化 请重新读取");
+            return { selection, availability: "available" as const, error: null, detail, sourcePin: source.pin, retentionDeadlines: source.retentionDeadlines };
+          }));
+        } catch (failure) {
+          if (failure instanceof ForbiddenError) throw failure;
+          result.push(this.unavailableSummaryReport(selection, "failed"));
+        }
       }
+      return result;
     }
-    return result;
   }
 
-  /** The summary coordinator already owns the order lock. Verify retained source
-   * bytes and deadlines without a second private read, audit or read-model write. */
+  /** The coordinator owns order locks. Revalidate every original selection in
+   * one lightweight batch; the per-row savepoint path is only a fault fallback. */
   async verifySummaryDetailsInTransaction(tx: TenantTransaction, context: TenantContext,
     reads: readonly OrderSummaryReportRead[]): Promise<OrderSummaryReportRead[]> {
     await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead], { requireMembership: true });
+    const ordered = [...reads].sort((a, b) => (a.selection.versionId ?? a.selection.id).localeCompare(b.selection.versionId ?? b.selection.id));
+    let sources: Map<string, SummarySource> | null = null;
+    try { sources = await tx.transaction(inner => this.summarySources(inner, ordered.filter(read => read.availability !== "failed").map(read => read.selection))); }
+    catch (error) { if (error instanceof ForbiddenError) throw error; }
     const result: OrderSummaryReportRead[] = [];
-    for (const read of [...reads].sort((a, b) => (a.selection.versionId ?? a.selection.id).localeCompare(b.selection.versionId ?? b.selection.id))) {
-      // A failed parse is not retried or replaced by a different report version.
+    for (const read of ordered) {
       if (read.availability === "failed") { result.push(read); continue; }
       try {
-        // A lock/query error aborts only this savepoint, not healthy peer rows.
-        const source = await tx.transaction(inner => this.summarySource(inner, read.selection));
-        if (source.availability !== "available") result.push(this.unavailableSummaryReport(read.selection, source.availability));
+        const source = sources ? sources.get(canonicalJson(read.selection)) : await tx.transaction(inner => this.summarySource(inner, read.selection));
+        if (!source) result.push(this.unavailableSummaryReport(read.selection, "failed"));
+        else if (source.availability !== "available") result.push(this.unavailableSummaryReport(read.selection, source.availability));
         else if (read.availability !== "available") result.push(read);
         else if (!read.sourcePin || source.pin !== read.sourcePin) result.push(this.unavailableSummaryReport(read.selection, "failed", "定制资料已变化 请重新读取"));
-        else result.push(read);
+        else result.push({ ...read, retentionDeadlines: source.retentionDeadlines });
       } catch (error) {
         if (error instanceof ForbiddenError) throw error;
         result.push(this.unavailableSummaryReport(read.selection, "failed"));
@@ -610,35 +690,71 @@ export class AmazonOrderReportService {
     return { selection, availability, error, detail: null, sourcePin: null };
   }
 
-  private async summarySource(tx: TenantTransaction, selection: OrderSummaryReportSelection) {
-    const row = await this.loadLine(tx, selection.id, true);
-    const [privacy] = await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, row.order.id));
-    const selectedId = selection.pinned ? selection.versionId : row.report.currentVersionId;
-    const [version] = selectedId ? await tx.select().from(versions).where(and(eq(versions.id, selectedId), eq(versions.reportLineId, row.report.id)))
-      .for("share", { of: versions, noWait: true }) : [];
+  /** One request-local source batch; no private body or key leaves this transaction. */
+  private async summarySources(tx: TenantTransaction, selections: readonly OrderSummaryReportSelection[]): Promise<Map<string, SummarySource>> {
+    const unique = [...new Map(selections.map(selection => [canonicalJson(selection), selection])).values()];
+    if (!unique.length) return new Map();
+    const ids = [...new Set(unique.map(selection => selection.id))].sort();
+    const discovered = await tx.select({ orderId: reportLines.orderId }).from(reportLines).where(inArray(reportLines.id, ids));
+    const orderIds = [...new Set(discovered.map(row => row.orderId))].sort();
+    // Same retention lock direction as the coordinator: order, privacy, version.
+    if (orderIds.length) await tx.select({ id: orders.id }).from(orders).where(inArray(orders.id, orderIds)).orderBy(asc(orders.id)).for("share");
+    const privacy = orderIds.length ? await tx.select({ ...summaryPrivacyColumns,
+      retained: sql<boolean>`nullif(${orderProtectedDetails.encryptedEnvelope},'') is not null`,
+      envelopeHash: summaryCiphertextHash(sql`${orderProtectedDetails.encryptedEnvelope}`) })
+      .from(orderProtectedDetails).where(inArray(orderProtectedDetails.orderId, orderIds)).orderBy(asc(orderProtectedDetails.orderId)).for("share") : [];
+    const rows = await tx.select({ report: summaryReportColumns, order: orders, line: orderLines,
+      sourceRetained: sql<boolean>`nullif(${reportLines.encryptedSource},'') is not null`,
+      sourceHash: summaryCiphertextHash(sql`${reportLines.encryptedSource}`) })
+      .from(reportLines).innerJoin(orders, eq(orders.id, reportLines.orderId)).innerJoin(orderLines, eq(orderLines.id, reportLines.orderLineId))
+      .where(inArray(reportLines.id, ids)).orderBy(asc(orders.id), asc(reportLines.id));
+    const rowById = new Map(rows.map(row => [row.report.id, row]));
+    const versionIds = [...new Set(unique.flatMap(selection => {
+      const id = selection.pinned ? selection.versionId : rowById.get(selection.id)?.report.currentVersionId;
+      return id ? [id] : [];
+    }))].sort();
+    const selectedVersions = versionIds.length ? await tx.select({ ...summaryVersionColumns,
+      documentRetained: sql<boolean>`nullif(${versions.encryptedDocument},'') is not null`,
+      documentHash: summaryCiphertextHash(sql`${versions.encryptedDocument}`),
+      archiveHash: summaryCiphertextHash(sql`${versions.encryptedArchive}`) })
+      .from(versions).where(inArray(versions.id, versionIds)).orderBy(asc(versions.id)).for("share", { of: versions, skipLocked: true }) : [];
+    const versionById = new Map(selectedVersions.map(version => [version.id, version])), privacyByOrder = new Map(privacy.map(row => [row.orderId, row]));
     const [clock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp() as now`);
-    const now = new Date(clock!.now);
-    let availability = orderSummaryAvailability({ anonymized: row.order.addressStatus === "anonymized" || privacy?.status === "anonymized",
-      deadlines: [row.report.expiresAt, ...(privacy ? [privacy.retentionExpiresAt] : []), ...(version ? [version.expiresAt] : [])],
-      cleared: Boolean(privacy && !privacy.encryptedEnvelope) || Boolean(version && !version.encryptedDocument) ||
-        (!selection.pinned && row.report.state !== "none" && !row.report.encryptedSource),
-      failed: Boolean(selectedId && !version) || !selection.pinned && (row.report.state === "failed" ||
-        (["ready", "partial"].includes(row.report.state) && !selectedId)),
-    }, now);
-    if (availability === "available" && row.report.state === "expired") availability = "expired";
-    // A null pin means there was no report version in the saved work basis.
-    // It never grants access to a later archive merely because one now exists.
-    const report: ReportLine = selection.pinned ? { ...row.report, currentVersionId: selectedId,
-      versionNumber: version?.versionNumber ?? 0, updatedAt: version?.createdAt ?? row.report.updatedAt,
-      state: version ? "ready" : "none", hasPreview: false,
-      currency: row.report.currentVersionId === selectedId ? row.report.currency : null,
-      itemTotalMinor: row.report.currentVersionId === selectedId ? row.report.itemTotalMinor : null,
-    } : row.report;
-    // Convert PostgreSQL Date values to their JSON timestamps before canonical
-    // sorting; canonicalJson itself deliberately accepts plain transport values.
-    const pin = checksum(canonicalJson(JSON.parse(JSON.stringify({ selection, report: row.report, order: row.order, line: row.line,
-      privacy: privacy ?? null, version: version ?? null }))));
-    return { row, report, availability, pin };
+    const now = new Date(clock!.now), result = new Map<string, SummarySource>();
+    for (const selection of unique) {
+      const row = rowById.get(selection.id); if (!row) continue;
+      const protectedDetail = privacyByOrder.get(row.order.id);
+      const selectedId = selection.pinned ? selection.versionId : row.report.currentVersionId;
+      const candidate = selectedId ? versionById.get(selectedId) : undefined;
+      const version = candidate?.reportLineId === row.report.id ? candidate : undefined;
+      const retentionDeadlines = [row.report.expiresAt, ...(protectedDetail ? [protectedDetail.retentionExpiresAt] : []), ...(version ? [version.expiresAt] : [])];
+      let availability = orderSummaryAvailability({ anonymized: row.order.addressStatus === "anonymized" || protectedDetail?.status === "anonymized",
+        deadlines: retentionDeadlines,
+        cleared: Boolean(protectedDetail && !protectedDetail.retained) || Boolean(version && !version.documentRetained) ||
+          (!selection.pinned && row.report.state !== "none" && !row.sourceRetained),
+        failed: Boolean(selectedId && !version) || !selection.pinned && (row.report.state === "failed" ||
+          (["ready", "partial"].includes(row.report.state) && !selectedId)),
+      }, now);
+      if (availability === "available" && row.report.state === "expired") availability = "expired";
+      const report: SummaryReportLine = selection.pinned ? { ...row.report, currentVersionId: selectedId,
+        versionNumber: version?.versionNumber ?? 0, updatedAt: version?.createdAt ?? row.report.updatedAt,
+        state: version ? "ready" : "none", hasPreview: false,
+        currency: row.report.currentVersionId === selectedId ? row.report.currency : null,
+        itemTotalMinor: row.report.currentVersionId === selectedId ? row.report.itemTotalMinor : null,
+      } : row.report;
+      // This pin is internal to this read. It covers every original header and
+      // all four original ciphertexts, without persisting a new source version.
+      const pin = checksum(canonicalJson(JSON.parse(JSON.stringify({ selection, report: row.report, order: row.order, line: row.line,
+        sourceRetained: row.sourceRetained, sourceHash: row.sourceHash, privacy: protectedDetail ?? null, version: version ?? null }))));
+      result.set(canonicalJson(selection), { row, report, availability, pin, retentionDeadlines });
+    }
+    return result;
+  }
+
+  private async summarySource(tx: TenantTransaction, selection: OrderSummaryReportSelection): Promise<SummarySource> {
+    const source = (await this.summarySources(tx, [selection])).get(canonicalJson(selection));
+    if (!source) throw new NotFoundException("订单行不存在");
+    return source;
   }
 
   /** Internal review handoff: never replace unavailable pinned evidence with the latest report. */
@@ -950,7 +1066,7 @@ export class AmazonOrderReportService {
 
   private async readModel(
     tx: TenantTransaction,
-    line: ReportLine,
+    line: Pick<ReportLine, "id" | "tenantId" | "currentVersionId" | "state" | "expiresAt">,
     addressStatus: string,
     thumbnails = false,
   ): Promise<ReadModel | null> {
@@ -999,7 +1115,7 @@ export class AmazonOrderReportService {
 
   private async readDocument(
     tx: TenantTransaction,
-    line: ReportLine,
+    line: Pick<ReportLine, "id" | "currentVersionId" | "state" | "expiresAt">,
     addressStatus: string,
   ): Promise<StoredDocument | null> {
     if (
@@ -1105,7 +1221,7 @@ function toBatch(row: typeof batches.$inferSelect): AmazonReportBatchView {
 }
 
 function toLine(
-  report: ReportLine,
+  report: SummaryReportLine,
   order: typeof orders.$inferSelect,
   line: typeof orderLines.$inferSelect,
 ): AmazonReportLineView {

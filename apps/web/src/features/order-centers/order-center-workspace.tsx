@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, FileUp, RefreshCw } from "lucide-react";
@@ -11,7 +12,6 @@ import {
   type OrderCenterOptions,
 } from "@yummyai/contracts/order/workspace";
 import { centers, centerRead, dateTime } from "./order-center-model";
-import { OrderReviewDrawer } from "./order-review-drawer";
 import { OrderProductList } from "./order-product-list";
 import { OrderFulfillmentList } from "./order-fulfillment-list";
 import { orderReviewQueue } from "./order-whole-detail-model";
@@ -24,6 +24,10 @@ import "./order-operator.css";
 import { returnHref } from "../navigation/workflow-href";
 import { orderMatchingSummary } from "./order-operations-summary";
 import { OrderDeadlineSummary } from "./order-deadline-summary";
+
+const OrderReviewDrawer = dynamic(() => import("./order-review-drawer").then(module => module.OrderReviewDrawer), {
+  loading: () => <p className="oc-notice" role="status">正在打开订单详情…</p>,
+});
 
 const empty: {
   items: OrderWorkListItem[];
