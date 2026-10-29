@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createEntityId } from "@yummyai/contracts";
-import { AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { AssistViewSchema, CreateAssistSchema, type AssistHistoryEntry } from "@yummyai/contracts/ai/assist";
 import { AssistAutomaticAuditReuseProofSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
 import { ARTWORK_AUDIT_POLICY, ArtworkAuditCodeSchema, ArtworkAuditReportSchema } from "@yummyai/contracts/ai/artwork-audit";
 import { erpSessionAuthority, type ErpSessionView } from "@yummyai/contracts/auth/session";
@@ -59,6 +59,36 @@ describe("AI assist authenticated proxy", () => {
     vi.clearAllMocks(); mocks.upstream.mockReset(); mocks.identity.mockResolvedValue({ view: actor }); mocks.current.mockResolvedValue();
     mocks.failure.mockImplementation((error: PersonalSessionError) => Response.json({ code: error.code }, { status: error.status }));
     process.env.API_BASE_URL = "http://api.test";
+  });
+
+  it.each(["knowledge_answer", "artwork_preflight"] as const)("preserves shared usage history for %s before the client reads the original detail", async kind => {
+    const reader = kind === "artwork_preflight" ? auditMetadata().reviewer : actor;
+    mocks.identity.mockResolvedValue({ view: reader });
+    const stamp = erpSessionAuthority(reader), automatic = kind === "artwork_preflight";
+    const query = new URLSearchParams({ kind, scope: (automatic ? "order:" : "knowledge:") + createEntityId(), ...(automatic ? { automaticAudit: "1" } : {}) });
+    const row: AssistHistoryEntry = { id: createEntityId(), status: "completed", createdAt: "2026-10-29T00:00:00.000Z", modelLabel: "Synthetic history model",
+      tokenUsage: { version: "model-token-usage-v1", inputTokens: 100, outputTokens: 60, cachedInputTokens: 20, totalTokens: 160, totalTokensBasis: "provider" },
+      usageSummary: { scope: "assist_scope", state: "complete", callCount: 1, reportedCalls: 1, unknownCalls: 0,
+        inputTokens: 100, outputTokens: 60, cachedInputTokens: 20, totalTokens: 160 } };
+    mocks.upstream.mockResolvedValueOnce(Response.json([row]));
+    const response = await GET(new Request(`${origin}/api/ai-assists/runs?${query}`, { headers: { "x-yummyai-context-authority": stamp } }), context(["runs"]));
+    expect(response.status).toBe(200); expect(await response.json()).toEqual([row]);
+    expect(response.headers.get("x-yummyai-context-authority")).toBe(stamp);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.upstream).toHaveBeenCalledWith(`http://api.test/v1/ai-assists/runs?${query}`, expect.objectContaining({ method: "GET", cache: "no-store" }));
+    expect(mocks.current).toHaveBeenCalledOnce();
+  });
+
+  it("keeps legacy history readable but rejects unknown fields in the upstream history", async () => {
+    const row = { id: createEntityId(), status: "completed", createdAt: "2026-10-29T00:00:00.000Z", modelLabel: "Synthetic legacy model" };
+    const target = () => new Request(`${origin}/api/ai-assists/runs?kind=knowledge_answer&scope=knowledge:${createEntityId()}`,
+      { headers: { "x-yummyai-context-authority": authority } });
+    mocks.upstream.mockResolvedValueOnce(Response.json([row]));
+    const legacy = await GET(target(), context(["runs"]));
+    expect(legacy.status).toBe(200); expect(await legacy.json()).toEqual([row]);
+    mocks.upstream.mockResolvedValueOnce(Response.json([{ ...row, syntheticPrivateBody: "Synthetic substituted response" }]));
+    const invalid = await GET(target(), context(["runs"]));
+    expect(invalid.status).toBe(502); expect(await invalid.text()).not.toContain("Synthetic substituted response");
   });
 
   it.each([

@@ -13,7 +13,7 @@ import {
 } from "@yummyai/contracts";
 import { CreativeRequirementsSchema } from "@yummyai/contracts/catalog/artwork";
 import { CANVAS_WORKFLOW_TEMPLATES } from "@yummyai/contracts/pod/canvas-bridge";
-import { AssistResultSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { AssistHistoryEntrySchema, AssistResultSchema, CreateAssistSchema, type CreateAssist } from "@yummyai/contracts/ai/assist";
 import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
 import {
   aiAssistRuns,
@@ -751,6 +751,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
     await processor.process(envelope(task.id));
     const done = await verifyGovernedTask(task.id);
     expect(done.status).toBe("completed");
+    const historyEntry = AssistHistoryEntrySchema.parse(
+      (await assists.list(context, done.kind, done.scope)).find(entry => entry.id === task.id),
+    );
+    expect(historyEntry).toEqual({
+      id: done.id, status: done.status, createdAt: new Date(done.createdAt).toISOString(),
+      modelLabel: done.modelLabel, tokenUsage: done.tokenUsage, usageSummary: done.usageSummary,
+    });
     expect(done.result?.directions).toHaveLength(3);
     expect(done.costUsd).toBeGreaterThan(0);
     expect(done.invocations?.[0]).toMatchObject({owner:"assist",boundary:"received",billing:{basis:"configured_rate",needsProviderEvidence:true},responseChecksum:expect.stringMatching(/^[a-f0-9]{64}$/)});
@@ -1041,6 +1048,13 @@ describe("AI assists use real tenant services and immutable background tasks", (
       await processor.process(envelope(task.id));
       const completed = await verifyGovernedTask(task.id);
       expect(completed.status).toBe("completed");
+      const historyEntry = AssistHistoryEntrySchema.parse(
+        (await assists.list(context, "artwork_preflight", completed.scope, true)).find(entry => entry.id === task.id),
+      );
+      expect(historyEntry).toEqual({
+        id: completed.id, status: completed.status, createdAt: new Date(completed.createdAt).toISOString(),
+        modelLabel: completed.modelLabel, tokenUsage: completed.tokenUsage, usageSummary: completed.usageSummary,
+      });
       expect(completed.artworkAudit?.checks.find(c => c.code === "visualReview")?.status).toBe("needs_review"); // No customer image in this fixture.
       expect(completed.artworkAudit?.checks.find(c => c.code === "barcodeTab")?.status).toBe("passed");
       expect(await repository.current(context, file.project.id, file.version.id)).toEqual(completed.artworkAudit);

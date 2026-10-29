@@ -331,6 +331,15 @@ export const AssistViewSchema = z
       .default([]),
   })
   .strict();
+export const AssistHistoryEntrySchema = AssistViewSchema.pick({
+  id: true,
+  status: true,
+  createdAt: true,
+  modelLabel: true,
+  tokenUsage: true,
+  usageSummary: true,
+}).strict();
+export type AssistHistoryEntry = z.infer<typeof AssistHistoryEntrySchema>;
 export type AssistKind = z.infer<typeof AssistKindSchema>;
 export type CreateAssist = z.infer<typeof CreateAssistSchema>;
 export type AssistResult = z.infer<typeof AssistResultSchema>;

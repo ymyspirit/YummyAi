@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
-import { AssistBasisViewSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema, businessAssistSelection, type CreateAssist } from "@yummyai/contracts/ai/assist";
+import { AssistBasisViewSchema, AssistHistoryEntrySchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema, businessAssistSelection, type CreateAssist } from "@yummyai/contracts/ai/assist";
 import { AssistTaskBasisSchema, AssistTaskTargetsSchema, AssistTaskWorkspaceSchema } from "@yummyai/contracts/ai/task-workspace";
 import { AssistTargetPageViewSchema } from "@yummyai/contracts/ai/task-target-page";
 import { AssistAutomaticAuditReuseProofSchema, AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
@@ -32,7 +32,7 @@ export class AssistRequestError extends Error {
 export function assistReadDenied(cause: unknown): cause is AssistRequestError {
   return cause instanceof AssistRequestError && ([401, 403, 404].includes(cause.status) || cause.code === "authority_changed");
 }
-const historySchema = z.array(AssistViewSchema.pick({ id: true, status: true, createdAt: true, modelLabel: true }).strict()).max(20);
+const historySchema = z.array(AssistHistoryEntrySchema).max(20);
 export function assistErrorMessage(status: number, code?: string | null) {
   if (status === 409 && code && Object.hasOwn(assistConfigurationErrors, code)) return assistConfigurationErrors[code as AssistConfigurationError];
   return code === "authority_changed" ? "当前身份或授权范围已变化 原私有资料已隐藏 请重新核对" : code === "agent_collection_changed" || code === "assist_target_collection_changed" ? "读取期间原集合已变化 已清除旧页 请从第一页重新读取" :

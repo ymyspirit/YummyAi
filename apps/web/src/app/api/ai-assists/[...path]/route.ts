@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { AssistBasisViewSchema, AssistBusinessSelectionSchema, AssistKindSchema, AssistModelInputSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { AssistBasisViewSchema, AssistBusinessSelectionSchema, AssistHistoryEntrySchema, AssistKindSchema, AssistModelInputSchema, AssistModelSchema, AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
 import { AssistTaskBasisRequestSchema, AssistTaskBasisSchema, AssistTaskQuerySchema, AssistTaskTargetsSchema, AssistTaskTargetQuerySchema, AssistTaskWorkspaceSchema } from "@yummyai/contracts/ai/task-workspace";
 import { AssistTargetPageQuerySchema, AssistTargetPageViewSchema } from "@yummyai/contracts/ai/task-target-page";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
@@ -20,7 +20,7 @@ type Context = { params: Promise<{ path: string[] }> };
 const privateHeaders = { "cache-control": "private, no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 const Id = z.uuidv7();
 const historyQuery = z.object({ kind: AssistKindSchema, scope: z.string().max(200).regex(/^(?:(creative|order|template|listing|finance|case|knowledge):[0-9a-f-]{36}|procurement:[0-9a-f-]{36}:[0-9a-f-]{36})$/i), automaticAudit: z.literal("1").optional() }).strict();
-const historyView = z.array(AssistViewSchema.pick({ id: true, status: true, createdAt: true, modelLabel: true }).strict()).max(20);
+const historyView = z.array(AssistHistoryEntrySchema).max(20);
 class TooLarge extends Error {}
 const configurationFailures = {
   assist_model_changed: "模型配置已变化 请刷新模型后核对再分析 当前填写仍保留",

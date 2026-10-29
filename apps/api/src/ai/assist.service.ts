@@ -31,12 +31,14 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   AssistModelInputSchema,
   AssistBudgetStateSchema,
+  AssistHistoryEntrySchema,
   CreateAssistSchema,
   type CreateAssist,
   type AssistKind,
   type AssistModel,
   type AssistResult,
   type AssistView,
+  type AssistHistoryEntry,
 } from "@yummyai/contracts/ai/assist";
 import { BusinessBenchmarkCaseSchema, BUSINESS_BENCHMARK_ROLES, LEGACY_BUSINESS_BENCHMARK_ROLES } from "@yummyai/contracts/knowledge/benchmark";
 import { AssistAutomaticAuditReuseProofSchema, AssistReceiptQuerySchema, AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
@@ -486,7 +488,7 @@ export class AssistService {
       policy: audit.policy, orderLineId: audit.orderLineId, revision: audit.revision, editorVersionId: audit.versionId });
   }
 
-  async list(context: TenantContext, kind: AssistKind, scope: string, automaticAudit = false) {
+  async list(context: TenantContext, kind: AssistKind, scope: string, automaticAudit = false): Promise<AssistHistoryEntry[]> {
     authorizeAssist(context, kind);
     if(automaticAudit&&kind!=="artwork_preflight")throw new BadRequestException("自动核对仅适用于生产稿");
     const usageSummary=await withTenant(this.database.db,context,tx=>readAssistUsageSummary(tx,context.userId,kind,scope));
@@ -498,7 +500,7 @@ export class AssistService {
         const input = await this.vault.withSecret(row.encryptedInput, value => JSON.parse(value) as AssistContext);
         if (input.artworkAudit) result.push({id: row.id, status: row.status, createdAt: row.createdAt, modelLabel: row.modelSnapshot.label,tokenUsage:row.tokenUsage??null,usageSummary});
       }
-      return result.slice(0, 20);
+      return result.slice(0, 20).map(row => AssistHistoryEntrySchema.parse({ ...row, createdAt: row.createdAt.toISOString() }));
     }
     const rows=await withTenant(this.database.db, context, (tx) =>
       tx
@@ -514,7 +516,7 @@ export class AssistService {
         .orderBy(desc(runs.createdAt))
         .limit(20),
     );
-    return rows.map(row=>({...row,usageSummary}));
+    return rows.map(row=>AssistHistoryEntrySchema.parse({...row,createdAt:row.createdAt.toISOString(),usageSummary}));
   }
 
   /** Read an original owner/request receipt. Never enqueue, reserve or resubmit. */
