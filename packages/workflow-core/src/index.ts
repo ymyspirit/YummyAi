@@ -44,3 +44,6 @@ export * from "./agent-native-v4-protocol.js";
 export * from "./agent-native-v4-model.js";
 export * from "./agent-native-v4-evidence.js";
 export * from "./agent-native-v4-runtime.js";
+
+export * from "./assist/ai-assist-execution.js";
+export * from "./assist/provider-selection.js";

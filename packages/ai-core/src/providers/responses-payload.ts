@@ -1,32 +1,54 @@
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
-const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-const invalid = (): never => { throw new Error("model_response_invalid"); };
+const record = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+const invalid = (): never => {
+  throw new Error("model_response_invalid");
+};
 export function assertResponsesPayloadComplete(payload: Record<string, unknown>) {
-  if (payload.status !== undefined && payload.status !== "completed" || payload.error || payload.incomplete_details)
+  if (
+    (payload.status !== undefined && payload.status !== "completed") ||
+    payload.error ||
+    payload.incomplete_details
+  )
     throw new Error("model_response_incomplete");
   if (payload.output !== undefined && !Array.isArray(payload.output)) return invalid();
   for (const item of (payload.output ?? []) as unknown[]) {
     if (!record(item)) return invalid();
-    if (item.status !== undefined && item.status !== "completed" || item.type === "refusal") throw new Error("model_response_incomplete");
+    if ((item.status !== undefined && item.status !== "completed") || item.type === "refusal")
+      throw new Error("model_response_incomplete");
     if (item.content !== undefined && !Array.isArray(item.content)) return invalid();
     for (const part of (item.content ?? []) as unknown[]) {
       if (!record(part)) return invalid();
-      if (part.type === "refusal" || part.refusal !== undefined || part.status !== undefined && part.status !== "completed")
+      if (
+        part.type === "refusal" ||
+        part.refusal !== undefined ||
+        (part.status !== undefined && part.status !== "completed")
+      )
         throw new Error("model_response_incomplete");
     }
   }
 }
 
-/** Some Responses relays always stream. Only the complete final envelope is usable. */
-export async function readResponsesPayload(response: Response, maxBytes = DEFAULT_LIMIT, onPayload?: (payload: Record<string, unknown>) => Promise<void>): Promise<Record<string, unknown>> {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TypeError("Invalid response limit");
+/** Text deltas are provisional previews. Only the complete final envelope is usable. */
+export async function readResponsesPayload(
+  response: Response,
+  maxBytes = DEFAULT_LIMIT,
+  onPayload?: (payload: Record<string, unknown>) => Promise<void>,
+  onTextDelta?: (text: string) => void | Promise<void>,
+): Promise<Record<string, unknown>> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+    throw new TypeError("Invalid response limit");
   const reader = response.body?.getReader();
   if (!reader) return invalid();
-  const streaming = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+  const streaming =
+    response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ===
+    "text/event-stream";
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  let bytes = 0, buffer = "";
+  let bytes = 0,
+    buffer = "";
   let completed: Record<string, unknown> | undefined;
   let observed = false;
+  let previewAvailable = true;
   async function observe(payload: Record<string, unknown>) {
     if (observed) return;
     observed = true;
@@ -34,14 +56,36 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
   }
   async function event(block: string) {
     const lines = block.split(/\r\n|\n|\r/);
-    const data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).replace(/^ /, ""))
+      .join("\n");
     if (!data || data === "[DONE]") return;
     let parsed: unknown;
-    try { parsed = JSON.parse(data); } catch { return invalid(); }
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return invalid();
+    }
     if (!record(parsed)) return invalid();
-    const label = lines.find(line => line.startsWith("event:"))?.slice(6).trim();
+    const label = lines
+      .find((line) => line.startsWith("event:"))
+      ?.slice(6)
+      .trim();
     const type = typeof parsed.type === "string" ? parsed.type : label;
     if (label && label !== type) return invalid();
+    if (type === "response.output_text.delta" && onTextDelta && previewAvailable) {
+      if (typeof parsed.delta !== "string") return invalid();
+      if (parsed.delta) {
+        // Losing the UI/event sink must not discard the paid response and its durable receipt.
+        // Stop previews after the first failure, but continue to the original final envelope.
+        try {
+          await onTextDelta(parsed.delta);
+        } catch {
+          previewAvailable = false;
+        }
+      }
+    }
     if (["error", "response.failed", "response.incomplete"].includes(type ?? "")) {
       if (record(parsed.response)) await observe(parsed.response);
       throw new Error("model_response_incomplete");
@@ -49,7 +93,8 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
     if (type === "response.completed") {
       const final = parsed.response;
       if (record(final)) await observe(final);
-      if (!record(final) || final.status !== "completed" || final.error || final.incomplete_details) throw new Error("model_response_incomplete");
+      if (!record(final) || final.status !== "completed" || final.error || final.incomplete_details)
+        throw new Error("model_response_incomplete");
       assertResponsesPayloadComplete(final);
       completed = final;
     }
@@ -57,7 +102,10 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
   try {
     for (;;) {
       const part = await reader.read();
-      if (part.done) { buffer += decoder.decode(); break; }
+      if (part.done) {
+        buffer += decoder.decode();
+        break;
+      }
       bytes += part.value.byteLength;
       if (bytes > maxBytes) throw new Error("model_response_too_large");
       buffer += decoder.decode(part.value, { stream: true });
@@ -77,7 +125,11 @@ export async function readResponsesPayload(response: Response, maxBytes = DEFAUL
       return completed;
     }
     let payload: unknown;
-    try { payload = JSON.parse(buffer); } catch { return invalid(); }
+    try {
+      payload = JSON.parse(buffer);
+    } catch {
+      return invalid();
+    }
     if (!record(payload)) return invalid();
     await observe(payload);
     assertResponsesPayloadComplete(payload);

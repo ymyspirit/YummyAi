@@ -123,7 +123,7 @@ async function markers(page: Page, preparation = false) {
   return preparation ? values.map(value => AgentNativeV2PreparationIntentSchema.parse(value)) : values.map(value => AgentNativeV2IntentSchema.parse(value));
 }
 async function fill(page: Page, f: Fixture, source: Source, complete: boolean) {
-  await loginErp(page); await page.goto("/ai-tasks"); await expect(panel(page)).toBeVisible();
+  await loginErp(page); await page.goto("/ai-tasks?tools=1"); await expect(panel(page)).toBeVisible();
   const form = panel(page).getByRole("form", { name: "启动十一类原生工具模型任务", exact: true }); await expect(form).toBeVisible();
   await form.getByRole("textbox", { name: "本次任务目标", exact: true }).fill("Synthetic V2 eleven-owner source verification " + source.inputs["orders.order"].orderId);
   await form.getByRole("textbox", { name: "用户补充资料 未经事实核验", exact: true }).fill(source.contextText);

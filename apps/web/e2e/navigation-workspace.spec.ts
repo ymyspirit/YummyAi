@@ -149,7 +149,7 @@ test("single sidebar follows the business sequence and supports keyboard collaps
 
 test("task workspaces have direct routes, compatible links and responsive layouts", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/ai-tasks");
+  await page.goto("/ai-tasks?tools=1");
   await expect(page.getByRole("heading", { name: "AI 任务工作台", exact: true })).toBeVisible();
   await expect(page.getByLabel("要完成的任务")).toBeVisible();
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
@@ -168,7 +168,7 @@ test("task workspaces have direct routes, compatible links and responsive layout
   await expect(page.getByRole("alert")).toContainText("业务对象编号无效");
   for (const path of ["/ai-tasks", "/business-tasks"]) {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(path);
+    await page.goto(path === "/ai-tasks" ? "/ai-tasks?tools=1" : path);
     await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
     if (path === "/ai-tasks") {
       await expect(page.getByRole("button", { name: "展开任务历史", exact: true })).toBeVisible();

@@ -130,7 +130,7 @@ test("real order and SKU tasks retain reviewed v1 after v2 and reject an outdate
     skuBasis = await basis("sku_package");
   expect(orderBasis.methodSelection).toMatchObject({ mode: "published", version: 1 });
   expect(skuBasis.methodSelection).toMatchObject({ mode: "published", version: 1 });
-  await page.goto("/ai-tasks");
+  await page.goto("/ai-tasks?tools=1");
   await page.getByLabel("要完成的任务", { exact: true }).selectOption("order_review");
   await page.getByLabel("本次业务对象").selectOption(lineId);
   await page.getByLabel("分析重点（可选）", { exact: true }).fill("Synthetic private order goal");

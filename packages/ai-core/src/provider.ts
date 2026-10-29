@@ -13,6 +13,8 @@ export interface ModelRequest<T> {
   /** null omits the provider cap; undefined retains the caller's legacy default. */
   maxOutputTokens?: number | null;
   images?: Array<{ sourceId: string; dataUrl: string }>;
+  /** Provisional provider output text only; a delta is never a validated result or usage receipt. */
+  onTextDelta?: (text: string) => void | Promise<void>;
   onResponseCheckpoint?: (response: ModelResponseCheckpoint) => Promise<void>;
 }
 

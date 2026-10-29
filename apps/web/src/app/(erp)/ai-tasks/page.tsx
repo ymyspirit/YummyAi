@@ -1,8 +1,12 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { AiTaskWorkspace } from "../../../features/ai-tasks/ai-task-workspace";
+import { AgentWorkspaceEntry } from "../../../features/ai-tasks/agent-workspace-entry";
 export const metadata = { title: "AI 任务工作台 · YummyAI" };
-export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const params = await searchParams;
   if (params.business === "1") {
     const query = new URLSearchParams();
@@ -20,7 +24,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         </main>
       }
     >
-      <AiTaskWorkspace />
+      <AgentWorkspaceEntry />
     </Suspense>
   );
 }

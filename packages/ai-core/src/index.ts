@@ -30,3 +30,4 @@ export * from "./knowledge-benchmark.js";
 export * from "./business-benchmark.js";
 export * from "./research-image.js";
 export * from "./role-benchmark.js";
+export * from "./streaming-summary.js";

@@ -26,6 +26,7 @@ export default defineConfig({
       "src/ai/agent-fulfillment-command.integration.test.ts", "src/ai/agent-fulfillment-command-upgrade.integration.test.ts",
       "src/orders/order-summary-availability.integration.test.ts",
       "src/ai/agent-read.integration.test.ts", "src/ai/assist-request-recovery.integration.test.ts",
+      "src/ai/agent-chat.integration.test.ts",
       "src/ai/assist-target-page.integration.test.ts",
       "src/ai/agent-loop.integration.test.ts", "src/ai/agent-loop-upgrade.integration.test.ts",
       "src/ai/agent-command.integration.test.ts", "src/ai/agent-command-upgrade.integration.test.ts",

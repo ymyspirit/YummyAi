@@ -172,7 +172,7 @@ test("lost201 handoff and committed200 execution recover by pure IDs and GET acr
     expect((await fixture.state()).inventory_procurement_requisitions).toEqual(initial.inventory_procurement_requisitions);
     const retained = await markers(page); expect(retained).toHaveLength(1); expect(retained[0]).toMatchObject({ state: "unknown", id: null, requestId: prepared.requestId });
     expect(Object.keys(retained[0]!)).toHaveLength(7);
-    await page.goto("/ai-tasks"); await page.reload();
+    await page.goto("/ai-tasks?tools=1"); await page.reload();
     const recover = page.getByRole("region", { name: "本人 Agent 操作原请求恢复", exact: true });
     const original = recover.getByRole("article", { name: "原 Agent 操作请求 " + prepared.requestId, exact: true });
     const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/api/agent-commands/receipts" && response.request().method() === "GET");
