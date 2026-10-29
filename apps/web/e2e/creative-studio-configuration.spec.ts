@@ -421,6 +421,8 @@ test("manual fallback and OpenAI defaults remain usable at mobile width", async 
   await expect(drawer.getByLabel("渠道名称", { exact: true })).toHaveValue("OpenAI");
   await expect(drawer.getByLabel("接口地址", { exact: true })).toHaveValue("https://api.openai.com/v1");
   await drawer.getByLabel("API Key", { exact: true }).fill("synthetic-credential-never-sent-to-provider");
+  // The drawer fits its iframe, so scroll the outer page to bring that frame into the mobile viewport.
+  await page.locator('iframe[title="无限画布模型配置"]').scrollIntoViewIfNeeded();
   const selectModels = drawer.getByRole("button", { name: "选择模型", exact: true });
   try { await selectModels.click(); }
   catch (originalError) {
