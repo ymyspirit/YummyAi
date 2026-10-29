@@ -9,7 +9,7 @@ const servers = Array.isArray(base.webServer) ? base.webServer : [];
 
 export default defineConfig({
   ...base,
-  testMatch: "creative-studio-configuration.spec.ts",
+  testMatch: ["creative-studio-configuration.spec.ts", "content-project-personal-auth.spec.ts"],
   grep: undefined,
   workers: 1,
   fullyParallel: false,
@@ -18,9 +18,10 @@ export default defineConfig({
   metadata: {
     ...base.metadata,
     isolatedNonce: isolated.nonce,
-    scope: "compiled_personal_studio_configuration_http_fixtures",
+    scope: "compiled_personal_configuration_and_content_project_read",
     configurationHttpBoundary: "synthetic_fixture",
     assistModelsHttpBoundary: "synthetic_fixture",
+    contentProjectsHttpBoundary: "real_personal_bff_and_api",
     paidExecutionExercised: false,
     realPaidCalls: 0,
   },

@@ -49,6 +49,20 @@ cached process-wide. Private responses are not cached, and write requests requir
 the configured same-origin Origin header. Business APIs retain their own current
 object/role/RLS checks; a Web session is not an operation grant.
 
+The content-project read BFF (`/api/content-projects`, including the shaped-pillow
+list and exact order detail) uses this same personal `apiFetch` path in compiled
+production builds. It does not require development mode or a loopback browser
+hostname. Explicit cross-site requests, unknown paths, caller-selected tenancy,
+duplicate query keys and invalid filters are rejected before forwarding. The API
+still requires `design:read`, plus `asset:read` for project detail; it retains
+tenant and object scope checks. A production-mode gate must not be reported as a
+missing account permission.
+
+An ordinary ERP administrator can hold all ordinary ERP business permissions
+within the current organization. Factory-portal permissions remain separate, and
+role labels do not bypass authentication, tenant scope, immutable-version checks
+or business-state requirements.
+
 After the business request returns, Web checks server-session liveness and current
 authority again before exposing the response. A changed role/scope discards the
 body and returns 409; the UI must check the original operation before retrying.
