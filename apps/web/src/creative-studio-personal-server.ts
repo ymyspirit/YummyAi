@@ -3,6 +3,7 @@ import type { Permission as PermissionValue } from "@yummyai/authz/permissions";
 import { erpSessionAuthority } from "@yummyai/contracts/auth/session";
 import { publicStudioModelSelectionError } from "@yummyai/contracts/pod/creative-studio";
 import { publicStudioPaidImageError } from "@yummyai/contracts/pod/studio-paid-image";
+import { publicModelConfigurationError } from "@yummyai/contracts/ai/model-configuration";
 import { apiFetch } from "./server-api";
 import { PersonalSessionError } from "./identity/core";
 import { assertErpIdentityCurrent, erpAuthFailure, erpRequestIdentity, type ErpRequestIdentity } from "./erp-auth/server";
@@ -59,6 +60,12 @@ export async function studioPersonalCall(request: Request, identity: ErpRequestI
     try { payload = await readStudioJson(upstream, 8192); } catch { /* Raw diagnostics never cross the BFF. */ }
     await assertErpIdentityCurrent(identity);
     const known = payload && typeof payload === "object" ? payload as { message?: unknown; code?: unknown } : {};
+    const configurationError = target === "ai/configuration" ? publicModelConfigurationError(known.code, upstream.status) : null;
+    if (configurationError) {
+      const failure = studioPersonalFailure(upstream.status, configurationError.message, configurationError.code);
+      failure.headers.set("x-yummyai-context-authority", erpSessionAuthority(identity.view));
+      return failure;
+    }
     const publicCodes: Record<number, readonly string[]> = {
       400: ["studio_transfer_invalid"], 404: ["studio_transfer_missing"], 422: ["studio_transfer_unavailable", "studio_video_directory_too_large"],
       409: ["authority_changed", "studio_paid_execution_paused", "studio_original_pin_required", "studio_transfer_changed", "studio_transfer_cancelled", "studio_video_directory_changed"],

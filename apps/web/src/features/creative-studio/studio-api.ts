@@ -2,7 +2,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ErpContextAuthoritySchema } from "@yummyai/contracts/auth/session";
 import { ASSIST_INTENT_CLEAR_EVENT } from "@yummyai/contracts/ai/assist-recovery";
-import { ConfigurationRpcSchema, ConfigurationSnapshotSchema, ModelCatalogueSchema } from "@yummyai/contracts/ai/model-configuration";
+import { ConfigurationRpcSchema, ConfigurationSnapshotSchema, ModelCatalogueSchema, publicModelConfigurationError } from "@yummyai/contracts/ai/model-configuration";
 import { StudioRpcSchema, StudioScopeSchema, publicStudioModelSelectionError } from "@yummyai/contracts/pod/creative-studio";
 import { publicStudioPaidImageError } from "@yummyai/contracts/pod/studio-paid-image";
 import { CanvasBriefSchema, CanvasProjectSummarySchema } from "@yummyai/contracts/pod/canvas-bridge";
@@ -90,7 +90,7 @@ async function boundedJson(response: Response, limit: number, context?: StudioRe
     throw new StudioApiError("ERP 返回的内容无法读取", 502);
   } finally { reader.releaseLock(); }
 }
-async function request(url: string, value: unknown, method: string, signal?: AbortSignal, context?: StudioRequestContext, limit = STUDIO_PERSONAL_METADATA_LIMIT): Promise<unknown> {
+async function request(url: string, value: unknown, method: string, signal?: AbortSignal, context?: StudioRequestContext, limit = STUDIO_PERSONAL_METADATA_LIMIT, configuration = false): Promise<unknown> {
   if (context) assertStudioCurrent(context);
   const headers: Record<string, string> = {};
   if (value !== undefined) headers["content-type"] = "application/json";
@@ -108,6 +108,11 @@ async function request(url: string, value: unknown, method: string, signal?: Abo
   if (context) assertStudioCurrent(context);
   if (!successful) {
     const errorCode = result && typeof result === "object" && "code" in result ? result.code : undefined;
+    const configurationError = configuration ? publicModelConfigurationError(errorCode, response.status) : null;
+    if (configurationError) {
+      if (context && !context.localDevelopment && response.headers.get("x-yummyai-context-authority") !== context.authority) throw contextChanged();
+      throw new StudioApiError(configurationError.message, configurationError.status, configurationError.code);
+    }
     const selectionError = publicStudioModelSelectionError(errorCode, response.status) ?? publicStudioPaidImageError(errorCode, response.status);
     if (selectionError) throw new StudioApiError(selectionError.message, response.status, selectionError.code);
     const code = result && typeof result === "object" && "code" in result && typeof result.code === "string" && ["authority_changed", "studio_video_directory_changed", "studio_video_directory_too_large", "studio_video_directory_unavailable"].includes(result.code) ? result.code : undefined;
@@ -132,7 +137,7 @@ export async function studioApi<T>(path: string, value: unknown, method: string,
   if (!context) throw contextChanged();
   if (path !== "configuration" || method !== "POST") throw new StudioApiError("配置请求不受支持", 400);
   const input = parsed(() => ConfigurationRpcSchema.parse(value));
-  const result = await request("/api/creative-studio/configuration", input, method, signal, context);
+  const result = await request("/api/creative-studio/configuration", input, method, signal, context, STUDIO_PERSONAL_METADATA_LIMIT, true);
   const output = parsed(() => input.operation === "channel.discover" ? ModelCatalogueSchema.parse(result) : ConfigurationSnapshotSchema.parse(result));
   assertStudioCurrent(context); return output as T;
 }

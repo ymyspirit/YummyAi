@@ -2,12 +2,13 @@ import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Input, Modal, Select, Tabs } from "antd";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChannelEditorDrawer, type SettingsChannel } from "upstream-channel-editor";
 import { AppProviders } from "@/components/layout/app-providers";
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, type ModelChannel } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { ConfigurationSnapshot, ConfiguredChannel, ModelDefaults } from "@yummyai/contracts/ai/model-configuration";
+import { modelConfigurationRemovalFailure, type ConfigurationSnapshot, type ConfiguredChannel, type ModelDefaults } from "@yummyai/contracts/ai/model-configuration";
 import i18n from "@/i18n";
 import { initialized, notify } from "./rpc";
 import { isSavedSettingsChannel, settingsRequest } from "./settings-transport";
@@ -28,17 +29,22 @@ function editable(channel: ConfiguredChannel): SettingsChannel {
 }
 const protocolLabel = (provider: string) => provider === "openai" ? "Responses" : provider === "openai-compatible" ? "Chat Completions" : "其他协议";
 type ManagedModel = { id: string; name: string; label: string; capability: "image" | "video" | "text" | "analysis" };
+type RemovalTarget = { channel: ConfiguredChannel; model?: ManagedModel };
+const removalKey = (target: RemovalTarget) => JSON.stringify([target.channel.id, target.model?.id ?? null]);
+const unknownRemoval = "删除结果尚未核对 请读取原配置确认 未自动重试";
 const capabilityLabel = { image: "图片", video: "视频", text: "文字 / 业务分析", analysis: "图文分析" };
 function Settings() {
   const { message } = App.useApp();
+  const reducedMotion = useReducedMotion();
   const [snapshot, setSnapshot] = useState<ConfigurationSnapshot>(), [editing, setEditing] = useState<SettingsChannel | null>(null);
   const [defaults, setDefaults] = useState<ModelDefaults>(), [writing, setBusy] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState(""), [catalogue, setCatalogue] = useState("");
   const busy = writing || loading;
   const [tab, setTab] = useState("channels"), [channelFilter, setChannelFilter] = useState("all"), [capabilityFilter, setCapabilityFilter] = useState("all"), [query, setQuery] = useState("");
-  const [removal, setRemoval] = useState<{ channel: ConfiguredChannel; model?: ManagedModel } | null>(null), [removalError, setRemovalError] = useState("");
+  const [removal, setRemoval] = useState<RemovalTarget | null>(null), [removalError, setRemovalError] = useState(""), [removalNotice, setRemovalNotice] = useState("");
   const [addingModels, setAddingModels] = useState(false), [addingChannelId, setAddingChannelId] = useState<string>();
-  const removing = useRef(false);
-  const accept = useCallback((value: ConfigurationSnapshot) => { setSnapshot(value); setDefaults(value.defaults); setError(""); useStudioModels.setState({ status: "ready", error: "" }); }, []);
+  const removing = useRef(false), removalEpoch = useRef(0), removalChecks = useRef(new Map<string, string>());
+  useEffect(() => () => { removalEpoch.current++; }, []);
+  const accept = useCallback((value: ConfigurationSnapshot, previousDefaults?: ModelDefaults) => { setSnapshot(value); setDefaults(current => previousDefaults && JSON.stringify(current) !== JSON.stringify(previousDefaults) ? current : value.defaults); setError(""); useStudioModels.setState({ status: "ready", error: "" }); }, []);
   const load = useCallback(async () => { setLoading(true); try { accept(await settingsRequest({ operation: "configuration.get" })); } catch (cause) { setError(cause instanceof Error ? cause.message : "配置读取失败"); } finally { setLoading(false); } }, [accept]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -84,20 +90,58 @@ function Settings() {
     finally { setBusy(false); }
   }
   function requestRemoval(channel: ConfiguredChannel, model?: ManagedModel) {
-    setRemovalError(""); setRemoval({ channel, model });
+    if (busy || defaultsDirty || removing.current) return;
+    const target = { channel, model };
+    removalEpoch.current++; setRemovalError(removalChecks.current.get(removalKey(target)) ?? ""); setRemovalNotice(""); setRemoval(target);
   }
   async function confirmRemoval() {
-    if (!removal || removing.current) return;
-    removing.current = true; setBusy(true); setRemovalError("");
+    if (!removal || removing.current || busy || defaultsDirty || removalChecks.current.has(removalKey(removal)) || !removal.model && removal.channel.dependentRoutes?.length) return;
+    const epoch = removalEpoch.current, key = removalKey(removal);
+    removing.current = true; setBusy(true); setRemovalError(""); setRemovalNotice("");
     const { channel, model } = removal;
     try {
-      accept(await settingsRequest(model
+      const result = await settingsRequest(model
         ? { operation: "model.remove", channelId: channel.id, modelId: model.id, revision: channel.revision }
-        : { operation: "channel.remove", id: channel.id, revision: channel.revision }));
+        : { operation: "channel.remove", id: channel.id, revision: channel.revision });
+      if (removalEpoch.current !== epoch) return;
+      accept(result); removalChecks.current.delete(key);
       if (!model && channelFilter === channel.id) setChannelFilter("all");
       setRemoval(null); notify("settings.saved"); message.success(model ? "模型已删除，历史任务和生成文件保留" : "渠道及其模型配置已删除，历史任务和生成文件保留");
-    } catch (cause) { setRemovalError(cause instanceof Error ? cause.message : "删除失败，请重试"); }
-    finally { removing.current = false; setBusy(false); }
+    } catch (cause) {
+      if (removalEpoch.current !== epoch) return;
+      const failure = modelConfigurationRemovalFailure(cause instanceof Error ? cause.message : undefined);
+      const feedback = failure?.message ?? unknownRemoval;
+      removalChecks.current.set(key, feedback); setRemovalError(feedback);
+    }
+    finally { if (removalEpoch.current === epoch) { removing.current = false; setBusy(false); } }
+  }
+  async function reconcileRemoval() {
+    if (!removal || removing.current || busy || defaultsDirty) return;
+    const target = removal, epoch = removalEpoch.current, key = removalKey(target), previousDefaults = snapshot?.defaults;
+    removing.current = true; setLoading(true); setRemovalNotice("");
+    try {
+      const result = await settingsRequest({ operation: "configuration.get" });
+      if (removalEpoch.current !== epoch) return;
+      accept(result, previousDefaults);
+      const channel = result.channels.find(item => item.id === target.channel.id);
+      const modelId = target.model?.id;
+      const creativeModel = modelId ? channel?.models.find(item => item.id === modelId) : undefined;
+      const analysisModel = modelId ? channel?.analysisModels?.find(item => item.id === modelId) : undefined;
+      const model: ManagedModel | undefined = creativeModel ?? (analysisModel ? { ...analysisModel, capability: "analysis" } : undefined);
+      removalChecks.current.delete(key); setRemovalError("");
+      if (!channel || target.model && !model) {
+        setRemoval(null);
+        setRemovalNotice(target.model ? "已核对 当前模型已不在配置中 未再次执行删除" : "已核对 当前渠道已不在配置中 未再次执行删除");
+        return;
+      }
+      setRemoval({ channel, model });
+      setRemovalNotice(target.model ? "已读取最新配置 该模型仍在 请重新确认删除" : "已读取最新配置 该渠道仍在 请重新确认删除");
+    } catch {
+      if (removalEpoch.current !== epoch) return;
+      const feedback = removalChecks.current.get(key) ?? unknownRemoval;
+      removalChecks.current.set(key, feedback); setRemovalError(`${feedback} 原配置读取失败 请重新核对`);
+    }
+    finally { if (removalEpoch.current === epoch) { removing.current = false; setLoading(false); } }
   }
   function addModels() {
     const channel = selectedChannel ?? (channels.length === 1 ? channels[0] : undefined);
@@ -114,6 +158,7 @@ function Settings() {
   return <div className="settings-shell">
     <div className="settings-toolbar"><p>渠道管理接口和密钥，模型管理可用能力，默认模型按当前用户保存。</p><Button disabled={busy || !!editing || !!removal || defaultsDirty} icon={<RefreshCw size={14} />} onClick={() => void load()}>刷新配置</Button></div>
     {error && <p role="alert" className="settings-error">{error}</p>}
+    <AnimatePresence initial={false}>{removalNotice && !removal && <motion.p key="removal-result" role="status" className="settings-removal-notice" initial={{ opacity: 0, y: reducedMotion ? 0 : -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -2 }} transition={{ duration: reducedMotion ? 0 : 0.16 }}>{removalNotice}</motion.p>}</AnimatePresence>
     {!snapshot && <p role="status">{busy ? "正在读取配置…" : "配置暂时无法读取，请点击刷新配置重试。"}</p>}
     {snapshot && <Tabs activeKey={tab} onChange={setTab} items={[
       { key: "channels", label: "渠道管理", children: <>
@@ -145,8 +190,8 @@ function Settings() {
     ]} />}
     {catalogue && tab !== "defaults" && <p role="status" className="settings-catalogue">{catalogue}。目录信息不代表已验证生成能力。</p>}
     <Modal open={!!removal} title={removal ? `删除${removal.model ? "模型" : "渠道"}“${removal.model?.name ?? removal.channel.name}”？` : "删除配置"}
-      okText={busy ? "正在删除…" : "确认删除"} cancelText="取消" confirmLoading={busy} okButtonProps={{ "aria-label": busy ? "正在删除" : "确认删除", danger: true, disabled: busy || (!removal?.model && !!removal?.channel.dependentRoutes?.length) }}
-      cancelButtonProps={{ disabled: busy }} closable={!busy} keyboard={!busy} maskClosable={!busy} onCancel={() => { if (!removing.current) setRemoval(null); }} onOk={() => void confirmRemoval()}>
+      okText={loading ? "正在核对…" : writing ? "正在删除…" : "确认删除"} cancelText="取消" confirmLoading={writing} okButtonProps={{ "aria-label": writing ? "正在删除" : "确认删除", danger: true, disabled: busy || defaultsDirty || !!removal && removalChecks.current.has(removalKey(removal)) || (!removal?.model && !!removal?.channel.dependentRoutes?.length) }}
+      cancelButtonProps={{ disabled: busy }} closable={!busy} keyboard={!busy} maskClosable={!busy} onCancel={() => { if (!removing.current) { removalEpoch.current++; setRemoval(null); setRemovalNotice(""); } }} onOk={() => void confirmRemoval()}>
       {removal && <div className="settings-removal-content">
         <p>{removal.channel.name} · {removal.channel.baseUrl}</p>
         {removal.model ? <p>删除后不能再为新任务选择此模型。{removal.model.capability === "text" ? "此文本模型也会从业务分析助手中移除。" : ""}</p> : <>
@@ -156,7 +201,12 @@ function Settings() {
           {!!removal.channel.dependentRoutes?.length && <p role="alert" className="settings-error">请先调整仍引用此渠道的业务路由：{removal.channel.dependentRoutes.map(route => route.label).join("、")}</p>}
         </>}
         <p>历史任务和生成文件保留。受影响的个人默认模型会清除。如有排队或进行中的任务，需等待完成或取消任务后再删除。</p>
-        {removalError && <p role="alert" className="settings-error">{removalError}</p>}
+        <AnimatePresence initial={false} mode="wait">
+          {removalError ? <motion.p key={`removal-error:${removalError}`} role="alert" className="settings-error" initial={{ opacity: 0, y: reducedMotion ? 0 : -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -2 }} transition={{ duration: reducedMotion ? 0 : 0.16 }}>{removalError}</motion.p>
+            : removalNotice && <motion.p key="removal-current" role="status" className="settings-removal-notice" initial={{ opacity: 0, y: reducedMotion ? 0 : -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -2 }} transition={{ duration: reducedMotion ? 0 : 0.16 }}>{removalNotice}</motion.p>}
+        </AnimatePresence>
+        <Button className="settings-removal-recheck" aria-label="读取原配置核对" icon={<RefreshCw size={14} />} loading={loading} disabled={busy || defaultsDirty} onClick={() => void reconcileRemoval()}>读取原配置核对</Button>
+        {removalChecks.current.has(removalKey(removal)) && <p>核对前不能再次删除 读取配置不会重试删除</p>}
       </div>}
     </Modal>
     <Modal open={addingModels} title="选择模型所属渠道" okText="继续添加模型" cancelText="取消" okButtonProps={{ disabled: !addingChannelId }} onCancel={() => setAddingModels(false)} onOk={() => { const channel = channels.find(item => item.id === addingChannelId); if (channel) { setEditing(editable(channel)); setAddingModels(false); } }}>
