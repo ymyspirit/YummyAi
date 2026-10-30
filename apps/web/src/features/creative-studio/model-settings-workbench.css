@@ -4,7 +4,7 @@
 .ai-settings-summary, .ai-settings-row-actions, .ai-settings-model-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .ai-settings-summary { font-size: 12px; color: var(--muted-foreground, #68758a); }
 .ai-settings-summary span + span::before { content: ""; border-left: 1px solid rgba(10, 25, 45, .14); margin-right: 12px; }
-.ai-settings-workbench :is(button, input, select), .ai-settings-dialog :is(button, input, select) { min-height: 40px; transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
+.studio-workspace .ai-settings-workbench :is(button, input:not([type="checkbox"]):not([type="radio"]), select), .studio-workspace.ai-settings-dialog :is(button, input:not([type="checkbox"]):not([type="radio"]), select) { min-height: 40px; transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
 .ai-settings-workbench button:active:enabled, .ai-settings-dialog button:active:enabled { transform: scale(.96); }
 .ai-settings-workbench :is(button, summary, input, select, a):focus-visible, .ai-settings-dialog :is(button, summary, input, select, a):focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 3px; }
 .ai-settings-workbench :is(p, small, strong, code), .ai-settings-dialog :is(p, small, strong, code) { overflow-wrap: anywhere; }
@@ -99,7 +99,7 @@
 .ai-settings-dialog .ai-settings-catalogue-option { display: flex; align-items: center; gap: 9px; padding: 8px 10px; min-height: 40px; font-size: 12px; cursor: pointer; border-bottom: 1px solid rgba(10, 25, 45, .06); }
 .ai-settings-catalogue-option:last-child { border-bottom: 0; }
 .ai-settings-catalogue-option span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
-.ai-settings-dialog .ai-settings-catalogue-option input { min-height: 16px; width: 16px; height: 16px; margin: 0; flex-shrink: 0; }
+.ai-settings-dialog .ai-settings-catalogue-option input { min-height: 16px; width: 16px; height: 16px; padding: 0; margin: 0; flex-shrink: 0; }
 .ai-settings-catalogue-option svg { color: var(--accent, #2563eb); flex-shrink: 0; }
 .ai-settings-manual-fields { display: grid; grid-template-columns: minmax(180px, 1fr) 140px auto; gap: 10px; align-items: end; padding-top: 12px; }
 .ai-settings-selected-list { margin-top: 12px; }
@@ -112,7 +112,7 @@
 .ai-settings-cost-policy { border: 0; padding: 0; margin: 0 0 20px; min-width: 0; }
 .ai-settings-cost-policy legend { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .ai-settings-dialog .ai-settings-cost-policy label { display: flex; align-items: flex-start; gap: 9px; padding-block: 9px; min-height: 44px; cursor: pointer; }
-.ai-settings-dialog .ai-settings-cost-policy input { flex-shrink: 0; width: 16px; height: 16px; min-height: 16px; margin: 2px 0 0; }
+.ai-settings-dialog .ai-settings-cost-policy input { flex-shrink: 0; width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 2px 0 0; }
 .ai-settings-cost-policy strong { display: block; font-weight: 500; }
 .ai-settings-cost-policy small { display: block; font-size: 11px; line-height: 1.7; color: var(--muted-foreground, #68758a); margin-top: 3px; }
 .ai-settings-official-price { border-top: 1px solid rgba(10, 25, 45, .1); padding-top: 16px; margin-top: 20px; font-size: 12px; line-height: 1.7; font-variant-numeric: tabular-nums; }
@@ -139,7 +139,7 @@
   .ai-settings-summary span + span::before { margin-right: 10px; }
   .ai-settings-tabs { gap: 0; justify-content: space-between; margin-bottom: 18px; }
   .studio-workspace .ai-settings-tabs [role="tab"] { font-size: 12px; min-width: 44px; min-height: 44px; padding-inline: 3px; }
-  .ai-settings-workbench :is(button, input, select, summary), .ai-settings-dialog :is(button, input, select, summary) { min-height: 44px; }
+  .studio-workspace .ai-settings-workbench :is(button, input:not([type="checkbox"]):not([type="radio"]), select, summary), .studio-workspace.ai-settings-dialog :is(button, input:not([type="checkbox"]):not([type="radio"]), select, summary) { min-height: 44px; }
   .ai-settings-more > summary, .studio-workspace .ai-settings-icon-button { width: 44px; height: 44px; }
   .ai-settings-channel-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .ai-settings-row-actions { gap: 6px; }
