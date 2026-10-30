@@ -8,6 +8,9 @@ import type {
 import { modes, statuses } from "./development-client";
 import { Permission } from "@yummyai/authz/permissions";
 import { useErpAccess } from "../identity/erp-access";
+import { boundSpecificationAxes } from "./specification-options";
+import { orderedSpecifications } from "./specification-presentation";
+import "./spu-catalog-summary.css";
 
 export function ArtworkTable({
   items,
@@ -144,7 +147,14 @@ export function SpuTable({
         </thead>
         <tbody>
           {items.map((item) => {
-            const variants = options.specifications.filter((spec) => spec.spuId === item.id);
+            const variants = orderedSpecifications(options.specifications.filter((spec) => spec.spuId === item.id));
+            const axes = boundSpecificationAxes(variants);
+            const preview = axes.length
+              ? axes.map(axis => `${axis.name} ${axis.values.slice(0, 4).join("、")}${axis.values.length > 4 ? ` 等 ${axis.values.length} 项` : ""}`).join(" · ")
+              : variants.slice(0, 2).map(spec => spec.name).join(" / ");
+            const allOptions = axes.length
+              ? axes.map(axis => `${axis.name} ${axis.values.join("、")}`).join("；")
+              : variants.map(spec => spec.name).join(" / ");
             return (
               <tr key={item.id}>
                 <td data-label="商品 SPU">
@@ -152,8 +162,10 @@ export function SpuTable({
                 </td>
                 <td data-label="产品名称">{item.name}</td>
                 <td data-label="规格">
-                  {variants.length} 个规格
-                  <small>{variants.map((spec) => spec.name).join(" / ") || "待完善"}</small>
+                  <div className="pd-spu-variant-summary">
+                    <span className="pd-spu-variant-count">{variants.length} 个规格</span>
+                    <small className="pd-spu-option-preview" title={allOptions || undefined}>{preview || "待完善"}</small>
+                  </div>
                 </td>
                 <td data-label="操作">
                   <button className="oc-button" onClick={() => onOpen(item.id)}>

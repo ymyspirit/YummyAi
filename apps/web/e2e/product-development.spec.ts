@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { CANVAS_BRIDGE } from "@yummyai/contracts/pod/canvas-bridge";
 import type {
   DevelopmentWorkspace,
@@ -8,6 +8,11 @@ import { centerApi, createCenterProfile, createCenterSpu } from "./order-centers
 import { syntheticProductionPng } from "./production-editor-fixture";
 import { loginErp } from "./erp-identity-fixture";
 import { fillSpecificationFacts } from "./specification-facts-form";
+
+const spuSpecificationRows = (page: Page) => page.getByRole("dialog")
+  .getByRole("table", { name: "产品规格对比", exact: true })
+  .locator("tbody tr")
+  .filter({ has: page.getByRole("button", { name: "修改规格", exact: true }) });
 
 test.beforeEach(async ({ page }) => { await loginErp(page); });
 
@@ -93,9 +98,9 @@ test("SPU owns multiple specs; an independent artwork combines across products a
     await f.getByLabel("已逐项核实所选规格的完整商品资料 包括重量与包装测量").check();
     await f.getByRole("button", { name: "保存 2 个规格", exact: true }).click();
     await expect(page.locator(".oc-notice")).toContainText("所选规格已绑定");
-    await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
+    await expect(spuSpecificationRows(page)).toHaveCount(2);
     await page.reload();
-    await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
+    await expect(spuSpecificationRows(page)).toHaveCount(2);
   }
   await page.goto(`/product-specifications?q=${suffix}`);
   await expect(page.locator("tbody tr")).toHaveCount(2);
@@ -105,7 +110,7 @@ test("SPU owns multiple specs; an independent artwork combines across products a
     fullPage: true,
   });
   await page.locator("tbody tr").first().getByRole("button", { name: "查看产品与规格" }).click();
-  await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
+  await expect(spuSpecificationRows(page)).toHaveCount(2);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
@@ -224,7 +229,7 @@ test("multiple sizes and shapes preview, selectively bind, retain row-specific p
   await page.reload();
   await expect(page.getByLabel("已绑定规格选项")).toContainText("50 mm、254 mm");
   await expect(page.getByLabel("已绑定规格选项")).toContainText("圆形、方形");
-  await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
+  await expect(spuSpecificationRows(page)).toHaveCount(2);
   const saved = (
     await centerApi<DevelopmentOptions>("product-development/options")
   ).specifications.filter((spec) => spec.spuId === spu.id);
@@ -256,8 +261,8 @@ test("multiple sizes and shapes preview, selectively bind, retain row-specific p
   await page.getByLabel("规格名称", { exact: true }).fill("Updated synthetic specification");
   await page.getByRole("button", { name: "保存新版本", exact: true }).click();
   await expect(page.locator(".oc-notice")).toContainText("规格版本已保存");
-  await expect(page.getByRole("dialog").locator("tbody tr")).toHaveCount(2);
+  await expect(spuSpecificationRows(page)).toHaveCount(2);
   await page.reload();
-  await expect(page.getByRole("dialog").locator("tbody")).toContainText("Updated synthetic specification");
+  await expect(page.getByRole("dialog").getByRole("table", { name: "产品规格对比", exact: true })).toContainText("Updated synthetic specification");
   expect(errors).toEqual([]);
 });
