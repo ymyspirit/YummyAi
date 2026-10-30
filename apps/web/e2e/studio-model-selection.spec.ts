@@ -368,6 +368,8 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     result.images = images; result.viewports = viewports; result.configurationReads = transport; result.authorityHash = basis.authorityHash;
     result.configurationSnapshotHash = originalSha(JSON.stringify(configuration)); result.originalDocumentsHash = originalSha(JSON.stringify(before.documents));
     result.businessTablesUnchanged = true; result.originalDraftsAndRevisionsUnchanged = true; result.providerRequests = 0;
+    await compatibility.getByRole("button", { name: "关闭高级兼容配置", exact: true }).click();
+    await expect(compatibility).toBeHidden();
     const logoutButton = page.getByRole("button", { name: "退出登录", exact: true }), logoutPhase = "configuration-201.logout-private-settings";
     await page.bringToFront(); await logoutButton.focus();
     await seen.markPhase(logoutPhase); const clearBoundary = await seen.clear.boundary();

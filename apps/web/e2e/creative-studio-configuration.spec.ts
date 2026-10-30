@@ -292,16 +292,14 @@ test("channel removal shows its models, handles conflicts and pending state, and
   state.snapshot.defaults = { ...emptyModelDefaults(), image: imageId, analysis: analysisId };
   await frame.getByRole("button", { name: "刷新配置", exact: true }).click();
   await expect(frame.getByRole("button", { name: "删除模型 gpt-image-fixture", exact: true })).toBeHidden();
-  if (process.env.E2E_STUDIO_CONFIGURATION_ISOLATED === "1") {
-    const analysis = page.locator("details#analysis-model-settings");
-    await expect(analysis.locator(":scope > summary")).toHaveText("图文分析模型与费用设置");
-    await expect(analysis.locator(":scope > summary")).toBeVisible();
-    await expect(analysis).toHaveJSProperty("open", false);
-    await expect(analysis.getByRole("button", { name: "刷新分析模型", exact: true })).toBeHidden();
-    await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toHaveAttribute("aria-selected", "true");
-    expect(state.requests.filter(input => input.operation === "model.remove")).toHaveLength(0);
-    expect(state.externalCalls).toEqual([]);
-  } else await expect(page.getByText("图文分析模型与费用设置", { exact: true })).toBeHidden();
+  const analysis = page.locator("details#analysis-model-settings");
+  await expect(analysis.locator(":scope > summary")).toHaveText("图文分析模型与费用设置");
+  await expect(analysis.locator(":scope > summary")).toBeVisible();
+  await expect(analysis).toHaveJSProperty("open", false);
+  await expect(analysis.getByRole("button", { name: "刷新分析模型", exact: true })).toBeHidden();
+  await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toHaveAttribute("aria-selected", "true");
+  expect(state.requests.filter(input => input.operation === "model.remove")).toHaveLength(0);
+  expect(state.externalCalls).toEqual([]);
   // Only this leaf owns these synthetic HTTP outcomes. Provider credentials and
   // real tenant settings are never touched, and every reconcile stays a read.
   let outcome: "busy" | "unknown_unchanged" | "unknown_saved" = "busy";
