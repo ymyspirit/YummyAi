@@ -131,10 +131,14 @@ test("native personal settings discover and batch-select models with a manual fa
     await editor.getByLabel("搜索目录模型", { exact: true }).fill("catalogue-new");
     await editor.getByRole("button", { name: "选择当前筛选模型", exact: true }).click();
     await editor.getByText("高级 · 手动添加模型", { exact: true }).click();
-    await editor.getByLabel("model ID", { exact: true }).fill("manual-custom-image");
-    await editor.getByLabel("配置用途", { exact: true }).selectOption("image");
-    await editor.getByRole("button", { name: "手动添加模型", exact: true }).click();
+    const manual = editor.locator("details").filter({ has: page.locator("summary").filter({ hasText: /^高级 · 手动添加模型$/ }) });
+    await expect(manual).toHaveCount(1);
+    await manual.getByRole("textbox", { name: "model ID", exact: true }).fill("manual-custom-image");
+    await manual.getByRole("combobox", { name: "配置用途", exact: true }).selectOption("image");
+    await expect(manual.getByRole("combobox", { name: "配置用途", exact: true })).toHaveValue("image");
+    await manual.getByRole("button", { name: "手动添加模型", exact: true }).click();
     await expect(editor.getByRole("region", { name: "已选渠道模型", exact: true })).toContainText("已选模型 7");
+    await expect(editor.getByRole("region", { name: "已选渠道模型", exact: true }).getByRole("combobox", { name: "manual-custom-image 配置用途", exact: true })).toHaveValue("image");
     await expect(editor).toContainText("能力未实测");
     await page.screenshot({ path: testInfo.outputPath("native-channel-desktop.png") });
     await editor.getByRole("button", { name: "保存渠道与模型", exact: true }).click();
@@ -152,7 +156,7 @@ test("native personal settings discover and batch-select models with a manual fa
 });
 
 test("personal business defaults retain other purposes and survive a deep-link reload without losing return context", async ({ page }, testInfo) => {
-  const returnTarget = "/orders?queue=synthetic-queue";
+  const returnTarget = `/orders?${new URLSearchParams({ line: id(21), queue: id(21) })}`;
   const { state, workbench } = await fixture(page, `/settings/ai?${new URLSearchParams({ returnTo: returnTarget, settingsTab: "defaults" })}`);
   try {
     await expect(workbench.getByRole("tab", { name: "业务默认", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -256,7 +260,7 @@ test("native session invalidation removes private editing state and ignores a la
     await expect(editor).toBeHidden();
     await expect(page.locator(".ai-settings-workbench input,.ai-settings-workbench select")).toHaveCount(0);
     state.releaseSave!();
-    await expect(page.getByRole("alert").filter({ hasText: /配置.*填写.*隐藏/ })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: /配置.*填写.*隐藏/ })).toBeVisible();
     await expect(page.getByText("Synthetic late private draft", { exact: true })).toHaveCount(0);
     expect(state.commands.filter(input => input.operation === "channel.save")).toHaveLength(1);
     expect(state.externalCalls).toEqual([]); expect(state.paidRequests).toEqual([]);

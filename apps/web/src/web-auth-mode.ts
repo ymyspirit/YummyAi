@@ -1,5 +1,6 @@
 import { factoryPortalOnly } from "./factory-portal-mode";
 import { EntityIdSchema } from "@yummyai/contracts/common/ids";
+import { ModelBillingOwnerSchema, ModelBillingSubjectIdSchema } from "@yummyai/contracts/ai/model-billing";
 import {AdHistoryRecordQuerySchema} from "@yummyai/contracts/advertising/history";
 import { AdAnalysisInputSchema, AdGoalFieldsSchema, AdMarketplaceSchema, AdProductScopeSchema,
   AdReportTypeSchema } from "@yummyai/contracts/advertising";
@@ -89,6 +90,35 @@ export function erpReturnPath(value: string | null | undefined, depth = 0): stri
     for (const key of ["form", "compose", "editSpu", "archived"]) {
       if (u.searchParams.getAll(key).length === 1 && u.searchParams.get(key) === "1")
         kept.set(key, "1");
+    }
+    if (["/orders", "/orders/"].includes(u.pathname)) {
+      const queues = u.searchParams.getAll("queue");
+      if (queues.length === 1) {
+        const ids = queues[0]!.split(",").map(value => EntityIdSchema.safeParse(value));
+        if (ids.length <= 50 && ids.every(id => id.success)) {
+          const canonical = ids.map(id => id.data!.toLowerCase());
+          if (new Set(canonical).size === canonical.length) kept.set("queue", canonical.join(","));
+        }
+      }
+      const modes = u.searchParams.getAll("detailMode");
+      if (modes.length === 1 && EntityIdSchema.safeParse(kept.get("line")).success &&
+          ["orders", "artwork", "production", "shipments", "after-sales"].includes(modes[0]!))
+        kept.set("detailMode", modes[0]!);
+    }
+    if (["/settings/ai", "/settings/ai/"].includes(u.pathname)) {
+      const tabs = u.searchParams.getAll("settingsTab");
+      if (tabs.length === 1 && ["channels", "models", "defaults", "usage"].includes(tabs[0]!))
+        kept.set("settingsTab", tabs[0]!);
+      const owners = u.searchParams.getAll("owner"), subjects = u.searchParams.getAll("id");
+      const owner = owners.length === 1 ? ModelBillingOwnerSchema.safeParse(owners[0]) : null;
+      const subject = subjects.length === 1 ? ModelBillingSubjectIdSchema.safeParse(subjects[0]) : null;
+      if (owner?.success && subject?.success) { kept.set("owner", owner.data); kept.set("id", subject.data.toLowerCase()); }
+      const sources = u.searchParams.getAll("returnTo");
+      if (depth < 2 && sources.length === 1) {
+        const source = erpReturnPath(sources[0], depth + 1), target = new URL(source, "https://erp.invalid");
+        if (["/orders", "/orders/", "/production", "/shipments", "/ai-tasks", "/creative-designs/studio/image"].includes(target.pathname))
+          kept.set("returnTo", source);
+      }
     }
     if (["/customer-intelligence","/customer-intelligence/","/advertising/originals","/advertising/originals/"].includes(u.pathname)) {
       // Personal login sanitizes the target more than once. Preserve the exact

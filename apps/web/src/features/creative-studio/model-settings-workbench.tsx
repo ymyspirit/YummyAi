@@ -9,6 +9,7 @@ import { ModelRemovalDialog } from "./model-removal-dialog";
 import { ModelSettingsChannelEditor } from "./model-settings-workbench-channel";
 import { ModelSettingsDialog } from "./model-settings-workbench-dialog";
 import { ModelSettingsPricingEditor } from "./model-settings-workbench-pricing";
+import { ModelSettingsCompatibility } from "./model-settings-workbench-compatibility";
 import { capabilityLabels, channelSaveInput, defaultModelLabel, filterManagedModels, isDefaultModel, managedModels, modelSettingsTab, modelSettingsTabHref, pricingSummary, type ChannelDraft, type ManagedModel } from "./model-settings-presentation";
 import "./model-settings-workbench.css";
 
@@ -33,8 +34,8 @@ function purposeValues(defaults: ModelDefaults): PurposeDraft {
     ? { ...defaults.purposeDefaults } as PurposeDraft : {};
 }
 
-export function ModelSettingsWorkbench({ revision, advanced, billing, onState }: {
-  revision: number; advanced: ReactNode; billing: ReactNode; onState: (state: { dirty: boolean; busy: boolean }) => void;
+export function ModelSettingsWorkbench({ revision, advanced, advancedState, billing, onState }: {
+  revision: number; advanced: ReactNode; advancedState?: { dirty: boolean; busy: boolean }; billing: ReactNode; onState: (state: { dirty: boolean; busy: boolean }) => void;
 }) {
   const fence = useStudioAccessFence("model-settings"), alive = useRef(true), sequence = useRef(0), busyRef = useRef(false);
   const readController = useRef<AbortController | null>(null), writeController = useRef<AbortController | null>(null);
@@ -49,14 +50,14 @@ export function ModelSettingsWorkbench({ revision, advanced, billing, onState }:
   const [query, setQuery] = useState(""), [capability, setCapability] = useState(""), [channelId, setChannelId] = useState("");
   const [defaults, setDefaults] = useState<ModelDefaults | null>(null), [defaultsRevision, setDefaultsRevision] = useState(0), [defaultsDirty, setDefaultsDirty] = useState(false);
   const [purposes, setPurposes] = useState<PurposeDraft>({}), [purposeRevision, setPurposeRevision] = useState(0), [purposeDirty, setPurposeDirty] = useState(false);
-  const defaultsDirtyRef = useRef(false), purposeDirtyRef = useRef(false), [advancedMounted, setAdvancedMounted] = useState(false);
+  const defaultsDirtyRef = useRef(false), purposeDirtyRef = useRef(false), [advancedMounted, setAdvancedMounted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
   defaultsDirtyRef.current = defaultsDirty; purposeDirtyRef.current = purposeDirty;
   const id = useId(), available = fence.available && fence.can(Permission.ModelConfigure) && !cleared;
   const setEditorDirtyStable = useCallback((value: boolean) => setEditorDirty(value), []);
   const setPricingDirtyStable = useCallback((value: boolean) => setPricingDirty(value), []);
   const allModels = useMemo(() => snapshot ? managedModels(snapshot) : [], [snapshot]);
   const visibleModels = useMemo(() => filterManagedModels(allModels, query, capability, channelId), [allModels, query, capability, channelId]);
-  const disabled = busy || loading || blocked || !available || !snapshot;
+  const readOnlyDisabled = busy || loading || !available || !snapshot, disabled = readOnlyDisabled || blocked;
   useEffect(() => { onState({ dirty: editorDirty || defaultsDirty || purposeDirty || pricingDirty || !!modelEdit && modelLabel !== modelEdit.label, busy }); }, [editorDirty, defaultsDirty, purposeDirty, pricingDirty, modelEdit, modelLabel, busy, onState]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; readController.current?.abort(); writeController.current?.abort(); }; }, []);
   useEffect(() => {
@@ -152,12 +153,12 @@ export function ModelSettingsWorkbench({ revision, advanced, billing, onState }:
       {snapshot && <div className="ai-settings-channel-list">{snapshot.channels.map(channel => { const editable = ["openai", "openai-compatible"].includes(channel.provider) && new Set(channel.models.map(model => model.name)).size === channel.models.length;
         return <article key={channel.id} className="ai-settings-channel-row"><div className="ai-settings-channel-identity"><strong>{channel.name}</strong><span className={channel.status === "enabled" ? "ai-settings-state" : "ai-settings-muted"}>{channel.status === "enabled" ? "已启用" : "已停用"}</span>
         <p>{channel.baseUrl}</p><small>{channel.models.length + channel.analysisModels.length} 个配置模型 · {channel.hasCredential ? "密钥已保存" : "尚无密钥"} · 能力未实测</small></div>
-        <div className="ai-settings-row-actions"><button type="button" disabled={disabled || !editable} aria-label={`编辑渠道 ${channel.name}`} title={editable ? undefined : "此渠道类型或历史同名多用途配置请在高级兼容配置中核对"} onClick={() => { setError(""); setEditor(channel); }}><Pencil size={14} />编辑</button>
+        <div className="ai-settings-row-actions"><button type="button" disabled={readOnlyDisabled || !editable} aria-label={`编辑渠道 ${channel.name}`} title={editable ? undefined : "此渠道类型或历史同名多用途配置请在高级兼容配置中核对"} onClick={() => { if (!blocked) setError(""); setEditor(channel); }}><Pencil size={14} />编辑</button>
           <button type="button" disabled={disabled} onClick={() => void mutate({ operation: "channel.status", id: channel.id, revision: channel.revision, status: channel.status === "enabled" ? "disabled" : "enabled" }, channel.status === "enabled" ? "渠道已停用 历史任务与文件保留" : "渠道已启用 能力仍需在实际任务中验证")}>{channel.status === "enabled" ? "停用" : "启用"}</button>
           <details className="ai-settings-more"><summary aria-label={`更多渠道操作 ${channel.name}`}><MoreHorizontal size={18} /><span className="sr-only">更多操作</span></summary><div><button type="button" className="ai-settings-delete-action" disabled={disabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemovalError(""); setRemovalNotice(""); setRemoval({ kind: "channel", channel }); }}><Trash2 size={14} />删除渠道</button></div></details></div>{!editable && <p className="ai-settings-muted">此渠道类型或历史同名多用途配置请在高级兼容配置中核对 原模型保留</p>}</article>; })}
         {!snapshot.channels.length && <p className="ai-settings-empty">还没有渠道 点击添加渠道开始配置</p>}</div>}
-      <details className="ai-settings-disclosure ai-settings-advanced" onToggle={event => { if (event.currentTarget.open) setAdvancedMounted(true); }}><summary><Settings2 size={16} />高级兼容配置</summary>
-        <p className="ai-settings-muted">保留原画布配置和历史分析模型入口 两处共用同一份 ERP 配置 修改其他入口后请先读取最新配置</p>{advancedMounted && advanced}</details>
+      <div className="ai-settings-advanced-entry"><button type="button" disabled={busy || loading} onClick={() => { setAdvancedMounted(true); setAdvancedOpen(true); }}><Settings2 size={16} />高级兼容配置</button>
+        <p className="ai-settings-muted">在独立工作区打开原画布配置和历史分析模型入口 与本页共用 ERP 配置</p></div>
     </div>
     <div role="tabpanel" id={tabPanel("models")} aria-labelledby={tabButton("models")} hidden={tab !== "models"} className="ai-settings-panel">
       <div className="ai-settings-section-heading"><div><h2>模型库</h2><p>配置用途和实际能力分开显示 接口目录可见与保存成功均不代表已实测</p></div><button type="button" disabled={disabled} onClick={() => chooseTab("channels")}><Plus size={15} />从渠道添加模型</button></div>
@@ -199,6 +200,7 @@ export function ModelSettingsWorkbench({ revision, advanced, billing, onState }:
       <div className="ai-settings-section-heading"><div><h2>用量与费用</h2><p>用量按真实接口回执记录 官方参考成本与渠道实际账单分别核对 缺失用量或未知价格保持未知</p></div><Link href="/model-billing">打开完整费用核对<ExternalLink size={14} /></Link></div>
       {visited.has("usage") && billing}
     </div>
+    {advancedMounted && <ModelSettingsCompatibility open={advancedOpen} busy={advancedState?.busy ?? false} dirty={advancedState?.dirty ?? false} onClose={() => setAdvancedOpen(false)}>{advanced}</ModelSettingsCompatibility>}
     {editor && <ModelSettingsChannelEditor key={editor === "new" ? "new" : editor.id} channel={editor === "new" ? undefined : editor} currentChannel={editor === "new" ? undefined : snapshot?.channels.find(channel => channel.id === editor.id)} channels={snapshot?.channels}
       busy={busy || loading} blocked={blocked} error={error} onDirty={setEditorDirtyStable} onClose={() => { setEditor(null); setEditorDirty(false); }}
       onReconcile={() => void reloadRef.current()} onOpenExisting={channel => { setEditor(channel); setEditorDirty(false); setError(""); setNotice("已打开保存的渠道 请核对模型与协议 密钥保持隐藏"); }} onSave={draft => mutate(channelSaveInput(draft), "渠道与模型已保存 能力仍需在实际任务中验证")} onDiscover={discover} />}

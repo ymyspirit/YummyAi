@@ -3,7 +3,7 @@
 The native `/settings/ai` workbench is the primary configuration surface. It
 reuses `/v1/ai/configuration`, the encrypted provider vault and the existing
 tenant transaction boundary. The vendored Infinite Canvas settings remain a
-collapsed advanced compatibility surface; no provider credentials move into
+separate advanced compatibility workspace; no provider credentials move into
 browser storage or vendor code.
 
 ## Operator flow
@@ -26,7 +26,12 @@ browser storage or vendor code.
 The `settingsTab` query parameter accepts only `channels`, `models`, `defaults`
 or `usage`. Existing return context and billing selection parameters survive
 tab changes. The old `#analysis-model-settings` link opens the native model
-library. Compatibility forms remain available under **高级兼容配置**.
+library. Compatibility forms open in the **高级兼容配置** dialog so iframe
+drawers and pickers remain inside the visible workspace. Closing it preserves
+drafts until the operator explicitly discards them or authority changes.
+Personal login preserves only the four allowed tabs, a typed billing selection
+and an allowed internal return path. Order queue returns require distinct UUIDv7
+references (at most 50); arbitrary parameters and external destinations are dropped.
 
 ## Shared transport
 

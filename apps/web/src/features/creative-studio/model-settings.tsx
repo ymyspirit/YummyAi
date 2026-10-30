@@ -34,11 +34,11 @@ function ModelSettingsContent({ runtimeUrl }: { runtimeUrl: string | null }) {
   if (cleared) return <section className="studio-workspace studio-settings"><h1>AI 模型配置</h1><p role="status">当前本人会话已清除 配置界面与填写已隐藏</p></section>;
   return <div className="studio-workspace studio-settings">
     <header className="studio-page-header"><div><h1>AI 模型配置</h1><p>渠道与模型统一管理 为订单 设计和 Agent 设置本人默认 费用在同一处核对</p></div><div className="studio-actions"><WorkflowReturnLink label="返回原任务" /><Link href="/creative-designs/studio/image">进入生图工作台</Link></div></header>
-    <ModelSettingsWorkbench revision={revision} onState={onNativeState} billing={<ModelBillingWorkbench embedded />} advanced={<>
-      <AnalysisModelSettings revision={revision} />
-      <section className="studio-settings-runtime" aria-label="渠道与默认模型配置"><h2>画布兼容配置</h2><p>原画布配置保留 与本页读取同一份 ERP 渠道和模型</p>
+    <ModelSettingsWorkbench revision={revision} onState={onNativeState} advancedState={state} billing={<ModelBillingWorkbench embedded />} advanced={<>
+      <section className="studio-settings-runtime" aria-label="渠道与默认模型配置">
         {runtimeUrl ? <ModelConfigurationFrame runtimeUrl={runtimeUrl} onState={setState} onSaved={() => setRevision(value => value + 1)} onView={() => undefined} /> : <p role="alert" className="studio-alert">画布兼容配置暂未就绪 可继续使用本页的渠道 模型和业务默认</p>}
       </section>
+      <AnalysisModelSettings revision={revision} />
     </>} />
   </div>;
 }

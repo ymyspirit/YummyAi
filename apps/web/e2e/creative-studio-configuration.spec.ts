@@ -9,6 +9,23 @@ const analysisId = "019a0000-0000-7000-8000-000000000003";
 function snapshot(): ConfigurationSnapshot {
   return { channels: [{ id: channelId, name: "QA OpenAI", provider: "openai", baseUrl: "https://api.openai.com/v1", hasCredential: true, status: "enabled", revision: "a".repeat(64), analysisModels: [], dependentRoutes: [], models: [{ id: imageId, label: "QA Image", name: "gpt-image-fixture", capability: "image" }] }], analysisModels: [], defaults: emptyModelDefaults(), defaultsRevision: 0 };
 }
+async function openAdvancedConfiguration(page: Page) {
+  const workspace = page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true });
+  if (!await workspace.isVisible()) {
+    const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+    const channels = workbench.getByRole("tab", { name: "渠道连接", exact: true });
+    await expect(channels).toBeVisible();
+    if (await channels.getAttribute("aria-selected") !== "true") await channels.click();
+    await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+  }
+  await expect(workspace).toBeVisible();
+  const element = workspace.locator('iframe[title="无限画布模型配置"]');
+  await expect(element).toBeVisible({ timeout: 30_000 });
+  await element.scrollIntoViewIfNeeded();
+  const frame = page.frameLocator('iframe[title="无限画布模型配置"]');
+  await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toBeVisible({ timeout: 30_000 });
+  return frame;
+}
 async function fixture(page: Page) {
   const state = { snapshot: snapshot(), failSave: false, failDiscover: false, failRemove: false, unknownRemoval: null as "unchanged" | "saved" | null, holdRemoval: null as Promise<void> | null, requests: [] as ConfigurationRpc[], externalCalls: [] as string[] };
   // The actual ERP page and vendored runtime render; this fixture owns only the
@@ -65,8 +82,7 @@ async function fixture(page: Page) {
     await loginErp(page, "operator", "/settings/ai");
     await expect(page).toHaveURL(/\/settings\/ai(?:\?|$)/);
   } else await page.goto("/settings/ai");
-  await page.getByText("高级兼容配置", { exact: true }).click();
-  const frame = page.frameLocator('iframe[title="无限画布模型配置"]');
+  const frame = await openAdvancedConfiguration(page);
   await expect(frame.getByRole("button", { name: "编辑渠道", exact: true })).toBeVisible({ timeout: 30_000 });
   return { frame, state };
 }
@@ -107,6 +123,7 @@ test("upstream configuration discovers using saved credentials, selects models a
   expect(state.externalCalls).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("configuration-models-desktop.png") });
   await page.reload();
+  await openAdvancedConfiguration(page);
   await frame.getByRole("tab", { name: "模型管理", exact: true }).click();
   await expect(frame.locator(".settings-model-list")).toContainText("custom-image-manual", { timeout: 30_000 });
 });
@@ -167,6 +184,7 @@ test("model deletion confirms, keeps failed removals visible, clears defaults an
   expect(removals()).toHaveLength(3);
   expect(removals().at(-1)).toEqual({ operation: "model.remove", channelId, modelId: imageId, revision: "d".repeat(64) });
   await page.reload();
+  await openAdvancedConfiguration(page);
   await expect(frame.locator(".settings-channel")).toContainText("0 个创作模型", { timeout: 30_000 });
   await expect(remove).toHaveCount(0);
   expect(removals()).toHaveLength(3);
@@ -238,6 +256,7 @@ test("analysis model deletion cancels safely, shows server conflicts and refresh
   await frame.getByRole("tab", { name: "默认模型", exact: true }).click();
   await expect(frame.locator(".settings-analysis-select")).toContainText("跟随默认文本模型");
   await page.reload();
+  await openAdvancedConfiguration(page);
   await frame.getByRole("tab", { name: "模型管理", exact: true }).click();
   await page.getByText("图文分析模型与费用设置", { exact: true }).click();
   await expect(page.getByText("尚未配置图文分析模型。", { exact: true })).toBeVisible();
@@ -275,8 +294,8 @@ test("channel removal shows its models, handles conflicts and pending state, and
   await expect(frame.getByRole("button", { name: "删除模型 gpt-image-fixture", exact: true })).toBeHidden();
   if (process.env.E2E_STUDIO_CONFIGURATION_ISOLATED === "1") {
     const analysis = page.locator("details#analysis-model-settings");
-    await expect(analysis.locator("summary")).toHaveText("图文分析模型与费用设置");
-    await expect(analysis.locator("summary")).toBeVisible();
+    await expect(analysis.locator(":scope > summary")).toHaveText("图文分析模型与费用设置");
+    await expect(analysis.locator(":scope > summary")).toBeVisible();
     await expect(analysis).toHaveJSProperty("open", false);
     await expect(analysis.getByRole("button", { name: "刷新分析模型", exact: true })).toBeHidden();
     await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -373,6 +392,7 @@ test("channel removal shows its models, handles conflicts and pending state, and
   expect(removals()).toHaveLength(3);
   expect(state.snapshot.defaults).toEqual(emptyModelDefaults());
   await page.reload();
+  await openAdvancedConfiguration(page);
   await expect(frame.getByText(/已配置 0 个渠道/)).toBeVisible({ timeout: 30_000 });
   await expect(remove).toHaveCount(0);
   expect(removals()).toHaveLength(3);
@@ -480,6 +500,7 @@ test("manual fallback and OpenAI defaults remain usable at mobile width", async 
   await expect(frame.getByRole("button", { name: "保存默认模型", exact: true })).toBeDisabled();
   await expect(frame.getByRole("button", { name: "刷新配置", exact: true })).toBeEnabled();
   await page.reload();
+  await openAdvancedConfiguration(page);
   await expect(frame.getByRole("tab", { name: "默认模型", exact: true })).toBeVisible({ timeout: 30_000 });
   await frame.getByRole("tab", { name: "默认模型", exact: true }).click();
   await expect(frame.locator(".settings-defaults > div").first().getByRole("combobox")).toContainText("gpt-image-fixture");
