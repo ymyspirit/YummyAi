@@ -268,7 +268,11 @@ async function readModelSettings(page: Page, seen: Seen, child: Child, seed: z.i
     expect(channel).toBeDefined(); if (!channel) throw new Error("studio_paid_image_browser_settings_channel_missing");
     const model = channel.models.find(item => item.id === seed.modelId);
     expect(model).toMatchObject({ id: seed.modelId, name: seed.model, capability: "image", imagePricing: seed.pricing });
-    const settingsRoot = page.getByRole("region", { name: "渠道与默认模型配置", exact: true });
+    const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+    await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+    const compatibility = page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true });
+    await expect(compatibility).toBeVisible();
+    const settingsRoot = compatibility.getByRole("region", { name: "渠道与默认模型配置", exact: true });
     const configurationFrame = settingsRoot.locator('iframe[title="无限画布模型配置"]'); await expect(configurationFrame).toBeVisible();
     const frame = configurationFrame.contentFrame(); await expect(frame.getByRole("tab", { name: "渠道管理", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(frame.locator(".settings-channel")).toHaveCount(snapshot.channels.length);

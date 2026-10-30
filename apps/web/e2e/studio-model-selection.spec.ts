@@ -297,7 +297,11 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
       expect(configuration.channels.find(channel => channel.id === channelId)?.models.find(item => item.id === model.id))
         .toMatchObject({ id: model.id, name: model.model, capability: model.capability });
     }
-    const root = page.getByRole("region", { name: "渠道与默认模型配置", exact: true });
+    const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+    await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+    const compatibility = page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true });
+    await expect(compatibility).toBeVisible();
+    const root = compatibility.getByRole("region", { name: "渠道与默认模型配置", exact: true });
     const embedded = root.locator('iframe[title="无限画布模型配置"]'); await expect(embedded).toHaveCount(1); await expect(embedded).toBeVisible();
     const frame = embedded.contentFrame(), images: string[] = [], viewports: Array<Record<string, unknown>> = [], readRequests = [firstResponse.request()];
     const capabilityLabel = { image: "图片", video: "视频", text: "文字 / 业务分析" };

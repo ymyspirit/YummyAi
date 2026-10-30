@@ -390,6 +390,9 @@ test("a failed save preserves the open draft and needs an explicit save retry", 
 test("configuration is an ERP page and rejects cross-origin writes", async ({ page }) => {
   await page.goto("/settings/ai");
   await expect(page.getByRole("heading", { name: "AI 模型配置", exact: true })).toBeVisible();
+  const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+  await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true })).toBeVisible();
   await expect(page.frameLocator('iframe[title="无限画布模型配置"]').getByRole("button", { name: "添加渠道", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".erp-sidebar")).toHaveCount(1);
   await expect(page.locator('iframe[title="无限画布模型配置"]')).toHaveCount(1);
