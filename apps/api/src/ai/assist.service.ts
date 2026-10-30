@@ -30,6 +30,7 @@ import { authorize, ForbiddenError, permissionScope, Permission, ASSIST_ACCESS_P
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   AssistModelInputSchema,
+  assistModelExecutionSnapshot,
   AssistBudgetStateSchema,
   AssistHistoryEntrySchema,
   CreateAssistSchema,
@@ -125,7 +126,19 @@ export class AssistService {
         );
       if (!provider || !["openai", "openai-compatible"].includes(provider.provider))
         throw new BadRequestException("请选择启用的 OpenAI 或 OpenAI 兼容渠道");
+      // A second analysis alias cannot make an existing explicit quote/cap disappear.
+      const siblings = await tx.select().from(modelRoutes).where(inArray(modelRoutes.taskType, ["studio_text", "studio_analysis"]));
+      const pricing = { inputUsdPerMillion: input.inputUsdPerMillion, outputUsdPerMillion: input.outputUsdPerMillion, maxTaskCostUsd: input.maxTaskCostUsd };
+      if (siblings.some(route => (route.status === "enabled" || (route.status === "disabled" && route.targets[0]?.configurationDisabled === true)) &&
+        route.targets.length === 1 && route.targets[0]?.providerConfigId === input.providerConfigId &&
+        route.targets[0]?.providerModel === input.model && route.targets[0].analysisPricing &&
+        (route.targets[0].analysisPricing.inputUsdPerMillion !== pricing.inputUsdPerMillion ||
+          route.targets[0].analysisPricing.outputUsdPerMillion !== pricing.outputUsdPerMillion ||
+          route.targets[0].analysisPricing.maxTaskCostUsd !== pricing.maxTaskCostUsd)))
+        throw new ConflictException({ code: "model_configuration_pricing_conflict", message: "该模型仍继承关联分析配置的价格或限额 请先核对关联分析模型 本次价格未修改" });
       const [removed] = await tx.select().from(modelRoutes).where(and(eq(modelRoutes.modelKey, input.label), eq(modelRoutes.taskType, "studio_analysis"), eq(modelRoutes.status, "disabled")));
+      if (removed?.targets.some(target => target.configurationDisabled === true))
+        throw new ConflictException({ code: "model_configuration_model_paused", message: "该模型已停用 请在模型库核对原配置后启用 本次未新增或改写" });
       if (removed) {
         await tx.update(modelRoutes).set({ status: "enabled", updatedAt: new Date(), targets: [{ providerConfigId: input.providerConfigId, providerModel: input.model, timeoutMs: 120000, analysisPricing: { inputUsdPerMillion: input.inputUsdPerMillion, outputUsdPerMillion: input.outputUsdPerMillion, maxTaskCostUsd: input.maxTaskCostUsd } }] }).where(eq(modelRoutes.id, removed.id));
         return { id: removed.id };
@@ -278,9 +291,10 @@ export class AssistService {
     }
     if (input.kind === "knowledge_answer" && input.purpose === "evaluation" && !admission)
       throw new BadRequestException("请从原生评测入口启动任务");
-    const model = (await this.models(context)).find((m) => m.id === input.modelId);
-    if (!model)
+    const selectedModel = (await this.models(context)).find((m) => m.id === input.modelId);
+    if (!selectedModel)
       throw new BadRequestException("尚未配置可用的文本模型，请先在 AI 模型配置中添加并启用");
+    const model = assistModelExecutionSnapshot(selectedModel);
     // Native evaluation v1 keeps its sealed execution policy. Ordinary requests
     // use provider token limits; an evaluation already requires trusted admission above.
     const basis = admission?.prepared ? await admission.prepared(input) : await this.contexts.prepareForExecution(
@@ -369,7 +383,7 @@ export class AssistService {
       )
         throw new ConflictException({ code: "assist_model_changed", message: "模型配置已变化，请刷新后重试" });
       const currentModel = (await configuredAssistModels(tx, context.userId)).find(m => m.id === model.id);
-      if (!currentModel || JSON.stringify(currentModel) !== JSON.stringify(model))
+      if (!currentModel || JSON.stringify(assistModelExecutionSnapshot(currentModel)) !== JSON.stringify(model))
         throw new ConflictException({ code: "assist_pricing_changed", message: "模型计价配置已更新，请刷新后重试" });
       const [active] = await tx.execute<{ count: string }>(sql`select (
         (select count(*) from ai_assist_runs where tenant_id=${context.tenantId}::uuid and status in('queued','running') and expires_at>clock_timestamp())+

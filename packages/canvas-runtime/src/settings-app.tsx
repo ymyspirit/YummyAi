@@ -25,7 +25,7 @@ window.addEventListener("studio.theme", event => { const theme = (event as Custo
 
 function editable(channel: ConfiguredChannel): SettingsChannel {
   if (!["openai", "openai-compatible"].includes(channel.provider)) throw new Error("此渠道协议尚未接入编辑 请保留原配置");
-  return { id: channel.id, name: channel.name, baseUrl: channel.baseUrl, apiKey: "", apiFormat: channel.provider === "openai" ? "responses" : "openai", models: channel.models.map(model => ({ name: model.name, capability: model.capability })) };
+  return { id: channel.id, name: channel.name, baseUrl: channel.baseUrl, apiKey: "", apiFormat: channel.provider === "openai" ? "responses" : "openai", models: channel.models.filter(model => model.status !== "disabled").map(model => ({ name: model.name, capability: model.capability })) };
 }
 const protocolLabel = (provider: string) => provider === "openai" ? "Responses" : provider === "openai-compatible" ? "Chat Completions" : "其他协议";
 type ManagedModel = { id: string; name: string; label: string; capability: "image" | "video" | "text" | "analysis" };
@@ -60,8 +60,8 @@ function Settings() {
   useEffect(() => { if (snapshot && channelFilter !== "all" && !snapshot.channels.some(channel => channel.id === channelFilter)) setChannelFilter("all"); }, [snapshot, channelFilter]);
   const selectedChannel = channels.find(channel => channel.id === channelFilter);
   const managedModels = channels.flatMap(channel => [
-    ...channel.models.map(model => ({ channel, model: model as ManagedModel })),
-    ...(channel.analysisModels ?? []).map(model => ({ channel, model: { ...model, capability: "analysis" as const } })),
+    ...channel.models.filter(model => model.status !== "disabled").map(model => ({ channel, model: model as ManagedModel })),
+    ...(channel.analysisModels ?? []).filter(model => model.status !== "disabled").map(model => ({ channel, model: { ...model, capability: "analysis" as const } })),
   ]);
   const visibleModels = managedModels.filter(({ channel, model }) => (channelFilter === "all" || channel.id === channelFilter)
     && (capabilityFilter === "all" || model.capability === capabilityFilter || (capabilityFilter === "analysis" && model.capability === "text"))

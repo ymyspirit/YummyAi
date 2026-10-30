@@ -65,6 +65,7 @@ async function fixture(page: Page) {
     await loginErp(page, "operator", "/settings/ai");
     await expect(page).toHaveURL(/\/settings\/ai(?:\?|$)/);
   } else await page.goto("/settings/ai");
+  await page.getByText("高级兼容配置", { exact: true }).click();
   const frame = page.frameLocator('iframe[title="无限画布模型配置"]');
   await expect(frame.getByRole("button", { name: "编辑渠道", exact: true })).toBeVisible({ timeout: 30_000 });
   return { frame, state };

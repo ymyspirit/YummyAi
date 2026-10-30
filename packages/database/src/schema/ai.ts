@@ -10,7 +10,9 @@ export interface ModelRouteTargetRecord {
   providerConfigId: string;
   providerModel: string;
   timeoutMs: number;
-  analysisPricing?: { inputUsdPerMillion: number; outputUsdPerMillion: number; maxTaskCostUsd: number };
+  analysisPricing?: { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null; maxTaskCostUsd: number | null };
+  /** Only explicit reversible configuration pauses carry this marker. */
+  configurationDisabled?: boolean;
   imagePricing?: StudioImagePricing;
 }
 

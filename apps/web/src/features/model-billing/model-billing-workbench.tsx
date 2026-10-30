@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Calculator, Check, ExternalLink, FileCheck2, RefreshCw, Table2 } from "lucide-react";
 import {
   ModelBillingBasisSchema,
@@ -216,9 +216,16 @@ export function OfficialPriceCheckPanel({ check }: { check?: OfficialApiPriceChe
   );
 }
 
-export function ModelBillingWorkbench() {
+export function ModelBillingWorkbench({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter(),
     params = useSearchParams();
+  const pathname = usePathname();
+  const selectionHref = (nextOwner: string, id: string) => {
+    if (!embedded) return `/model-billing?owner=${nextOwner}&id=${id}`;
+    const query = new URLSearchParams(params.toString());
+    query.set("owner", nextOwner); query.set("id", id);
+    return `${pathname}?${query}`;
+  };
   const owner = ModelBillingOwnerSchema.safeParse(params.get("owner")),
     subject = ModelBillingSubjectIdSchema.safeParse(params.get("id"));
   const selection = owner.success && subject.success ? `${owner.data}/${subject.data}` : "";
@@ -381,7 +388,7 @@ export function ModelBillingWorkbench() {
       return;
     }
     const [nextOwner, id] = path.split("/");
-    router.replace(`/model-billing?owner=${nextOwner}&id=${id}`, { scroll: false });
+    router.replace(selectionHref(nextOwner, id), { scroll: false });
   }
   async function hashFile(file: File | undefined) {
     const epoch = ++fileEpoch.current;
@@ -474,9 +481,10 @@ export function ModelBillingWorkbench() {
     }
   }
 
+  const Container = embedded ? "section" : "main";
   return (
-    <main className="oc-page model-billing-page">
-      <header className="oc-page-header">
+    <Container className={`oc-page model-billing-page${embedded ? " model-billing-page--embedded" : ""}`}>
+      {!embedded && <header className="oc-page-header">
         <div>
           <p className="oc-eyebrow">AI 执行</p>
           <h1>模型费用核对</h1>
@@ -486,7 +494,7 @@ export function ModelBillingWorkbench() {
           <ArrowLeft size={15} />
           返回 AI 任务
         </Link>
-      </header>
+      </header>}
       <p className="model-billing-note">
         此处记录人工确认的美元费用 凭证文件只在当前浏览器计算摘要 原文件请自行保管
       </p>
@@ -570,7 +578,7 @@ export function ModelBillingWorkbench() {
                   setPendingSelection(null);
                   setDirty(false);
                   const [nextOwner, id] = path.split("/");
-                  router.replace(`/model-billing?owner=${nextOwner}&id=${id}`, { scroll: false });
+                  router.replace(selectionHref(nextOwner, id), { scroll: false });
                 }}
               >
                 放弃未保存内容并切换
@@ -742,6 +750,6 @@ export function ModelBillingWorkbench() {
           )}
         </section>
       </div>
-    </main>
+    </Container>
   );
 }

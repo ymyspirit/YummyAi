@@ -258,13 +258,12 @@ explicit diagnostics without exposing provider response bodies. Responses are
 bounded to 2 MB and 10,000 entries; a saved channel accepts up to 200 models.
 
 Existing `/v1/ai/model-configs` and single-model endpoints remain available.
-The settings surface separates **渠道管理**, **模型管理** and **默认模型**.
-Channel rows show connection metadata and counts; the model tab supports channel,
-capability and name/ID filtering, including dedicated analysis models on disabled
-channels. The advanced analysis pricing form appears only on the model tab.
-The parent accepts a validated `settings.view` notification from its existing
-origin/source/channel-checked frame to control that visibility; hidden pricing
-drafts remain mounted and keep their navigation guard.
+The native settings surface separates **渠道连接**, **模型库**, **业务默认** and
+**用量与费用**, sharing the same configuration and billing owners. The former
+frame and analysis form remain under **高级兼容配置**. See
+[AI settings workflow](ai-settings-workflow.md) for personal-purpose defaults,
+reversible model pauses, effective inherited prices, optional caps and the
+compatibility boundary. Hidden drafts retain their navigation guard.
 
 `channel.remove` requires the current `id` and `revision`. Its page-rendered
 confirmation lists both creative and dedicated analysis models, including those

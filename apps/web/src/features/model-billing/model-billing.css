@@ -1,6 +1,11 @@
 .model-billing-page {
   max-width: 1440px;
 }
+.model-billing-page.model-billing-page--embedded {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
 .model-billing-page * {
   min-width: 0;
 }
