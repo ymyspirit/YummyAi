@@ -739,6 +739,7 @@ function DevelopmentWorkspaceContent({ mode }: { mode: Mode }) {
             </DevelopmentDrawerForm>
           ) : mode === "specification" && spuId ? (
             <SpuDetailPanel
+              key={`${spuId}:${options.contextAuthority ?? "legacy"}`}
               options={options}
               spuId={spuId}
               busy={busy || optionsLoading}

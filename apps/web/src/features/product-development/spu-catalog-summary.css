@@ -1,0 +1,26 @@
+.pd-spu-variant-summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.pd-spu-variant-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+.pd-spu-option-preview {
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--muted-ink, #687386);
+  line-height: 1.6;
+  animation: pd-spu-summary-enter 160ms ease-out both;
+}
+@keyframes pd-spu-summary-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-spu-option-preview { animation: none; }
+}
