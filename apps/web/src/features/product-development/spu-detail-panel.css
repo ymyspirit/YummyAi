@@ -59,12 +59,18 @@
   .spu-spec-filter { width: 100%; }
   .spu-spec-table colgroup, .spu-spec-table thead { display: none; }
   .spu-detail-panel .spu-spec-table table, .spu-spec-table tbody { display: block; }
-  .spu-spec-summary-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; padding: 12px; border-bottom: 1px solid var(--line, #dce1e7); }
+  .spu-spec-summary-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 10px 12px; border-bottom: 1px solid var(--line, #dce1e7); }
   .spu-detail-panel .spu-spec-summary-row > :is(th, td) { min-width: 0; border: 0; padding: 0; }
   .spu-spec-summary-row > :is(th, td)::before { content: attr(data-label); display: block; color: var(--muted-ink, #687386); font-size: 11px; font-weight: 400; margin-bottom: 4px; }
   .spu-spec-summary-row > :first-child, .spu-spec-summary-row > :last-child { grid-column: 1 / -1; }
   .spu-spec-summary-row > :nth-child(4) { grid-column: 1 / -1; }
   .spu-spec-summary-row > :last-child::before { display: none; }
+  .spu-spec-summary-row > :first-child::before, .spu-spec-summary-row > :nth-child(4)::before { display: none; }
+  .spu-spec-summary-row > :first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .spu-spec-summary-row .spu-spec-code { margin: 0; }
+  .spu-spec-summary-row .spu-spec-dimensions { flex-basis: 100%; margin-top: 0; }
+  .spu-spec-summary-row > :nth-child(4) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+  .spu-spec-summary-row > :nth-child(4) small { margin-top: 0; }
   .spu-spec-details-row, .spu-spec-details-row > td { display: block; width: 100%; }
   .spu-detail-panel .spu-detail-facts { grid-template-columns: 1fr; gap: 12px; }
   .spu-spec-details-content { padding: 14px 12px; }
@@ -72,6 +78,8 @@
 }
 @media (max-width: 600px) {
   .spu-detail-panel :is(summary, button, .oc-button, .spu-spec-template, .spu-spec-rules a), .spu-detail-button, .spu-spec-filter-input input { min-height: 44px; }
+  /* Outrank the product input rule and late shared button styles only here. */
+  .spu-detail-panel .spu-spec-filter .spu-spec-filter-input input[type="search"], .task-drawer-footer .oc-button.spu-detail-button { min-height: 44px; min-width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .spu-detail-panel *, .spu-detail-panel *::details-content, .spu-detail-button { transition: none !important; }
