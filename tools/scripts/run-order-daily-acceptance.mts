@@ -1795,7 +1795,7 @@ try {
                                                       "src/content-projects/content-project.integration.test.ts",
                                                     ]
                                                   : modelConfigurationIntegration
-                                                    ? ["src/ai/model-configuration.integration.test.ts"]
+                                                    ? ["src/ai/model-configuration.integration.test.ts", "src/ai/model-settings.integration.test.ts"]
                                                   : canvasIntegration
                                                     ? [
                                                         "src/ai/model-configuration.integration.test.ts",

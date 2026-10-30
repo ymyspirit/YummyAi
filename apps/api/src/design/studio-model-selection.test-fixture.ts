@@ -213,7 +213,7 @@ export async function createStudioModelSelectionFixture(options: Parameters<type
       if (proof.role !== "yummyai_app" || proof.channels.length !== channelIds.length || proof.channels.some(row => row.status !== "deleted" || !row.credentialCleared)
         || proof.routes.length !== routeIds.length || proof.routes.some(row => row.status !== "disabled") || proof.entries.some(row => !row.deletedAt)
         || proof.projects.length !== scopeIds.length || proof.projects.some(row => row.status !== "cancelled" || !row.archivedAt)
-        || Object.values(proof.preferences?.defaults ?? {}).some(id => id && routeIds.includes(id))
+        || Object.values(proof.preferences?.defaults ?? {}).flatMap(value => typeof value === "object" && value !== null ? Object.values(value) : [value]).some(id => id && routeIds.includes(id))
         || proof.entries.length > 0 && proof.retainedRevisions < proof.entries.length) throw new Error("studio_model_fixture_cleanup_not_verified");
       if ((await catalogue(context)).length || (await base.bridge.projectSummaries(context)).some(row => scopeIds.includes(row.id))) throw new Error("studio_model_fixture_cleanup_not_visible");
       for (const row of proof.projects) {

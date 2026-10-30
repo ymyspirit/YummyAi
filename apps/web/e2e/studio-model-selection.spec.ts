@@ -297,7 +297,11 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
       expect(configuration.channels.find(channel => channel.id === channelId)?.models.find(item => item.id === model.id))
         .toMatchObject({ id: model.id, name: model.model, capability: model.capability });
     }
-    const root = page.getByRole("region", { name: "渠道与默认模型配置", exact: true });
+    const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+    await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+    const compatibility = page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true });
+    await expect(compatibility).toBeVisible();
+    const root = compatibility.getByRole("region", { name: "渠道与默认模型配置", exact: true });
     const embedded = root.locator('iframe[title="无限画布模型配置"]'); await expect(embedded).toHaveCount(1); await expect(embedded).toBeVisible();
     const frame = embedded.contentFrame(), images: string[] = [], viewports: Array<Record<string, unknown>> = [], readRequests = [firstResponse.request()];
     const capabilityLabel = { image: "图片", video: "视频", text: "文字 / 业务分析" };
@@ -364,6 +368,8 @@ test("6db3a742_settings_reads_real_configuration_201_with_personal_authority_and
     result.images = images; result.viewports = viewports; result.configurationReads = transport; result.authorityHash = basis.authorityHash;
     result.configurationSnapshotHash = originalSha(JSON.stringify(configuration)); result.originalDocumentsHash = originalSha(JSON.stringify(before.documents));
     result.businessTablesUnchanged = true; result.originalDraftsAndRevisionsUnchanged = true; result.providerRequests = 0;
+    await compatibility.getByRole("button", { name: "关闭高级兼容配置", exact: true }).click();
+    await expect(compatibility).toBeHidden();
     const logoutButton = page.getByRole("button", { name: "退出登录", exact: true }), logoutPhase = "configuration-201.logout-private-settings";
     await page.bringToFront(); await logoutButton.focus();
     await seen.markPhase(logoutPhase); const clearBoundary = await seen.clear.boundary();

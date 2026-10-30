@@ -1,4 +1,5 @@
 "use client";
+import { preferredModelId } from "@yummyai/contracts/ai/model-purpose";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -255,7 +256,7 @@ function AgentChatContent({
       if (!valid(token) || abort.signal.aborted || sequence !== workspaceSequence.current) return;
       setWorkspace(next);
       setModelId((current) =>
-        next.models.some((model) => model.id === current) ? current : (next.models[0]?.id ?? ""),
+        preferredModelId(next.models, "agent_chat", current),
       );
     } catch (failure) {
       if (valid(token) && !abort.signal.aborted && sequence === workspaceSequence.current)

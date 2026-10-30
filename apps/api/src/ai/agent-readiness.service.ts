@@ -124,9 +124,9 @@ export class AgentReadinessService {
     const blockers = new Set<AgentReadinessBlocker>();
     for (const route of supported) {
       const pricing = route.targets[0]!.analysisPricing;
-      const priced = pricing && Number.isFinite(pricing.inputUsdPerMillion) && pricing.inputUsdPerMillion >= 0
-        && Number.isFinite(pricing.outputUsdPerMillion) && pricing.outputUsdPerMillion >= 0;
-      const capped = pricing && Number.isFinite(pricing.maxTaskCostUsd) && pricing.maxTaskCostUsd >= 0.000001;
+      const priced = pricing && pricing.inputUsdPerMillion !== null && Number.isFinite(pricing.inputUsdPerMillion) && pricing.inputUsdPerMillion >= 0
+        && pricing.outputUsdPerMillion !== null && Number.isFinite(pricing.outputUsdPerMillion) && pricing.outputUsdPerMillion >= 0;
+      const capped = pricing && pricing.maxTaskCostUsd !== null && Number.isFinite(pricing.maxTaskCostUsd) && pricing.maxTaskCostUsd >= 0.000001;
       if (priced && capped) return [];
       if (!priced) blockers.add("model_pricing_missing");
       if (!capped) blockers.add("model_task_cap_missing");

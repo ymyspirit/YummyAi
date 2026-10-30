@@ -10,6 +10,8 @@ import { BenchmarkTypedAnswerSchema } from "@yummyai/contracts/knowledge/benchma
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
 import { OrderRequirementRoleSchema } from "@yummyai/contracts/order/requirement-interpretation";
 import { ModelTokenUsageSchema, ModelUsageSummarySchema } from "@yummyai/contracts/ai/model-usage";
+import { ModelPurposeSchema } from "@yummyai/contracts/ai/model-purpose";
+import { AnalysisModelPricingFields, analysisQuoteSupportsCap } from "@yummyai/contracts/ai/model-pricing-policy";
 
 export const AssistKindSchema = z.enum([
   "creative",
@@ -247,24 +249,31 @@ export const CreateAssistSchema = z.discriminatedUnion("kind", [
   BusinessRequest.extend(ProcurementSelection.shape).strict(),
   BusinessRequest.extend(AfterSalesSelection.shape).strict(),
 ]);
-export const AssistModelInputSchema = z
+const AssistModelBaseSchema = z
   .object({
     providerConfigId: Id,
     model: z.string().trim().min(1).max(120),
     label: z.string().trim().min(1).max(100),
-    inputUsdPerMillion: z.number().nonnegative().max(1000),
-    outputUsdPerMillion: z.number().nonnegative().max(5000),
-    maxTaskCostUsd: z.number().positive().max(20).default(1),
+    ...AnalysisModelPricingFields,
   })
   .strict();
-export const AssistModelSchema = AssistModelInputSchema.omit({ providerConfigId: true }).extend({
+export const AssistModelInputSchema = AssistModelBaseSchema.refine(analysisQuoteSupportsCap, { message: "设置费用上限前需要完整的输入和输出报价" });
+export const AssistModelSchema = AssistModelBaseSchema.omit({ providerConfigId: true }).extend({
   id: Id,
   label: z.string(),
   providerLabel: z.string(),
   inputUsdPerMillion: z.number().nonnegative().nullable(),
   outputUsdPerMillion: z.number().nonnegative().nullable(),
   maxTaskCostUsd: z.number().positive().nullable(),
+  defaultFor: z.array(ModelPurposeSchema).max(10).optional(),
 });
+
+/** A personal preference is presentation metadata, never execution or price identity. */
+export function assistModelExecutionSnapshot(model: z.infer<typeof AssistModelSchema>) {
+  const { defaultFor, ...execution } = model;
+  void defaultFor;
+  return execution;
+}
 export const AssistCheckSchema = z
   .object({
     code: z.string(),

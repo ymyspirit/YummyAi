@@ -19,6 +19,7 @@ import {
   type CreateAssist,
 } from "@yummyai/contracts/ai/assist";
 import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
+import { preferredModelId } from "@yummyai/contracts/ai/model-purpose";
 import { requiredAssistPermissions } from "@yummyai/authz/assist-policy";
 import { useErpAccess } from "../identity/erp-access";
 import type { AssistIntent } from "@yummyai/contracts/ai/assist-recovery";
@@ -242,7 +243,7 @@ function AssistPanelContent({
       ]);
       if (mountedScope.current !== scope || signal?.aborted || epoch !== readEpoch.current) return;
       setModels(available);
-      setModelId((id) => (available.some((m) => m.id === id) ? id : kind === "order_review" ? "" : (available[0]?.id ?? "")));
+      setModelId((id) => preferredModelId(available, kind, id));
       const runId = linkedRunId ?? rows[0]?.id;
       const saved = runId
         ? AssistViewSchema.parse(await api(`runs/${runId}`, undefined, signal))

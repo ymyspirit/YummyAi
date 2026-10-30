@@ -86,6 +86,8 @@
     "./knowledge/benchmark-values": "./src/knowledge/benchmark-values.ts",
     "./knowledge/benchmark-command": "./src/knowledge/benchmark-command.ts",
     "./ai/model-configuration": "./src/ai/model-configuration.ts",
+    "./ai/model-purpose": "./src/ai/model-purpose.ts",
+    "./ai/model-pricing-policy": "./src/ai/model-pricing-policy.ts",
     "./ai/assist": "./src/ai/assist.ts",
     "./tenant/tenant-context": "./src/tenant/tenant-context.ts",
     "./ai/task-workspace": "./src/ai/task-workspace.ts",

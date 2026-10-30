@@ -97,13 +97,11 @@ test.describe("order requirements personal source interpretation and Agent-first
       await expect(analysis.locator(":scope > summary")).toHaveText("AI 辅助填写字段对应关系");
       await analysis.locator(":scope > summary").click();
       const model = analysis.getByRole("combobox", { name: "图文模型", exact: true });
-      await expect(model).toHaveValue("");
-      await expect(analysis.getByRole("button", { name: "AI分析并填写", exact: true })).toBeDisabled();
-      expect(audit.analysisPosts).toEqual([]);
-      await model.selectOption(analysisModel.id);
-      await expect(analysis).toContainText("输入 $1/百万 tokens 输出 $2/百万 tokens 单次费用上限 $1");
+      await expect(model).toHaveValue(analysisModel.id);
       const start = analysis.getByRole("button", { name: "AI分析并填写", exact: true });
       await expect(start).toBeEnabled();
+      expect(audit.analysisPosts).toEqual([]);
+      await expect(analysis).toContainText("输入 $1/百万 tokens 输出 $2/百万 tokens 单次费用上限 $1");
       child = await startProductionEditorWorker(); child.stdout?.on("data", countCalls);
       const posted = page.waitForResponse(value => path(value.url()) === "/api/ai-assists/runs" && value.request().method() === "POST").then(async reply => {
         expect(reply.status()).toBe(201);

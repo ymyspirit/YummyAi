@@ -1,6 +1,38 @@
 import { describe, expect, it } from "vitest";
 import { erpReturnPath } from "./web-auth-mode";
 
+describe("native AI settings login context", () => {
+  const line = "019a0000-0000-7000-8000-000000000021", other = "019a0000-0000-7000-8000-000000000022";
+  it("preserves the selected settings tab and valid order queue through repeated personal login", () => {
+    const source = `/orders?line=${line}&queue=${line},${other}&detailMode=artwork`;
+    const path = `/settings/ai?${new URLSearchParams({ settingsTab: "defaults", returnTo: source, token: "private" })}`;
+    const first = erpReturnPath(path), result = new URL(erpReturnPath(first), "https://erp.invalid");
+    expect(result.searchParams.get("settingsTab")).toBe("defaults");
+    expect(result.searchParams.get("returnTo")).toBe(erpReturnPath(source));
+    expect(result.searchParams.has("token")).toBe(false); expect(erpReturnPath(first)).toBe(first);
+  });
+  it("preserves a typed embedded-billing selection without granting authority", () => {
+    expect(erpReturnPath(`/settings/ai?settingsTab=usage&owner=assist&id=${line}&tenantId=private`))
+      .toBe(`/settings/ai?settingsTab=usage&owner=assist&id=${line}`);
+    expect(erpReturnPath(`/settings/ai?owner=unknown&id=${line}`)).toBe("/settings/ai");
+    expect(erpReturnPath(`/settings/ai?owner=assist&id=${line}&id=${other}`)).toBe("/settings/ai");
+  });
+  it("rejects ambiguous or wrong-route tab selectors and external or recursive return paths", () => {
+    for (const query of ["settingsTab=defaults&settingsTab=models", "settingsTab=unknown", "settingsTab=https://outside.invalid"])
+      expect(erpReturnPath(`/settings/ai?${query}`)).toBe("/settings/ai");
+    expect(erpReturnPath("/orders?settingsTab=defaults")).toBe("/orders");
+    for (const target of ["https://outside.invalid", "//outside.invalid", "/api/creative-studio/configuration", "/settings/ai?settingsTab=usage"])
+      expect(new URL(erpReturnPath(`/settings/ai?${new URLSearchParams({ returnTo: target })}`), "https://erp.invalid").searchParams.has("returnTo")).toBe(false);
+  });
+  it("drops malformed, duplicate or oversized order queues and unrelated detail modes", () => {
+    for (const queue of ["not-an-id", `${line},${line}`, Array.from({ length: 51 }, () => line).join(",")])
+      expect(new URL(erpReturnPath(`/orders?${new URLSearchParams({ queue })}`), "https://erp.invalid").searchParams.has("queue")).toBe(false);
+    expect(erpReturnPath(`/orders?queue=${line}&queue=${other}&detailMode=artwork`)).toBe("/orders");
+    expect(erpReturnPath(`/products?queue=${line}&detailMode=artwork`)).toBe("/products");
+    expect(erpReturnPath(`/orders?line=${line}&detailMode=unknown`)).toBe(`/orders?line=${line}`);
+  });
+});
+
 describe("native v4 original-form login recovery",()=>{
   const run="0198fbef-4a10-7000-8000-000000000904",item="0198fbef-4a10-7000-8000-000000000905",order="0198fbef-4a10-7000-8000-000000000906";
   it("keeps only original recovery coordinates across repeated login and removes operator bodies and tokens",()=>{

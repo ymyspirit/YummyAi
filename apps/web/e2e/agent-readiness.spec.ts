@@ -342,6 +342,9 @@ test.describe("compiled personal read-only Agent readiness", () => {
       const fees = page.locator("#analysis-model-settings"), configuration = page.waitForResponse(response => new URL(response.url()).pathname === "/api/creative-studio/configuration" && response.request().method() === "POST");
       const models = page.waitForResponse(response => new URL(response.url()).pathname === "/api/ai-assists/models" && response.request().method() === "GET");
       await seen.control("read_fees_independent_of_iframe", async () => {
+        const workbench = page.getByRole("region", { name: "统一模型配置", exact: true });
+        await workbench.getByRole("button", { name: "高级兼容配置", exact: true }).click();
+        await expect(page.getByRole("dialog", { name: "高级兼容配置工作区", exact: true })).toBeVisible();
         await fees.getByText("图文分析模型与费用设置", { exact: true }).click();
         const [actualConfiguration, actualModels] = await Promise.all([configuration, models]);
         expect(actualConfiguration.status()).toBe(201); expect(actualModels.status()).toBe(200);

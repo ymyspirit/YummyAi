@@ -159,7 +159,8 @@ describe("model removal preserves tenant history and active tasks", () => {
     snapshot = await read();
     await service.invoke(context, { operation: "defaults.save", revision: snapshot.defaultsRevision, defaults: { ...emptyModelDefaults(), text: textId, analysis: analysisId } });
     const latest = (await read()).channels.find(item => item.id === current.id)!;
-    expect(latest.analysisModels).toEqual([{ id: analysisId, name: "priced-analysis", label: `Analysis ${current.id}` }]);
+    expect(latest.analysisModels).toEqual([{ id: analysisId, name: "priced-analysis", label: `Analysis ${current.id}`,
+      analysisPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxTaskCostUsd: 1 } }]);
     snapshot = await service.invoke(context, removeChannelInput(latest)) as ConfigurationSnapshot;
     expect(snapshot.channels.some(item => item.id === current.id)).toBe(false);
     expect(snapshot.defaults).toEqual(emptyModelDefaults());
