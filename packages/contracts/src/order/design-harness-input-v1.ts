@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   DesignAutomationRecipeSchema, DesignAutomationBudgetSchema, DesignAutomationBlockerCodeSchema,
   PillowSubjectSchema, PILLOW_HALF_BODY_PROMPT_VERSION,
-} from "../pod/design-automation.js";
+} from "@yummyai/contracts/pod/design-automation";
 
 /** The original V1/V2 Harness schema is part of immutable execution contracts.
  * Keep its original step variants and plan shape instead of deriving them from

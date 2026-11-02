@@ -114,6 +114,7 @@
     "./order/native-production": "./src/order/native-production.ts",
     "./order/design-agent": "./src/order/design-agent.ts",
     "./order/design-harness": "./src/order/design-harness.ts",
+    "./order/design-harness-input-v1": "./src/order/design-harness-input-v1.ts",
     "./order/design-policy": "./src/order/design-policy.ts",
     "./order/workbench": "./src/order/workbench.ts",
     "./order/routing": "./src/order/routing.ts",
