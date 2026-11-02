@@ -2,7 +2,7 @@ import { HarnessRegistry, HarnessContractError, harnessChecksum } from "@yummyai
 import { Permission, ForbiddenError } from "@yummyai/authz";
 import { ORDER_IMAGE_ENHANCEMENT_POLICY,ORDER_IMAGE_ENHANCEMENT_INSTRUCTION } from "@yummyai/contracts/order/design-policy";
 import type { TenantContext } from "@yummyai/contracts";
-import { OrderDesignMethodSnapshotSchema, OrderDesignHarnessInputSchema, OrderDesignCompletionV1Schema, type OrderDesignMethodSnapshot } from "@yummyai/contracts/order/design-harness";
+import { OrderDesignMethodSnapshotSchema, OrderDesignHarnessInputSchema, OrderDesignPinnedPlanHarnessInputV1Schema, OrderDesignCompletionV1Schema, type OrderDesignMethodSnapshot } from "@yummyai/contracts/order/design-harness";
 import { assertAgentMethodSelection, selectAgentMethod, AgentMethodAuthorityError, loadCurrentMembershipContext, type TenantTransaction } from "@yummyai/database";
 import { assertMethodKnowledge } from "@yummyai/knowledge-core";
 import { fingerprint } from "./crypto.js";
@@ -21,7 +21,7 @@ const bundles=new Map((["template","pillow_photo"] as const).flatMap(workflow=>[
     resourcePolicy:"order-design.original-work-revision",dataDomains:["order_private","business","authorized_asset"],
     timeout:{mode:"fenced_lease",milliseconds:90_000},maxInputBytes:1024*1024,maxOutputBytes:1024*1024,
     recovery:"original_child_task",approval:"owning_business_flow",
-  },inputSchema:OrderDesignHarnessInputSchema,outputSchema:OrderDesignCompletionV1Schema}],[{
+  },inputSchema:revision?OrderDesignHarnessInputSchema:OrderDesignPinnedPlanHarnessInputV1Schema,outputSchema:OrderDesignCompletionV1Schema}],[{
     ...skill,label:workflow==="template"?"订单设计 · 模板排版":"订单设计 · 来图抱枕",
     instructions:revision?"按运营明确反馈修订原可编辑项目的当前候选，只追加新版本，保留所有图层、原图、规则、工艺和费用历史。截图只作反馈参考；裁线修订不调用模型，主体修订只替换固定主体素材。完成后返回运营审核，不批准生产。":`使用原订单、模板、配方、规则和计划完成受控制作；原模型响应与费用先保存再采用结果。方法说明不修改制造数值、客户要求或预算，不授予生产批准。保真美化策略摘要：${enhancementPolicyChecksum}${version===currentVersion?"。若含本次需求解释，固定原字段分组及完整备注，字体颜色选择器不制造文字；未审核顾客稿仅交运营审核，拒绝后沿原owner转交美工。":""}`,
     steps:["authorize_original_order","validate_pinned_recipe_rules_and_plan","execute_existing_bounded_steps","preserve_original_response_and_cost","validate_private_proof","handoff_for_business_review"],tools:[{key:toolKey,version}],

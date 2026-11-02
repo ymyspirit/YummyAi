@@ -3,6 +3,7 @@ import { HarnessExecutionContractSchema } from "@yummyai/contracts/harness";
 import { AgentMethodSelectionSchema } from "@yummyai/contracts/harness/methods";
 import { DesignAutomationPlanSchema, DesignAutomationRecipeSchema } from "@yummyai/contracts/pod/design-automation";
 import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
+export { OrderDesignPinnedPlanHarnessInputV1Schema } from "./design-harness-input-v1.js";
 
 const Id=z.uuidv7(), Hash=z.string().regex(/^[a-f0-9]{64}$/);
 export const OrderDesignMethodSnapshotSchema=z.object({
