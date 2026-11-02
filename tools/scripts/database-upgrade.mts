@@ -14,6 +14,7 @@ import {
   restoreDrill, validateBackup, verifyBackupObjects,
 } from "./backup-restore.mjs";
 import { FACTORY_RETENTION_ACTOR_POLICY as actorPolicy, evaluateMigration164ActorPreservation, UpgradeSystemActorPolicyError } from "./upgrade-system-actor-policy.mjs";
+import { resolveUpgradeSourceRoot } from "./upgrade-source-root.mjs";
 
 const workspace = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const exec = promisify(execFile);
@@ -188,13 +189,14 @@ async function startReport(operation: string, reportPath: string, root: string) 
 async function assertSourceUnchanged(expected: string, root: string) {
   if ((await captureRuntimeSource(root)).sha256 !== expected) fail("upgrade_runtime_source_changed");
 }
-export async function rehearseDatabaseUpgrade({ backupDirectory, reportPath, root = workspace, verifyPreservation, verifyUpgraded }: {
-  backupDirectory: string; reportPath: string; root?: string;
+export async function rehearseDatabaseUpgrade({ backupDirectory, reportPath, root = workspace, sourceRoot, verifyPreservation, verifyUpgraded }: {
+  backupDirectory: string; reportPath: string; root?: string; sourceRoot?: string;
   verifyPreservation?: UpgradeVerification; verifyUpgraded?: UpgradeVerification;
 }) {
+  const runtimeRoot = await resolveUpgradeSourceRoot({ root, sourceRoot, executingSourceRoot: workspace });
   const config = settings(), { report, save } = await startReport("rehearse", reportPath, root);
   try {
-    const { backup, manifest } = await validateBackup(root, backupDirectory), source = await captureRuntimeSource(root);
+    const { backup, manifest } = await validateBackup(root, backupDirectory), source = await captureRuntimeSource(runtimeRoot);
     const manifestSha256 = sha(await fs.readFile(path.join(backup, "backup-manifest.json")));
     Object.assign(report, { sourceSnapshotSha256: source.sha256, sourceFiles: source.files.length, backupManifestSha256: manifestSha256, normalDatabaseMigrated: false });
     const nonce = randomUUID().replaceAll("-", "");
@@ -214,7 +216,7 @@ export async function rehearseDatabaseUpgrade({ backupDirectory, reportPath, roo
         report.phases.push("isolated_upgrade_and_adoption_verified"); await save(); return upgraded;
       },
     }));
-    await assertSourceUnchanged(source.sha256, root);
+    await assertSourceUnchanged(source.sha256, runtimeRoot);
     Object.assign(report, { status: "pass", upgrade: restored.upgrade, restoreDatabaseDeleted: restored.databaseDeleted, restoreBucketDeleted: restored.bucketDeleted, actualPaidCalls: 0 });
     await save(); return report;
   } catch (error) {
@@ -232,12 +234,13 @@ export async function rehearseDatabaseUpgrade({ backupDirectory, reportPath, roo
     Object.assign(report, { status: "failed", error: error instanceof BackupOperationError ? error.code : "upgrade_rehearsal_failed" }); await save(); throw new BackupOperationError(String(report.error));
   }
 }
-export async function applyDatabaseUpgrade({ backupDirectory, rehearsalPath, reportPath, root = workspace }: { backupDirectory: string; rehearsalPath: string; reportPath: string; root?: string }) {
+export async function applyDatabaseUpgrade({ backupDirectory, rehearsalPath, reportPath, root = workspace, sourceRoot }: { backupDirectory: string; rehearsalPath: string; reportPath: string; root?: string; sourceRoot?: string }) {
+  const runtimeRoot = await resolveUpgradeSourceRoot({ root, sourceRoot, executingSourceRoot: workspace });
   const config = settings(), { report, save } = await startReport("apply", reportPath, root);
   try {
     const rehearsal = JSON.parse(await fs.readFile(await resolveWorkspacePath(root, rehearsalPath), "utf8"));
     if (rehearsal.version !== 1 || rehearsal.operation !== "rehearse" || rehearsal.status !== "pass" || !rehearsal.expectedDatabaseDeleted || !rehearsal.restoreDatabaseDeleted || !rehearsal.restoreBucketDeleted || rehearsal.upgrade?.readiness !== "pass") fail("upgrade_successful_rehearsal_required");
-    const { backup, manifest } = await validateBackup(root, backupDirectory), source = await captureRuntimeSource(root);
+    const { backup, manifest } = await validateBackup(root, backupDirectory), source = await captureRuntimeSource(runtimeRoot);
     const manifestSha256 = sha(await fs.readFile(path.join(backup, "backup-manifest.json")));
     if (rehearsal.backupManifestSha256 !== manifestSha256 || rehearsal.sourceSnapshotSha256 !== source.sha256) fail("upgrade_rehearsal_is_stale");
     if (manifest.source.database !== decodeURIComponent(new URL(config.url).pathname.slice(1)) || manifest.source.bucket !== config.bucket) fail("upgrade_backup_source_mismatch");
@@ -247,13 +250,13 @@ export async function applyDatabaseUpgrade({ backupDirectory, rehearsalPath, rep
     Object.assign(report, { sourceSnapshotSha256: source.sha256, sourceFiles: source.files.length, backupManifestSha256: manifestSha256, normalDatabaseMigrated: false });
     report.phases.push("normal_source_and_rehearsal_verified"); await save();
     const upgraded = await canonicalDatabase(config.url, report, save, async canonicalUrl => {
-      await assertQuiescent(config.url); await assertSourceUnchanged(source.sha256, root);
+      await assertQuiescent(config.url); await assertSourceUnchanged(source.sha256, runtimeRoot);
       report.normalMigrationAttempted = true; await save();
       return alignAndVerify({ databaseUrl: config.url, bucket: config.bucket, manifest, manifestSha256, sourceSha256: source.sha256, canonicalUrl,
         onSchemaMismatch: async value => { report.schemaMismatch = value; await save(); },
       });
     });
-    await assertSourceUnchanged(source.sha256, root); await assertQuiescent(config.url);
+    await assertSourceUnchanged(source.sha256, runtimeRoot); await assertQuiescent(config.url);
     Object.assign(report, { status: "pass", normalDatabaseMigrated: true, upgrade: upgraded, actualPaidCalls: 0 }); await save(); return report;
   } catch (error) {
     Object.assign(report, { status: "failed", error: error instanceof BackupOperationError ? error.code : "upgrade_apply_failed", automaticBusinessRollback: false }); await save(); throw new BackupOperationError(String(report.error));
@@ -262,11 +265,11 @@ export async function applyDatabaseUpgrade({ backupDirectory, rehearsalPath, rep
 async function main() {
   const [operation, ...args] = process.argv.slice(2), options: Record<string, string> = {};
   for (let i = 0; i < args.length; i += 2) {
-    const key = ({ "--backup": "backupDirectory", "--report": "reportPath", "--rehearsal": "rehearsalPath" } as Record<string, string>)[args[i]!];
+    const key = ({ "--backup": "backupDirectory", "--report": "reportPath", "--rehearsal": "rehearsalPath", "--root": "root", "--source-root": "sourceRoot" } as Record<string, string>)[args[i]!];
     if (!key || !args[i + 1]) fail("upgrade_arguments_invalid"); options[key] = args[i + 1]!;
   }
   if (!options.backupDirectory || !options.reportPath) fail("upgrade_arguments_invalid");
-  const shared = { backupDirectory: options.backupDirectory, reportPath: options.reportPath };
+  const shared = { backupDirectory: options.backupDirectory, reportPath: options.reportPath, ...(options.root ? { root: options.root } : {}), ...(options.sourceRoot ? { sourceRoot: options.sourceRoot } : {}) };
   if (operation === "rehearse") return rehearseDatabaseUpgrade(shared);
   if (operation === "apply" && options.rehearsalPath) return applyDatabaseUpgrade({ ...shared, rehearsalPath: options.rehearsalPath });
   fail("upgrade_arguments_invalid");

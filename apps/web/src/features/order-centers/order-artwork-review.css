@@ -138,7 +138,13 @@
 }
 .oc-artwork-decision-actions > button {
   flex: 1;
+  min-height: 44px;
+  min-width: min(132px, 100%);
+  transition: background-color 150ms ease, transform 150ms ease;
 }
+.oc-artwork-decision-actions > button:active:not(:disabled) { transform: scale(.98); }
+.oc-review-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.oc-review-quick-actions > .oc-button { min-height: 44px; white-space: normal; }
 .oc-artwork-review .oc-full-field textarea {
   width: 100%;
   resize: vertical;
@@ -195,4 +201,8 @@
   }
   .oc-subject-boundary { grid-template-columns: minmax(0, 1fr); }
   .oc-subject-diagram { width: 100%; max-width: 324px; box-sizing: border-box; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oc-artwork-decision-actions > button { transition: none; }
+  .oc-artwork-decision-actions > button:active:not(:disabled) { transform: none; }
 }

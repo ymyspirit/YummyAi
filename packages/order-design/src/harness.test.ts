@@ -1,5 +1,6 @@
 import { describe,expect,it } from "vitest";
 import { harnessChecksum } from "@yummyai/ai-core";
+import { Permission } from "@yummyai/authz";
 import { createEntityId } from "@yummyai/contracts";
 import { OrderDesignMethodSnapshotSchema,OrderDesignHarnessInputSchema,OrderDesignCompletionV1Schema } from "@yummyai/contracts/order/design-harness";
 import { buildDesignAutomationPlan } from "@yummyai/production-editor/design-automation";
@@ -18,12 +19,26 @@ function fixture(){
 }
 describe("order design native method boundary",()=>{
   it("registers both existing workflows with their own code-owned plan and unapproved completion",()=>{
-    expect(registeredOrderDesignMethods()).toHaveLength(2);
-    for(const method of registeredOrderDesignMethods()){
+    const original=registeredOrderDesignMethods().filter(method=>method.tools[0]?.inputSchemaKey==="order-design.pinned-plan-v1");
+    expect(original.map(method=>method.executionContract.skill.key)).toEqual(["order.design.template","order.design.pillow_photo"]);
+    expect(original).toHaveLength(2);
+    for(const method of original){
       expect(method.executionContract.executorKey).toBe("order_design");
       expect(method.tools[0]).toMatchObject({owner:"order_design_owner",inputSchemaKey:"order-design.pinned-plan-v1",outputSchemaKey:"order-design.completion-v1",approval:"owning_business_flow"});
       expect(method.instructions).toContain("不授予生产批准");
     }
+  });
+  it("registers the explicit revision separately with review permission and an unapproved business handoff",()=>{
+    const revisions=registeredOrderDesignMethods().filter(method=>method.tools[0]?.inputSchemaKey==="order-design.candidate-revision-v1");
+    expect(revisions).toHaveLength(1);
+    const revision=revisions[0]!;
+    expect(revision.executionContract.executorKey).toBe("order_design");
+    expect(revision.executionContract.skill.key).toBe("order.design.pillow_photo.revision");
+    expect(revision.tools[0]).toMatchObject({owner:"order_design_owner",inputSchemaKey:"order-design.candidate-revision-v1",outputSchemaKey:"order-design.completion-v1",approval:"owning_business_flow"});
+    expect(revision.tools[0]!.requiredPermissions).toEqual([Permission.OrderRead,Permission.OrderWrite,Permission.OrderPiiRead,Permission.DesignRead,Permission.DesignWrite,Permission.AssetRead,Permission.DesignReview].sort());
+    expect(revision.steps.at(-1)).toBe("handoff_for_business_review");
+    expect(revision.instructions).toContain("完成后返回运营审核，不批准生产");
+    expect(revision.instructions).toContain("截图只作反馈参考");
   });
   it("keeps legacy fingerprints and binds native method pins independently of JSONB key order",()=>{
     const f=fixture();expect(orderDesignInputChecksum(f.snapshot)).toBe(fingerprint(f.snapshot));

@@ -13,11 +13,15 @@ import { fixture, id } from "./order-review-fixture";
 import { syntheticProductionPng } from "./production-editor-fixture";
 import { AssistViewSchema } from "@yummyai/contracts/ai/assist";
 import { ARTWORK_AUDIT_POLICY, ArtworkAuditCodeSchema } from "@yummyai/contracts/ai/artwork-audit";
+import { OrderDesignReviseCandidateSchema, type OrderDesignAgentRunView } from "@yummyai/contracts/order/design-agent";
+import { OrderDesignCompletionRecordSchema } from "@yummyai/contracts/order/design-harness";
+import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
+import { loginErp } from "./erp-identity-fixture";
 
 // Isolated in-memory transport for the real orders/artwork UI. API integration
 // tests separately cover tenant permissions, immutable versions and review writes.
-async function artworkFixture(page: Page, hasPreview = true, count = 1) {
-  const state = await fixture(page, count);
+async function artworkFixture(page: Page, hasPreview = true, count = 1, currentReadContracts = false) {
+  const state = await fixture(page, count, { currentReadContracts });
   const record = state.records[0]!;
   Object.assign(record.line, {
     preparation: "pushed",
@@ -131,6 +135,156 @@ async function artworkFixture(page: Page, hasPreview = true, count = 1) {
     },
   };
 }
+
+// This family owns synthetic order/editor/Agent transport. Personal login is a
+// disposable identity fixture; native services and model safety are covered by
+// order-design-revision.integration.test.ts, never a paid provider call here.
+for (const width of [1440, 390]) test(`operator AI design revision supports feedback screenshots at ${width}px`, async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await loginErp(page); await page.setViewportSize({ width, height: 1000 });
+  const state = await artworkFixture(page, true, 1, true), now = "2026-11-02T00:00:00.000Z";
+  const authority = erpSessionAuthority(ErpSessionViewSchema.parse(await (await page.request.get("/api/erp-auth/session")).json()));
+  await page.route("**/api/order-centers/fulfillment-commands?**", route => {
+    expect(route.request().method()).toBe("GET");
+    expect(new URL(route.request().url()).searchParams.get("orderId")).toBe(state.record.line.orderId);
+    expect(route.request().headers()["x-yummyai-context-authority"]).toBe(authority);
+    return route.fulfill({ json: { items: [], truncated: false }, headers: { "x-yummyai-context-authority": authority } });
+  });
+  state.record.line.artwork = "in_progress"; state.record.line.designCandidateReview = true;
+  state.record.draft.designExecutor = "agent";
+  state.record.versions.push({ id: id(300), revision: state.record.line.revision, createdAt: now });
+  state.editor.project.workSource = { workItemId: state.record.line.id, revisionId: id(300) };
+  let run: OrderDesignAgentRunView = { id: id(301), workItemId: state.record.line.id, workRevisionId: id(300), revision: 3,
+    status: "awaiting_review", executorKey: "strict-pillow_photo", recipeVersion: "synthetic", policyVersion: "synthetic", modelRouteId: id(302),
+    projectId: state.editor.project.id, currentEditorVersionId: state.editor.version.id, createdAt: now, updatedAt: now, errorCode: null,
+    canResume: false, canTakeOver: true, canRevise: true, estimatedCostUsd: null, actualCostUsd: null, costStatus: "unknown", qualityDiagnostics: [], steps: [] };
+  const requests: ReturnType<typeof OrderDesignReviseCandidateSchema.parse>[] = [];
+  const feedbackPng = syntheticProductionPng(64);
+  await page.route(`**/api/order-centers/lines/${state.record.line.id}/design-agent`, route => route.fulfill({ json: { run }, headers: { "x-yummyai-context-authority": authority } }));
+  await page.route(`**/api/order-centers/lines/${state.record.line.id}/design-agent/revise`, async route => {
+    expect(route.request().headers()["x-yummyai-context-authority"]).toBe(authority);
+    const input = OrderDesignReviseCandidateSchema.parse(route.request().postDataJSON()); requests.push(input);
+    run = { ...run, id: id(303), revision: 1, status: "queued", canRevise: false, revisionFeedback: {
+      requestId: input.idempotencyKey, parentRunId: input.runId, baseProjectId: state.editor.project.id, baseVersionId: input.expectedEditorVersionId,
+      baseDocumentChecksum: "a".repeat(64), reason: input.reason, mode: input.mode,
+      attachments: input.attachments.map((file, index) => ({ id: id(310 + index), name: file.name, mediaType: "image/png", byteSize: feedbackPng.length })),
+    } };
+    state.record.line.designCandidateReview = false;
+    state.record.line.projectionVersion += 1;
+    return route.fulfill({ json: { run }, headers: { "x-yummyai-context-authority": authority } });
+  });
+  await page.goto(`/orders?line=${state.record.line.id}&detailMode=artwork`, { waitUntil: "domcontentloaded" });
+  const review = page.getByRole("region", { name: "生产图审核", exact: true });
+  await expect(review.getByRole("button", { name: "通过审核", exact: true })).toBeVisible();
+  await expect(review.getByRole("button", { name: "驳回并交美工修改", exact: true })).toBeVisible();
+  await review.getByRole("button", { name: "交 AI 修改", exact: true }).click();
+  const form = review.getByRole("form", { name: "AI 修改意见与参考截图" });
+  await expect(form.getByRole("button", { name: "提交 AI 修改", exact: true })).toBeDisabled();
+  await form.getByRole("textbox", { name: /修改意见/ }).fill("只去掉右脸外伸细毛 保持眼睛和主体形状");
+  await form.getByLabel("添加修改参考截图").setInputFiles({ name: "revision-reference.png", mimeType: "image/png", buffer: feedbackPng });
+  await expect(form.getByRole("img", { name: "修改参考截图 revision-reference.png", exact: true })).toBeVisible();
+  await expect(form.getByRole("button", { name: "提交 AI 修改", exact: true })).toBeEnabled();
+  expect(await form.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  for (const choice of await form.locator(".oc-ai-revision-modes > label").all()) {
+    const radio = await choice.getByRole("radio").boundingBox(), title = await choice.locator("strong").boundingBox();
+    expect(radio).not.toBeNull(); expect(title).not.toBeNull();
+    expect(Math.abs(radio!.y - title!.y)).toBeLessThan(12);
+    expect(radio!.x + radio!.width).toBeLessThanOrEqual(title!.x);
+  }
+  await page.screenshot({ path: testInfo.outputPath(`ai-revision-${width}.png`), fullPage: false });
+  await form.getByRole("button", { name: "提交 AI 修改", exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toMatchObject({ runId: id(301), expectedRevision: 3, expectedEditorVersionId: state.editor.version.id,
+    mode: "image_edit", attachments: [{ name: "revision-reference.png", contentBase64: feedbackPng.toString("base64") }] });
+  await expect(page.getByText("本轮修改意见", { exact: true })).toBeVisible();
+  await expect(page.getByText("只去掉右脸外伸细毛 保持眼睛和主体形状", { exact: true })).toBeVisible();
+  expect(state.actions).toEqual([]); expect(state.saves).toEqual([]); expect(state.unexpectedWrites).toEqual([]);
+});
+
+test("operator AI design revision uses submitted V8 while retaining the older Agent completion", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await loginErp(page); await page.setViewportSize({ width: 1440, height: 1000 });
+  const state = await artworkFixture(page, true, 1, true), now = "2026-11-02T00:00:00.000Z";
+  const authority = erpSessionAuthority(ErpSessionViewSchema.parse(await (await page.request.get("/api/erp-auth/session")).json()));
+  await page.route("**/api/order-centers/fulfillment-commands?**", route => {
+    expect(route.request().method()).toBe("GET");
+    expect(new URL(route.request().url()).searchParams.get("orderId")).toBe(state.record.line.orderId);
+    expect(route.request().headers()["x-yummyai-context-authority"]).toBe(authority);
+    return route.fulfill({ json: { items: [], truncated: false }, headers: { "x-yummyai-context-authority": authority } });
+  });
+  const oldVersionId = state.editor.version.id, currentVersionId = id(808), imageId = id(807);
+  const currentImage = syntheticProductionPng(512, true), feedbackPng = syntheticProductionPng(64);
+  state.record.line.artwork = "in_review"; state.record.line.designCandidateReview = false;
+  state.record.draft.designExecutor = "agent";
+  state.record.versions.push({ id: id(800), revision: state.record.line.revision, createdAt: now });
+  state.editor.project.workSource = { workItemId: state.record.line.id, revisionId: id(800) };
+  state.editor.project.currentVersionId = currentVersionId; state.editor.project.versionNumber = 8;
+  state.editor.version.id = currentVersionId; state.editor.version.versionNumber = 8;
+  state.editor.versions = [{ id: currentVersionId, versionNumber: 8, createdAt: now, reviewed: false }, ...state.editor.versions];
+  state.editor.renders = state.editor.renders.filter(render => render.purpose === "preview" && render.versionId === oldVersionId)
+    .map(render => ({ ...render, versionId: currentVersionId }));
+  const image = { id: imageId, version: 1 as const, name: "Synthetic submitted V8 subject.png", mediaType: "image/png", width: 512, height: 512,
+    hasAlpha: true, actualAlpha: true, checksumSha256: "b".repeat(64), byteSize: currentImage.length,
+    previewPath: `/api/production-editor/projects/${state.editor.project.id}/images/${imageId}?kind=preview`,
+    originalPath: `/api/production-editor/projects/${state.editor.project.id}/images/${imageId}?kind=original` };
+  state.editor.images = [image]; state.editor.version.document.layers = [newProductionImage(state.editor.version.document, image)];
+  await page.route(`**/api/production-editor/projects/${state.editor.project.id}/images/${imageId}**`, route => {
+    expect(route.request().method()).toBe("GET"); return route.fulfill({ contentType: "image/png", body: currentImage });
+  });
+  const originalCompletion = OrderDesignCompletionRecordSchema.parse({ checksum: "c".repeat(64), evidence: {
+    contractVersion: "order-design-completion-v1", runId: id(801), workItemId: state.record.line.id, workRevisionId: id(800),
+    inputChecksum: "a".repeat(64), methodContractChecksum: "b".repeat(64), projectId: state.editor.project.id,
+    editorVersionId: oldVersionId, documentChecksum: "c".repeat(64), templateVersionId: id(802), templateChecksum: "d".repeat(64),
+    ruleSnapshotChecksum: null, qualityCheckChecksum: "e".repeat(64), resultState: "awaiting_review",
+    steps: [{ id: id(803), key: "render_proof", requestId: id(804), inputChecksum: "a".repeat(64), outputAssetId: null, outputVersionId: oldVersionId, responseChecksum: "b".repeat(64) }],
+    proofs: [{ renderId: id(805), versionId: oldVersionId, manifestChecksum: "f".repeat(64),
+      files: [{ key: "result", mediaType: "image/png", byteSize: 100, checksumSha256: "a".repeat(64) }] }],
+    requiresBusinessReview: true, automaticProductionApproval: false,
+  } });
+  let run: OrderDesignAgentRunView = { id: id(801), workItemId: state.record.line.id, workRevisionId: id(800), revision: 3,
+    status: "awaiting_review", executorKey: "strict-pillow_photo", recipeVersion: "synthetic", policyVersion: "synthetic", modelRouteId: id(806),
+    projectId: state.editor.project.id, currentEditorVersionId: oldVersionId, completion: structuredClone(originalCompletion),
+    revisionBaseVersionId: currentVersionId, revisionSource: "submitted_successor", privateEvidenceState: "available",
+    createdAt: now, updatedAt: now, errorCode: null, canResume: false, canTakeOver: true, canRevise: true,
+    estimatedCostUsd: null, actualCostUsd: null, costStatus: "unknown", qualityDiagnostics: [], steps: [] };
+  const parentRun = run, requests: ReturnType<typeof OrderDesignReviseCandidateSchema.parse>[] = [];
+  await page.route(`**/api/order-centers/lines/${state.record.line.id}/design-agent`, route => route.fulfill({ json: { run }, headers: { "x-yummyai-context-authority": authority } }));
+  await page.route(`**/api/order-centers/lines/${state.record.line.id}/design-agent/revise`, route => {
+    expect(route.request().headers()["x-yummyai-context-authority"]).toBe(authority);
+    const input = OrderDesignReviseCandidateSchema.parse(route.request().postDataJSON()); requests.push(input);
+    expect(input.expectedEditorVersionId).toBe(currentVersionId); expect(input.expectedEditorVersionId).not.toBe(oldVersionId);
+    run = { ...run, id: id(809), revision: 1, status: "queued", canRevise: false, completion: null,
+      currentEditorVersionId: currentVersionId, revisionBaseVersionId: null, revisionSource: null, revisionFeedback: {
+        requestId: input.idempotencyKey, parentRunId: input.runId, baseProjectId: state.editor.project.id, baseVersionId: input.expectedEditorVersionId,
+        baseDocumentChecksum: "d".repeat(64), source: "submitted_successor", reason: input.reason, mode: input.mode,
+        attachments: input.attachments.map(file => ({ id: id(810), name: file.name, mediaType: "image/png", byteSize: feedbackPng.length })),
+      } };
+    state.record.line.artwork = "in_progress"; state.record.line.designCandidateReview = false; state.record.line.projectionVersion += 1;
+    return route.fulfill({ json: { run }, headers: { "x-yummyai-context-authority": authority } });
+  });
+  await page.goto(`/orders?line=${state.record.line.id}&detailMode=artwork`, { waitUntil: "domcontentloaded" });
+  const review = page.getByRole("region", { name: "生产图审核", exact: true });
+  await expect(review.getByRole("img", { name: "当前生产图 V8", exact: true })).toBeVisible();
+  await expect(review.getByRole("button", { name: "通过审核", exact: true })).toBeEnabled();
+  await expect(review.getByRole("button", { name: "驳回修改", exact: true })).toBeVisible();
+  await expect(review.getByText("无人设计稿待审核", { exact: true })).toHaveCount(0);
+  await review.getByRole("button", { name: "交 AI 修改", exact: true }).click();
+  await expect(review.getByText(/基于当前已提交待审稿 V8/)).toBeVisible();
+  const form = review.getByRole("form", { name: "AI 修改意见与参考截图" });
+  await form.getByRole("textbox", { name: /修改意见/ }).fill("只修整当前 V8 下巴边缘 保留已提交稿的其他内容");
+  await form.getByLabel("添加修改参考截图").setInputFiles({ name: "submitted-v8-reference.png", mimeType: "image/png", buffer: feedbackPng });
+  await expect(form.getByRole("img", { name: "修改参考截图 submitted-v8-reference.png", exact: true })).toBeVisible();
+  await expect(form.getByRole("button", { name: "提交 AI 修改", exact: true })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("ai-revision-submitted-successor-v8.png"), fullPage: false });
+  await form.getByRole("button", { name: "提交 AI 修改", exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toMatchObject({ runId: id(801), expectedRevision: 3, expectedEditorVersionId: currentVersionId, mode: "image_edit",
+    attachments: [{ name: "submitted-v8-reference.png", contentBase64: feedbackPng.toString("base64") }] });
+  await expect(form).toHaveCount(0); await expect(page.getByText("本轮修改意见", { exact: true })).toBeVisible();
+  expect(parentRun.currentEditorVersionId).toBe(oldVersionId); expect(parentRun.completion).toEqual(originalCompletion);
+  expect(state.record.line.designCandidateReview).toBe(false); expect(state.editor.version.reviewed).toBe(false);
+  expect(state.actions).toEqual([]); expect(state.saves).toEqual([]); expect(state.unexpectedWrites).toEqual([]);
+});
 
 test("operator task queue moves from artwork review to order review only after successful writes", async ({ page }) => {
   const state = await artworkFixture(page, true, 2);

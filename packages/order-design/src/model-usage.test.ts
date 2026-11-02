@@ -23,6 +23,7 @@ describe("complete order design usage ledger", () => {
     const usage = normalizeModelTokenUsage({ input_tokens: 12, output_tokens: 4, total_tokens: 16 })!;
     const work = { id: workItemId, encryptedDataKey: null, privateAvailable: false };
     const run = { id: runId, tenantId: context.tenantId, requestedBy: context.userId, workItemId, workRevisionId: createEntityId(), revision: 1, status: "needs_attention", executorKey: "strict-template",
+      parentRunId: null, revisionFeedbackObjects: [], revisionFeedbackPurgedAt: null,
       recipeVersion: "1", policyVersion: "order-design-v1", modelRouteId: null, projectId: null, currentEditorVersionId: null,
       methodSnapshot: null, encryptedSnapshot: "not-read", inputChecksum: "a".repeat(64), completionEvidence: null, completionChecksum: null, processingToken: null, leaseUntil: null,
       errorCode: null, estimatedCostUsd: null, actualCostUsd: null, costStatus: "unknown", qualityDiagnostics: [], createdAt: now, updatedAt: now } satisfies DesignRun;

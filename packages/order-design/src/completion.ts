@@ -28,7 +28,7 @@ export async function sealOrderDesignCompletion(tx:TenantTransaction,run:DesignR
     steps:rows.map(step=>{
       const output=step.encryptedOutput?open<OrderDesignStepCheckpoint>(workKey,step.encryptedOutput):{};
       const tool=snapshot.plan.steps.find(input=>input.id===step.key)!.tool;
-      if((tool==="enhance_image"||tool==="cutout_subject")&&(!output.responseReceipt||output.responseReceipt.requestId!==step.requestId||!output.responseReceipt.quarantined))invalid();
+      if((tool==="enhance_image"||tool==="cutout_subject"||tool==="revise_image")&&(!output.responseReceipt||output.responseReceipt.requestId!==step.requestId||!output.responseReceipt.quarantined))invalid();
       return {id:step.id,key:step.key,requestId:step.requestId,inputChecksum:step.inputChecksum,outputAssetId:step.outputAssetId,outputVersionId:step.outputVersionId,responseChecksum:output.responseReceipt?.checksum??null};
     }),
     proofs:proofs.map(proof=>{

@@ -57,6 +57,7 @@ export class OrderDesignProcessor {
           await tx.update(steps).set({status:"pending",updatedAt:new Date()}).where(eq(steps.id,step.id));
         }
         let projectId=run.projectId,versionId=run.currentEditorVersionId;
+        if(snapshot.revisionRequest&&(!projectId||!versionId||projectId!==snapshot.revisionRequest.baseProjectId))throw new OrderDesignError("agent_revision_changed");
         if(!projectId) {
           projectId=createEntityId();versionId=createEntityId();const projectKey=randomBytes(32);
           const document=ProductionEditorDocumentSchema.parse({...snapshot.document,layers:[],confirmations:{...snapshot.document.confirmations,visualReview:false}});

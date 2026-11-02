@@ -378,7 +378,10 @@ export class OrderProductionDeliveryService {
         throw new ConflictException("正式 JPG 的尺寸、150 DPI、RGB/sRGB 或色度采样检查未通过，请回制图中心修正");
       let ruleSnapshotChecksum: string | null = null, designRunId: string | null = null, designRunInputChecksum: string | null = null;
       await withTenant(this.database.db, context, async tx => {
-        const [run] = await tx.select().from(orderDesignAgentRuns).where(and(eq(orderDesignAgentRuns.workItemId, source.work!.id), eq(orderDesignAgentRuns.workRevisionId, source.revision!.id)));
+        // A reviewed order can have explicit AI revision attempts. Export binds
+        // the latest attempt, never an arbitrary original run from that revision.
+        const [run] = await tx.select().from(orderDesignAgentRuns).where(and(eq(orderDesignAgentRuns.workItemId, source.work!.id), eq(orderDesignAgentRuns.workRevisionId, source.revision!.id)))
+          .orderBy(desc(orderDesignAgentRuns.createdAt),desc(orderDesignAgentRuns.id)).limit(1);
         if (run) {
           designRunId = run.id; designRunInputChecksum = run.inputChecksum;
           const pinned = this.withKey(source.work!.encryptedDataKey!, key => openWork<{ ruleSnapshot?: unknown }>(key, run.encryptedSnapshot)).ruleSnapshot;

@@ -130,6 +130,7 @@ export function OrderWorkDetailPanel({
   });
   const [advanceOperation, setAdvanceOperation] = useState(false);
   const [deadlineState, setDeadlineState] = useState<OrderReviewState>({ dirty: false, busy: false, loading: false });
+  const [aiRevisionState, setAiRevisionState] = useState<OrderReviewState & { workItemId: string }>({ workItemId: id, dirty: false, busy: false, loading: false });
   const [agentState, setAgentState] = useState({ workItemId: id, busy: false, blocked: false, checking: true, manualTakeover: false });
   const [pendingAgentRefresh, setPendingAgentRefresh] = useState<string | null>(null);
   const [pendingDetailRefresh, setPendingDetailRefresh] = useState<string | null>(null);
@@ -179,11 +180,12 @@ export function OrderWorkDetailPanel({
   )?.customization.fields ?? [];
   const textCustomizationFields = customizationFields.filter(field => field.type !== "image");
   const otherUnsaved = useRef(false);
-  otherUnsaved.current = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || deadlineState.dirty;
+  const aiRevisionHere = aiRevisionState.workItemId === id;
+  otherUnsaved.current = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || deadlineState.dirty || aiRevisionHere && aiRevisionState.dirty;
   const pendingSaveHere = pendingSave?.orderLineId === id;
-  const dirty = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || operationState.dirty || deadlineState.dirty || pendingSaveHere;
-  const navigationBusy = busy || operationState.busy || deadlineState.busy || agentState.workItemId === id && agentState.busy;
-  const navigationLoading = loading || operationState.loading;
+  const dirty = draftDirty || styleEditsPending || !!reason.trim() || !!artworkReason.trim() || operationState.dirty || deadlineState.dirty || pendingSaveHere || aiRevisionHere && aiRevisionState.dirty;
+  const navigationBusy = busy || operationState.busy || deadlineState.busy || agentState.workItemId === id && agentState.busy || aiRevisionHere && aiRevisionState.busy;
+  const navigationLoading = loading || operationState.loading || aiRevisionHere && aiRevisionState.loading;
   const agentApplies = (module === "orders" || module === "artwork") && detail?.line.preparation === "pushed";
   const agentArtworkBlocked = agentApplies && (agentState.workItemId !== id || agentState.blocked || agentState.checking);
   const editable =
@@ -250,6 +252,8 @@ export function OrderWorkDetailPanel({
     setPendingSave(null);
     setOrderAssistOpen(false);
     setStyleEditsPending(false);
+    setArtworkReason("");
+    setAiRevisionState({ workItemId: id, dirty: false, busy: false, loading: false });
     return () => {
       saveFlight.current = null;
       if (uploadRequest.current?.orderLineId === id) {
@@ -446,6 +450,7 @@ export function OrderWorkDetailPanel({
   }
   async function action(action: OrderWorkActionInput["action"], advance = false) {
     if (!detail || navigationBusy || navigationLoading) return;
+    if (aiRevisionHere && aiRevisionState.dirty) { setError("请先处理当前 AI 修改填写或核对原修改任务 再执行其他流转"); return; }
     if (pendingSaveHere) { locateReview("status"); return; }
     if (agentArtworkBlocked && ["start_artwork", "submit_artwork", "approve_artwork", "reject_artwork", "approve_proof", "reject_proof"].includes(action)) {
       setError("请先核对自动制作状态；制作中的任务需先停止并接管，再编辑或审核。");
@@ -579,6 +584,7 @@ export function OrderWorkDetailPanel({
       navigationBusy ||
       navigationLoading ||
       agentArtworkBlocked ||
+      aiRevisionHere && aiRevisionState.dirty ||
       (purpose === "preview" && artworkPreviewPending(editor))
     )
       return;
@@ -613,6 +619,10 @@ export function OrderWorkDetailPanel({
     openEditorAt();
   }
   function openEditorAt(focus?: ProductionEditorFocus) {
+    if (aiRevisionHere && aiRevisionState.dirty) {
+      setError("请先提交或放弃本次 AI 修改填写 结果未知时先核对原任务 再打开生产文件");
+      return;
+    }
     if (agentArtworkBlocked || navigationBusy || navigationLoading) {
       setError("请先核对自动制作状态；制作中的任务需先停止并接管，再打开生产文件。");
       return;
@@ -801,16 +811,16 @@ export function OrderWorkDetailPanel({
         {pendingAgentRefresh === id && (dirty || navigationBusy || editorOpen) && <p className="oc-notice" role="status">自动制作状态已有更新，当前备注和修改仍保留。保存或清空修改后，将刷新稿件与审核信息。</p>}
         {pendingDetailRefresh === id && <p className="oc-notice" role="status">订单资料有更新，当前未保存内容仍保留；完成当前操作并保存或清空修改后再刷新。</p>}
         {detail.line.designCandidateReview && module === "orders" && <div className="oc-notice"><strong>无人设计稿待审核</strong>
-          <p>先核对 Agent 的本单候选稿 不通过时填写理由交美工修改</p>
+          <p>先核对 Agent 的本单候选稿 主体细节或裁线可交 AI 修改 文字与复杂排版交美工</p>
           {onModuleChange ? <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading || dirty} onClick={() => onModuleChange("artwork")}>审核无人设计稿</button>
             : dirty ? <p className="oc-hint">当前修改仍保留 请先处理未保存内容 再打开稿件审核</p> : <Link href={journeyHref("/order-artwork")}>审核无人设计稿</Link>}
         </div>}
         {module === "artwork" && editor && (
           <OrderArtworkReview
-            key={editor.version.id}
+            key={`${editor.version.id}:${access.authority ?? ""}`}
             editor={editor}
             detail={detail}
-            disabled={navigationBusy || navigationLoading || draftDirty || operationState.dirty || agentArtworkBlocked}
+            disabled={navigationBusy || navigationLoading || draftDirty || styleEditsPending || operationState.dirty || deadlineState.dirty || pendingSaveHere || agentArtworkBlocked}
             reason={artworkReason}
             onReason={setArtworkReason}
             onAction={(kind) => void action(kind, advanceArtwork)}
@@ -822,6 +832,13 @@ export function OrderWorkDetailPanel({
             hasNext={unified ? undefined : review?.hasNext}
             decisionFooter={review?.autoAdvance ? reviewFooter : null}
             onAdvanceAction={(kind) => void action(kind, true)}
+            onAiRevisionStateChange={state => setAiRevisionState({ ...state, workItemId: id })}
+            onAiRevisionSubmitted={() => {
+              setAiRevisionState({ workItemId: id, dirty: false, busy: false, loading: false });
+              setArtworkReason("");
+              setNotice("修改任务已保存 原稿保留 新稿完成后仍需运营审核");
+              setRefresh(value => value + 1); onChanged();
+            }}
           />
         )}
         {agentApplies && (

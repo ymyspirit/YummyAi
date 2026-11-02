@@ -43,7 +43,7 @@ export async function responseRecoveryTarget(tx: TenantTransaction, context: Ten
     throw new OrderDesignError("agent_response_recovery_not_safe");
   const checkpoint = step.encryptedOutput ? open<OrderDesignStepCheckpoint>(key, step.encryptedOutput) : {};
   if (checkpoint.responseCheckpoint || checkpoint.responseRecovery) throw new OrderDesignError("agent_response_recovery_not_safe");
-  if (input.tool !== "enhance_image" && input.tool !== "cutout_subject") throw new OrderDesignError("agent_response_recovery_not_safe");
+  if (input.tool !== "enhance_image" && input.tool !== "cutout_subject" && input.tool!=="revise_image") throw new OrderDesignError("agent_response_recovery_not_safe");
   const sourceAssetId = input.tool === "cutout_subject" && input.enhancedStepId
     ? rows.find(row => row.key === input.enhancedStepId && row.status === "completed")?.outputAssetId
     : input.sourceImageId;

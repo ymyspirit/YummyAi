@@ -732,7 +732,8 @@ export class ProductionEditorService {
       const [work] = await tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, project.sourceWorkItemId!));
       if (!work?.encryptedDataKey || work.expiresAt <= new Date() || work.held || work.pushedRevisionId !== project.sourceWorkRevisionId || !["starting", "in_progress", "changes_requested"].includes(work.artwork)) throw new ConflictException("该任务已提交审核、撤回或暂停，请先在制图中心处理变更");
       const [agent] = await tx.select({status:orderDesignAgentRuns.status}).from(orderDesignAgentRuns)
-        .where(and(eq(orderDesignAgentRuns.workItemId,work.id),eq(orderDesignAgentRuns.workRevisionId,work.pushedRevisionId!))).limit(1);
+        .where(and(eq(orderDesignAgentRuns.workItemId,work.id),eq(orderDesignAgentRuns.workRevisionId,work.pushedRevisionId!)))
+        .orderBy(desc(orderDesignAgentRuns.createdAt),desc(orderDesignAgentRuns.id)).limit(1);
       if(agent && ["queued","running","needs_attention"].includes(agent.status))throw new ConflictException("请先在无人设计进度中停止自动制作并接管，再修改稿件或素材");
     };
     if (transaction) await check(transaction); else await this.inTenant(context, check);

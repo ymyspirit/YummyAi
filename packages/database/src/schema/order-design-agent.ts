@@ -11,6 +11,10 @@ export const orderDesignDispatchTenants = pgTable("order_design_dispatch_tenants
 
 export const orderDesignAgentRuns = pgTable("order_design_agent_runs", {
   id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id),
+  parentRunId: uuid("parent_run_id"),
+  /** Private object locators only, so expiry can purge ciphertext after key erasure. */
+  revisionFeedbackObjects: jsonb("revision_feedback_objects").$type<Array<{id:string;objectKey:string}>>().notNull().default([]),
+  revisionFeedbackPurgedAt: timestamp("revision_feedback_purged_at",{mode:"date",withTimezone:true}),
   workItemId: uuid("work_item_id").notNull(), workRevisionId: uuid("work_revision_id").notNull(),
   revision: integer("revision").notNull().default(1), status: text("status").notNull().default("queued"),
   executorKey: text("executor_key").notNull(), recipeVersion: text("recipe_version").notNull(), policyVersion: text("policy_version").notNull(),
@@ -25,7 +29,10 @@ export const orderDesignAgentRuns = pgTable("order_design_agent_runs", {
   createdAt: timestamp("created_at", {mode:"date",withTimezone:true}).notNull().defaultNow(), updatedAt: timestamp("updated_at", {mode:"date",withTimezone:true}).notNull().defaultNow(),
 }, t => [
   uniqueIndex("order_design_runs_tenant_id_unique").on(t.tenantId,t.id),
-  uniqueIndex("order_design_runs_revision_unique").on(t.tenantId,t.workItemId,t.workRevisionId),
+  uniqueIndex("order_design_runs_initial_revision_unique").on(t.tenantId,t.workItemId,t.workRevisionId).where(sql`${t.parentRunId} is null`),
+  uniqueIndex("order_design_runs_parent_unique").on(t.tenantId,t.parentRunId).where(sql`${t.parentRunId} is not null`),
+  uniqueIndex("order_design_runs_lineage_unique").on(t.tenantId,t.id,t.workItemId,t.workRevisionId),
+  foreignKey({columns:[t.tenantId,t.parentRunId,t.workItemId,t.workRevisionId],foreignColumns:[t.tenantId,t.id,t.workItemId,t.workRevisionId],name:"order_design_runs_parent_fk"}),
   foreignKey({columns:[t.tenantId,t.workItemId],foreignColumns:[orderWorkItems.tenantId,orderWorkItems.id],name:"order_design_runs_work_fk"}),
   foreignKey({columns:[t.tenantId,t.workItemId,t.workRevisionId],foreignColumns:[orderWorkRevisions.tenantId,orderWorkRevisions.workItemId,orderWorkRevisions.id],name:"order_design_runs_revision_fk"}),
   foreignKey({columns:[t.tenantId,t.projectId],foreignColumns:[productionEditorProjects.tenantId,productionEditorProjects.id],name:"order_design_runs_project_fk"}),
@@ -33,6 +40,8 @@ export const orderDesignAgentRuns = pgTable("order_design_agent_runs", {
   check("order_design_runs_status_check",sql`${t.status} in ('queued','running','awaiting_review','needs_attention','cancelled')`),
   check("order_design_runs_cost_status_check",sql`${t.costStatus} in ('not_required','estimated','unknown','reported')`),
   check("order_design_runs_revision_check",sql`${t.revision} > 0`),
+  check("order_design_runs_parent_not_self",sql`${t.parentRunId} is null or ${t.parentRunId} <> ${t.id}`),
+  check("order_design_feedback_objects_check",sql`jsonb_typeof(${t.revisionFeedbackObjects})='array' and jsonb_array_length(${t.revisionFeedbackObjects})<=3`),
   check("order_design_runs_input_checksum_check",sql`${t.inputChecksum} ~ '^[0-9a-f]{64}$'`),
   check("order_design_completion_pair_check",sql`(${t.completionEvidence} is null and ${t.completionChecksum} is null) or (${t.completionEvidence} is not null and ${t.completionChecksum} is not null and ${t.completionChecksum} ~ '^[a-f0-9]{64}$')`),
   check("order_design_native_review_completion_check",sql`${t.methodSnapshot} is null or ${t.status}<>'awaiting_review' or ${t.completionEvidence} is not null`),
@@ -72,5 +81,5 @@ export const orderDesignAgentCommands = pgTable("order_design_agent_commands", {
   id: uuid("id").primaryKey(),tenantId:uuid("tenant_id").notNull().references(()=>organizations.id),runId:uuid("run_id").notNull(),
   idempotencyKey:uuid("idempotency_key").notNull(),action:text("action").notNull(),requestChecksum:text("request_checksum").notNull(),
   requestedBy:uuid("requested_by").notNull().references(()=>users.id),createdAt:timestamp("created_at",{mode:"date",withTimezone:true}).notNull().defaultNow(),
-},t=>[foreignKey({columns:[t.tenantId,t.runId],foreignColumns:[orderDesignAgentRuns.tenantId,orderDesignAgentRuns.id],name:"order_design_commands_run_fk"}),uniqueIndex("order_design_commands_idempotency_unique").on(t.tenantId,t.runId,t.idempotencyKey),check("order_design_commands_action_check",sql`${t.action} in ('resume','takeover','restore_response')`)]);
+},t=>[foreignKey({columns:[t.tenantId,t.runId],foreignColumns:[orderDesignAgentRuns.tenantId,orderDesignAgentRuns.id],name:"order_design_commands_run_fk"}),uniqueIndex("order_design_commands_idempotency_unique").on(t.tenantId,t.runId,t.idempotencyKey),check("order_design_commands_action_check",sql`${t.action} in ('resume','takeover','restore_response','revise')`)]);
 import type { OrderDesignMethodSnapshot, OrderDesignCompletionV1 } from "@yummyai/contracts/order/design-harness";

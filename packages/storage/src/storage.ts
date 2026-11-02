@@ -104,6 +104,30 @@ export class Storage {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /** Only an uncommitted feedback reference, after the owner checked exact live references. */
+  async discardOrderDesignFeedback(context: TenantContext, attachmentId: string, key: string,
+    options: { assertCurrent: () => Promise<void> }): Promise<void> {
+    assertAssetAccess(context, { id: attachmentId, tenantId: context.tenantId, assetDomain: "order", objectKey: key }, "order");
+    const parts=key.split("/");
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(attachmentId)
+      ||parts.length!==5||!/^[a-f0-9]{64}$/.test(parts[3]??"")||parts[4]!==`${attachmentId}-revision-feedback.pe`
+      ||key!==objectKey({tenantId:context.tenantId,domain:"order",sha256:parts[3]!,fileName:parts[4]!})
+      ||typeof options?.assertCurrent!=="function")throw new Error("ORDER_DESIGN_FEEDBACK_ARTIFACT_INVALID");
+    await options.assertCurrent();
+    await this.discardCreativeAdoptionKey(key,options);
+  }
+
+  /** Retention only: the owning RLS transaction rechecks expiry before every storage action. */
+  async purgeExpiredOrderDesignFeedback(input:{tenantId:string;attachmentId:string;objectKey:string},options:{assertExpired:()=>Promise<void>}):Promise<void>{
+    const {tenantId,attachmentId,objectKey:key}=input,parts=key.split("/");
+    const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    if(!uuid.test(tenantId)||!uuid.test(attachmentId)||parts.length!==5||!/^[a-f0-9]{64}$/.test(parts[3]??"")
+      ||parts[4]!==`${attachmentId}-revision-feedback.pe`||key!==objectKey({tenantId,domain:"order",sha256:parts[3]!,fileName:parts[4]!})
+      ||typeof options?.assertExpired!=="function")throw new Error("ORDER_DESIGN_FEEDBACK_ARTIFACT_INVALID");
+    await options.assertExpired();
+    await this.discardCreativeAdoptionKey(key,{assertCurrent:options.assertExpired});
+  }
+
   /** Only a fresh, unregistered work upload. The owner holds its work lock and
    * checks for committed references before every exact object-version delete. */
   async discardOrderWorkUpload(context: TenantContext, imageId: string, key: string,

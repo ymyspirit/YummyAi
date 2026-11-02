@@ -293,7 +293,7 @@ async function main(): Promise<number> {
       createWorker(QueueName.FulfillmentAutomation, envelope => processor.process(envelope));
     }
     if (selected(QueueName.AmazonOrderReportRetention)) {
-      const processor = new AmazonOrderReportRetentionProcessor(new DrizzleAmazonOrderReportRetentionRepository(database));
+      const processor = new AmazonOrderReportRetentionProcessor(new DrizzleAmazonOrderReportRetentionRepository(database, storage));
       createWorker(QueueName.AmazonOrderReportRetention, envelope => processor.process(envelope));
     }
     if (selected(QueueName.AmazonOrderReportProcessing)) {

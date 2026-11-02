@@ -16,6 +16,77 @@ recovery and immutable technical handoff are specified in
 [order design completion](order-design-completion.md). Missing legacy evidence
 is identified explicitly; existing manufacturing and business-review gates remain.
 
+## Operator-requested candidate revision
+
+The artwork decision keeps approval and rejection to a human designer. A third,
+explicit decision sends the exact current, unapproved Agent candidate back for
+revision. `POST /v1/order-centers/lines/:id/design-agent/revise` accepts the original
+`runId`, optimistic `expectedRevision`, `expectedEditorVersionId`, one
+`idempotencyKey`, required `reason`, `mode` and optional screenshot attachments.
+It creates a child run in the same editable project; it does not resume or rewrite
+the completed parent. Parent inputs, method/rules, proof, steps and costs remain
+immutable. Each parent admits at most one child, including competing request keys.
+Existing production, stale versions, held/expired orders and missing current
+review or execution authority prevent admission. No role is enlarged.
+
+The original Agent completion remains pinned to its original version. A later
+current, unapproved version in the same project and pushed work revision may
+also be revised while the work is `in_review`, provided its completed current
+proof and the original completion files remain available and valid. The server
+returns `revisionSource: submitted_successor` and `revisionBaseVersionId` for
+this case; it never relabels the original completion as the newer version or
+manufactures the original-candidate flag. A historical submission event is
+retained when present, not backfilled. The explicit new request binds the exact
+current version and document checksum. Both original and current proof bytes are
+read and checked before feedback is stored. Production readiness is not a
+prerequisite for requesting corrections; all approval and release checks still
+apply to the resulting draft.
+
+- `image_edit` revises the current subject image using the feedback and references,
+  then measures actual pixels, checks resolution, rebuilds independent contour
+  geometry, performs preflight and creates a new private proof. The fixed plan
+  budgets one image-model call. Original text, fonts and other editable layers
+  remain; outline normalization applies one common coordinate translation so
+  retained layers stay aligned.
+- `contour_only` keeps the original subject bytes and image transform, uses the
+  explicit allowed `contourRoundingPx` of 20, 25 or 30, and runs the geometry and
+  proof checks without a model call. It does not reinterpret manufacturing values
+  from free text or screenshots.
+- This candidate supports a versioned photo-pillow recipe with one visible subject
+  image layer. The original renderer still handles single/double sided exports.
+  Multiple visible image layers, new text/font/layout instructions and unsupported
+  products retain the human-design path; the UI must say why AI revision is unavailable.
+
+Attachments are at most three PNG/JPEG/WebP images, 5 MiB each and 10 MiB in total.
+The server checks decoded bytes, actual format/pixels and a clean scan. They are
+encrypted private `order` objects named `<attachmentId>-revision-feedback.pe`,
+pinned only as `operator_revision_feedback`, never buyer-original assets or
+production layers. Full private views expose feedback text and attachment metadata;
+financial/expired/omitted views do not. Reads use
+`GET .../design-agent/revision-attachments/:runId/:attachmentId` with tenant, live
+membership, original-owner expiry and post-read checks. The web proxy also fences
+the current person before/after reads or writes and returns `private, no-store`.
+
+Object locators remain in `revision_feedback_objects` so retention can delete exact
+encrypted objects and versions after key erasure. Parent/locator provenance is
+immutable; purge receipts require the source order to be expired/anonymized.
+Storage failure retains retry locators and never delays cryptographic expiry.
+
+The child uses a separate revision Harness identity; original method checksums are
+unchanged. Paid `revise_image` calls retain the original model-call ledger and
+usage/cost recovery protections, including no automatic re-purchase of an uncertain
+submission. Org budgets and permissions still apply. A completed child only becomes
+`awaiting_review`: previous approval/customer-proof pointers are cleared, and a
+new operator decision is required. Rejection to a human continues through the
+original `reject_artwork` flow and preserves the same editable project.
+
+The UI retains one frozen intent after an unknown response, offers read-only
+reconciliation using `revisionFeedback.requestId`, and never treats a missing
+immediate read as proof that the write did not happen. Opening or refreshing the
+review does not create a run or invoke a model. Development evidence and remaining
+factory/shipment acceptance gaps are tracked in the current project checkpoint;
+source support is not a daily-runtime adoption claim.
+
 ## Configure a product
 
 1. Create a production template in the existing editor. Select the product and enter the supplier's actual dimensions, DPI, safety regions and manufacturing rules.

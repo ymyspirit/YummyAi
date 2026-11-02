@@ -1,7 +1,8 @@
 import { apiFetch } from "../../../../server-api";
 import { isSameOriginRequest } from "../../../../same-origin-request";
 import { OrderReviewQuerySchema } from "@yummyai/contracts/order/review";
-import {OrderDesignAgentReadQuerySchema} from "@yummyai/contracts/order/design-agent";
+import { OrderDesignAgentReadQuerySchema, OrderDesignAgentViewSchema, OrderDesignReviseCandidateSchema,
+  ORDER_DESIGN_REVISION_MAX_FILE_BYTES } from "@yummyai/contracts/order/design-agent";
 import { OrderLineProductionAvailabilitySchema, OrderWorkDetailViewSchema } from "@yummyai/contracts/order/workspace";
 import { ShipmentCreateWorkspaceSchema } from "@yummyai/contracts/order/shipment";
 import { erpSessionAuthority } from "@yummyai/contracts/auth/session";
@@ -45,6 +46,12 @@ export async function POST(request: Request, context: Context) {
 async function proxy(request: Request, context: Context, method: "GET" | "POST") {
   const { path } = await context.params,
     target = path.join("/");
+  const revisionWrite = method === "POST" && new RegExp(`^lines/${id}/design-agent/revise$`, "i").test(target);
+  const revisionFile = method === "GET" && new RegExp(`^lines/${id}/design-agent/revision-attachments/${id}/${id}$`, "i").test(target);
+  const stampedDesignRead = method === "GET" && new RegExp(`^lines/${id}/design-agent$`, "i").test(target)
+    && request.headers.has("x-yummyai-context-authority");
+  if (revisionWrite || revisionFile || stampedDesignRead)
+    return personalOrderDesignRevision(request, path, revisionWrite, revisionFile);
   if (new RegExp(`^fulfillment-commands(/${id}(/(execute|cancel|acknowledge))?)?$`, "i").test(target))
     return personalFulfillmentCommand(request, path, method);
   if (method === "GET" && new RegExp(`^orders/${id}/shipment-create-workspace$`, "i").test(target))
@@ -291,6 +298,59 @@ async function proxy(request: Request, context: Context, method: "GET" | "POST")
   }
 }
 const personalOrderHeaders = { "cache-control": "private, no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
+/** Feedback is a separate, identity-fenced business intent. It cannot be routed
+ * through original-photo uploads or provider-response recovery. */
+async function personalOrderDesignRevision(request: Request, path: string[], write: boolean, file: boolean) {
+  const params = new URL(request.url).searchParams;
+  if (write || file ? params.size > 0 : [...params.keys()].some(key => params.getAll(key).length !== 1)
+    || !OrderDesignAgentReadQuerySchema.safeParse(Object.fromEntries(params)).success) return personalOrderFailure(400);
+  if (write && (!isSameOriginRequest(request) || !request.headers.get("content-type")?.startsWith("application/json")))
+    return personalOrderFailure(403);
+  try {
+    const identity = await erpRequestIdentity(request), authority = erpSessionAuthority(identity.view);
+    if (request.headers.get("x-yummyai-context-authority") !== authority) throw new PersonalSessionError(409, "authority_changed");
+    try {
+      for (const permission of [Permission.OrderRead, Permission.OrderPiiRead, ...(write
+        ? [Permission.OrderWrite, Permission.DesignRead, Permission.DesignWrite, Permission.DesignReview, Permission.AssetRead]
+        : file ? [Permission.AssetRead] : [])]) authorize(identity.view, permission);
+      if (identity.view.dataScope !== "tenant") return personalOrderFailure(403);
+    } catch { return personalOrderFailure(403); }
+    let input: ReturnType<typeof OrderDesignReviseCandidateSchema.parse> | undefined;
+    if (write) {
+      try { input = OrderDesignReviseCandidateSchema.parse(await personalOrderJson(request, 16 * 1024 * 1024)); }
+      catch { return personalOrderFailure(400); }
+    }
+    const base = process.env.API_BASE_URL?.replace(/\/$/, ""); if (!base) return personalOrderFailure(503);
+    await assertErpIdentityCurrent(identity);
+    const response = await apiFetch(`${base}/v1/order-centers/${path.join("/").toLowerCase()}${params.size ? `?${params}` : ""}`, {
+      method: write ? "POST" : "GET", cache: "no-store", redirect: "error",
+      ...(write ? { body: JSON.stringify(input), headers: { "content-type": "application/json" } } : {}),
+      // A disconnected browser cannot prove that a committed write did not run.
+      signal: write ? AbortSignal.timeout(110_000) : AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    });
+    if (!response.ok) {
+      await response.body?.cancel(); await assertErpIdentityCurrent(identity);
+      return personalOrderFailure([400, 401, 403, 404, 409, 413, 422, 503].includes(response.status) ? response.status : 502);
+    }
+    if (response.status !== 200) { await response.body?.cancel(); return personalOrderFailure(502); }
+    const headers = { ...personalOrderHeaders, "x-yummyai-context-authority": authority };
+    if (file) {
+      const mediaType = response.headers.get("content-type")?.split(";")[0];
+      if (!mediaType || !["image/png", "image/jpeg", "image/webp"].includes(mediaType)) { await response.body?.cancel(); return personalOrderFailure(502); }
+      const bytes = await personalOrderBytes(response, ORDER_DESIGN_REVISION_MAX_FILE_BYTES);
+      if (!bytes?.length) return personalOrderFailure(502);
+      await assertErpIdentityCurrent(identity);
+      return new Response(Uint8Array.from(bytes), { headers: { ...headers, "content-type": mediaType, "content-security-policy": "default-src 'none'; sandbox" } });
+    }
+    const value = OrderDesignAgentViewSchema.parse(await personalOrderJson(response, 8 * 1024 * 1024));
+    if (value.run && value.run.workItemId.toLowerCase() !== path[1]!.toLowerCase()) return personalOrderFailure(502);
+    if (write && (!value.run?.revisionFeedback || value.run.revisionFeedback.requestId !== input!.idempotencyKey
+      || value.run.revisionFeedback.parentRunId !== input!.runId || value.run.revisionFeedback.baseVersionId !== input!.expectedEditorVersionId))
+      return personalOrderFailure(502);
+    await assertErpIdentityCurrent(identity);
+    return Response.json(value, { headers });
+  } catch (cause) { return cause instanceof PersonalSessionError ? erpAuthFailure(cause, request) : personalOrderFailure(502); }
+}
 async function personalOrderBytes(response: Pick<Response, "body">, maximum: number): Promise<Buffer | null> {
   const reader = response.body?.getReader(); if (!reader) return null;
   const parts: Uint8Array[] = []; let size = 0;
