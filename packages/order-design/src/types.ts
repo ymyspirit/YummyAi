@@ -14,6 +14,8 @@ export type OrderDesignAssetPin = {
   checksum?:string; buyerOriginal?:boolean; usage?:string;
 };
 export type OrderDesignSnapshot = {
+  /** An explicit child attempt. Never inferred or backfilled onto historical runs. */
+  revisionRequest?: OrderDesignRevisionRequest;
   /** Absent on legacy runs; never substitute current rules during a resume. */
   ruleSnapshot?: OrderRuleSnapshot;
   schemaVersion:1; workItemId:string; workRevisionId:string; sourceVersionId:string|null;
@@ -31,8 +33,32 @@ export interface OrderDesignDispatcher { enqueue(input:{tenantId:string;requeste
 export type OrderDesignModelResponseReceipt = {requestId:string;actualCostUsd?:number;tokenUsage?:ModelTokenUsage|null};
 export interface OrderDesignImageGateway {
   generate(input:{context:TenantContext;requestId:string;model:NonNullable<OrderDesignSnapshot["model"]>;prompt:string;bytes:Buffer;size:string;transparent:boolean;signal:AbortSignal;
+    feedbackImages?:Array<{bytes:Buffer;mediaType:"image/png"|"image/jpeg"|"image/webp"}>;
     onReceipt?:(receipt:OrderDesignModelResponseReceipt)=>Promise<void>}):Promise<{bytes:Buffer;actualCostUsd?:number;tokenUsage?:ModelTokenUsage|null}>;
 }
+export type OrderDesignRevisionFeedbackImage = {
+  id:string;name:string;objectKey:string;checksum:string;byteSize:number;
+  mediaType:"image/png"|"image/jpeg"|"image/webp";purpose:"operator_revision_feedback";
+};
+export type OrderDesignRevisionRequest = {
+  /** Missing only on historical candidate-only revision requests. */
+  source?:OrderDesignRevisionSource;
+  submittedEventId?:string;
+  baseProof?:OrderDesignRevisionBaseProof;
+  sourceProofs?:OrderDesignRevisionBaseProof[];
+  requestId:string;parentRunId:string;baseProjectId:string;baseVersionId:string;baseDocumentChecksum:string;
+  targetImageId:string;targetImageChecksum:string;targetLayerIds:string[];
+  reason:string;mode:"image_edit"|"contour_only";contourRoundingPx?:20|25|30;
+  feedbackImages:OrderDesignRevisionFeedbackImage[];
+};
+export type OrderDesignRevisionSource="agent_candidate"|"submitted_successor";
+export type OrderDesignRevisionBaseProof={renderId:string;manifestChecksum:string;files:Array<{key:string;objectKey:string;mediaType:string;byteSize:number;checksumSha256:string}>};
+/** Historical native previews predate a raw-byte checksum in their manifest.
+ * Admission keeps their immutable locator; only actual file verification can
+ * produce the complete checksum evidence persisted in a child snapshot. */
+export type OrderDesignRevisionProofLocator=Omit<OrderDesignRevisionBaseProof,"files">&{
+  files:Array<Omit<OrderDesignRevisionBaseProof["files"][number],"checksumSha256">&{checksumSha256?:string}>;
+};
 export interface OrderDesignSuperResolutionGateway {
   validatePolicy(policy:NonNullable<DesignAutomationRecipe["pillowPipeline"]>["upscale"]):Promise<void>;
   upscale(input:{bytes:Buffer;policy:NonNullable<DesignAutomationRecipe["pillowPipeline"]>["upscale"];signal?:AbortSignal}):Promise<{bytes:Buffer;evidence:Record<string,unknown>}>;

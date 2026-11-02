@@ -10,32 +10,38 @@ import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesi
   orderWorkItems as works, orderLines, orders, amazonOrderReportLines, memberships, membershipRoles, roles, orderDesignDispatchTenants, aiBudgetLedger, orderDesignModelCalls as modelCalls,
   productionEditorProjects as projects, productionEditorVersions as versions, productionEditorRenders as renders,
   withTenant, type TenantTransaction, type DatabaseConnection } from "@yummyai/database";
-import { and, eq, gt, inArray, isNull, lte, asc, desc, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNull, lte, asc, desc, sql } from "drizzle-orm";
 import { fingerprint, seal, open } from "./crypto.js";
 import { OrderDesignError, type OrderDesignSnapshot, type OrderDesignDispatcher, type OrderDesignStepCheckpoint } from "./types.js";
 import { responseRecoveryTarget } from "./response-recovery.js";
 import { selectOrderDesignMethod, assertOrderDesignMethod, orderDesignInputChecksum } from "./harness.js";
 import { readOrderDesignCompletion } from "./completion.js";
 import { loadCurrentMembershipContext } from "@yummyai/database";
+import { revisionFeedbackView,selectOrderDesignRevisionSubject,resolveOrderDesignRevisionSource } from "./revision-plan.js";
+import { productionEditorImages as editorImages,productionOrders,orderWorkEvents } from "@yummyai/database";
+import { ProductionEditorDocumentSchema } from "@yummyai/contracts";
+import type {OrderDesignRevisionProofLocator,OrderDesignRevisionSource} from "./types.js";
+import type {StepResult} from "./executor.js";
 
 export type DesignRun=typeof runs.$inferSelect;
 export type DesignStep=typeof steps.$inferSelect;
 export const executionPermissions=[Permission.OrderRead,Permission.OrderWrite,Permission.OrderPiiRead,Permission.DesignRead,Permission.DesignWrite,Permission.AssetRead];
-export const paidTool=(tool:string)=>tool==="enhance_image" || tool==="cutout_subject";
+export const paidTool=(tool:string)=>tool==="enhance_image" || tool==="cutout_subject" || tool==="revise_image";
 export async function lockWork(tx:TenantTransaction,id:string) {await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`order-work:${id}`},0))`);}
-export async function assertExecutionIdentity(tx:TenantTransaction,context:TenantContext) {
+export async function assertExecutionIdentity(tx:TenantTransaction,context:TenantContext,additional:readonly Permission[]=[]) {
   const current=await loadCurrentMembershipContext(tx,context,{lock:true});
   const rows=await tx.select({permissions:roles.permissions,dataScope:roles.dataScope}).from(memberships).innerJoin(membershipRoles,eq(membershipRoles.membershipId,memberships.id)).innerJoin(roles,eq(roles.id,membershipRoles.roleId))
     .where(and(eq(memberships.userId,context.userId),eq(memberships.status,"active")));
   const grants=new Set(rows.filter(row=>row.dataScope==="tenant").flatMap(row=>row.permissions));
-  if(executionPermissions.some(permission=>!grants.has(permission))) throw new OrderDesignError("agent_membership_unavailable");
+  if([...executionPermissions,...additional].some(permission=>!grants.has(permission))) throw new OrderDesignError("agent_membership_unavailable");
   return current;
 }
 export async function assertRunSource(tx:TenantTransaction,run:DesignRun) {
   const [source]=await tx.select({work:works,order:orders}).from(works).innerJoin(orderLines,eq(orderLines.id,works.id)).innerJoin(orders,eq(orders.id,orderLines.orderId)).where(eq(works.id,run.workItemId));
   if(!source?.work.encryptedDataKey || source.work.expiresAt<=new Date() || source.order.addressStatus==="anonymized") throw new OrderDesignError("agent_source_expired");
   if(source.work.held || source.work.archivedAt || source.order.sideState==="cancelled") throw new OrderDesignError("agent_order_unavailable");
-  if(source.work.pushedRevisionId!==run.workRevisionId || !["queued","starting","in_progress","changes_requested"].includes(source.work.artwork)) throw new OrderDesignError("agent_work_changed");
+  if(source.work.pushedRevisionId!==run.workRevisionId || !["queued","starting","in_progress","changes_requested"].includes(source.work.artwork)
+    && !(run.status==="awaiting_review"&&source.work.artwork==="in_review")) throw new OrderDesignError("agent_work_changed");
   if(source.work.reportLineId) {
     const [report]=await tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id,source.work.reportLineId));
     const noCustomization=report?.state==="none" && report.currentVersionId===null && report.reviewedVersionId===null && source.work.sourceVersionId===null;
@@ -48,6 +54,10 @@ export async function assertRunSource(tx:TenantTransaction,run:DesignRun) {
 export async function assertOrderDesignRunMethod(tx:TenantTransaction,context:TenantContext,run:DesignRun,key:Uint8Array){
   const snapshot=open<OrderDesignSnapshot>(key,run.encryptedSnapshot);
   if(orderDesignInputChecksum(snapshot,run.methodSnapshot)!==run.inputChecksum)throw new OrderDesignError("agent_snapshot_invalid");
+  if(snapshot.revisionRequest){
+    if(run.parentRunId!==snapshot.revisionRequest.parentRunId||run.projectId!==snapshot.revisionRequest.baseProjectId||snapshot.plan.kind!=="candidate_revision")throw new OrderDesignError("agent_snapshot_invalid");
+    await assertExecutionIdentity(tx,context,[Permission.DesignReview]);
+  }else if(run.parentRunId)throw new OrderDesignError("agent_snapshot_invalid");
   await assertOrderDesignMethod(tx,context,snapshot,run.methodSnapshot,{lock:true});
   return snapshot;
 }
@@ -56,7 +66,7 @@ export async function assertOrderDesignRunMethod(tx:TenantTransaction,context:Te
 export async function registerOrderDesignRun(tx:TenantTransaction,context:TenantContext,snapshot:OrderDesignSnapshot,key:Uint8Array) {
   const plan=DesignAutomationPlanSchema.parse(snapshot.plan);
   await tx.insert(orderDesignDispatchTenants).values({tenantId:context.tenantId}).onConflictDoNothing();
-  const [prior]=await tx.select().from(runs).where(and(eq(runs.workItemId,snapshot.workItemId),eq(runs.workRevisionId,snapshot.workRevisionId)));
+  const [prior]=await tx.select().from(runs).where(and(eq(runs.workItemId,snapshot.workItemId),eq(runs.workRevisionId,snapshot.workRevisionId),isNull(runs.parentRunId)));
   if(prior) return prior.id;
   const methodSnapshot=await selectOrderDesignMethod(tx,context,snapshot);
   const id=createEntityId();
@@ -105,6 +115,93 @@ export async function assertOrderDesignCandidate(tx:TenantTransaction,context:Te
       return !proof || proof.status!=="completed" || !proof.encryptedManifest || fingerprint(proof.encryptedManifest)!==receipt.manifestChecksum;
     }))throw new OrderDesignError("agent_completion_invalid");
   } finally {key.fill(0);}
+}
+
+/** Revision admission is deliberately separate from strict candidate approval.
+ * A current review-stage successor is explicit new input, never a replacement
+ * completion or a claim of historical approval for its parent. */
+export async function assertOrderDesignRevisionSource(tx:TenantTransaction,context:TenantContext,run:DesignRun,vault:SecretVault,
+  expectedVersionId:string,options:{lock?:boolean}={}) {
+  const locked=options.lock!==false;
+  for(const permission of [...executionPermissions,Permission.DesignReview])authorize(context,permission);
+  if(locked)await lockWork(tx,run.workItemId);
+  await assertExecutionIdentity(tx,context,[Permission.DesignReview]);
+  const query=tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.workItemId,run.workItemId)));
+  const [current]=locked?await query.for("update"):await query;
+  if(!current||current.revision!==run.revision||current.status!=="awaiting_review"||!current.projectId||!current.currentEditorVersionId
+    ||!current.completionEvidence||!current.completionChecksum)throw new OrderDesignError("agent_revision_source_unsupported");
+  const work=await assertRunSource(tx,current);
+  const projectQuery=tx.select().from(projects).where(eq(projects.id,current.projectId));
+  const [project]=locked?await projectQuery.for("update"):await projectQuery;
+  if(!work.encryptedDataKey||work.preparation!=="pushed"||work.held||work.archivedAt||work.expiresAt<=new Date()
+    ||work.pushedRevisionId!==current.workRevisionId||work.editorProjectId!==current.projectId||work.approvedEditorVersionId
+    ||!project?.encryptedDataKey||project.status!=="active"||project.archivedAt||project.reviewedVersionId
+    ||project.expiresAt&&project.expiresAt<=new Date()||project.sourceWorkItemId!==work.id||project.sourceWorkRevisionId!==work.pushedRevisionId)
+    throw new OrderDesignError("agent_revision_not_reviewable");
+  if(project.currentVersionId!==expectedVersionId)throw new OrderDesignError("agent_revision_base_changed");
+  const [released]=await tx.select({id:productionOrders.id}).from(productionOrders).where(and(eq(productionOrders.sourceWorkItemId,work.id),sql`${productionOrders.status}<>'cancelled'`)).limit(1);
+  if(released)throw new OrderDesignError("agent_revision_production_released");
+  const [child]=await tx.select({id:runs.id}).from(runs).where(eq(runs.parentRunId,current.id));
+  if(child)throw new OrderDesignError("agent_revision_already_requested");
+  const workKey=vault.withSecret(work.encryptedDataKey,value=>Buffer.from(value,"base64"));
+  const projectKey=vault.withSecret(project.encryptedDataKey,value=>Buffer.from(value,"base64"));
+  try{
+    const snapshot=open<OrderDesignSnapshot>(workKey,current.encryptedSnapshot),completion=readOrderDesignCompletion(current,snapshot);
+    if(orderDesignInputChecksum(snapshot,current.methodSnapshot)!==current.inputChecksum||!completion)throw new OrderDesignError("agent_completion_invalid");
+    const [original]=await tx.select().from(versions).where(and(eq(versions.projectId,project.id),eq(versions.id,current.currentEditorVersionId)));
+    if(!original?.encryptedDocument||original.checksum!==completion.evidence.documentChecksum)throw new OrderDesignError("agent_completion_invalid");
+    const originalRaw=open<unknown>(projectKey,original.encryptedDocument);
+    if(fingerprint(originalRaw)!==original.checksum)throw new OrderDesignError("agent_completion_invalid");
+    const originalDocument=ProductionEditorDocumentSchema.parse(originalRaw);
+    const proofQuery=tx.select().from(renders).where(and(eq(renders.projectId,project.id),eq(renders.versionId,original.id),
+      inArray(renders.id,completion.evidence.proofs.map(proof=>proof.renderId))));
+    const originalProofs=locked?await proofQuery.for("share"):await proofQuery;
+    if(originalProofs.length!==completion.evidence.proofs.length||completion.evidence.proofs.some(pin=>{
+      const proof=originalProofs.find(row=>row.id===pin.renderId);
+      return !proof||proof.status!=="completed"||!proof.encryptedManifest||fingerprint(proof.encryptedManifest)!==pin.manifestChecksum;
+    }))throw new OrderDesignError("agent_completion_invalid");
+    const [version]=await tx.select().from(versions).where(and(eq(versions.projectId,project.id),eq(versions.id,expectedVersionId)));
+    if(!version?.encryptedDocument)throw new OrderDesignError("agent_revision_base_changed");
+    const raw=open<unknown>(projectKey,version.encryptedDocument);
+    if(fingerprint(raw)!==version.checksum)throw new OrderDesignError("agent_editor_checksum_invalid");
+    const document=ProductionEditorDocumentSchema.parse(raw);
+    if(document.productType!==originalDocument.productType||fingerprint(document.automation??null)!==fingerprint(originalDocument.automation??null))
+      throw new OrderDesignError("agent_revision_recipe_changed");
+    const source:OrderDesignRevisionSource=resolveOrderDesignRevisionSource({candidateVersionId:original.id,candidateVersionNumber:original.versionNumber,
+      currentVersionId:version.id,currentVersionNumber:version.versionNumber,expectedVersionId,artwork:work.artwork});
+    let submittedEventId:string|undefined;
+    if(source==="submitted_successor"){
+      const [submitted]=await tx.select().from(orderWorkEvents).where(and(eq(orderWorkEvents.workItemId,work.id),eq(orderWorkEvents.revision,work.revision),
+        eq(orderWorkEvents.action,"submit_artwork"),eq(orderWorkEvents.toState,"in_review"),gte(orderWorkEvents.occurredAt,version.createdAt)))
+        .orderBy(desc(orderWorkEvents.occurredAt),desc(orderWorkEvents.id)).limit(1);
+      // Historical event rows need not identify this version. Never manufacture
+      // one: current in_review ownership plus this request pins the new base.
+      submittedEventId=submitted?.id;
+    }
+    const baseProofQuery=tx.select().from(renders).where(and(eq(renders.projectId,project.id),eq(renders.versionId,version.id),eq(renders.status,"completed")))
+      .orderBy(desc(renders.createdAt),desc(renders.id));
+    const baseProofs=locked?await baseProofQuery.for("share"):await baseProofQuery;
+    const baseProof=baseProofs.find(proof=>{
+      if(!proof.encryptedManifest)return false;
+      const options=open<{purpose?:string;previewFullResolution?:boolean}>(projectKey,proof.encryptedOptions);
+      return options.purpose==="preview"&&options.previewFullResolution===true;
+    });
+    if(!baseProof?.encryptedManifest)throw new OrderDesignError("agent_revision_current_proof_unavailable");
+    const proof=revisionProofPin(baseProof,projectKey,"agent_revision_current_proof_unavailable",source==="submitted_successor");
+    const sourceProofs=completion.evidence.proofs.map(pin=>revisionProofPin(originalProofs.find(row=>row.id===pin.renderId)!,projectKey,"agent_revision_source_proof_unavailable"));
+    return {run:current,work,project,version,snapshot,document,source,submittedEventId,proof,sourceProofs};
+  }finally{workKey.fill(0);projectKey.fill(0);}
+}
+
+function revisionProofPin(proof:Pick<typeof renders.$inferSelect,"id"|"encryptedManifest">,projectKey:Buffer,errorCode:string,allowHistoricalPreview=false):OrderDesignRevisionProofLocator {
+  if(!proof.encryptedManifest)throw new OrderDesignError(errorCode);
+  const manifest=open<NonNullable<StepResult["proof"]>>(projectKey,proof.encryptedManifest);
+  if(!Array.isArray(manifest.files)||!manifest.files.length||manifest.files.length>10||manifest.files.some(file=>
+    typeof file.objectKey!=="string"||!file.objectKey||!/^image\/(png|jpeg|webp)$/.test(file.mediaType)
+    ||!Number.isSafeInteger(file.byteSize)||file.byteSize<=0||file.byteSize>64*1024*1024
+    ||(file.checksumSha256===undefined?!allowHistoricalPreview:!/^[a-f0-9]{64}$/.test(file.checksumSha256))))throw new OrderDesignError(errorCode);
+  return {renderId:proof.id,manifestChecksum:fingerprint(proof.encryptedManifest),
+    files:manifest.files.map(({key,objectKey,mediaType,byteSize,checksumSha256})=>({key,objectKey,mediaType,byteSize,checksumSha256}))};
 }
 
 /** Shared by the explicit Agent command and an operator's rejection of its exact proof. */
@@ -177,12 +274,33 @@ export class OrderDesignRepository {
       const responseRecoveries=new Map<string,OrderDesignResponseRecoveryEvidence>();
       const contourEvidence=new Map<string,PillowContourEvidence>();
       let completion=null;
+      let revisionFeedback=null;
+      let revisionBlockedCode:string|null="agent_revision_not_reviewable";
+      let revisionBaseVersionId:string|null=null;
+      let revisionSource:OrderDesignRevisionSource|null=null;
       if(includePrivate&&work.encryptedDataKey && work.privateAvailable) {
         const key=this.vault.withSecret(work.encryptedDataKey,value=>Buffer.from(value,"base64"));
         try {
           const snapshot=open<OrderDesignSnapshot>(key,run.encryptedSnapshot);
           if(orderDesignInputChecksum(snapshot,run.methodSnapshot)!==run.inputChecksum)throw new OrderDesignError("agent_snapshot_invalid");
           completion=readOrderDesignCompletion(run,snapshot);
+          if(snapshot.revisionRequest)revisionFeedback=revisionFeedbackView(snapshot.revisionRequest);
+          if(run.status==="awaiting_review"&&completion){
+            try{
+              if(!snapshot.recipe.pillowPipeline||snapshot.recipe.workflow!=="pillow_photo")throw new OrderDesignError("agent_revision_pipeline_unsupported");
+              if([...executionPermissions,Permission.DesignReview].some(permission=>!context.permissions.includes(permission)))throw new OrderDesignError("agent_membership_unavailable");
+              const [pointer]=run.projectId?await tx.select({currentVersionId:projects.currentVersionId}).from(projects).where(eq(projects.id,run.projectId)):[];
+              if(!pointer?.currentVersionId)throw new OrderDesignError("agent_revision_base_changed");
+              const basis=await assertOrderDesignRevisionSource(tx,context,run,this.vault,pointer.currentVersionId,{lock:false});
+              const projectKey=this.vault.withSecret(basis.project.encryptedDataKey!,value=>Buffer.from(value,"base64"));
+              try{
+                const assets=await tx.select().from(editorImages).where(eq(editorImages.projectId,basis.project.id));
+                selectOrderDesignRevisionSubject(basis.document,assets.map(asset=>({id:asset.id,checksum:asset.checksum,metadata:open(projectKey,asset.encryptedMetadata)})));
+              }finally{projectKey.fill(0);}
+              revisionBaseVersionId=basis.version.id;revisionSource=basis.source;
+              revisionBlockedCode=null;
+            }catch(error){if(!(error instanceof OrderDesignError))throw error;revisionBlockedCode=error.code;}
+          }
           ruleSnapshot=snapshot.ruleSnapshot?OrderRuleSnapshotSchema.parse(snapshot.ruleSnapshot):null;
           for(const step of rows) {
             if(!step.encryptedOutput)continue;
@@ -204,6 +322,8 @@ export class OrderDesignRepository {
       const [latest]=await authority();const privateEvidenceState=latest?.privateAvailable?"available":"expired";
       const exposePrivate=includePrivate&&work.privateAvailable&&latest?.privateAvailable&&work.encryptedDataKey===latest.encryptedDataKey;
       return OrderDesignAgentViewSchema.parse({usageSummary,run:{...run,ruleSnapshot:exposePrivate?ruleSnapshot:null,methodSnapshot:exposePrivate?run.methodSnapshot:null,completion:exposePrivate?completion:null,privateEvidenceState,privateEvidenceOmitted:!exposePrivate,createdAt:run.createdAt.toISOString(),updatedAt:run.updatedAt.toISOString(),
+        revisionFeedback:exposePrivate?revisionFeedback:null,canRevise:!!exposePrivate&&revisionBlockedCode===null,revisionBlockedCode:exposePrivate?revisionBlockedCode:"agent_source_expired",
+        revisionBaseVersionId:exposePrivate?revisionBaseVersionId:null,revisionSource:exposePrivate?revisionSource:null,
         usageSummary:summarizeModelUsage(usageRows.filter(call=>call.runId===run.id).map(call=>call.tokenUsage),"order_design_run"),
         modelCalls:callRows.slice(0,1000).map(call=>({...call,submittedAt:call.submittedAt.toISOString(),receivedAt:call.receivedAt?.toISOString()??null})),modelCallsTruncated:callRows.length>1000,
         responseRecoveryTarget:exposePrivate?recoveryTarget:null,responseRecoveryBlockedCode:exposePrivate?recoveryBlockedCode:null,qualityDiagnostics:exposePrivate?run.qualityDiagnostics:[],

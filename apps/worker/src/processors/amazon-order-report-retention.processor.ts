@@ -5,6 +5,8 @@ import {
 } from "@yummyai/database";
 import { AmazonOrderReportRetentionJobPayloadSchema, type JobEnvelope } from "@yummyai/jobs";
 import { eq } from "drizzle-orm";
+import type { Storage } from "@yummyai/storage";
+import { purgeExpiredOrderDesignFeedback } from "./order-design-feedback-retention.js";
 
 export interface AmazonOrderReportRetentionRepository {
   expiry(context: TenantContext, batchId: string): Promise<Date | undefined>;
@@ -30,7 +32,7 @@ export class AmazonOrderReportRetentionProcessor {
 }
 
 export class DrizzleAmazonOrderReportRetentionRepository implements AmazonOrderReportRetentionRepository {
-  constructor(private readonly database: DatabaseConnection) {}
+  constructor(private readonly database: DatabaseConnection, private readonly storage?: Pick<Storage, "purgeExpiredOrderDesignFeedback">) {}
 
   async expiry(context: TenantContext, batchId: string): Promise<Date | undefined> {
     const [batch] = await withTenant(this.database.db, context, (tx) => tx.select({ expiresAt: amazonOrderReportBatches.expiresAt })
@@ -38,5 +40,10 @@ export class DrizzleAmazonOrderReportRetentionRepository implements AmazonOrderR
     return batch?.expiresAt;
   }
 
-  purge(context: TenantContext, now: Date): Promise<void> { return purgeExpiredAmazonOrderReports(this.database, context, now); }
+  async purge(context: TenantContext, now: Date): Promise<void> {
+    // Even if object storage is unavailable, expire all private encryption keys.
+    // The durable locator stays available for a subsequent ciphertext purge.
+    try { await purgeExpiredOrderDesignFeedback(this.database, context, this.storage, now); }
+    finally { await purgeExpiredAmazonOrderReports(this.database, context, now); }
+  }
 }

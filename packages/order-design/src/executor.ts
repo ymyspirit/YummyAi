@@ -20,6 +20,7 @@ import { fingerprint,seal,open } from "./crypto.js";
 import { pinnedRuleDiagnostics } from "./rules.js";
 import { pillowCutoutPrompt } from "./pillow-cutout-prompt.js";
 import { runPillowContourWorkflow } from "./pillow-contour-workflow.js";
+import { orderDesignRevisionPrompt,mergeOrderDesignRevisionGeometry } from "./revision-plan.js";
 import type { DesignRun,DesignStep } from "./repository.js";
 import { OrderDesignError,type DesignStepInput,type OrderDesignSnapshot,type OrderDesignAssetPin,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignModelResponseReceipt,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
 
@@ -93,6 +94,14 @@ export class OrderDesignExecutor {
           document=await composeOrderArtwork(document,job.snapshot.layout,job.snapshot.customization,job.snapshot.draft,selected,job.snapshot.photoOnlyPillow,job.snapshot.requirements);
           return {document,output:{layerCount:document.layers.length}};
         }
+        case "reuse_revision_subject": {
+          const revision=job.snapshot.revisionRequest;
+          if(!revision||revision.mode!=="contour_only"||revision.targetImageId!==job.input.sourceImageId)throw new OrderDesignError("agent_revision_subject_unavailable");
+          const bytes=await read(job.input.sourceImageId);
+          if(fingerprint(bytes)!==revision.targetImageChecksum||!metadata.get(job.input.sourceImageId)?.actualAlpha)throw new OrderDesignError("agent_revision_subject_unavailable");
+          return {outputAssetId:job.input.sourceImageId,output:{sourceImageId:job.input.sourceImageId,sourceChecksum:fingerprint(bytes),artworkUnchanged:true,modelCalls:0}};
+        }
+        case "revise_image":
         case "enhance_image":
         case "cutout_subject": {
           if(!job.snapshot.model) throw new OrderDesignError("agent_model_unavailable");
@@ -103,9 +112,12 @@ export class OrderDesignExecutor {
             if(!enhanced?.id) throw new OrderDesignError("agent_step_dependency_invalid");sourceId=enhanced.id;
           }
           const source=await read(sourceId),sourceInfo=metadata.get(sourceId)!;
+          const revision=job.input.tool==="revise_image"?job.snapshot.revisionRequest:null;
+          if(job.input.tool==="revise_image"&&(!revision||revision.mode!=="image_edit"||revision.targetImageId!==originalId
+            ||revision.targetImageChecksum!==fingerprint(source)))throw new OrderDesignError("agent_revision_subject_unavailable");
           const cutout=job.input.tool==="cutout_subject";
           if(pipeline && job.snapshot.model.model!==pipeline.requiredModel)throw new OrderDesignError("agent_pillow_model_mismatch");
-          const prompt=job.input.tool==="cutout_subject"?pillowCutoutPrompt(job.input,pipeline,job.snapshot.requirements)
+          const prompt=revision?orderDesignRevisionPrompt(revision):job.input.tool==="cutout_subject"?pillowCutoutPrompt(job.input,pipeline,job.snapshot.requirements)
             :`${ORDER_IMAGE_ENHANCEMENT_INSTRUCTION}只做照片保真美化，保留整张画面的主体、背景、边缘和已有透明区域；不抠图，不加描边、裁剪线、条码或装饰。`;
           await job.assertActive();
           let result:Awaited<ReturnType<OrderDesignImageGateway["generate"]>>;
@@ -126,10 +138,20 @@ export class OrderDesignExecutor {
               throw new OrderDesignError("agent_model_response_checkpoint_invalid");
             }
           } else {
-            await job.markSubmitted();
-            result=await this.gateway.generate({context:job.context,requestId:job.step.requestId,model:job.snapshot.model,prompt,bytes:source,
+            const feedbackImages:Array<{bytes:Buffer;mediaType:"image/png"|"image/jpeg"|"image/webp"}>=[];
+            try{
+              if(revision)for(const pin of revision.feedbackImages){
+                await job.assertActive();
+                if(pin.purpose!=="operator_revision_feedback")throw new OrderDesignError("agent_revision_feedback_invalid");
+                const bytes=decryptProductionBytes(key,await this.storage.readPrivate(job.context,{id:pin.id,tenantId:job.context.tenantId,assetDomain:"order",objectKey:pin.objectKey},{requiredDomain:"order"}));
+                if(bytes.length!==pin.byteSize||fingerprint(bytes)!==pin.checksum){bytes.fill(0);throw new OrderDesignError("agent_revision_feedback_checksum_invalid");}
+                feedbackImages.push({bytes,mediaType:pin.mediaType});
+              }
+              await job.assertActive();await job.markSubmitted();
+              result=await this.gateway.generate({context:job.context,requestId:job.step.requestId,model:job.snapshot.model,prompt,bytes:source,
               size:sourceInfo.width/sourceInfo.height>1.25?"1536x1024":sourceInfo.height/sourceInfo.width>1.25?"1024x1536":"2048x2048",transparent:cutout || sourceInfo.actualAlpha,signal:job.signal,
-              onReceipt:job.markProviderReceived});
+                ...(feedbackImages.length?{feedbackImages}:{}),onReceipt:job.markProviderReceived});
+            }finally{for(const feedback of feedbackImages)feedback.bytes.fill(0);}
             // Persist receipt before scanning/decoding. A known response must never be sent again.
             const receipt:OrderDesignResponseReceipt={version:1,requestId:job.step.requestId,checksum:fingerprint(result.bytes),byteSize:result.bytes.length,
               receivedAt:new Date().toISOString(),quarantined:true,...(result.actualCostUsd!==undefined?{actualCostUsd:result.actualCostUsd}:{}),
@@ -148,13 +170,14 @@ export class OrderDesignExecutor {
           }
           await job.assertActive();
           const outputId=createEntityId();
-          const asset=await this.prepareAsset(job,key,outputId,cutout?"主体抠图":"保真美化",result.bytes,"image",{...(job.responseRecovery?{operatorRecovery:job.responseRecovery}:{}),modelEdit:{renderId:job.step.requestId,sourceImageId:originalId,model:job.snapshot.model.model,operation:cutout?"cutout":"enhance",...(cutout && pipeline?{promptVersion:pipeline.cutoutPromptVersion}:{}),...(job.input.tool==="cutout_subject" && job.input.subjectPromptVersion?{subjectPromptVersion:job.input.subjectPromptVersion}:{}),...(job.snapshot.recipe.imagePolicy==="faithful_enhancement"?{enhancementPolicy:ORDER_IMAGE_ENHANCEMENT_POLICY}:{})},sourceWidth:metadata.get(originalId)?.width,sourceHeight:metadata.get(originalId)?.height},responseCheckpoint?.objectKey);
+          const asset=await this.prepareAsset(job,key,outputId,revision?"运营反馈修改稿":cutout?"主体抠图":"保真美化",result.bytes,"image",{...(job.responseRecovery?{operatorRecovery:job.responseRecovery}:{}),modelEdit:{renderId:job.step.requestId,sourceImageId:revision?(sourceInfo.modelEdit?.sourceImageId??originalId):originalId,model:job.snapshot.model.model,operation:revision?"revise":cutout?"cutout":"enhance",...(cutout && pipeline?{promptVersion:pipeline.cutoutPromptVersion}:{}),...(job.input.tool==="cutout_subject" && job.input.subjectPromptVersion?{subjectPromptVersion:job.input.subjectPromptVersion}:{}),...(job.snapshot.recipe.imagePolicy==="faithful_enhancement"?{enhancementPolicy:ORDER_IMAGE_ENHANCEMENT_POLICY}:{})},sourceWidth:revision?sourceInfo.sourceWidth:metadata.get(originalId)?.width,sourceHeight:revision?sourceInfo.sourceHeight:metadata.get(originalId)?.height},responseCheckpoint?.objectKey);
           const info=open<AssetMetadata>(key,asset.encryptedMetadata);
           if((cutout || sourceInfo.actualAlpha) && !info.actualAlpha)return {assets:[asset],outputAssetId:outputId,actualCostUsd:result.actualCostUsd,
             output:{sourceImageId:originalId,outputAssetId:outputId,providerReturnedImage:true,applied:false,actualCostUsd:result.actualCostUsd??null},
             qualityDiagnostics:[{code:"agent_alpha_missing",severity:"error",message:"模型返回图片未保留所需透明区域，已保存结果供核对，未替换图稿。"}]};
           document.layers=document.layers.map(layer=>{
             if(layer.kind!=="image")return layer;
+            if(revision)return revision.targetLayerIds.includes(layer.id)&&layer.assetId===originalId?{...layer,assetId:outputId,assetVersion:1}:layer;
             const meta=metadata.get(layer.assetId);
             if(layer.assetId!==originalId && meta?.modelEdit?.sourceImageId!==originalId)return layer;
             const scale=Math.min(layer.widthMm/info.width,layer.heightMm/info.height);
@@ -200,6 +223,24 @@ export class OrderDesignExecutor {
             const layer=document.layers.find(layer=>layer.kind==="image" && layer.assetId===sourceId);
             if(!layer || !metadata.get(sourceId)?.actualAlpha || !document.spec.declaredLongestMm)throw new OrderDesignError("agent_contour_source_invalid");
             const raster=await pillowRaster(bytes),options={artworkLayerId:layer.id,longestSideInches:document.spec.declaredLongestMm/25.4};
+            if(job.snapshot.revisionRequest){
+              const revision=job.snapshot.revisionRequest;
+              // Run geometry on the existing subject, then merge only its own layer.
+              // Other image/text layers remain byte-for-byte structured values.
+              const isolated={...document,layers:[layer]};
+              const roundingPx=revision.mode==="contour_only"?revision.contourRoundingPx:pipeline.contour.roundingPx;
+              if(roundingPx!==20&&roundingPx!==25&&roundingPx!==30)throw new OrderDesignError("agent_revision_contour_parameter_invalid");
+              const sourceChecksum=fingerprint(bytes);
+              let result=revision.mode==="contour_only"?recomputePillowAutomationGeometry(isolated,raster,{...options,roundingPx})
+                :createPillowAutomationGeometry(isolated,raster,{...options,roundingPx});
+              if(revision.mode==="image_edit")for(const next of [25,30]){if(result.qa.technicalPassed)break;await job.assertActive();result=recomputePillowAutomationGeometry(result.document,raster,{...options,roundingPx:next});}
+              if(sourceChecksum!==fingerprint(bytes))throw new OrderDesignError("agent_contour_artwork_changed");
+              const revised=mergeOrderDesignRevisionGeometry(document,result.document,layer.id);
+              const revisedAnchor=revised.layers.find(item=>item.id===layer.id)!;
+              return {document:revised,outputAssetId:sourceId,output:{sourceAssetId:sourceId,sourceChecksum,artworkUnchanged:revision.mode==="contour_only",roundingPx,qa:result.qa,revisionRequestId:revision.requestId,
+                frameReference:"original_subject_layer_anchor",canvasTranslation:{xMm:revisedAnchor.xMm-layer.xMm,yMm:revisedAnchor.yMm-layer.yMm}},
+                qualityDiagnostics:result.qa.technicalPassed?[]:[{code:"agent_pillow_geometry_invalid",severity:"error",message:"本次修改稿的独立裁线或尺寸检查未通过，已保存新版本，需要人工核对。"}]};
+            }
             if(pipeline.contour.workflow!==undefined) {
               if(pipeline.contour.workflow!==PILLOW_CONTOUR_GRAPH_VERSION || !PillowPipelineSchema.safeParse(pipeline).success)throw new OrderDesignError("agent_contour_workflow_invalid");
               const sourceChecksum=fingerprint(bytes),pixelChecksum=fingerprint(raster.rgba);
@@ -249,7 +290,7 @@ export class OrderDesignExecutor {
             if(!originalId)continue;const original=data.assets.find(row=>row.id===originalId)!;const originalInfo=metadata.get(originalId)!;
             const actual=await read(originalId);const output=data.assets.find(row=>row.id===layer.assetId)!;
             qualityImages.push({sourceImageId:originalId,expectedSourceChecksum:original.checksum,sourceChecksum:fingerprint(actual),outputChecksum:output.checksum,
-              sourceWidthPx:info.modelEdit?.operation==="cutout"?null:originalInfo.width,sourceHeightPx:info.modelEdit?.operation==="cutout"?null:originalInfo.height,
+              sourceWidthPx:["cutout","revise"].includes(info.modelEdit?.operation??"")?null:originalInfo.width,sourceHeightPx:["cutout","revise"].includes(info.modelEdit?.operation??"")?null:originalInfo.height,
               outputWidthPx:info.width,outputHeightPx:info.height,placedWidthMm:layer.widthMm,placedHeightMm:layer.heightMm,minimumPpi:document.spec.dpi,
               sourceHasAlpha:originalInfo.actualAlpha,outputHasAlpha:info.actualAlpha,requiresAlpha:job.snapshot.recipe.workflow==="pillow_photo",scan:info.scan.result==="clean"?"clean" as const:"unavailable" as const,modelEdited:!!info.modelEdit});
           }

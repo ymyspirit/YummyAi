@@ -9,3 +9,5 @@ export * from "./artwork-audit-repository.js";
 export * from "./response-recovery.js";
 export * from "./harness.js";
 export * from "./model-costs.js";
+export * from "./revision.js";
+export * from "./revision-plan.js";

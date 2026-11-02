@@ -31,19 +31,27 @@ export class OrderDesignStudioGateway implements OrderDesignImageGateway {
       });
       const bytes = await sharp(input.bytes, { limitInputPixels: 100_000_000, failOn: "warning" }).rotate().png().toBuffer();
       input.signal.throwIfAborted();
-      return { selected, bytes };
+      const feedback=[];
+      try{
+        for(const item of input.feedbackImages??[]){
+          input.signal.throwIfAborted();
+          feedback.push({bytes:await sharp(item.bytes,{limitInputPixels:40_000_000,failOn:"warning"}).rotate().png().toBuffer(),mediaType:"image/png"});
+        }
+        return { selected, bytes,feedback };
+      }catch(error){for(const item of feedback)item.bytes.fill(0);throw error;}
     })().catch(error => { throw new OrderDesignSubmissionNotSentError(error instanceof OrderDesignError ? error.code : input.signal.aborted ? "agent_model_cancelled_before_submission" : "agent_model_preparation_failed"); });
     const { selected } = prepared;
     let receipt:OrderDesignModelResponseReceipt|undefined;
-    const output = await this.vault.withSecret(selected.encryptedApiKey, apiKey => this.gateway.generate({
+    let output:Awaited<ReturnType<StudioGateway["generate"]>>;
+    try{output = await this.vault.withSecret(selected.encryptedApiKey, apiKey => this.gateway.generate({
       endpoint: selected.endpoint ?? "https://api.openai.com/v1", apiKey, model: input.model.model, capability: "image", providerTaskId: null,
-      signal: input.signal, references: [{ bytes: prepared.bytes, mediaType: "image/png" }],
+      signal: input.signal, references: [{ bytes: prepared.bytes, mediaType: "image/png" },...prepared.feedback],
       input: { requestId: input.requestId, modelId: input.model.routeId, prompt: input.prompt, referenceKeys: [], size: input.size,
         quality: "high", background: input.transparent ? "transparent" : "auto", seconds: 4 },
     }, async () => undefined, async original => {
       receipt={requestId:input.requestId,...(original.costUsd!==null?{actualCostUsd:Number(original.costUsd)}:{}),tokenUsage:original.tokenUsage??null};
       await input.onReceipt?.(receipt);
-    }));
+    }));}finally{for(const item of prepared.feedback)item.bytes.fill(0);}
     input.signal.throwIfAborted();
     if (!("bytes" in output) || !output.mediaType.startsWith("image/")) throw new OrderDesignError("agent_model_invalid_output", true);
     return { bytes: output.bytes,...(receipt?.actualCostUsd!==undefined?{actualCostUsd:receipt.actualCostUsd}:{}),tokenUsage:receipt?.tokenUsage??null };

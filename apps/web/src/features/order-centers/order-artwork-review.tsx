@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ImageOff, LoaderCircle, Maximize2, Minimize2, RotateCcw } from "lucide-react";
+import { Bot, Check, ImageOff, LoaderCircle, Maximize2, Minimize2, RotateCcw } from "lucide-react";
 import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
 import type { ProductionEditorDetailView } from "@yummyai/contracts/pod/production-editor-api";
 import { artworkPreviewPending, artworkReviewFile, currentProductionRender } from "./order-artwork-review-model";
@@ -10,6 +10,7 @@ import { OrderCustomerRequirements } from "./order-customer-requirements";
 import { OrderArtworkChecks } from "./order-artwork-checks";
 import { OrderSubjectMeasurement } from "./order-subject-measurement";
 import { OrderArtworkAudit } from "./order-artwork-audit";
+import { OrderArtworkAiRevision, type OrderArtworkAiRevisionState } from "./order-artwork-ai-revision";
 import { applyArtworkAudit, type ArtworkAuditReport } from "@yummyai/contracts/ai/artwork-audit";
 import type { ProductionEditorFocus } from "../production-editor/production-editor-workspace";
 import "./order-artwork-review.css";
@@ -31,6 +32,8 @@ export function OrderArtworkReview({
   hasNext,
   decisionFooter,
   onAdvanceAction,
+  onAiRevisionSubmitted,
+  onAiRevisionStateChange,
 }: {
   editor: ProductionEditorDetailView;
   detail: OrderWorkDetail;
@@ -46,6 +49,8 @@ export function OrderArtworkReview({
   hasNext?: boolean;
   decisionFooter?: HTMLElement | null;
   onAdvanceAction?: (action: ReviewAction) => void;
+  onAiRevisionSubmitted?: () => void;
+  onAiRevisionStateChange?: (state: OrderArtworkAiRevisionState) => void;
 }) {
   const proof = artworkReviewFile(editor);
   const [loaded, setLoaded] = useState("");
@@ -57,6 +62,8 @@ export function OrderArtworkReview({
   const pending = artworkPreviewPending(editor);
   const [auditReport, setAuditReport] = useState<ArtworkAuditReport | null>(null);
   const [auditBusy, setAuditBusy] = useState(false);
+  const [aiRevisionOpen, setAiRevisionOpen] = useState(false);
+  const aiRevisionButton = useRef<HTMLButtonElement>(null);
   const currentAudit = auditReport?.versionId === editor.version.id && auditReport.revision === detail.line.revision && !detail.line.sourceChanged ? auditReport : null;
   const check = proof?.render.preflight ? applyArtworkAudit(proof.render.preflight, currentAudit) : null;
   const fileIssues = check?.issues.filter(i => !i.code.startsWith("artwork_audit_")) ?? [];
@@ -73,7 +80,9 @@ export function OrderArtworkReview({
     !!detail.line.archivedAt ||
     editor.version.id !== editor.project.currentVersionId ||
     !!editor.project.workSource && detail.versions.find(version => version.revision === detail.line.revision)?.id !== editor.project.workSource.revisionId;
-  const decisionBlocked = locked || auditBusy || !visible || !check?.productionReady;
+  const decisionBlocked = locked || auditBusy || !visible || !check?.productionReady || aiRevisionOpen;
+  const canOfferAiRevision = (candidate || state === "in_review") && state !== "approved" && detail.line.preparation === "pushed";
+  function closeAiRevision() { setAiRevisionOpen(false); window.requestAnimationFrame(() => aiRevisionButton.current?.focus()); }
   const latestRejection = detail.events
     .filter((event) => event.action === "reject_artwork")
     .toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0];
@@ -173,7 +182,7 @@ export function OrderArtworkReview({
           {state === "changes_requested" && latestRejection && (
             <p className="oc-error">上次驳回：{latestRejection.reason}</p>
           )}
-          {canReject && (
+          {canReject && !aiRevisionOpen && (
             <label className="oc-full-field">
               驳回理由 <span className="oc-hint">驳回时必填</span>
               <textarea
@@ -203,13 +212,17 @@ export function OrderArtworkReview({
               <button
                 type="button"
                 className="oc-button"
-                disabled={locked || !reason.trim()}
+                disabled={locked || !reason.trim() || aiRevisionOpen}
                 onClick={() => onAction("reject_artwork")}
               >
                 <RotateCcw size={16} />
                 {candidate ? "驳回并交美工修改" : "驳回修改"}
               </button>
             )}
+            {canOfferAiRevision && <button type="button" ref={aiRevisionButton} className="oc-button" aria-expanded={aiRevisionOpen}
+              disabled={locked || auditBusy || !!detail.line.sourceChanged || aiRevisionOpen} onClick={() => setAiRevisionOpen(true)}>
+              <Bot size={16} />交 AI 修改
+            </button>}
             {canSubmit && (
               <button
                 type="button"
@@ -221,12 +234,18 @@ export function OrderArtworkReview({
               </button>
             )}
           </div>
-          {canReview && !!reason.trim() && (
+          {aiRevisionOpen && canOfferAiRevision && <OrderArtworkAiRevision workItemId={detail.line.id}
+            workRevisionId={editor.project.workSource?.revisionId ?? detail.versions.find(version => version.revision === detail.line.revision)?.id ?? null}
+            projectId={editor.project.id} versionId={editor.version.id} versionNumber={editor.version.versionNumber}
+            initialReason={reason} disabled={locked || !!detail.line.sourceChanged} onClose={closeAiRevision} onStateChange={onAiRevisionStateChange}
+            onSubmitted={() => { setAiRevisionOpen(false); onAiRevisionSubmitted?.(); }} />}
+          {canReview && !!reason.trim() && !aiRevisionOpen && (
             <p className="oc-hint">已填写驳回理由；如需通过，请先清空理由。</p>
           )}
           {canSubmit && <p className="oc-hint">当前处于制图阶段，提交后由运营审核。</p>}
-          {candidate && <p className="oc-hint">这是 Agent 生成的待审稿 顾客要求 原图和完整检查仍需核对 驳回后美工沿本单原项目修改</p>}
-          {candidate && (!visible || auditBusy || !check?.productionReady) && <p className="oc-hint">原技术与视觉核对尚未全部满足 当前不能通过 可填写具体理由交美工修改</p>}
+          {candidate && <p className="oc-hint">这是 Agent 生成的待审稿 顾客要求 原图和完整检查仍需核对 主体细节或裁线可交 AI 修改 文字与复杂排版交美工沿原项目修改</p>}
+          {!candidate && canOfferAiRevision && <p className="oc-hint">这是当前已提交的待审稿 交 AI 修改前会核对本稿的支持情况 不支持时将说明原因 也可交美工沿原稿修改</p>}
+          {candidate && (!visible || auditBusy || !check?.productionReady) && <p className="oc-hint">原技术与视觉核对尚未全部满足 当前不能通过 可说明问题后交 AI 或美工修改</p>}
           {state === "approved" && (
             <p className={production?.status === "failed" ? "oc-error" : "oc-notice"} role="status">
               {production?.status === "completed" ? "审核已完成，生产文件已准备好，等待生产人员安排。"
@@ -257,10 +276,12 @@ export function OrderArtworkReview({
             disabled={decisionBlocked || !!reason.trim()} onClick={() => onAdvanceAction("approve_artwork")}>
             <Check size={16} />通过审核{hasNext ? "并下一单" : "并返回列表"}
           </button>}
-          {canReject && <button type="button" className="oc-button" disabled={locked || !reason.trim()}
+          {canReject && <button type="button" className="oc-button" disabled={locked || !reason.trim() || aiRevisionOpen}
             onClick={() => onAdvanceAction("reject_artwork")}>
             {candidate ? "驳回并交美工修改" : "驳回修改"}{hasNext ? "并下一单" : "并返回列表"}
           </button>}
+          {canOfferAiRevision && <button type="button" className="oc-button" disabled={locked || auditBusy || !!detail.line.sourceChanged || aiRevisionOpen}
+            onClick={() => { setAiRevisionOpen(true); aiRevisionButton.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); }}><Bot size={16} />交 AI 修改</button>}
         </div>, decisionFooter,
       )}
     </section>

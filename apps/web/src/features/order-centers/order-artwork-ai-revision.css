@@ -1,0 +1,46 @@
+.oc-ai-revision { min-width: 0; margin-top: 16px; padding: 16px 0; border-top: 1px solid var(--line); animation: oc-ai-revision-enter 170ms ease-out; transition: opacity 150ms ease, transform 150ms ease; }
+.oc-ai-revision > header, .oc-ai-revision-reference-heading, .oc-ai-revision footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.oc-ai-revision > header { align-items: flex-start; margin-bottom: 12px; }
+.oc-ai-revision h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.oc-ai-revision > header p { margin: 5px 0 0; color: var(--muted-ink); font-size: 12px; line-height: 1.65; }
+.oc-ai-revision :is(p, strong, small, label) { overflow-wrap: anywhere; }
+.oc-ai-revision > p[role="status"] { display: flex; align-items: center; gap: 8px; }
+.oc-ai-revision .oc-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; transition: background-color 150ms ease, transform 150ms ease; }
+.oc-ai-revision .oc-button:active:not(:disabled) { transform: scale(.98); }
+.oc-ai-revision .oc-ai-revision-close { padding-inline: 8px; }
+.oc-ai-revision :is(button, textarea, select, input):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.oc-ai-revision fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+.oc-ai-revision legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 500; }
+.oc-ai-revision-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+.oc-ai-revision form .oc-ai-revision-modes > label { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; min-height: 44px; padding-block: 8px; cursor: pointer; }
+.oc-ai-revision-modes > label > span { flex: 1; min-width: 0; }
+.oc-ai-revision form .oc-ai-revision-modes input[type="radio"] { box-sizing: border-box; flex: 0 0 16px; width: 16px; min-width: 16px; max-width: 16px; height: 16px; min-height: 16px; max-height: 16px; padding: 0; margin: 3px 0 0; align-self: flex-start; accent-color: var(--blue); }
+.oc-ai-revision-modes strong { display: block; font-size: 13px; font-weight: 500; line-height: 1.6; }
+.oc-ai-revision-modes small { display: block; margin-top: 3px; color: var(--muted-ink); font-size: 12px; line-height: 1.6; }
+.oc-ai-revision .oc-ai-revision-reason { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 6px; margin: 12px 0; font-size: 13px; }
+.oc-ai-revision-reason textarea { grid-column: 1 / -1; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; padding: 9px 11px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; line-height: 1.65; }
+.oc-ai-revision-rounding { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 8px; font-size: 13px; animation: oc-ai-revision-enter 140ms ease-out; }
+.oc-ai-revision-rounding select { min-height: 44px; max-width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; }
+.oc-ai-revision-reference-heading { justify-content: flex-start; font-size: 13px; }
+.oc-ai-revision-reference-heading small { margin-left: 5px; color: var(--muted-ink); font-size: 12px; }
+.oc-ai-revision-file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.oc-ai-revision-images { list-style: none; display: grid; gap: 8px; padding: 0; margin: 12px 0; }
+.oc-ai-revision-images li { display: grid; grid-template-columns: 72px minmax(0, 1fr) 44px; align-items: center; gap: 10px; min-width: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); animation: oc-ai-revision-enter 140ms ease-out; }
+.oc-ai-revision-images img { width: 72px; height: 64px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.oc-ai-revision-images strong { display: block; font-size: 12px; font-weight: 500; }
+.oc-ai-revision-images small { display: block; margin-top: 4px; color: var(--muted-ink); font-size: 12px; }
+.oc-ai-revision footer { justify-content: flex-end; margin-top: 14px; }
+.oc-ai-revision-reconcile { margin-top: 12px; }
+.oc-ai-revision.is-closing { opacity: 0; transform: translateY(-3px); }
+.oc-ai-revision-spinner { flex: none; animation: oc-ai-revision-spin 1s linear infinite; }
+.oc-ai-revision-feedback { min-width: 0; margin-block: 14px; padding-block: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); animation: oc-ai-revision-enter 170ms ease-out; }
+.oc-ai-revision-feedback h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.oc-ai-revision-feedback p { margin: 7px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.oc-ai-revision-feedback ul { list-style: none; margin: 10px 0; padding: 0; }
+.oc-ai-revision-feedback li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-block: 6px; overflow-wrap: anywhere; font-size: 12px; }
+.oc-ai-revision-feedback li span { min-width: 0; }
+.oc-ai-revision-feedback li small { flex: none; color: var(--muted-ink); }
+@keyframes oc-ai-revision-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes oc-ai-revision-spin { to { transform: rotate(360deg); } }
+@container artwork-review (max-width: 540px) { .oc-ai-revision-modes { grid-template-columns: minmax(0, 1fr); gap: 2px; } .oc-ai-revision > header > div { flex: 1 1 220px; } .oc-ai-revision footer .oc-button { flex: 1; } }
+@media (prefers-reduced-motion: reduce) { .oc-ai-revision, .oc-ai-revision-images li, .oc-ai-revision-rounding, .oc-ai-revision-spinner, .oc-ai-revision-feedback { animation: none; } .oc-ai-revision, .oc-ai-revision .oc-button { transition: none; } .oc-ai-revision.is-closing, .oc-ai-revision .oc-button:active:not(:disabled) { transform: none; } }

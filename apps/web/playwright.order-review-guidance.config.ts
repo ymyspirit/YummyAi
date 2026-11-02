@@ -6,9 +6,9 @@ if (process.env.E2E_ORDER_REVIEW_GUIDANCE_ISOLATED !== "1")
 
 export default defineConfig({
   ...personal,
-  testMatch: ["order-review-guidance.spec.ts", "order-intake.spec.ts"],
+  testMatch: ["order-review-guidance.spec.ts", "order-intake.spec.ts", "order-artwork-review.spec.ts"],
   grep: process.argv.some(arg => arg === "--grep" || arg.startsWith("--grep="))
-    ? undefined : /order review guidance/,
+    ? undefined : /order review guidance|operator AI design revision/,
   workers: 1,
   outputDir: "../../tmp/order-review-guidance-e2e",
 });

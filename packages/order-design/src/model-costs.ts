@@ -58,7 +58,7 @@ export async function recordOrderModelResponse(database:DatabaseConnection,conte
    return {recorded:true,state:original.costReportState};
   }
   else await tx.update(calls).set({receivedAt:sql`clock_timestamp()`,costReportState:report.state,reportedCostUsd:report.amount,tokenUsage}).where(eq(calls.id,original.id));
-  const paid=await tx.select({id:steps.id}).from(steps).where(and(eq(steps.runId,run.id),sql`${steps.key} ~ '^(enhance_image|cutout_subject)(_|$)'`));
+  const paid=await tx.select({id:steps.id}).from(steps).where(and(eq(steps.runId,run.id),sql`${steps.key} ~ '^(enhance_image|cutout_subject|revise_image)(_|$)'`));
   const projection=await readOrderModelCostProjection(tx,run.id,paid.length);
   // Fees can change after cancellation; never change task state, lease or production outcome here.
   await tx.update(runs).set({...projection,updatedAt:new Date()}).where(eq(runs.id,run.id));

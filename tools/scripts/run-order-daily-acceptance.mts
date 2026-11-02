@@ -1227,6 +1227,7 @@ try {
     aiTasksIntegration ||
     knowledgeIntegration ||
     forwarded.includes("--suite=design-agent-integration") ||
+    forwarded.includes("--suite=design-agent-revision-integration") ||
     ruleIntegration ||
     reportIntegration ||
     artworkAuditIntegration ||
@@ -1241,7 +1242,9 @@ try {
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   if (shipos || wholeOrder || qualityAssessmentBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) shiposFixture = await startShiposFixtureServer();
   if (logistics) logisticsFixture = await startLogisticsFixtureServer();
-  const args = studioPersonalBrowser
+  const args = forwarded.includes("--suite=design-agent-revision-integration")
+    ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "src/orders/order-design-revision.integration.test.ts", ...extra]
+    : studioPersonalBrowser
     ? [require.resolve("@playwright/test/cli"), "test", "--config", studioConfigurationBrowser ? "apps/web/playwright.studio-configuration.config.ts" : creativeOwnerResponseAdoptionBrowser ? "apps/web/playwright.creative-owner-response-adoption.config.ts" : studioPaidImageBrowser ? "apps/web/playwright.studio-paid-image.config.ts" : creativeResponseAdoptionBrowser ? "apps/web/playwright.creative-response-adoption.config.ts" : studioDraftRecoveryBrowser ? "apps/web/playwright.studio-draft-recovery.config.ts" : studioModelSelectionBrowser ? "apps/web/playwright.studio-model-selection.config.ts" : studioVideoDirectoryBrowser ? "apps/web/playwright.studio-video-directory.config.ts" : studioDocumentTransferBrowser ? "apps/web/playwright.studio-document-transfer.config.ts" : studioOriginalBrowser ? "apps/web/playwright.studio-original.config.ts" : "apps/web/playwright.creative-studio-personal.config.ts", ...browserExtra, "--output", output.browserOutputDirectory]
     : studioPersonalIntegration
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", creativeOwnerLegacyRegressionIntegration ? "vitest.creative-owner-legacy-regression.config.ts" : creativeOwnerResponseAdoptionIntegration ? "vitest.creative-owner-response-adoption.config.ts" : studioVisualPaidImageIntegration ? "vitest.studio-visual-paid-image.config.ts" : studioPaidImageLegacyRegression ? "vitest.studio-paid-image-legacy-regression.config.ts" : studioPaidImageIntegration ? "vitest.studio-paid-image.config.ts" : creativeResponseAdoptionIntegration ? "vitest.creative-response-adoption.config.ts" : creativeRecoveryIntegration ? "vitest.creative-recovery.config.ts" : studioModelSelectionIntegration ? "vitest.studio-model-selection.config.ts" : studioVideoDirectoryIntegration ? "vitest.studio-video-directory.config.ts" : studioDocumentTransferIntegration ? "vitest.studio-document-transfer.config.ts" : studioOriginalIntegration ? "vitest.studio-original.config.ts" : "vitest.creative-studio-personal.config.ts", "--maxWorkers=1", "--cache=false", ...extra.filter(arg => arg !== "--cache=false")]

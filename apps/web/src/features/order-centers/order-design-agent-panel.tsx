@@ -13,6 +13,7 @@ import { designAgentRecoveryGuidance } from "./order-design-recovery-model";
 import type { ModelUsageSummary } from "@yummyai/contracts/ai/model-usage";
 import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
 import { ModelTokenUsageLine, ModelUsageSummaryLine } from "../ai-assist/model-usage-summary";
+import { OrderArtworkAiRevisionFeedback } from "./order-artwork-ai-revision";
 
 const ruleVerificationLabels = { automatic: "系统自动核验", manual: "需人工核验", unavailable: "尚未接入" } as const;
 
@@ -280,7 +281,9 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
       {manualTakeover && <p className="oc-hint">自动制作已停止 原素材 版本与费用记录完整保留 美工在本单原项目继续修改后重新送审</p>}
       {run.privateEvidenceState==="expired"?<p className="oc-hint">订单私有资料已到期 历史方法和产物交接不再展示</p>:financialOnly||run.privateEvidenceOmitted?<p className="oc-hint">当前仅显示制作状态与费用依据。</p>:<>
         <MethodEvidence selection={run.methodSnapshot?.methodSelection} />
-        {run.completion?<p className="oc-hint" aria-label="原始制作交接">{approvedCurrent ? "历史移交 · " : ""}已核验 {run.completion.evidence.proofs.reduce((count,proof)=>count+proof.files.length,0)} 份原尺寸待审稿 · {approvedCurrent ? "当时交由业务审核" : "交由业务审核"}</p>:run.status==="awaiting_review"?<p className="oc-hint">历史任务未记录产物交接凭据</p>:null}
+        {!checking && run.revisionFeedback && <OrderArtworkAiRevisionFeedback key={run.id} workItemId={workItemId} runId={run.id} />}
+        {run.completion?<p className="oc-hint" aria-label="原始制作交接">{run.revisionSource === "submitted_successor" ? "原 Agent 制作交接记录 · " : approvedCurrent ? "历史移交 · " : ""}已核验 {run.completion.evidence.proofs.reduce((count,proof)=>count+proof.files.length,0)} 份原尺寸待审稿 · {approvedCurrent || run.revisionSource === "submitted_successor" ? "当时交由业务审核" : "交由业务审核"}</p>:run.status==="awaiting_review"?<p className="oc-hint">历史任务未记录产物交接凭据</p>:null}
+        {!checking && run.revisionSource === "submitted_successor" && <p className="oc-hint">当前 AI 修改依据为已提交待审稿 原 Agent 制作记录对应更早版本并保留原样</p>}
       </>}
       {!financialOnly&&!run.privateEvidenceOmitted&&<RecoveryProgress run={run} approvedCurrent={approvedCurrent}
         disabled={disabled || busy || checking}

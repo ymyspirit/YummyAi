@@ -30,3 +30,23 @@ The drill restores into `yummyai_restore_verify` and `yummyai-restore-verify`; i
 6. Switch traffic after two-person approval. Keep original resources read-only until retention expires.
 
 Never test restore by deleting the only copy of local or production data.
+
+## Upgrading an adopted source snapshot
+
+Keep backup files and upgrade reports under the operational workspace, outside
+the immutable `.artifacts/ordinary-api-source-*` snapshot. Execute
+`tools/scripts/database-upgrade.mts` from the selected snapshot and pass
+`--root <operational-workspace>` with `--source-root <snapshot-path>` to both
+`rehearse` and `apply`. The explicit source must be a regular directory contained
+in that operational workspace and must match the source executing the upgrade.
+Junctions, source substitution and paths outside the workspace are rejected.
+Omitting both options preserves the original single-workspace behavior.
+
+Rehearsal and application bind the same backup checksum and complete runtime
+source fingerprint. Rehearsal restores into disposable resources and verifies
+their cleanup; application requires a quiescent database and rechecks the original
+data and objects before migrating. Never copy a business backup into a source
+snapshot to satisfy the path guard, change an adopted source manifest, or point
+an older-schema application back at a newer database as a rollback. A failed
+application has no automatic business rollback; use the recovery procedure above
+or a separately verified forward correction.

@@ -134,6 +134,8 @@ export const DesignAutomationStepSchema = z.discriminatedUnion("tool", [
   z.object({ ...StepBase, tool: z.literal("validate_inputs"), outputRole: z.literal("input_validation") }).strict(),
   z.object({ ...StepBase, tool: z.literal("compose_template"), outputRole: z.literal("layout") }).strict(),
   z.object({ ...StepBase, tool: z.literal("enhance_image"), outputRole: z.literal("enhanced_image"), sourceImageId: Id }).strict(),
+  z.object({ ...StepBase, tool: z.literal("revise_image"), outputRole: z.literal("subject_image"), sourceImageId: Id }).strict(),
+  z.object({ ...StepBase, tool: z.literal("reuse_revision_subject"), outputRole: z.literal("subject_image"), sourceImageId: Id }).strict(),
   z.object({ ...StepBase, tool: z.literal("cutout_subject"), outputRole: z.literal("subject_image"), sourceImageId: Id, enhancedStepId: Key.nullable(), subject: PillowSubjectSchema,
     subjectPromptVersion: z.literal(PILLOW_HALF_BODY_PROMPT_VERSION).optional(),
   }).strict().refine(step => (step.subject === "half_body") === (step.subjectPromptVersion !== undefined), "Half-body steps require their own pinned subject prompt; legacy subjects remain unchanged"),
@@ -147,6 +149,8 @@ export const DesignAutomationStepSchema = z.discriminatedUnion("tool", [
 export type DesignAutomationStep = z.infer<typeof DesignAutomationStepSchema>;
 export const DesignAutomationPlanSchema = z.object({
   schemaVersion: z.literal(1), recipe: DesignAutomationRecipeSchema,
+  /** A new, explicit child attempt; never default onto an original run. */
+  kind: z.literal("candidate_revision").optional(),
   status: z.enum(["ready", "blocked"]), blockers: z.array(DesignAutomationBlockerCodeSchema),
   steps: z.array(DesignAutomationStepSchema).min(1).max(108),
   plannedModelCalls: z.int().nonnegative().max(200), budget: DesignAutomationBudgetSchema,
@@ -159,11 +163,19 @@ export const DesignAutomationPlanSchema = z.object({
   }
   if (plan.plannedModelCalls !== plan.budget.plannedModelCalls) ctx.addIssue({ code: "custom", path: ["plannedModelCalls"], message: "Plan and budget call counts must agree" });
   if ((plan.status === "ready") !== (plan.blockers.length === 0 && plan.budget.allowed)) ctx.addIssue({ code: "custom", path: ["status"], message: "Plan blockers and budget determine readiness" });
-  if (plan.status === "ready" && plan.plannedModelCalls !== plan.steps.filter(step => step.tool === "enhance_image" || step.tool === "cutout_subject").length) ctx.addIssue({ code: "custom", path: ["plannedModelCalls"], message: "Every model step must be budgeted" });
+  if (plan.status === "ready" && plan.plannedModelCalls !== plan.steps.filter(step => step.tool === "enhance_image" || step.tool === "cutout_subject" || step.tool === "revise_image").length) ctx.addIssue({ code: "custom", path: ["plannedModelCalls"], message: "Every model step must be budgeted" });
+  const revisionStages = plan.steps.filter(step => step.tool === "revise_image" || step.tool === "reuse_revision_subject");
+  if (!plan.kind && revisionStages.length) ctx.addIssue({ code: "custom", path: ["steps"], message: "Revision tools require an explicit child plan" });
   const newStages = plan.steps.filter(step => step.tool === "measure_subject" || step.tool === "ensure_resolution");
   if (!plan.recipe.pillowPipeline && newStages.length) ctx.addIssue({ code: "custom", path: ["steps"], message: "Legacy recipes cannot silently acquire new pillow stages" });
+  if (plan.kind && (!plan.recipe.pillowPipeline || plan.recipe.workflow !== "pillow_photo"))
+    ctx.addIssue({ code: "custom", path: ["kind"], message: "Candidate revision requires the pinned pillow pipeline" });
   if (plan.recipe.pillowPipeline && plan.status === "ready") {
-    const expected = ["validate_inputs", "compose_template", "enhance_image", "cutout_subject", "measure_subject", "ensure_resolution", "optimize_contour", "preflight", "render_proof", "review_required"];
+    const expected = plan.kind
+      ? plan.steps[0]?.tool === "reuse_revision_subject"
+        ? ["reuse_revision_subject", "optimize_contour", "preflight", "render_proof", "review_required"]
+        : ["revise_image", "measure_subject", "ensure_resolution", "optimize_contour", "preflight", "render_proof", "review_required"]
+      : ["validate_inputs", "compose_template", "enhance_image", "cutout_subject", "measure_subject", "ensure_resolution", "optimize_contour", "preflight", "render_proof", "review_required"];
     if (plan.steps.length !== expected.length || plan.steps.some((step, index) => step.tool !== expected[index])) ctx.addIssue({ code: "custom", path: ["steps"], message: "The versioned pillow pipeline has a fixed ordered tool chain" });
   }
   if (plan.steps.at(-1)?.tool !== "review_required") ctx.addIssue({ code: "custom", path: ["steps"], message: "The plan must end in review" });

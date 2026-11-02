@@ -19,6 +19,46 @@ export const OrderDesignResponseRecoveryTargetSchema = z.object({
   knownResponseChecksum: z.string().nullable(),
 });
 export const OrderDesignAgentActionSchema = z.object({ runId: Id, expectedRevision: z.int().positive(), idempotencyKey: z.uuid() }).strict();
+export const ORDER_DESIGN_REVISION_MAX_ATTACHMENTS = 3;
+export const ORDER_DESIGN_REVISION_MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const ORDER_DESIGN_REVISION_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+const revisionImage = z.object({
+  name: z.string().trim().min(1).max(200).regex(/^[^/\\]+\.(?:png|jpe?g|webp)$/i)
+    .refine(value => [...value].every(character => character.charCodeAt(0) > 31), "Invalid image filename"),
+  contentBase64: z.string().min(4).max(4 * Math.ceil(ORDER_DESIGN_REVISION_MAX_FILE_BYTES / 3))
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/).refine(value => value.length % 4 === 0, "Invalid base64 length"),
+}).strict();
+const decodedLength = (value: string) => value.length / 4 * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
+/** Explicit business decision against one exact, unapproved Agent candidate.
+ * Screenshots are private feedback references, never buyer originals or layers. */
+export const OrderDesignReviseCandidateSchema = OrderDesignAgentActionSchema.extend({
+  expectedEditorVersionId: Id,
+  reason: z.string().trim().min(1).max(2000),
+  mode: z.enum(["image_edit", "contour_only"]).default("image_edit"),
+  contourRoundingPx: z.union([z.literal(20), z.literal(25), z.literal(30)]).optional(),
+  attachments: z.array(revisionImage).max(ORDER_DESIGN_REVISION_MAX_ATTACHMENTS).default([]),
+}).strict().superRefine((value, ctx) => {
+  if ((value.mode === "contour_only") !== (value.contourRoundingPx !== undefined))
+    ctx.addIssue({ code: "custom", path: ["contourRoundingPx"], message: "仅裁线修改需要明确选择圆滑参数 图像修改不接受制造参数" });
+  if (value.attachments.some(file => decodedLength(file.contentBase64) > ORDER_DESIGN_REVISION_MAX_FILE_BYTES))
+    ctx.addIssue({ code: "custom", path: ["attachments"], message: "每张修改截图不得超过 5 MiB" });
+  if (value.attachments.reduce((sum, file) => sum + decodedLength(file.contentBase64), 0) > ORDER_DESIGN_REVISION_MAX_TOTAL_BYTES)
+    ctx.addIssue({ code: "custom", path: ["attachments"], message: "修改截图总计不得超过 10 MiB" });
+});
+export type OrderDesignReviseCandidate = z.infer<typeof OrderDesignReviseCandidateSchema>;
+export const OrderDesignRevisionFeedbackSchema = z.object({
+  requestId: z.uuid(), parentRunId: Id, baseProjectId: Id, baseVersionId: Id,
+  baseDocumentChecksum: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().min(1).max(2000),
+  source: z.enum(["agent_candidate", "submitted_successor"]).optional(),
+  mode: z.enum(["image_edit", "contour_only"]),
+  contourRoundingPx: z.union([z.literal(20), z.literal(25), z.literal(30)]).optional(),
+  attachments: z.array(z.object({
+    id: Id, name: z.string().min(1).max(200), mediaType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+    byteSize: z.int().positive().max(ORDER_DESIGN_REVISION_MAX_FILE_BYTES),
+  }).strict()).max(ORDER_DESIGN_REVISION_MAX_ATTACHMENTS),
+}).strict();
+export type OrderDesignRevisionFeedback = z.infer<typeof OrderDesignRevisionFeedbackSchema>;
 export const ORDER_DESIGN_RECOVERY_MAX_BYTES = 20 * 1024 * 1024;
 export const OrderDesignRestoreResponseSchema = OrderDesignAgentActionSchema.extend({
   stepId: Id, requestId: Id,
@@ -38,6 +78,11 @@ export const OrderDesignAgentStepViewSchema = z.object({
   responseRecovery: OrderDesignResponseRecoveryEvidenceSchema.nullable().optional(),
 });
 export const OrderDesignAgentRunViewSchema = z.object({
+  revisionFeedback: OrderDesignRevisionFeedbackSchema.nullable().optional(),
+  canRevise: z.boolean().optional(),
+  revisionBaseVersionId: Id.nullable().optional(),
+  revisionSource: z.enum(["agent_candidate", "submitted_successor"]).nullable().optional(),
+  revisionBlockedCode: z.string().nullable().optional(),
   ruleSnapshot: OrderRuleSnapshotSchema.nullable().optional(),
   methodSnapshot: OrderDesignMethodSnapshotSchema.nullable().optional(),
   completion: OrderDesignCompletionRecordSchema.nullable().optional(),

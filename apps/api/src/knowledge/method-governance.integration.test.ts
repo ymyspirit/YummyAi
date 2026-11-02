@@ -304,10 +304,32 @@ describe.skipIf(!isolated)("tenant method governance and real assistant executio
       "creative.mockup_render.internal_write", "creative.studio_generation.external_request",
     ];
     const benchmarkKey = "yummyai.assist.knowledge_answer.benchmark.review";
-    // Preserve all ten original assistant methods plus the separate dataset benchmark.
-    const methodCount = 10 + 1 + 2 + 2 + PodExecutableToolKeySchema.options.length * 2 + creativeKeys.length;
+    const revisionKey = "order.design.pillow_photo.revision";
+    const revisionVersion = "order-design-candidate-revision-2026-11-02-v1";
+    // Preserve the original methods and include the separate order-design revision identity.
+    const methodCount = 10 + 1 + 2 + 3 + PodExecutableToolKeySchema.options.length * 2 + creativeKeys.length;
     expect(workspace.catalog).toHaveLength(methodCount);
     expect(new Set(workspace.catalog.map(row => row.methodKey)).size).toBe(methodCount);
+    const revisionMethods = workspace.catalog.filter(method => method.methodKey === revisionKey);
+    expect(revisionMethods).toHaveLength(1);
+    const revision = revisionMethods[0]!;
+    expect(revision.executionContract).toMatchObject({
+      executorKey: "order_design",
+      skill: { key: revisionKey, version: revisionVersion },
+      tools: [{ key: "order_design.pillow_photo.revision", version: revisionVersion }],
+    });
+    expect(revision.tools).toMatchObject([{
+      key: "order_design.pillow_photo.revision", version: revisionVersion,
+      owner: "order_design_owner", effect: "external_request",
+      inputSchemaKey: "order-design.candidate-revision-v1",
+      outputSchemaKey: "order-design.completion-v1", approval: "owning_business_flow",
+    }]);
+    expect(revision.tools[0]!.requiredPermissions).toEqual([
+      Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead,
+      Permission.DesignRead, Permission.DesignWrite, Permission.AssetRead, Permission.DesignReview,
+    ].sort());
+    expect(revision.steps.at(-1)).toBe("handoff_for_business_review");
+    expect(revision.instructions).toContain("完成后返回运营审核，不批准生产");
     const benchmarkMethods = workspace.catalog.filter(row => row.methodKey.includes(".benchmark."));
     expect(benchmarkMethods.map(row => row.methodKey)).toEqual([benchmarkKey]);
     expect(benchmarkMethods[0]?.tools).toMatchObject([{ key: "yummyai.assist.knowledge_answer.benchmark", version: "assist-benchmark-2026-10-21-v1" }]);
