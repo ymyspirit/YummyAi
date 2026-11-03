@@ -24,6 +24,13 @@ an item retains the order queue and URL filters, and unsaved/busy guards still
 apply. No model, budget, customer-proof or production permission is granted by
 the step display. See the [operator guide](../user-guide.md#71-定制资料).
 
+Initial/current-item focus separately waits for the drawer's known-order, loaded,
+idle `focusReady` acknowledgement and schedules one cancellable layout frame.
+It deliberately allows dirty content so automatic matching never prevents
+positioning within the current form. This is independent of the stricter
+`navigationReady` permission to leave a form. No guessed timeout or weakened
+field-validation condition is used.
+
 ## Shaped-pillow intake matching (2026-10-26)
 
 The order catalog lists active, authorized SPUs independently from manufacturing

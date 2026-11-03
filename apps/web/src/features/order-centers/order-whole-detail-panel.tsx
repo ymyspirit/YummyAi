@@ -34,6 +34,7 @@ type OrderWholeDetailPanelProps = {
   onSelectItem(id: string, module: OrderWorkspaceModule): void;
   onStateChange(state: OrderReviewState): void; onOrderLoaded(orderId: string): void;
   navigationReady?: boolean;
+  focusReady?: boolean;
   review: { hasNext: boolean; onNext(): void };
 };
 export function OrderWholeDetailPanel(props: OrderWholeDetailPanelProps) {
@@ -44,7 +45,7 @@ export function OrderWholeDetailPanel(props: OrderWholeDetailPanelProps) {
   if (!canRead) return <section className="oc-whole-detail" aria-label="整单详情"><p role="status" className="oc-muted">当前账号缺少读取整单资料权限</p></section>;
   return <ReadableOrderWholeDetailPanel key={access.authority} {...props} />;
 }
-function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEditor, onClose, onChanged, onSelectItem, onStateChange, onOrderLoaded, review, navigationReady = false }: OrderWholeDetailPanelProps) {
+function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEditor, onClose, onChanged, onSelectItem, onStateChange, onOrderLoaded, review, navigationReady = false, focusReady = false }: OrderWholeDetailPanelProps) {
   const params = useSearchParams(), requestedOrder = params.get("order"), deliveryParam = params.get("delivery"), back = returnHref(params.get("returnTo"));
   const requestedPackage = deliveryParam && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(deliveryParam) ? deliveryParam : undefined;
   const [view, setView] = useState<WholeOrderDetailView | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState("");
@@ -65,20 +66,24 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
     });
   }, [id, module, editorOpen]);
   useEffect(() => {
-    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
+    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || !focusReady || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
     if (module !== "production" && deliveryOpen && !deliveryState.dirty) { setDeliveryOpen(false); return; }
     const element = pendingAction.target
       ? operation.current?.querySelector<HTMLElement>(`[data-order-action="${pendingAction.target}"]`)
       : operation.current;
     if (!element) return;
-    let details = element.closest("details");
-    while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
-    element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-    const control = pendingAction.target ? [...element.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")]
-      .find(node => node.getClientRects().length > 0) : undefined;
-    (control ?? element).focus({ preventScroll: true });
-    setPendingAction(null);
-  }, [pendingAction, id, module, loading, itemState.loading, deliveryOpen, deliveryState.dirty, view]);
+    const frame = window.requestAnimationFrame(() => {
+      if (!element.isConnected || !operation.current?.contains(element)) return;
+      let details = element.closest("details");
+      while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
+      element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      const control = pendingAction.target ? [...element.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")]
+        .find(node => node.getClientRects().length > 0) : undefined;
+      (control ?? element).focus({ preventScroll: true });
+      setPendingAction(current => current === pendingAction ? null : current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingAction, id, module, focusReady, loading, itemState.loading, deliveryOpen, deliveryState.dirty, view]);
   useEffect(() => { onStateChange({ dirty, busy, loading: loading || itemState.loading || deliveryState.loading || exceptionState.loading || fulfillmentState.loading }); }, [dirty, busy, loading, itemState.loading, deliveryState.loading, exceptionState.loading, fulfillmentState.loading, onStateChange]);
   useEffect(() => {
     const abort = new AbortController();
