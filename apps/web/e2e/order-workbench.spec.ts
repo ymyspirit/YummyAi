@@ -1,7 +1,141 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { fixture, id } from "./order-review-fixture";
-import { ArchiveOrderWorkInputSchema } from "@yummyai/contracts/order/workspace";
+import { ArchiveOrderWorkInputSchema, OrderWorkActionInputSchema } from "@yummyai/contracts/order/workspace";
 import { ProductionEditorDetailViewSchema } from "@yummyai/contracts/pod/production-editor-api";
+import { loginErp } from "./erp-identity-fixture";
+import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
+
+test("order review flow starts with requirements and keeps confirmation visible at desktop and mobile widths", async ({ page }) => {
+  test.setTimeout(90_000);
+  await loginReviewFlow(page);
+  const state = await fixture(page, 5);
+  groupReviewFlowItems(state);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/orders?platform=amazon&accountId=${id(99)}&stage=pending_review&pageSize=25`);
+  const row = page.locator(".oc-product-row").first();
+  await row.getByRole("button", { name: "开始审单", exact: true }).click();
+  const whole = page.getByRole("region", { name: "整单详情", exact: true });
+  const steps = whole.getByRole("region", { name: "本件审单步骤", exact: true });
+  const confirm = whole.getByRole("button", { name: "确认本件审单", exact: true });
+  await expect(steps).toBeVisible();
+  await expect(whole.getByRole("button", { name: "订单要求", exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(confirm).toBeEnabled();
+  await expect(confirm).toBeInViewport();
+  expect(await whole.evaluate(element => {
+    const operation = element.querySelector(".oc-whole-operation"), items = element.querySelector(".oc-whole-items");
+    return !!operation && !!items && !!(operation.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING);
+  })).toBe(true);
+  const opened = new URL(page.url());
+  expect(opened.searchParams.get("line")).toBe(state.records[0]!.line.id);
+  expect(opened.searchParams.get("detailMode")).not.toBe("artwork");
+  expect(opened.searchParams.get("accountId")).toBe(id(99));
+  expect(opened.searchParams.get("platform")).toBe("amazon");
+  expect(opened.searchParams.get("stage")).toBe("pending_review");
+  expect(opened.searchParams.get("queue")).toBe(state.records[0]!.line.id);
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await steps.scrollIntoViewIfNeeded();
+    await expect(confirm).toBeInViewport();
+    await whole.evaluate(element => {
+      const operation = element.querySelector<HTMLElement>(".oc-whole-operation")!;
+      const operationTop = operation.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+      element.scrollTop = operationTop + Math.min(320, Math.max(0, operation.offsetHeight - element.clientHeight - 80));
+    });
+    await expect(confirm).toBeInViewport();
+    await expect.poll(() => whole.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  expect(state.saves).toEqual([]);
+  expect(state.unexpectedWrites).toEqual([]);
+});
+
+test("order review flow routes five mixed-status items to each item's real next step", async ({ page }) => {
+  test.setTimeout(90_000);
+  await loginReviewFlow(page);
+  const state = await fixture(page, 5);
+  groupReviewFlowItems(state);
+  Object.assign(state.records[1]!.line, { preparation: "ready_to_push", designExecutor: "agent" });
+  Object.assign(state.records[2]!.line, { preparation: "pushed", artwork: "in_progress", designExecutor: "agent" });
+  Object.assign(state.records[3]!.line, { preparation: "pushed", artwork: "in_review", designExecutor: "agent" });
+  state.records[4]!.line.preparation = "needs_information";
+  await page.goto(`/orders?accountId=${id(99)}&line=${state.records[0]!.line.id}&queue=${state.records[0]!.line.id}`);
+  const whole = page.getByRole("region", { name: "整单详情", exact: true });
+  await expect(whole.locator(".oc-whole-item")).toHaveCount(5);
+  const expected = ["orders", "orders", "artwork", "artwork", "orders"];
+  for (const [index, module] of expected.entries()) {
+    const card = whole.locator(".oc-whole-item").nth(index);
+    const action = card.locator(".oc-whole-artwork button");
+    await expect(action).toBeEnabled();
+    await expect(action).not.toHaveText("查看本件审核与制图");
+    await action.click();
+    await expect.poll(() => new URL(page.url()).searchParams.get("line")).toBe(state.records[index]!.line.id);
+    await expect(whole.getByRole("button", { name: module === "orders" ? "订单要求" : "审核与制图", exact: true }))
+      .toHaveAttribute("aria-current", "step");
+    expect(new URL(page.url()).searchParams.get("queue")).toBe(state.records[0]!.line.id);
+    expect(new URL(page.url()).searchParams.get("accountId")).toBe(id(99));
+  }
+  expect(state.saves).toEqual([]);
+  expect(state.unexpectedWrites).toEqual([]);
+});
+
+test("order review flow changes to artwork only after an explicit dispatch is known to succeed", async ({ page }) => {
+  test.setTimeout(90_000);
+  await loginReviewFlow(page);
+  const state = await fixture(page, 1), record = state.records[0]!;
+  record.line.preparation = "ready_to_push";
+  const calls: Array<ReturnType<typeof OrderWorkActionInputSchema.parse>> = [];
+  await page.route(`**/api/order-centers/lines/${record.line.id}/actions`, async route => {
+    expect(route.request().method()).toBe("POST");
+    const input = OrderWorkActionInputSchema.parse(route.request().postDataJSON());
+    expect(input.action).toBe("push");
+    expect(input.expectedRevision).toBe(record.line.revision);
+    expect(input.expectedProjectionVersion).toBe(record.line.projectionVersion);
+    calls.push(input);
+    if (calls.length === 1) return route.abort("failed");
+    if (calls.length === 2) return route.fulfill({ status: 503, json: { message: "Synthetic dispatch not completed" } });
+    Object.assign(record.line, { preparation: "pushed", artwork: "queued", projectionVersion: record.line.projectionVersion + 1 });
+    return route.fulfill({ json: record });
+  });
+  await page.goto(`/orders?accountId=${id(99)}&line=${record.line.id}&queue=${record.line.id}`);
+  const whole = page.getByRole("region", { name: "整单详情", exact: true });
+  const dispatch = whole.getByRole("button", { name: "推送本件设计", exact: true });
+  await expect(dispatch).toBeEnabled();
+  expect(calls).toEqual([]);
+  for (const attempts of [1, 2]) {
+    await dispatch.click();
+    await expect.poll(() => calls.length).toBe(attempts);
+    await expect(whole.locator(".oc-review-footer [role=alert]")).toBeVisible();
+    await expect(dispatch).toBeEnabled();
+    await expect(whole.getByRole("button", { name: "订单要求", exact: true })).toHaveAttribute("aria-current", "step");
+    expect(new URL(page.url()).searchParams.get("detailMode")).not.toBe("artwork");
+    expect(record.line.preparation).toBe("ready_to_push");
+  }
+  await dispatch.click();
+  await expect(whole.getByRole("button", { name: "审核与制图", exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(page).toHaveURL(/detailMode=artwork/);
+  expect(calls).toHaveLength(3);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[2]).toEqual(calls[0]);
+  const completed = new URL(page.url());
+  expect(completed.searchParams.get("line")).toBe(record.line.id);
+  expect(completed.searchParams.get("queue")).toBe(record.line.id);
+  expect(completed.searchParams.get("accountId")).toBe(id(99));
+  expect(state.saves).toEqual([]);
+  expect(state.unexpectedWrites).toEqual([]);
+});
+
+async function loginReviewFlow(page: Page) {
+  if (process.env.WEB_AUTH_MODE !== "personal") return;
+  requireDisposableIntegrationEnvironment();
+  await loginErp(page);
+}
+
+function groupReviewFlowItems(state: Awaited<ReturnType<typeof fixture>>) {
+  const first = state.records[0]!.line;
+  for (const [index, record] of state.records.entries()) Object.assign(record.line, {
+    orderId: first.orderId, externalOrderId: "SYNTHETIC-REVIEW-FLOW", externalLineId: String(index + 1),
+  });
+}
 
 test("queue filters update locally, keep counts visible and support browser history without a page request", async ({
   page,

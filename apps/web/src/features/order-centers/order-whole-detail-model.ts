@@ -1,6 +1,7 @@
 import type { WholeOrderDetailView } from "@yummyai/contracts/order/whole-detail";
 import type { OrderWorkListItem, OrderWorkspaceModule } from "@yummyai/contracts/order/workspace";
 import { orderOperatorTask } from "@yummyai/contracts/order/workbench";
+import { orderItemWorkflow } from "./order-item-workflow";
 
 export function orderReviewQueue(items: OrderWorkListItem[], selectedId?: string) {
   const seen = new Set<string>();
@@ -23,7 +24,7 @@ export function wholeOrderNextStep(view: WholeOrderDetailView): WholeOrderNextSt
   for (const key of priorities) {
     const item = view.items.find(item => orderOperatorTask(item.line).key === key);
     if (item) {
-      const task = orderOperatorTask(item.line);
+      const task = orderItemWorkflow(item.line);
       return step(task.title, `${item.line.externalLineId || item.line.skuCode || "本单商品"}：${task.description}`, task.action, task.module, "item", item.line.id);
     }
   }

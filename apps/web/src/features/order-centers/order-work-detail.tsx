@@ -3,7 +3,7 @@ import { OrderLifecycleProgress } from "./order-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import Link from "next/link";
-import { ArrowLeft, Plus, Save, Send, Upload, X } from "lucide-react";
+import { ArrowLeft, Check, Plus, Save, Send, Upload, X } from "lucide-react";
 import { orderOperatorTask } from "@yummyai/contracts/order/workbench";
 import { pillowCropSubject } from "@yummyai/contracts/order/production-requirements";
 import { orderRequirementDraftInput } from "@yummyai/contracts/order/requirement-interpretation";
@@ -36,7 +36,7 @@ import { OrderTemplatePlanPanel } from "./order-template-plan";
 import { OrderIntakeCheckPanel } from "./order-intake-check";
 import { OrderRequirementsView } from "./order-requirements-view";
 import { orderRequirementAdoptionSources } from "./order-requirements-model";
-import { orderReviewCheckCurrent, orderReviewConfirmedCurrent, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
+import { orderReviewCheckCurrent, orderReviewConfirmedCurrent, orderReviewIssueTarget, orderReviewLineState, type OrderReviewCheckState, type OrderReviewTarget } from "./order-review-model";
 import { OrderWorkImageBinding } from "./order-work-image-binding";
 import { defaultOrderImageUsage, mergeOrderImageUpload, ORDER_IMAGE_LIMIT, orderImageBindingField,
   orderImageSelectionProblem, orderImageUploadBasis, orderImageUploadBasisMatches, orderImageUploadProblem,
@@ -50,6 +50,7 @@ import { useErpAccess } from "../identity/erp-access";
 import { centerRequest, centers, dateTime, fileBase64, label, orderCommandUncertain, OrderCenterRequestError } from "./order-center-model";
 import "../orders/amazon-report-workspace.css";
 import "./order-centers.css";
+import "./order-review-flow.css";
 import "../product-development/artwork-workflow.css";
 
 export type OrderReviewState = { dirty: boolean; busy: boolean; loading: boolean };
@@ -72,6 +73,7 @@ export function OrderWorkDetailPanel({
   onStateChange,
   onModuleChange,
   unified = false,
+  navigationReady = false,
   onSelectItem,
   refreshToken = 0,
 }: {
@@ -84,6 +86,7 @@ export function OrderWorkDetailPanel({
   onChanged: () => void;
   inline?: boolean;
   unified?: boolean;
+  navigationReady?: boolean;
   onSelectItem?: (id: string, module: OrderWorkspaceModule) => void;
   refreshToken?: number;
   onStateChange?: (state: OrderReviewState) => void;
@@ -134,6 +137,9 @@ export function OrderWorkDetailPanel({
   const [agentState, setAgentState] = useState({ workItemId: id, busy: false, blocked: false, checking: true, manualTakeover: false });
   const [pendingAgentRefresh, setPendingAgentRefresh] = useState<string | null>(null);
   const [pendingDetailRefresh, setPendingDetailRefresh] = useState<string | null>(null);
+  const [pendingDesignNavigation, setPendingDesignNavigation] = useState<{
+    orderLineId: string; authority: string | null; scope: string | null; lineState: string;
+  } | null>(null);
   const [reviewCheck, setReviewCheck] = useState<OrderReviewCheckState | null>(null);
   const [reviewFieldMap, setReviewFieldMap] = useState<{ orderLineId: string; artworkVersionId: string | null;
     reportVersionId: string | null; fields: OrderIntakeCheck["fields"] } | null>(null);
@@ -250,6 +256,7 @@ export function OrderWorkDetailPanel({
     setUploading(false);
     setBusy(false);
     setPendingSave(null);
+    setPendingDesignNavigation(null);
     setOrderAssistOpen(false);
     setStyleEditsPending(false);
     setArtworkReason("");
@@ -262,6 +269,20 @@ export function OrderWorkDetailPanel({
       }
     };
   }, [id, access.authority, access.preferenceScope]);
+  useEffect(() => {
+    if (!pendingDesignNavigation) return;
+    if (pendingDesignNavigation.orderLineId !== id || pendingDesignNavigation.authority !== access.authority ||
+      pendingDesignNavigation.scope !== access.preferenceScope ||
+      detail && pendingDesignNavigation.lineState !== orderReviewLineState(detail)) {
+      setPendingDesignNavigation(null);
+      return;
+    }
+    if (!detail || detail.line.preparation !== "pushed" || !navigationReady || dirty ||
+      navigationBusy || navigationLoading || editorOpen || !onModuleChange) return;
+    setPendingDesignNavigation(null);
+    onModuleChange("artwork");
+  }, [pendingDesignNavigation, id, access.authority, access.preferenceScope, detail, navigationReady, dirty,
+    navigationBusy, navigationLoading, editorOpen, onModuleChange]);
   useEffect(() => {
     if (pendingDetailRefresh !== id || dirty || navigationBusy || navigationLoading || editorOpen || error) return;
     setPendingDetailRefresh(null);
@@ -424,7 +445,7 @@ export function OrderWorkDetailPanel({
         return;
       }
       update(next);
-      setNotice(recovering ? "上次保存结果已核对。" : attempt.body.status === "ready_to_push" ? "审单已保存，可以推送制图。" : "草稿已保存。");
+      setNotice(recovering ? "上次保存结果已核对。" : attempt.body.status === "ready_to_push" ? "审单已确认 下一步点击推送本件设计派发任务" : "草稿已保存。");
       setReason("");
       if (!recovering && attempt.advance) review?.onSavedNext();
     } catch (cause) {
@@ -484,6 +505,10 @@ export function OrderWorkDetailPanel({
         ? { expectedEditorVersionId: editor?.version.id }
         : {}),
     };
+    const actionContext = {
+      orderLineId: id, orderId: detail.line.orderId, authority: access.authority,
+      scope: access.preferenceScope, input: JSON.stringify({ draft, reason }),
+    };
     try {
       const next = OrderWorkDetailViewSchema.parse(
         await centerRequest(`lines/${id}/actions`, {
@@ -491,12 +516,30 @@ export function OrderWorkDetailPanel({
           idempotencyKey: requestKey(payload),
         }),
       );
+      if (action === "push") {
+        if (next.line.id !== actionContext.orderLineId || next.line.orderId !== actionContext.orderId)
+          throw new Error("设计派发回执与本件不一致 请核对原派发结果");
+        if (next.line.preparation !== "pushed")
+          throw new Error("尚未取得本件设计已派发的回执 请核对原派发结果");
+        const current = live.current;
+        if (current.id !== actionContext.orderLineId || current.detail?.line.orderId !== actionContext.orderId ||
+          current.authority !== actionContext.authority || current.scope !== actionContext.scope) return;
+        if (JSON.stringify({ draft: current.draft, reason: current.reason }) !== actionContext.input) {
+          setPendingDetailRefresh(id);
+          setNotice("设计派发已有结果 当前填写已变化并保留 请先核对派发结果");
+          onChanged();
+          return;
+        }
+      }
       update(next);
-      setNotice(action === "approve_artwork" ? "审核已通过，系统会自动准备生产文件。你可以继续审核下一单。" : `${label(action)}已记录。`);
+      setNotice(action === "approve_artwork" ? "审核已通过，系统会自动准备生产文件。你可以继续审核下一单。" : action === "push" ? "本件设计已派发 可查看制作进度 完成后仍需运营审图" : `${label(action)}已记录。`);
       setReason("");
       setArtworkReason("");
-      setRefresh((value) => value + 1);
+      if (action !== "push" || !unified || !onModuleChange) setRefresh((value) => value + 1);
       if (action === "start_artwork") openEditor();
+      else if (action === "push" && unified && onModuleChange) setPendingDesignNavigation({
+        orderLineId: id, authority: actionContext.authority, scope: actionContext.scope, lineState: orderReviewLineState(next),
+      });
       else if (advance) review?.onSavedNext();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败");
@@ -726,6 +769,23 @@ export function OrderWorkDetailPanel({
       detail.profile && !profiles.some((profile) => profile.versionId === detail.profile!.versionId)
         ? [detail.profile]
         : [];
+  const reviewFlow = module === "orders" && unified;
+  const reviewIssues = currentReviewCheck?.check?.issues ?? [];
+  const firstReviewIssue = reviewIssues[0];
+  const designDispatched = detail.line.preparation === "pushed";
+  const reviewFlowStep = designDispatched
+    ? detail.line.designCandidateReview || ["in_review", "approved"].includes(detail.line.artwork) ? 2 : 1
+    : savedReviewConfirmed ? 1 : 0;
+  const reviewFlowTitle = detail.line.archivedAt ? "本件已归档 请先核对记录状态"
+    : detail.line.sideState === "cancelled" ? "本件已取消 保留原始资料与历史"
+    : detail.line.held ? "本件已暂停 请先核对暂停原因"
+    : pendingSaveHere ? "先核对上次保存结果"
+    : detail.line.sourceChanged ? "先核对更新的订单资料"
+    : designDispatched ? reviewFlowStep === 2 ? "本件已有设计稿 可进入运营审图" : "本件已派发设计 可查看制作进度"
+    : savedReviewConfirmed ? "审单已确认 下一步派发设计"
+    : reviewReady ? "本件资料检查通过 可以确认审单"
+    : currentReviewCheck?.status === "checking" || !currentReviewCheck ? "正在核对本件订单要求"
+    : `本件还有 ${reviewIssues.length || 1} 项需要处理`;
   return (
     <Container
       ref={reviewRoot}
@@ -762,6 +822,36 @@ export function OrderWorkDetailPanel({
             刷新状态
           </button>
         </header>
+        {reviewFlow && <section className="oc-review-flow" aria-label="本件审单步骤">
+          <ol className="oc-review-flow-steps" aria-label="审单与设计流程">
+            {["核对要求", "派发设计", "运营审图"].map((step, index) => <li key={step}
+              className={index < reviewFlowStep ? "is-complete" : ""} aria-current={index === reviewFlowStep ? "step" : undefined}>
+              <span className="oc-review-flow-number" aria-hidden="true">{index < reviewFlowStep ? <Check size={13} /> : index + 1}</span>
+              <span>{step}</span>
+            </li>)}
+          </ol>
+          <div className="oc-review-flow-summary">
+            <div><strong aria-live="polite">{reviewFlowTitle}</strong><p>{designDispatched
+              ? "设计完成后核对本件稿件 小问题可交 AI 修改 复杂问题转美工"
+              : savedReviewConfirmed ? "点击下方推送本件设计后派发 设计完成后再审核稿件"
+              : "先看原图与定制内容 再核对规格工艺 缺项可直接定位 确认入口始终保留在操作栏"}</p></div>
+            {!designDispatched && !reviewReady && !savedReviewConfirmed && <button type="button" className="oc-button"
+              disabled={navigationBusy || navigationLoading}
+              onClick={() => locateReview(pendingSaveHere ? "status" : styleEditsPending ? "requirements" : firstReviewIssue ? orderReviewIssueTarget(firstReviewIssue, currentReviewCheck?.check) : "status", firstReviewIssue?.fieldKey)}>
+              处理下一项待办
+            </button>}
+            {designDispatched && onModuleChange && <button type="button" className="oc-button"
+              disabled={navigationBusy || navigationLoading || dirty} onClick={() => onModuleChange("artwork")}>
+              {reviewFlowStep === 2 ? "查看本件设计稿" : "查看本件设计进度"}
+            </button>}
+          </div>
+          {!designDispatched && <div className="oc-review-flow-shortcuts" aria-label="本件资料快速定位">
+            <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading} onClick={() => locateReview("images")}>核对顾客原图</button>
+            <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading} onClick={() => locateReview("requirements")}>核对定制内容</button>
+            <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading} onClick={() => locateReview("basis")}>核对制作依据</button>
+          </div>}
+          {firstReviewIssue && !designDispatched && <p className="oc-review-flow-issue">下一项待办：{firstReviewIssue.message}</p>}
+        </section>}
         {!inline && <p className="oc-detail-title">{detail.line.title}</p>}
         {!inline && !unified && <OrderLifecycleProgress status={detail.line.orderStatus} />}
         {!inline && !unified && <div className="oc-current-task" aria-label="当前任务">
@@ -1494,7 +1584,7 @@ export function OrderWorkDetailPanel({
         </details>
       </div>
       {review && (
-        <footer className="oc-review-footer">
+        <footer className={`oc-review-footer${reviewFlow ? " oc-review-flow-footer" : ""}`} aria-label={reviewFlow ? "本件审单操作" : undefined}>
           <div ref={setReviewFooter} />
           {visibleError && (
             <p className="oc-error" role="alert">

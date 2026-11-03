@@ -76,6 +76,7 @@ export function OrderReviewDrawer({
         onChanged={onChanged}
         onOrderLoaded={orderLoaded}
         onStateChange={setState}
+        navigationReady={!state.busy && !state.dirty && !state.loading}
         onSelectItem={(lineId, target) => {
           if (lineId === id && target === module) return;
           leave(() => {

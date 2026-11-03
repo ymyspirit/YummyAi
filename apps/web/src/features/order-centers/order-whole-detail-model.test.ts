@@ -57,7 +57,7 @@ describe("whole order navigation and next action", () => {
   });
   it("directs the operator to an unfinished sibling instead of sending the reviewed item to production", () => {
     const view = fixture(); view.items[2]!.line.artwork = "in_review";
-    expect(wholeOrderNextStep(view)).toMatchObject({ lineId: "pillow-c", module: "artwork", section: "item", action: "审核生产图" });
+    expect(wholeOrderNextStep(view)).toMatchObject({ lineId: "pillow-c", module: "artwork", section: "item", action: "审核本件设计稿" });
   });
   it("chooses a held sibling first and preserves a concrete action", () => {
     const view = fixture(); view.items[1]!.line.held = true;

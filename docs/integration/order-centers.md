@@ -4,6 +4,26 @@ Current per-permission scope, private-file I/O, command replay and parent follow
 authority are specified in [order authority](order-authority.md). Operational
 assignment does not establish personal/team ownership of an order.
 
+## Guided item review (2026-11-03)
+
+The drawer puts the current item's operation before the whole-order item directory,
+factory, shipment and after-sales records. Its item selector and directory actions
+use `orderItemWorkflow`, which preserves canonical `orderOperatorTask` blocking
+priority. Unreviewed requirements open `orders`, dispatched designs open progress,
+and actual review candidates open artwork review. Unknown design status is a
+read/check destination, not authority to retry or infer successful generation.
+
+The requirements view shows requirement, dispatch and operator-review steps,
+existing intake issue navigation and a sticky action footer. Confirmation remains
+the existing `ready_to_push` save; dispatch remains a separate explicit command.
+Only an identity-, item-, order- and fixed-state-matching successful push queues an
+artwork transition. The child waits for the drawer's actual clean, idle, loaded
+`navigationReady` acknowledgement and its own matching clean state before using
+the existing guarded navigation. Unknown/failed results stay in place. Selecting
+an item retains the order queue and URL filters, and unsaved/busy guards still
+apply. No model, budget, customer-proof or production permission is granted by
+the step display. See the [operator guide](../user-guide.md#71-定制资料).
+
 ## Shaped-pillow intake matching (2026-10-26)
 
 The order catalog lists active, authorized SPUs independently from manufacturing
