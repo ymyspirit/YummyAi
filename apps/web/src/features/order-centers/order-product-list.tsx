@@ -26,6 +26,7 @@ import { useErpAccess } from "../identity/erp-access";
 import { orderSummaryMessages, orderSummaryState, type OrderSummaryState } from "./order-summary-state";
 import { orderCustomizationHighlights, orderFieldLabel, orderFieldPriority, orderFieldValue, orderLineUnits, orderProductLabel } from "./order-operations-summary";
 import { reconcileOrderProductSelection } from "./order-product-selection-model";
+import { orderItemWorkflow } from "./order-item-workflow";
 
 const OrderWorkDetailPanel = dynamic(() => import("./order-work-detail").then(module => module.OrderWorkDetailPanel), {
   loading: () => <p className="oc-notice" role="status">正在打开本件订单编辑…</p>,
@@ -471,7 +472,7 @@ function OrderProductListContent({
                 product = summary?.images.find((image) => image.kind === "preview");
               const buyerImages = summary?.images.filter((image) => image.kind === "buyer") ?? [];
               const contentAvailable = sourceState === "available", status = orderSummaryMessages[sourceState];
-              const next = orderOperatorTask(row);
+              const next = { ...orderOperatorTask(row), ...orderItemWorkflow(row) };
               return (
                 <Fragment key={row.id}>
                   <article

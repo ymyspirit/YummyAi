@@ -24,6 +24,7 @@ import "./order-operator.css";
 import { returnHref } from "../navigation/workflow-href";
 import { orderMatchingSummary } from "./order-operations-summary";
 import { OrderDeadlineSummary } from "./order-deadline-summary";
+import { orderItemWorkflow } from "./order-item-workflow";
 
 const OrderReviewDrawer = dynamic(() => import("./order-review-drawer").then(module => module.OrderReviewDrawer), {
   loading: () => <p className="oc-notice" role="status">正在打开订单详情…</p>,
@@ -148,7 +149,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
   useEffect(() => {
     if (!lineId) { setReviewQueue(null); setReviewOrderIds({}); }
     else if (!loading && !reviewQueue) {
-      reviewModes.current = new Map(data.items.map(row => [row.id, module === "orders" ? orderOperatorTask(row).module : module]));
+      reviewModes.current = new Map(data.items.map(row => [row.id, module === "orders" ? orderItemWorkflow(row).module : module]));
       setReviewOrderIds(Object.fromEntries(data.items.map(row => [row.id, row.orderId])));
       setReviewQueue(
         data.items.some((row) => row.id === lineId) ? orderReviewQueue(data.items, lineId) : [lineId],
@@ -200,7 +201,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
   }
   function openLine(id: string, detailMode?: OrderWorkspaceModule) {
     const queue = orderReviewQueue(data.items, id);
-    reviewModes.current = new Map(data.items.map(row => [row.id, module === "orders" ? orderOperatorTask(row).module : module]));
+    reviewModes.current = new Map(data.items.map(row => [row.id, module === "orders" ? orderItemWorkflow(row).module : module]));
     setReviewOrderIds(Object.fromEntries(data.items.map(row => [row.id, row.orderId])));
     const target = detailMode ?? reviewModes.current.get(id) ?? module;
     setReviewQueue(queue);

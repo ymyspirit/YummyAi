@@ -23,6 +23,7 @@ import { AgentFulfillmentEntry } from "../ai-tasks/agent-fulfillment-entry";
 import { FulfillmentCommandScope, FulfillmentCommandRecovery } from "./fulfillment-command-recovery";
 import { AgentFulfillmentProposalHandoff } from "../ai-tasks/agent-fulfillment-proposal-handoff";
 import { orderFieldLabel, orderFieldPriority, orderFieldValue, orderProductLabel } from "./order-operations-summary";
+import { orderItemWorkflow } from "./order-item-workflow";
 
 const idle: OrderReviewState = { dirty: false, busy: false, loading: false };
 const originalFieldText = (value: string) => value.trim() ? value : "未填写";
@@ -32,6 +33,8 @@ type OrderWholeDetailPanelProps = {
   onEditor(open: boolean): void; onClose(): void; onChanged(): void;
   onSelectItem(id: string, module: OrderWorkspaceModule): void;
   onStateChange(state: OrderReviewState): void; onOrderLoaded(orderId: string): void;
+  navigationReady?: boolean;
+  focusReady?: boolean;
   review: { hasNext: boolean; onNext(): void };
 };
 export function OrderWholeDetailPanel(props: OrderWholeDetailPanelProps) {
@@ -42,7 +45,7 @@ export function OrderWholeDetailPanel(props: OrderWholeDetailPanelProps) {
   if (!canRead) return <section className="oc-whole-detail" aria-label="整单详情"><p role="status" className="oc-muted">当前账号缺少读取整单资料权限</p></section>;
   return <ReadableOrderWholeDetailPanel key={access.authority} {...props} />;
 }
-function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEditor, onClose, onChanged, onSelectItem, onStateChange, onOrderLoaded, review }: OrderWholeDetailPanelProps) {
+function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEditor, onClose, onChanged, onSelectItem, onStateChange, onOrderLoaded, review, navigationReady = false, focusReady = false }: OrderWholeDetailPanelProps) {
   const params = useSearchParams(), requestedOrder = params.get("order"), deliveryParam = params.get("delivery"), back = returnHref(params.get("returnTo"));
   const requestedPackage = deliveryParam && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(deliveryParam) ? deliveryParam : undefined;
   const [view, setView] = useState<WholeOrderDetailView | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState("");
@@ -57,19 +60,30 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   const previousOrder = useRef<string | null>(null);
   const dirty = itemState.dirty || deliveryState.dirty || exceptionState.dirty, busy = itemState.busy || deliveryState.busy || taskBusy || exceptionState.busy || fulfillmentState.busy;
   useEffect(() => {
-    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || loading || itemState.loading) return;
+    if (editorOpen) return;
+    setPendingAction(previous => previous?.lineId === id && previous.module === module ? previous : {
+      lineId: id, module, section: "operation", title: "本件处理", description: "", action: "",
+    });
+  }, [id, module, editorOpen]);
+  useEffect(() => {
+    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || !focusReady || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
     if (module !== "production" && deliveryOpen && !deliveryState.dirty) { setDeliveryOpen(false); return; }
     const element = pendingAction.target
       ? operation.current?.querySelector<HTMLElement>(`[data-order-action="${pendingAction.target}"]`)
       : operation.current;
     if (!element) return;
-    let details = element.closest("details");
-    while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
-    element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-    (element.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])")
-      ?? element.querySelector<HTMLElement>("button:not([disabled])"))?.focus({ preventScroll: true });
-    setPendingAction(null);
-  }, [pendingAction, id, module, loading, itemState.loading, deliveryOpen, deliveryState.dirty]);
+    const frame = window.requestAnimationFrame(() => {
+      if (!element.isConnected || !operation.current?.contains(element)) return;
+      let details = element.closest("details");
+      while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
+      element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      const control = pendingAction.target ? [...element.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")]
+        .find(node => node.getClientRects().length > 0) : undefined;
+      (control ?? element).focus({ preventScroll: true });
+      setPendingAction(current => current === pendingAction ? null : current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingAction, id, module, focusReady, loading, itemState.loading, deliveryOpen, deliveryState.dirty, view]);
   useEffect(() => { onStateChange({ dirty, busy, loading: loading || itemState.loading || deliveryState.loading || exceptionState.loading || fulfillmentState.loading }); }, [dirty, busy, loading, itemState.loading, deliveryState.loading, exceptionState.loading, fulfillmentState.loading, onStateChange]);
   useEffect(() => {
     const abort = new AbortController();
@@ -91,6 +105,8 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
       : <div className="oc-whole-loading" role="status">正在读取整单商品、审核稿和履约记录…</div>}
   </section>;
   const first = view.items[0]!.line, quantity = view.items.reduce((sum, item) => sum + item.line.quantity, 0);
+  const selectedIndex = view.items.findIndex(item => item.line.id === id);
+  const selectedItem = view.items[selectedIndex], selectedWorkflow = selectedItem && orderItemWorkflow(selectedItem.line);
   const task = wholeOrderNextStep(view), disabled = busy || loading || itemState.loading;
   function nextAction() {
     if (task.section === "refresh") { setRefresh(value => value + 1); return; }
@@ -117,10 +133,34 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
         <button className="oc-button primary" disabled={disabled || dirty || !!error} onClick={nextAction}>{task.action}<ArrowRight size={14} /></button></div>
       <FulfillmentCommandRecovery compact />
       <OrderExceptionPanel compact key={`exceptions:${view.orderId}`} orderId={view.orderId} focusId={params.get("exception")??undefined} refreshToken={refresh} disabled={loading||itemState.busy||itemState.dirty||deliveryState.busy||deliveryState.dirty||taskBusy} onChanged={changed} onStateChange={setExceptionState} />
+    </>}
+    {!editorOpen && <section className="oc-current-item" aria-label="当前商品处理">
+      <div className="oc-current-item-heading"><div><h2>本件处理 · 商品行 {selectedIndex + 1} / {view.items.length}</h2>
+        <p>{selectedWorkflow?.title ?? "核对本件资料"} · 每件单独确认 整单统一履约</p></div>
+        <label>切换本单商品
+          <select aria-label="切换本单商品" value={id} disabled={disabled} onChange={event => {
+            const item = view.items.find(item => item.line.id === event.target.value);
+            if (item) selectOperation(item.line.id, orderItemWorkflow(item.line).module);
+          }}>{view.items.map((item, index) => <option key={item.line.id} value={item.line.id}>商品行 {index + 1} · {orderProductLabel(item.line)} · {orderItemWorkflow(item.line).title}</option>)}</select>
+        </label>
+      </div>
+      <nav className="oc-whole-stages" aria-label="本单操作">{stages.map(([target, name]) => <button className="oc-button" key={target} aria-current={target === module ? "step" : undefined} disabled={disabled} onClick={() => selectOperation(id, target)}>{name}</button>)}</nav>
+      {module === "artwork" && selectedItem?.line.preparation !== "pushed" && selectedWorkflow?.module === "orders" && <div className="oc-item-prerequisite" role="status">
+        <span>{selectedItem?.line.preparation === "ready_to_push" ? "本件已确认审单 下一步明确派发设计" : "本件尚未确认审单 请先核对订单要求 再派发设计"}</span>
+        <button className="oc-button" disabled={disabled} onClick={() => selectOperation(id, "orders")}>去处理订单要求<ArrowRight size={14} /></button>
+      </div>}
+    </section>}
+    {deliveryState.dirty && <p className="oc-hint">请先登记或清空工厂回执，再操作本件商品与发货表单。</p>}
+    <div ref={operation} className="oc-whole-operation" tabIndex={-1} inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
+      <OrderWorkDetailPanel key={`${id}:${module}`} id={id} module={module} options={options} editorOpen={editorOpen} onEditor={onEditor} onBack={onClose} onChanged={changed} refreshToken={detailRefresh} unified onSelectItem={selectOperation} navigationReady={navigationReady}
+        onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
+    </div>
+    {!editorOpen && <>
       <section className="oc-whole-items" aria-label="本单全部商品与审核稿"><h2>本单全部商品与审核稿</h2>
-        <p className="oc-hint">每个抱枕保留自己的定制要求和审核版本。点击商品可在下方处理。</p>
+        <p className="oc-hint">每件保留独立要求和审核版本 按当前状态进入本件处理区</p>
         {view.items.map((item, index) => {
           const file = item.artwork.data, summary = item.summary.data;
+          const itemWorkflow = orderItemWorkflow(item.line);
           const fields = summary?.fields ?? [];
           const keyFields = fields.filter(field => orderFieldPriority(field.label) <= 2)
             .toSorted((a, b) => orderFieldPriority(a.label) - orderFieldPriority(b.label));
@@ -128,7 +168,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
           return <article className={`oc-whole-item${item.line.id === id ? " selected" : ""}`} key={item.line.id}>
             <div className="oc-whole-image">{file?.preview ? <a href={file.preview.path} target="_blank" rel="noreferrer"><Image src={file.preview.path} alt={`商品 ${index + 1} 当前审核稿`} width={168} height={112} unoptimized /></a> : <span>{item.artwork.error ? "审核稿无法读取" : "暂无审核稿"}</span>}</div>
             <div className="oc-whole-requirements"><button className="oc-text-button" aria-pressed={item.line.id === id} disabled={disabled}
-              onClick={() => selectOperation(item.line.id, module)}>商品行 {index + 1} · {orderProductLabel(item.line)} · {item.line.quantity} 件</button>
+              onClick={() => selectOperation(item.line.id, itemWorkflow.module)}>商品行 {index + 1} · {orderProductLabel(item.line)} · {item.line.quantity} 件</button>
               <small>{item.line.skuCode ?? "未提供 SKU"} · {summary?.specification ?? item.line.specificationName ?? "规格待确认"} · {item.line.externalLineId}</small>
               {item.summary.error || summary?.error ? <p className="oc-error">{item.summary.error ?? summary?.error}</p> : <>
                 {keyFields.map((field, fieldIndex) => <p key={`${field.label}:${fieldIndex}`}><b title={field.label}>{orderFieldLabel(field.label, field.value)}：</b><span title={field.value}>{originalFieldText(orderFieldValue(field.value))}</span></p>)}
@@ -147,7 +187,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
               {!file.approved && file.approvedVersionNumber && <small>原审核稿 V{file.approvedVersionNumber}，当前稿需重新核对</small>}
               {file.productionFile ? <a download className="oc-file-link" href={file.productionFile.path}>下载已审核正式文件</a> : <small>{file.productionPending ? "正式文件生成中" : "正式文件尚未准备好"}</small>}
             </> : <small>尚未建立制作稿</small>}
-              <button className="oc-button" disabled={disabled} onClick={() => selectOperation(item.line.id, "artwork")}>查看本件审核与制图</button>
+              <button className="oc-button" disabled={disabled} onClick={() => selectOperation(item.line.id, itemWorkflow.module)}>{itemWorkflow.action}</button>
             </div>
           </article>;
         })}
@@ -182,13 +222,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
         {view.cases.error && <p role="alert" className="oc-error">{view.cases.error}</p>}
         {view.cases.data && <p className="oc-hint">{view.cases.data.filter(record => !["resolved", "cancelled"].includes(record.case.status)).length} 个未结案问题 · 已结案记录继续保留</p>}
       </section>
-      <nav className="oc-whole-stages" aria-label="本单操作">{stages.map(([target, name]) => <button className="oc-button" key={target} aria-current={target === module ? "step" : undefined} disabled={disabled} onClick={() => selectOperation(id, target)}>{name}</button>)}</nav>
     </>}
-    {deliveryState.dirty && <p className="oc-hint">请先登记或清空工厂回执，再操作下方商品与发货表单。</p>}
-    <div ref={operation} className="oc-whole-operation" inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
-      <OrderWorkDetailPanel key={`${id}:${module}`} id={id} module={module} options={options} editorOpen={editorOpen} onEditor={onEditor} onBack={onClose} onChanged={changed} refreshToken={detailRefresh} unified onSelectItem={selectOperation}
-        onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
-    </div>
     {!editorOpen && <section className="oc-whole-follow-up" aria-label="任务与高级核查">
       <OrderTaskPanel key={view.orderId} lineId={id} refreshToken={refresh} disabled={dirty || itemState.busy || deliveryState.busy || loading || !!error} onBusyChange={setTaskBusy} onChanged={() => { setDetailRefresh(value => value + 1); changed(); }} />
       <details className="oc-whole-records oc-whole-advanced" key={`advanced:${view.orderId}`}>

@@ -66,6 +66,76 @@ test.describe("order review guidance with native personal pillow intake", () => 
     }
   });
 
+  test("order review guidance keeps the real confirmation visible and locates a missing original without saving or dispatching", async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    const fixture = await orderIntakePillowFixture(false), audit = watch(page, fixture.lineId);
+    let completed = false;
+    try {
+      await navigateToInitialOrderCheck(page, fixture, check => check.ready);
+      const whole = order(page), steps = whole.getByRole("region", { name: "本件审单步骤", exact: true });
+      const confirm = confirmButton(page);
+      await expect(steps).toBeInViewport();
+      await expect(confirm).toBeEnabled();
+      const initialLayout = await whole.evaluate(element => {
+        const inspect = (node: Element | null) => {
+          if (!node) return null;
+          const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+          return {
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+              top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left },
+            clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, scrollTop: node.scrollTop,
+            style: { display: style.display, position: style.position, overflow: style.overflow,
+              overflowX: style.overflowX, overflowY: style.overflowY, height: style.height,
+              minHeight: style.minHeight, maxHeight: style.maxHeight, flexDirection: style.flexDirection,
+              flexShrink: style.flexShrink, flexBasis: style.flexBasis, top: style.top, bottom: style.bottom },
+          };
+        };
+        return { viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
+          whole: inspect(element), reviewDetail: inspect(element.querySelector(".oc-whole-operation .oc-page.oc-review-detail")),
+          footer: inspect(element.querySelector(".oc-review-flow-footer")),
+          button: inspect(element.querySelector(".oc-review-flow-footer button.primary")) };
+      });
+      const layoutFile = testInfo.outputPath("order-review-layout-proof.json");
+      await mkdir(dirname(layoutFile), { recursive: true });
+      await writeFile(layoutFile, JSON.stringify(initialLayout, null, 2) + "\n", { flag: "wx" });
+      await testInfo.attach("initial-review-sticky-layout", { path: layoutFile, contentType: "application/json" });
+      await expect(confirm).toBeInViewport();
+      expect(await whole.evaluate(element => {
+        const operation = element.querySelector(".oc-whole-operation"), items = element.querySelector(".oc-whole-items");
+        return !!operation && !!items && !!(operation.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING);
+      })).toBe(true);
+      for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await steps.scrollIntoViewIfNeeded();
+        await expect(confirm).toBeInViewport();
+        await whole.evaluate(element => {
+          const operation = element.querySelector<HTMLElement>(".oc-whole-operation")!;
+          const operationTop = operation.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+          element.scrollTop = operationTop + Math.min(320, Math.max(0, operation.offsetHeight - element.clientHeight - 80));
+        });
+        await expect(confirm).toBeInViewport();
+        await expect.poll(() => whole.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+      const missing = nextCheck(page, fixture, check => !check.ready && check.normalizedDraft.images.length === 0);
+      await original(page).uncheck();
+      await missing;
+      await expect(confirm).toBeDisabled();
+      await steps.getByRole("button", { name: "处理下一项待办", exact: true }).click();
+      await expect(original(page)).toBeInViewport();
+      expect(audit.saves).toEqual([]);
+      expect((await fixture.readDetail()).draft).toEqual(fixture.initial.draft);
+      await fixture.assertOriginalPreserved();
+      expect(audit.forbidden).toEqual([]);
+      expect(audit.errors).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath("native-review-flow-sticky-missing-original-390.png") });
+      completed = true;
+    } finally {
+      audit.stop();
+      await proof(testInfo, fixture, audit, "native_review_flow_visible_confirmation_and_missing_original", completed);
+    }
+  });
+
   test("order review guidance locates missing originals and preserves special requirements for Agent-first intake", async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     const fixture = await orderIntakePillowFixture(true), audit = watch(page, fixture.lineId);
@@ -255,6 +325,13 @@ test.describe("order review guidance with native personal pillow intake", () => 
       await expect(panel).toContainText("暂时无法完成审单检查");
       await expect(panel.getByRole("alert")).toHaveText("服务器暂时无法完成操作，请保留填写内容后重试。");
       await expect(confirm).toBeDisabled();
+      const steps = order(page).getByRole("region", { name: "本件审单步骤", exact: true });
+      await expect(steps).toContainText("审单检查暂时无法完成 请重新核对");
+      await expect(steps).not.toContainText(/还有\s*\d+\s*项|下一项待办/);
+      await steps.getByRole("button", { name: "查看核对状态", exact: true }).click();
+      await expect(panel).toBeInViewport();
+      await expect(confirm).toBeDisabled();
+      expect(audit.checks).toHaveLength(1);
       const retry = panel.getByRole("button", { name: "核对当前需求", exact: true });
       await expect(retry).toBeEnabled();
       expect(audit.saves).toEqual([]);

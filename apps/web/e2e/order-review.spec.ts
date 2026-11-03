@@ -148,7 +148,7 @@ test("saving locks navigation and preserves the existing save-without-advance ac
   } finally {
     state.releaseSave();
   }
-  await expect(drawer.getByRole("status").filter({ hasText: "审单已保存" })).toBeVisible();
+  await expect(drawer.getByRole("status").filter({ hasText: "审单已确认 下一步点击推送本件设计派发任务" })).toBeVisible();
   await expect(drawer.getByRole("heading", { name: "SYNTHETIC-REVIEW-1" })).toBeVisible();
   await expect(drawer.getByRole("button", { name: "推送本件设计", exact: true })).toBeVisible();
   expect(state.saves).toHaveLength(1);

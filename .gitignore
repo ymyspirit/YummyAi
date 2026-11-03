@@ -21,3 +21,8 @@ tmp/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+
+# Rebuilt by tools/scripts/build-canvas-plugin.mjs; sealed by the public asset inventory.
+apps/web/public/plugins/yummyai-bridge-1.1.0.js
+apps/web/public/plugins/yummyai-bridge-1.1.0.LICENSE.txt
+apps/web/public/plugins/yummyai-bridge-1.1.0.manifest.json
