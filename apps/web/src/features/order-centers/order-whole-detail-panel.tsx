@@ -59,7 +59,13 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   const previousOrder = useRef<string | null>(null);
   const dirty = itemState.dirty || deliveryState.dirty || exceptionState.dirty, busy = itemState.busy || deliveryState.busy || taskBusy || exceptionState.busy || fulfillmentState.busy;
   useEffect(() => {
-    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || loading || itemState.loading) return;
+    if (editorOpen) return;
+    setPendingAction(previous => previous?.lineId === id && previous.module === module ? previous : {
+      lineId: id, module, section: "operation", title: "本件处理", description: "", action: "",
+    });
+  }, [id, module, editorOpen]);
+  useEffect(() => {
+    if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
     if (module !== "production" && deliveryOpen && !deliveryState.dirty) { setDeliveryOpen(false); return; }
     const element = pendingAction.target
       ? operation.current?.querySelector<HTMLElement>(`[data-order-action="${pendingAction.target}"]`)
@@ -68,10 +74,11 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
     let details = element.closest("details");
     while (details) { details.open = true; details = details.parentElement?.closest("details") ?? null; }
     element.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-    (element.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])")
-      ?? element.querySelector<HTMLElement>("button:not([disabled])"))?.focus({ preventScroll: true });
+    const control = pendingAction.target ? [...element.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")]
+      .find(node => node.getClientRects().length > 0) : undefined;
+    (control ?? element).focus({ preventScroll: true });
     setPendingAction(null);
-  }, [pendingAction, id, module, loading, itemState.loading, deliveryOpen, deliveryState.dirty]);
+  }, [pendingAction, id, module, loading, itemState.loading, deliveryOpen, deliveryState.dirty, view]);
   useEffect(() => { onStateChange({ dirty, busy, loading: loading || itemState.loading || deliveryState.loading || exceptionState.loading || fulfillmentState.loading }); }, [dirty, busy, loading, itemState.loading, deliveryState.loading, exceptionState.loading, fulfillmentState.loading, onStateChange]);
   useEffect(() => {
     const abort = new AbortController();
@@ -139,7 +146,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
       </div>}
     </section>}
     {deliveryState.dirty && <p className="oc-hint">请先登记或清空工厂回执，再操作本件商品与发货表单。</p>}
-    <div ref={operation} className="oc-whole-operation" inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
+    <div ref={operation} className="oc-whole-operation" tabIndex={-1} inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
       <OrderWorkDetailPanel key={`${id}:${module}`} id={id} module={module} options={options} editorOpen={editorOpen} onEditor={onEditor} onBack={onClose} onChanged={changed} refreshToken={detailRefresh} unified onSelectItem={selectOperation} navigationReady={navigationReady}
         onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
     </div>

@@ -13,17 +13,23 @@ test("order review flow starts with requirements and keeps confirmation visible 
   await loginReviewFlow(page);
   const state = await reviewFlowFixture(page, 5);
   groupReviewFlowItems(state);
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(`/orders?platform=amazon&accountId=${id(99)}&stage=pending_review&pageSize=25`);
   const row = page.locator(".oc-product-row").first();
   await row.getByRole("button", { name: "开始审单", exact: true }).click();
   const whole = page.getByRole("region", { name: "整单详情", exact: true });
   const steps = whole.getByRole("region", { name: "本件审单步骤", exact: true });
   const confirm = whole.getByRole("button", { name: "确认本件审单", exact: true });
-  await expect(steps).toBeVisible();
+  // No test-owned scroll: opening review must land on its complete guide itself.
+  await expect(steps).toBeInViewport({ ratio: 1 });
   await expect(whole.getByRole("button", { name: "订单要求", exact: true })).toHaveAttribute("aria-current", "step");
   await expect(confirm).toBeEnabled();
   await expect(confirm).toBeInViewport();
+  await expect.poll(() => whole.evaluate(element => {
+    const guide = element.querySelector<HTMLElement>(".oc-review-flow");
+    const footer = element.querySelector<HTMLElement>(".oc-review-flow-footer");
+    return !!guide && !!footer && guide.getBoundingClientRect().bottom <= footer.getBoundingClientRect().top;
+  })).toBe(true);
   expect(await whole.evaluate(element => {
     const operation = element.querySelector(".oc-whole-operation"), items = element.querySelector(".oc-whole-items");
     return !!operation && !!items && !!(operation.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING);
