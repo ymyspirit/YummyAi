@@ -772,6 +772,7 @@ export function OrderWorkDetailPanel({
   const reviewFlow = module === "orders" && unified;
   const reviewIssues = currentReviewCheck?.check?.issues ?? [];
   const firstReviewIssue = reviewIssues[0];
+  const reviewCheckFailed = currentReviewCheck?.status === "failed";
   const designDispatched = detail.line.preparation === "pushed";
   const reviewFlowStep = designDispatched
     ? detail.line.designCandidateReview || ["in_review", "approved"].includes(detail.line.artwork) ? 2 : 1
@@ -784,8 +785,9 @@ export function OrderWorkDetailPanel({
     : designDispatched ? reviewFlowStep === 2 ? "本件已有设计稿 可进入运营审图" : "本件已派发设计 可查看制作进度"
     : savedReviewConfirmed ? "审单已确认 下一步派发设计"
     : reviewReady ? "本件资料检查通过 可以确认审单"
+    : reviewCheckFailed ? "审单检查暂时无法完成 请重新核对"
     : currentReviewCheck?.status === "checking" || !currentReviewCheck ? "正在核对本件订单要求"
-    : `本件还有 ${reviewIssues.length || 1} 项需要处理`;
+    : reviewIssues.length ? `本件还有 ${reviewIssues.length} 项需要处理` : "本件仍有待核对事项";
   return (
     <Container
       ref={reviewRoot}
@@ -832,13 +834,14 @@ export function OrderWorkDetailPanel({
           </ol>
           <div className="oc-review-flow-summary">
             <div><strong aria-live="polite">{reviewFlowTitle}</strong><p>{designDispatched
-              ? "设计完成后核对本件稿件 小问题可交 AI 修改 复杂问题转美工"
+              ? "设计完成后核对本件稿件 不通过时按可用方式退回修改"
               : savedReviewConfirmed ? "点击下方推送本件设计后派发 设计完成后再审核稿件"
+              : reviewCheckFailed ? "当前填写仍保留 点击查看核对状态后重试检查"
               : "先看原图与定制内容 再核对规格工艺 缺项可直接定位 确认入口始终保留在操作栏"}</p></div>
             {!designDispatched && !reviewReady && !savedReviewConfirmed && <button type="button" className="oc-button"
               disabled={navigationBusy || navigationLoading}
-              onClick={() => locateReview(pendingSaveHere ? "status" : styleEditsPending ? "requirements" : firstReviewIssue ? orderReviewIssueTarget(firstReviewIssue, currentReviewCheck?.check) : "status", firstReviewIssue?.fieldKey)}>
-              处理下一项待办
+              onClick={() => reviewCheckFailed ? locateReview("status") : locateReview(pendingSaveHere ? "status" : styleEditsPending ? "requirements" : firstReviewIssue ? orderReviewIssueTarget(firstReviewIssue, currentReviewCheck?.check) : "status", firstReviewIssue?.fieldKey)}>
+              {reviewCheckFailed ? "查看核对状态" : "处理下一项待办"}
             </button>}
             {designDispatched && onModuleChange && <button type="button" className="oc-button"
               disabled={navigationBusy || navigationLoading || dirty} onClick={() => onModuleChange("artwork")}>
@@ -850,7 +853,7 @@ export function OrderWorkDetailPanel({
             <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading} onClick={() => locateReview("requirements")}>核对定制内容</button>
             <button type="button" className="oc-button" disabled={navigationBusy || navigationLoading} onClick={() => locateReview("basis")}>核对制作依据</button>
           </div>}
-          {firstReviewIssue && !designDispatched && <p className="oc-review-flow-issue">下一项待办：{firstReviewIssue.message}</p>}
+          {firstReviewIssue && !reviewCheckFailed && !designDispatched && <p className="oc-review-flow-issue">下一项待办：{firstReviewIssue.message}</p>}
         </section>}
         {!inline && <p className="oc-detail-title">{detail.line.title}</p>}
         {!inline && !unified && <OrderLifecycleProgress status={detail.line.orderStatus} />}

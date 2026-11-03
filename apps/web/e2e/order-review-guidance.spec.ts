@@ -302,6 +302,13 @@ test.describe("order review guidance with native personal pillow intake", () => 
       await expect(panel).toContainText("暂时无法完成审单检查");
       await expect(panel.getByRole("alert")).toHaveText("服务器暂时无法完成操作，请保留填写内容后重试。");
       await expect(confirm).toBeDisabled();
+      const steps = order(page).getByRole("region", { name: "本件审单步骤", exact: true });
+      await expect(steps).toContainText("审单检查暂时无法完成 请重新核对");
+      await expect(steps).not.toContainText(/还有\s*\d+\s*项|下一项待办/);
+      await steps.getByRole("button", { name: "查看核对状态", exact: true }).click();
+      await expect(panel).toBeInViewport();
+      await expect(confirm).toBeDisabled();
+      expect(audit.checks).toHaveLength(1);
       const retry = panel.getByRole("button", { name: "核对当前需求", exact: true });
       await expect(retry).toBeEnabled();
       expect(audit.saves).toEqual([]);

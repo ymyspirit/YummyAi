@@ -2,13 +2,16 @@ import { expect, test, type Page } from "@playwright/test";
 import { fixture, id } from "./order-review-fixture";
 import { ArchiveOrderWorkInputSchema, OrderWorkActionInputSchema } from "@yummyai/contracts/order/workspace";
 import { ProductionEditorDetailViewSchema } from "@yummyai/contracts/pod/production-editor-api";
+import { ErpSessionViewSchema, erpSessionAuthority } from "@yummyai/contracts/auth/session";
+import { FulfillmentCommandListSchema } from "@yummyai/contracts/order/fulfillment-command";
+import { OrderExceptionOperationsQuerySchema, OrderExceptionOperationsViewSchema } from "@yummyai/contracts/order/exception-operations";
 import { loginErp } from "./erp-identity-fixture";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 
 test("order review flow starts with requirements and keeps confirmation visible at desktop and mobile widths", async ({ page }) => {
   test.setTimeout(90_000);
   await loginReviewFlow(page);
-  const state = await fixture(page, 5);
+  const state = await reviewFlowFixture(page, 5);
   groupReviewFlowItems(state);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/orders?platform=amazon&accountId=${id(99)}&stage=pending_review&pageSize=25`);
@@ -52,7 +55,7 @@ test("order review flow starts with requirements and keeps confirmation visible 
 test("order review flow routes five mixed-status items to each item's real next step", async ({ page }) => {
   test.setTimeout(90_000);
   await loginReviewFlow(page);
-  const state = await fixture(page, 5);
+  const state = await reviewFlowFixture(page, 5);
   groupReviewFlowItems(state);
   Object.assign(state.records[1]!.line, { preparation: "ready_to_push", designExecutor: "agent" });
   Object.assign(state.records[2]!.line, { preparation: "pushed", artwork: "in_progress", designExecutor: "agent" });
@@ -81,7 +84,7 @@ test("order review flow routes five mixed-status items to each item's real next 
 test("order review flow changes to artwork only after an explicit dispatch is known to succeed", async ({ page }) => {
   test.setTimeout(90_000);
   await loginReviewFlow(page);
-  const state = await fixture(page, 1), record = state.records[0]!;
+  const state = await reviewFlowFixture(page, 1), record = state.records[0]!;
   record.line.preparation = "ready_to_push";
   const calls: Array<ReturnType<typeof OrderWorkActionInputSchema.parse>> = [];
   await page.route(`**/api/order-centers/lines/${record.line.id}/actions`, async route => {
@@ -128,6 +131,37 @@ async function loginReviewFlow(page: Page) {
   if (process.env.WEB_AUTH_MODE !== "personal") return;
   requireDisposableIntegrationEnvironment();
   await loginErp(page);
+}
+
+/** Current read contracts for these synthetic items, never a substitute authority. */
+async function reviewFlowFixture(page: Page, count: number) {
+  const state = await fixture(page, count, { currentReadContracts: true });
+  const response = await page.request.get("/api/erp-auth/session");
+  expect(response.ok()).toBe(true);
+  const session = ErpSessionViewSchema.parse(await response.json());
+  expect(session.canUseErp).toBe(true);
+  const authority = erpSessionAuthority(session);
+  await page.route("**/api/order-centers/fulfillment-commands?**", async route => {
+    const request = route.request(), orderId = new URL(request.url()).searchParams.get("orderId");
+    expect(request.method()).toBe("GET");
+    expect(state.records.some(record => record.line.orderId === orderId)).toBe(true);
+    expect(request.headers()["x-yummyai-context-authority"]).toBe(authority);
+    await route.fulfill({ headers: { "x-yummyai-context-authority": authority, "cache-control": "private, no-store" },
+      json: FulfillmentCommandListSchema.parse({ items: [], truncated: false }) });
+  });
+  await page.route("**/api/order-exceptions/**", async route => {
+    const request = route.request(), url = new URL(request.url()), orderId = url.pathname.split("/")[3];
+    const record = state.records.find(item => item.line.orderId === orderId);
+    expect(request.method()).toBe("GET");
+    expect(record).toBeDefined();
+    const query = OrderExceptionOperationsQuerySchema.parse(Object.fromEntries(url.searchParams));
+    await route.fulfill({ json: OrderExceptionOperationsViewSchema.parse({
+      orderId, lineId: null, label: record!.line.externalOrderId, orderSequence: 1,
+      sourceChecksum: "b".repeat(64), asOf: "2026-09-14T00:00:00.000Z", canCreate: false, query,
+      total: 0, page: query.page, pageSize: query.pageSize, summary: { open: 0, resolved: 0, missingEvent: 0 }, items: [],
+    }) });
+  });
+  return state;
 }
 
 function groupReviewFlowItems(state: Awaited<ReturnType<typeof fixture>>) {
