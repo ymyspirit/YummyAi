@@ -76,6 +76,29 @@ test.describe("order review guidance with native personal pillow intake", () => 
       const confirm = confirmButton(page);
       await expect(steps).toBeInViewport();
       await expect(confirm).toBeEnabled();
+      const initialLayout = await whole.evaluate(element => {
+        const inspect = (node: Element | null) => {
+          if (!node) return null;
+          const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+          return {
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+              top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left },
+            clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, scrollTop: node.scrollTop,
+            style: { display: style.display, position: style.position, overflow: style.overflow,
+              overflowX: style.overflowX, overflowY: style.overflowY, height: style.height,
+              minHeight: style.minHeight, maxHeight: style.maxHeight, flexDirection: style.flexDirection,
+              flexShrink: style.flexShrink, flexBasis: style.flexBasis, top: style.top, bottom: style.bottom },
+          };
+        };
+        return { viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
+          whole: inspect(element), reviewDetail: inspect(element.querySelector(".oc-whole-operation .oc-page.oc-review-detail")),
+          footer: inspect(element.querySelector(".oc-review-flow-footer")),
+          button: inspect(element.querySelector(".oc-review-flow-footer button.primary")) };
+      });
+      const layoutFile = testInfo.outputPath("order-review-layout-proof.json");
+      await mkdir(dirname(layoutFile), { recursive: true });
+      await writeFile(layoutFile, JSON.stringify(initialLayout, null, 2) + "\n", { flag: "wx" });
+      await testInfo.attach("initial-review-sticky-layout", { path: layoutFile, contentType: "application/json" });
       await expect(confirm).toBeInViewport();
       expect(await whole.evaluate(element => {
         const operation = element.querySelector(".oc-whole-operation"), items = element.querySelector(".oc-whole-items");

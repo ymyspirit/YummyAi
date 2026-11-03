@@ -40,7 +40,7 @@
 .oc-whole-stages [aria-current] { border-color: var(--action); color: var(--action); }
 .oc-whole-operation { min-height: 0; }
 .oc-whole-operation [data-order-action] { scroll-margin-top: 12px; }
-.oc-whole-operation .oc-review-detail { display: block; overflow: visible; }
+.oc-whole-operation .oc-page.oc-review-detail { display: block; overflow: visible; }
 .oc-whole-operation .oc-review-body { overflow: visible; padding: 0; }
 .oc-whole-operation .oc-review-footer { margin: 12px -24px -16px; }
 .oc-whole-editor { display: flex; padding: 0; overflow: hidden; }
