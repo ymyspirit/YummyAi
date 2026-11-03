@@ -310,11 +310,17 @@ test("six centers preserve an existing human order through operator edits, artwo
       path: testInfo.outputPath("orders-reviewed-desktop.png"),
       fullPage: true,
     });
+    const dispatchedUrl = new URL(page.url());
+    expect(dispatchedUrl.searchParams.get("line")).toBe(id);
     await page.getByRole("button", { name: "推送本件设计", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "推送制图已记录" })).toBeVisible();
-    await page.getByRole("button", { name: "返回订单中心", exact: true }).click();
+    await expect(whole.getByRole("button", { name: "审核与制图", exact: true })).toHaveAttribute("aria-current", "step");
+    dispatchedUrl.searchParams.set("detailMode", "artwork");
+    dispatchedUrl.searchParams.delete("editor");
+    await expect(page).toHaveURL(dispatchedUrl.href);
+    await expect(whole.getByRole("heading", { name: externalId, exact: true })).toBeVisible();
+    await whole.getByRole("button", { name: "返回制图中心", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    expect((await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`)).line).toMatchObject({ preparation: "pushed",
+    expect((await centerApi<OrderWorkDetail>(`order-centers/lines/${id}`)).line).toMatchObject({ id, orderId: before.line.orderId, preparation: "pushed",
       designExecutor: "human", artwork: "queued", production: "not_released", editorProjectId: null });
     expect(DesignAgentViewSchema.parse(await centerApi(`order-centers/lines/${id}/design-agent`)).run).toBeNull();
     await expect(page.getByLabel("搜索订单", { exact: true })).toHaveValue(externalId);
