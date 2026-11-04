@@ -605,11 +605,12 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
   orderReviewGuidanceBrowser = process.argv.includes("--suite=order-review-guidance"),
   orderImageUploadBrowser = process.argv.includes("--suite=order-image-upload"),
   orderDocumentsBrowser = process.argv.includes("--suite=order-documents"),
+  logisticsBrowser = process.argv.includes("--suite=logistics"),
   compiledWeb = process.argv.includes("--compiled-web"),
   incomingBrowser = process.argv.includes("--suite=incoming-browser"),
   procurementCycleBrowser = process.argv.includes("--suite=procurement-cycle-browser"),
   erpPersonalBrowser =
-    orderDocumentsBrowser || orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser ||
+    logisticsBrowser || orderDocumentsBrowser || orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser ||
     ordinaryDailyBrowser ||
     studioPersonalBrowser ||
     shipmentCreateBrowser ||
@@ -1168,7 +1169,6 @@ try {
   const logistics = forwarded.includes("--suite=logistics");
   const orderDocuments = forwarded.includes("--suite=order-documents");
   if (orderDocuments && !compiledWeb) knowledgeSandbox = await createKnowledgeBrowserSandbox(token, Number(process.env.E2E_ORDER_DOCUMENTS_WEB_PORT));
-  if (logistics) knowledgeSandbox = await createKnowledgeBrowserSandbox(token, 3100);
   const publicationLeaseIntegration = forwarded.includes("--suite=publication-lease-integration");
   const allIntegration = forwarded.includes("--suite=all-integration") || publicationLeaseIntegration;
   const productAuthorityIntegration = forwarded.includes("--suite=product-authority-integration");
@@ -1922,6 +1922,7 @@ try {
                                                                       ? "apps/web/playwright.order-review-guidance.config.ts"
                                                                       : orderImageUploadBrowser
                                                                       ? "apps/web/playwright.order-image-upload.config.ts"
+                                                                      : logisticsBrowser ? "apps/web/playwright.logistics.config.ts"
                                                                       : orderDocuments ? "apps/web/playwright.order-documents.config.ts"
                                                                       : "apps/web/playwright.erp-identity.config.ts"
                                                   : factoryPortal
