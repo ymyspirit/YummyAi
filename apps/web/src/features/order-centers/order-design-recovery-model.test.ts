@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { designAgentRecoveryGuidance } from "./order-design-recovery-model";
+import { designAgentInterruption, designAgentRecoveryGuidance } from "./order-design-recovery-model";
 import type { DesignAgentRunView } from "@yummyai/contracts/order/design-agent";
 
 const steps = [
@@ -21,5 +21,33 @@ describe("order design recovery guidance", () => {
     expect(designAgentRecoveryGuidance({ ...view, status: "needs_attention", canResume: true }).nextAction).toContain("已保存的模型结果会继续复用");
     expect(designAgentRecoveryGuidance({ ...view, status: "awaiting_review" }).nextAction).toContain("填写驳回理由");
     expect(designAgentRecoveryGuidance({ ...view, status: "cancelled" }).nextAction).toContain("重新检查并送审");
+  });
+
+  it("keeps provider rejection separate from legacy uncertainty and gives an immediate handoff action", () => {
+    const run = { status: "needs_attention" as const, canResume: false, steps, responseRecoveryTarget: null };
+    const moderation = designAgentInterruption({ ...run, errorCode: "agent_provider_moderation_blocked" });
+    expect(moderation).toMatchObject({ kind: "moderation", primaryTakeover: true, retryAt: null });
+    expect(moderation?.nextAction).toContain("美工接管");
+    expect(moderation?.nextAction).not.toContain("导入");
+    expect(designAgentInterruption({ ...run, errorCode: "agent_model_submission_unknown" })?.kind).toBe("uncertain");
+    expect(designAgentInterruption(run)?.kind).toBe("other");
+    expect(designAgentInterruption({ ...run, errorCode: "agent_provider_authentication_failed" })?.nextAction).toContain("密钥");
+    expect(designAgentInterruption({ ...run, errorCode: "agent_provider_invalid_request" })?.nextAction).toContain("请求参数");
+    expect(designAgentRecoveryGuidance({ ...run, errorCode: "agent_provider_moderation_blocked" }).nextAction).toBe(moderation?.nextAction);
+  });
+
+  it("only describes automatic retry for a queued persisted rate-limit failure and never invents a time", () => {
+    const run = { status: "queued" as const, canResume: false, steps, responseRecoveryTarget: null, errorCode: "agent_provider_rate_limited" };
+    expect(designAgentInterruption({ ...run, nextRetryAt: "2026-11-04T00:01:00.000Z" })).toMatchObject({ kind: "retry", retryAt: "2026-11-04T00:01:00.000Z" });
+    expect(designAgentRecoveryGuidance(run).nextAction).toContain("无需重新派发");
+    expect(designAgentInterruption(run)?.retryAt).toBeNull();
+    expect(designAgentInterruption({ ...run, nextRetryAt: "not a date" })?.retryAt).toBeNull();
+    expect(designAgentInterruption({ ...run, errorCode: null })).toBeNull();
+    expect(designAgentInterruption({ ...run, status: "running" })).toBeNull();
+    expect(designAgentInterruption({ ...run, status: "needs_attention", errorCode: "agent_provider_retry_exhausted" })).toMatchObject({ kind: "exhausted", primaryTakeover: true, retryAt: null });
+    const deferred = designAgentInterruption({ ...run, status: "needs_attention", errorCode: "agent_provider_retry_deferred" });
+    expect(deferred).toMatchObject({ kind: "deferred", primaryTakeover: true, retryAt: null });
+    expect(deferred?.nextAction).not.toContain("次数");
+    expect(deferred?.title).not.toContain("用完");
   });
 });

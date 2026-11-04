@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./ai/provider-failure": "./src/ai/provider-failure.ts",
     "./ai/agent-chat": "./src/ai/agent-chat.ts",
     "./ai/official-model-pricing": "./src/ai/official-model-pricing.ts",
     "./ai/model-usage": "./src/ai/model-usage.ts",

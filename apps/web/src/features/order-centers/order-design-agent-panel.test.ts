@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { DesignAgentRunView } from "@yummyai/contracts/order/design-agent";
 
-import { designAgentActivity, designAgentBillingNotice, designAgentCurrentVersionApproved, designAgentErrorMessage, designAgentNoRunMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
+import { DesignAgentInterruptionNotice, designAgentActivity, designAgentBillingNotice, designAgentCurrentVersionApproved, designAgentErrorMessage, designAgentNoRunMessage, designAgentReadRetryDelay } from "./order-design-agent-panel";
 
 describe("design agent absent-run context", () => {
   it("distinguishes a successfully read pushed Agent order without claiming a specific configuration defect", () => {
@@ -92,6 +95,12 @@ describe("design agent diagnostics", () => {
     ["agent_asset_storage_unavailable", "私有素材存储暂时不可用"],
     ["agent_asset_preview_failed", "无需重新调用模型"],
     ["agent_requirements_need_resolution", "顾客定制要求仍有待核对项"],
+    ["agent_provider_moderation_blocked", "提供方安全审核拒绝"],
+    ["agent_provider_authentication_failed", "渠道授权"],
+    ["agent_provider_invalid_request", "未接受本次请求"],
+    ["agent_provider_rate_limited", "系统已安排延后重试"],
+    ["agent_provider_retry_exhausted", "自动重试已达到上限"],
+    ["agent_provider_retry_deferred", "当前不会继续重试"],
   ])("explains the bounded pillow failure %s with an actionable safe message", (code, expected) => {
     const message = designAgentErrorMessage(code);
     expect(message).toContain(expected);
@@ -104,6 +113,117 @@ describe("design agent diagnostics", () => {
     expect(message).toContain("已完成");
     expect(message).toContain("复用");
     expect(message).not.toContain("重新抠图");
+  });
+});
+
+function interruptionRun(overrides: Partial<DesignAgentRunView> = {}): DesignAgentRunView {
+  return {
+    id: "019f0000-0000-7000-8000-000000000001", workItemId: "019f0000-0000-7000-8000-000000000002",
+    workRevisionId: "019f0000-0000-7000-8000-000000000003", revision: 1, status: "needs_attention",
+    executorKey: "strict-pillow_photo", recipeVersion: "synthetic-v1", policyVersion: "synthetic-v1", modelRouteId: null,
+    projectId: null, currentEditorVersionId: null, createdAt: "2026-11-04T00:00:00.000Z", updatedAt: "2026-11-04T00:00:10.000Z",
+    errorCode: "agent_provider_moderation_blocked", canResume: false, canTakeOver: true,
+    estimatedCostUsd: null, actualCostUsd: null, costStatus: "unknown", qualityDiagnostics: [],
+    steps: [{ id: "019f0000-0000-7000-8000-000000000004", key: "enhance_image_1", label: "顾客图片保真美化", status: "failed",
+      attempt: 1, errorCode: "agent_provider_moderation_blocked", outputAssetId: null, outputVersionId: null, startedAt: null, completedAt: null,
+      providerFailure: { version: 1, kind: "moderation", status: 400, code: "moderation_blocked", providerRequestId: "synthetic-provider-request",
+        receivedAt: "2026-11-04T00:00:10.000Z", retryAfterMs: null } }],
+    ...overrides,
+  };
+}
+function renderInterruption(run: DesignAgentRunView, disabled = false) {
+  return renderToStaticMarkup(createElement(DesignAgentInterruptionNotice, { run, disabled, onTakeOver: () => undefined, onResume: () => undefined }));
+}
+
+describe("design agent interruption notice", () => {
+  it("places a definite moderation rejection beside a manual handoff instead of calling the result or bill uncertain", () => {
+    const run = interruptionRun({ canResume: true }); // The UI still refuses an unsafe recovery offered by a stale response.
+    const html = renderInterruption(run);
+    expect(html).toContain("图像模型安全审核拒绝");
+    expect(html).toContain("交美工接管本单");
+    expect(html).toContain('class="oc-button primary"');
+    expect(html).toContain("提供方返回 HTTP 400");
+    expect(html).toContain("synthetic-provider-request");
+    expect(html).not.toContain("恢复可重试步骤");
+    expect(html).not.toContain("结果或费用待核实");
+    expect(html).not.toContain("更换模型");
+    expect(designAgentBillingNotice(run.costStatus, run.steps)).toContain("实际账单尚未确认");
+  });
+
+  it("shows the persisted next retry time without claiming execution has started or offering a duplicate dispatch", () => {
+    const pending = interruptionRun().steps[0]!;
+    const html = renderInterruption(interruptionRun({ status: "queued", errorCode: "agent_provider_rate_limited",
+      nextRetryAt: "2026-11-04T00:01:00.000Z", steps: [{ ...pending, status: "pending", errorCode: "agent_provider_rate_limited",
+        providerFailure: { ...pending.providerFailure!, status: 429, kind: "rate_limit", code: "rate_limit_exceeded" } }] }));
+    expect(html).toContain("模型限流 等待自动重试");
+    expect(html).toContain("系统已安排延后重试");
+    expect(html).toContain("计划重试时间");
+    expect(html).toContain("实际开始以后台状态为准");
+    expect(html).toContain("提供方返回 HTTP 429");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("图像模型安全审核拒绝");
+  });
+
+  it("does not attribute a later quality failure to a completed step's historical rate limit", () => {
+    const previous = interruptionRun().steps[0]!;
+    const completed = { ...previous, status: "completed" as const, errorCode: null,
+      providerFailure: { ...previous.providerFailure!, status: 429, kind: "rate_limit" as const, code: "rate_limit_exceeded",
+        providerRequestId: "synthetic-previous-rate-limit" } };
+    for (const status of ["completed", "failed"] as const) {
+      const html = renderInterruption(interruptionRun({ errorCode: "agent_quality_failed", steps: [completed,
+        { ...previous, id: "019f0000-0000-7000-8000-000000000005", key: "preflight", label: "生产预检", status,
+          errorCode: "agent_quality_failed", providerFailure: null }],
+        qualityDiagnostics: [{ code: "synthetic-quality-failure", severity: "error", message: "Synthetic quality check requires correction" }] }));
+      expect(html).toContain("自动检查发现需要修正的问题");
+      expect(html).not.toContain("提供方返回 HTTP");
+      expect(html).not.toContain("synthetic-previous-rate-limit");
+    }
+  });
+
+  it("keeps authorization, invalid input and exhausted retries distinct and never promotes them to resumed production", () => {
+    for (const [errorCode, title] of [
+      ["agent_provider_authentication_failed", "模型渠道授权不可用"],
+      ["agent_provider_invalid_request", "模型未接受本次请求"],
+      ["agent_provider_retry_exhausted", "自动重试已用完"],
+      ["agent_provider_retry_deferred", "自动重试已暂缓"],
+    ]) {
+      const html = renderInterruption(interruptionRun({ errorCode, canResume: true }));
+      expect(html).toContain(title);
+      expect(html).toContain("交美工接管本单");
+      expect(html).not.toContain("恢复可重试步骤");
+      expect(html).not.toContain("已通过审核");
+    }
+    expect(renderInterruption(interruptionRun(), true)).toContain('disabled=""');
+    expect(renderInterruption(interruptionRun({ canTakeOver: false }))).not.toContain("<button");
+  });
+
+  it("preserves the historical unknown-result path without inventing a moderation reason or exposing arbitrary metadata", () => {
+    const html = renderInterruption(interruptionRun({ errorCode: "agent_model_submission_unknown", steps: [{
+      ...interruptionRun().steps[0]!, status: "uncertain", errorCode: "agent_model_submission_unknown", providerFailure: null,
+    }] }));
+    expect(html).toContain("原模型结果待核实");
+    expect(html).toContain("不会自动再次付费提交");
+    expect(html).not.toContain("提供方返回 HTTP");
+    expect(html).not.toContain("图像模型安全审核拒绝");
+    const malicious = interruptionRun();
+    malicious.steps[0]!.providerFailure!.providerRequestId = "Bearer synthetic-secret\nprivate buyer";
+    malicious.errorCode = "secret=synthetic-secret";
+    const redacted = renderInterruption(malicious);
+    expect(redacted).not.toContain("synthetic-secret");
+    expect(redacted).not.toContain("private buyer");
+  });
+
+  it("does not show stale failure details after cancellation, completion or private-evidence removal", () => {
+    for (const overrides of [
+      { status: "cancelled" as const }, { status: "awaiting_review" as const },
+      { status: "running" as const }, { status: "queued" as const, errorCode: null },
+      { privateEvidenceOmitted: true }, { privateEvidenceState: "expired" as const },
+    ]) {
+      const html = renderInterruption(interruptionRun(overrides));
+      expect(html).toContain('hidden=""');
+      expect(html).not.toContain("synthetic-provider-request");
+      expect(html).not.toContain("<button");
+    }
   });
 });
 

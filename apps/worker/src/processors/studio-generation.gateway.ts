@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { readResponsesPayload } from "@yummyai/ai-core";
+import { parseModelProviderHttpFailure, readResponsesPayload } from "@yummyai/ai-core";
 import type { StudioGenerate } from "@yummyai/contracts/pod/creative-studio";
 import type { PodInvocationReceipt } from "@yummyai/contracts/harness";
 import { podInvocationReceipt } from "./pod-invocation-receipt.js";
@@ -34,7 +34,7 @@ export class HttpStudioGateway implements StudioGateway {
         headers: { authorization: `Bearer ${execution.apiKey}`, ...(body && !multipart ? { "content-type": "application/json" } : {}) },
         body: multipart ? body : body ? JSON.stringify(body) : undefined,
       });
-      if (!response.ok) { await response.body?.cancel(); throw new Error(`studio_provider_http_${response.status}`); }
+      if (!response.ok) throw await parseModelProviderHttpFailure(response);
       return response;
     };
     let receipt = execution.originalReceipt ?? undefined;

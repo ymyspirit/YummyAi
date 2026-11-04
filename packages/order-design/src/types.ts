@@ -7,6 +7,7 @@ import type { CustomizationDefinition } from "@yummyai/contracts/catalog/product
 import type { OrderRequirementInterpretation } from "@yummyai/contracts/order/requirement-interpretation";
 import type { DesignAutomationPlan, DesignAutomationRecipe, DesignAutomationStep } from "@yummyai/contracts/pod/design-automation";
 import type { ModelTokenUsage } from "@yummyai/contracts/ai/model-usage";
+import { ModelProviderHttpFailureSchema, type ModelProviderHttpFailure } from "@yummyai/contracts/ai/provider-failure";
 
 export type OrderDesignAssetPin = {
   key:string; name:string; kind:"image"|"font"; origin:"editor"|"authorized"|"work"|"report";
@@ -73,6 +74,10 @@ export type OrderDesignStepCheckpoint = {
   responseReceipt?:OrderDesignResponseReceipt; responseCheckpoint?:OrderDesignResponseCheckpoint;
   responseProcessingAttempts?:number; localRecovery?:Array<{attempt:number;code:string}>;
   responseRecovery?:OrderDesignResponseRecoveryEvidence;
+  providerFailures?:Array<{attempt:number;failure:ModelProviderHttpFailure}>;
+  /** Trusted local failures before provider I/O; never inferred from a timeout. */
+  unsubmittedAttempts?:number[];
+  nextRetryAt?:string;
 };
 export class OrderDesignError extends Error {
   constructor(readonly code:string, readonly uncertain=false) {super(code);this.name="OrderDesignError";}
@@ -80,5 +85,14 @@ export class OrderDesignError extends Error {
 /** Only for failures proven to occur before any provider submission. */
 export class OrderDesignSubmissionNotSentError extends OrderDesignError {
   constructor(code:string){super(code);this.name="OrderDesignSubmissionNotSentError";}
+}
+/** A received HTTP error, not a generated image or a zero-cost invoice. */
+export class OrderDesignProviderRejectedError extends OrderDesignError {
+  readonly failure:ModelProviderHttpFailure;
+  constructor(failure:ModelProviderHttpFailure){
+    super("agent_provider_http_error");
+    this.name="OrderDesignProviderRejectedError";
+    this.failure=ModelProviderHttpFailureSchema.parse(failure);
+  }
 }
 export type DesignStepInput = DesignAutomationStep;

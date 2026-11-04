@@ -1574,6 +1574,40 @@
 .oc-design-agent { min-width: 0; }
 .oc-design-agent > .oc-actions { justify-content: space-between; }
 .oc-design-agent h3 { margin: 0; }
+.oc-agent-interruption {
+  margin-block: 12px;
+  padding: 12px 14px;
+  min-width: 0;
+  border: 1px solid var(--line, #dce1e7);
+  border-left: 3px solid var(--danger, #b53a38);
+  border-radius: 4px;
+  background: var(--surface, #fff);
+  overflow-wrap: anywhere;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 160ms ease, transform 160ms ease, display 160ms allow-discrete;
+}
+.oc-agent-interruption[hidden] { display: none; opacity: 0; transform: translateY(-3px); }
+.oc-agent-interruption.is-retry { border-left-color: var(--action, #2264d1); }
+.oc-agent-interruption-heading { display: flex; align-items: center; gap: 8px; text-wrap: balance; }
+.oc-agent-interruption-heading svg { flex-shrink: 0; }
+.oc-agent-interruption p { margin-block: 8px; text-wrap: pretty; }
+.oc-agent-interruption .oc-actions { margin-top: 12px; }
+.oc-agent-provider-reference { font-variant-numeric: tabular-nums; }
+.oc-agent-interruption .oc-button {
+  min-height: 40px;
+  max-width: 100%;
+  white-space: normal;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.oc-agent-interruption .oc-button:hover:not(:disabled) { transform: translateY(-1px); }
+.oc-agent-interruption .oc-button:active:not(:disabled) { transform: scale(.96); }
+@starting-style { .oc-agent-interruption:not([hidden]) { opacity: 0; transform: translateY(4px); } }
+@media (max-width: 767px) { .oc-agent-interruption .oc-button { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) {
+  .oc-agent-interruption, .oc-agent-interruption .oc-button { transition: none; }
+  .oc-agent-interruption .oc-button:is(:hover, :active):not(:disabled) { transform: none; }
+}
 .oc-agent-steps { margin: 12px 0; padding-left: 24px; }
 .oc-agent-steps li { padding: 8px 0; border-bottom: 1px solid var(--erp-border, #e2e5eb); overflow-wrap: anywhere; }
 .oc-agent-steps li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }

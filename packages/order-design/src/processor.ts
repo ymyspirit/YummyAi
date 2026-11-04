@@ -3,21 +3,22 @@ import { assessPaidRequestRecovery, type SecretVault } from "@yummyai/ai-core";
 import { createEntityId, ProductionEditorDocumentSchema, type TenantContext } from "@yummyai/contracts";
 import { DesignAutomationStepSchema } from "@yummyai/contracts/pod/design-automation";
 import { ModelTokenUsageSchema } from "@yummyai/contracts/ai/model-usage";
-import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderWorkItems as works, orderLines,orders,productionEditorProjects as projects,
+import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderWorkItems as works, orderLines,orders,productionEditorProjects as projects,
   productionEditorVersions as versions, productionEditorImages as images, productionEditorRenders as renders, aiBudgetLedger, aiBudgetPolicies,
   withTenant,type DatabaseConnection,type TenantTransaction } from "@yummyai/database";
-import { and,eq,inArray,gte,sql } from "drizzle-orm";
+import { and,eq,inArray,gte,isNull,sql } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { ClamAvScanner } from "@yummyai/storage";
 import { fingerprint,seal,open } from "./crypto.js";
 import { assertExecutionIdentity,assertRunSource,assertOrderDesignRunMethod,executionPermissions,lockWork,paidTool,type DesignRun,type DesignStep } from "./repository.js";
 import { orderDesignInputChecksum } from "./harness.js";
 import { sealOrderDesignCompletion } from "./completion.js";
-import {registerOrderModelSubmission,recordOrderModelResponse,readOrderModelCostProjection,orderModelBudgetAmount} from "./model-costs.js";
+import {registerOrderModelSubmission,recordOrderModelResponse,readOrderModelCostProjection,orderModelBudgetAmount,releaseUnsubmittedOrderModelReservations,settleOrderModelReservation} from "./model-costs.js";
 import {orderDesignModelCalls as modelCalls} from "@yummyai/database";
-import { OrderDesignError,OrderDesignSubmissionNotSentError,type DesignStepInput,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignSnapshot,
+import { OrderDesignError,OrderDesignSubmissionNotSentError,OrderDesignProviderRejectedError,type DesignStepInput,type OrderDesignImageGateway,type OrderDesignSuperResolutionGateway,type OrderDesignSnapshot,
   type OrderDesignStepCheckpoint,type OrderDesignModelResponseReceipt,type OrderDesignResponseReceipt,type OrderDesignResponseCheckpoint } from "./types.js";
 import { OrderDesignExecutor, type StepResult } from "./executor.js";
+import { canRetryRateLimitedStep, orderProviderFailureCode, orderProviderRetryDelay } from "./provider-failure.js";
 
 export class OrderDesignProcessor {
   private readonly executor:OrderDesignExecutor;
@@ -41,6 +42,14 @@ export class OrderDesignProcessor {
         const snapshot=open<OrderDesignSnapshot>(key,run.encryptedSnapshot);
         if(orderDesignInputChecksum(snapshot,run.methodSnapshot)!==run.inputChecksum || snapshot.plan.status!=="ready") throw new OrderDesignError("agent_snapshot_invalid");
         try{await assertOrderDesignRunMethod(tx,context,run,key);}catch(error){await tx.update(runs).set({status:"needs_attention",errorCode:safeCode(error),processingToken:null,leaseUntil:null,updatedAt:new Date()}).where(eq(runs.id,run.id));return null;}
+        // Redis may redeliver an older job while a durable retry is still delayed.
+        if(run.errorCode==="agent_provider_rate_limited") {
+          const [waiting]=await tx.select().from(steps).where(and(eq(steps.runId,run.id),eq(steps.status,"pending"))).orderBy(steps.position).limit(1);
+          const checkpoint=waiting?.encryptedOutput?open<OrderDesignStepCheckpoint>(key,waiting.encryptedOutput):{};
+          if(!waiting || !canRetryRateLimitedStep(checkpoint,waiting.attempt))throw new OrderDesignError("agent_provider_retry_evidence_invalid");
+          const [due]=await tx.select({ready:sql<boolean>`clock_timestamp() >= ${checkpoint.nextRetryAt!}::timestamptz`}).from(runs).where(eq(runs.id,run.id));
+          if(!due?.ready)return null;
+        }
         const interrupted=await tx.select().from(steps).where(and(eq(steps.runId,run.id),eq(steps.status,"running")));
         for(const step of interrupted) {
           const task=DesignAutomationStepSchema.parse(open(key,step.encryptedInput));
@@ -53,8 +62,10 @@ export class OrderDesignProcessor {
             await tx.update(runs).set({status:"needs_attention",processingToken:null,leaseUntil:null,...costEvidence,errorCode:code,updatedAt:new Date()}).where(eq(runs.id,run.id));
             return null;
           }
-          if(paidTool(task.tool) && recovery.reservation==="release") await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));
-          await tx.update(steps).set({status:"pending",updatedAt:new Date()}).where(eq(steps.id,step.id));
+          if(paidTool(task.tool) && recovery.reservation==="release") await releaseUnsubmittedOrderModelReservations(tx,step.requestId);
+          const output=paidTool(task.tool)&&recovery.action==="submit"&&checkpoint.submissionState==="not_submitted"
+            ?{...checkpoint,unsubmittedAttempts:[...new Set([...(checkpoint.unsubmittedAttempts??[]),step.attempt])]}:checkpoint;
+          await tx.update(steps).set({status:"pending",...(output!==checkpoint?{encryptedOutput:seal(key,output)}:{}),updatedAt:new Date()}).where(eq(steps.id,step.id));
         }
         let projectId=run.projectId,versionId=run.currentEditorVersionId;
         if(snapshot.revisionRequest&&(!projectId||!versionId||projectId!==snapshot.revisionRequest.baseProjectId))throw new OrderDesignError("agent_revision_changed");
@@ -108,8 +119,39 @@ export class OrderDesignProcessor {
             const key=work[0]?.encryptedDataKey?this.workKey(work[0].encryptedDataKey):null;
             let checkpoint:OrderDesignStepCheckpoint={};
             try {
-              const prior=key && currentStep?.encryptedOutput?open<OrderDesignStepCheckpoint>(key,currentStep.encryptedOutput):{};
-              checkpoint={...prior,...(originalCall?{submissionState:originalCall.receivedAt?"received" as const:"submitted" as const}:!key&&paidTool(active.input.tool)?{submissionState:"submitted" as const}:{})};
+              let prior=key && currentStep?.encryptedOutput?open<OrderDesignStepCheckpoint>(key,currentStep.encryptedOutput):{};
+              if(error instanceof OrderDesignSubmissionNotSentError && key && currentStep && !originalCall?.receivedAt && !prior.responseReceipt && !prior.responseCheckpoint) {
+                prior={...prior,submissionState:"not_submitted",unsubmittedAttempts:[...new Set([...(prior.unsubmittedAttempts??[]),currentStep.attempt])]};
+                await tx.update(steps).set({encryptedOutput:seal(key,prior),updatedAt:new Date()}).where(eq(steps.id,currentStep.id));
+              }
+              checkpoint={...prior,...(originalCall&&!(error instanceof OrderDesignSubmissionNotSentError)?{submissionState:originalCall.receivedAt?"received" as const:"submitted" as const}:!key&&paidTool(active.input.tool)?{submissionState:"submitted" as const}:{})};
+              if(error instanceof OrderDesignProviderRejectedError && paidTool(active.input.tool) && key && currentStep && originalCall
+                && !prior.responseReceipt && !prior.responseCheckpoint && !originalCall.receivedAt) {
+                const failure=error.failure;
+                const providerFailures=[...(prior.providerFailures??[]),{attempt:currentStep.attempt,failure}];
+                const delay=orderProviderRetryDelay(failure,providerFailures.length);
+                // This is an HTTP error receipt, never a generated image or a zero bill.
+                await tx.update(modelCalls).set({receivedAt:new Date(failure.receivedAt),costReportState:"unknown"})
+                  .where(and(eq(modelCalls.stepId,currentStep.id),eq(modelCalls.claimToken,token)));
+                const costEvidence=await readPaidCostEvidence(tx,run.id,claimed.snapshot.plan.plannedModelCalls);
+                if(delay!==null && !controller.signal.aborted) {
+                  const [event]=await tx.insert(outbox).values({id:createEntityId(),tenantId:context.tenantId,runId:run.id,requestedBy:run.requestedBy,
+                    nextAttemptAt:sql`clock_timestamp() + (${delay} * interval '1 millisecond')`}).returning({nextAttemptAt:outbox.nextAttemptAt});
+                  const nextRetryAt=event!.nextAttemptAt.toISOString();
+                  // An earlier undispatched event cannot bypass this rejection's backoff.
+                  await tx.update(outbox).set({nextAttemptAt:event!.nextAttemptAt}).where(and(eq(outbox.runId,run.id),isNull(outbox.dispatchedAt)));
+                  await tx.update(steps).set({status:"pending",errorCode:"agent_provider_rate_limited",
+                    encryptedOutput:seal(key,{...prior,submissionState:"received",providerFailures,nextRetryAt}),updatedAt:new Date()}).where(eq(steps.id,currentStep.id));
+                  await tx.update(runs).set({status:"queued",revision:run.revision+1,errorCode:"agent_provider_rate_limited",processingToken:null,leaseUntil:null,...costEvidence,updatedAt:new Date()}).where(eq(runs.id,run.id));
+                  return false;
+                }
+                const uncertain=["unavailable","unknown"].includes(failure.kind);
+                const code=failure.kind==="rate_limit"?(providerFailures.length>=3?"agent_provider_retry_exhausted":"agent_provider_retry_deferred"):orderProviderFailureCode(failure);
+                await tx.update(steps).set({status:uncertain?"uncertain":"failed",errorCode:code,
+                  encryptedOutput:seal(key,{...prior,submissionState:"received",providerFailures}),updatedAt:new Date()}).where(eq(steps.id,currentStep.id));
+                await tx.update(runs).set({status:"needs_attention",errorCode:code,processingToken:null,leaseUntil:null,...costEvidence,updatedAt:new Date()}).where(eq(runs.id,run.id));
+                return false;
+              }
               const recoverable=active.input.tool==="ensure_resolution" && error instanceof OrderDesignError && ["agent_upscale_timeout","agent_upscale_process_failed","agent_upscale_busy"].includes(error.code);
               const responseRecoverable=!!prior.responseCheckpoint && error instanceof OrderDesignError &&
                 ["agent_scan_unavailable","agent_asset_storage_unavailable","agent_asset_preview_failed"].includes(error.code);
@@ -130,7 +172,8 @@ export class OrderDesignProcessor {
             const exhausted=hasResponse?(checkpoint.responseProcessingAttempts??1)>=3:!paidTool(active.input.tool) && (currentStep?.attempt??0)>=3;
             const code=responseCaptureStopped?safeCode(error):uncertain?`agent_model_${recovery.reason}`:exhausted?"agent_retry_exhausted":
               hasResponse?(error instanceof OrderDesignError?safeCode(error):"agent_model_response_processing_failed"):safeCode(error);
-            if(paidTool(active.input.tool) && !responseCaptureStopped&&recovery.reservation==="release")await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,active.step.requestId),eq(aiBudgetLedger.state,"reserved")));
+            if(paidTool(active.input.tool) && !responseCaptureStopped&&recovery.reservation==="release")await releaseUnsubmittedOrderModelReservations(tx,active.step.requestId,
+              error instanceof OrderDesignSubmissionNotSentError?{stepId:active.step.id,claimToken:token}:undefined);
             await tx.update(steps).set({status:uncertain?"uncertain":"failed",errorCode:code,updatedAt:new Date()}).where(eq(steps.id,active.step.id));
             const costEvidence=paidTool(active.input.tool) && (uncertain || hasResponse||responseCaptureStopped)?await readPaidCostEvidence(tx,run.id,claimed.snapshot.plan.plannedModelCalls):{};
             await tx.update(runs).set({status:"needs_attention",errorCode:code,processingToken:null,leaseUntil:null,...costEvidence,updatedAt:new Date()}).where(eq(runs.id,run.id));
@@ -177,12 +220,13 @@ export class OrderDesignProcessor {
           return null;
         }
         if(paidTool(input.tool) && !responseCheckpoint) {
-          try {await reserveModelBudget(tx,context,run,step,open<OrderDesignSnapshot>(key,run.encryptedSnapshot));}
+          try {await reserveModelBudget(tx,context,run,step,open<OrderDesignSnapshot>(key,run.encryptedSnapshot),checkpoint);}
           catch(error){const uncertain=error instanceof OrderDesignError && error.uncertain;await tx.update(steps).set({status:uncertain?"uncertain":"failed",errorCode:safeCode(error),updatedAt:new Date()}).where(eq(steps.id,step.id));await tx.update(runs).set({status:"needs_attention",errorCode:safeCode(error),processingToken:null,leaseUntil:null,...(uncertain?{costStatus:"unknown",actualCostUsd:null}:{}),updatedAt:new Date()}).where(eq(runs.id,run.id));return null;}
         }
         const priorLocal=input.tool==="ensure_resolution"?checkpoint.localRecovery:undefined;
         const output=responseCheckpoint?{...checkpoint,responseProcessingAttempts:(checkpoint.responseProcessingAttempts??1)+1}:
-          {submissionState:"not_submitted",...(priorLocal?{localRecovery:priorLocal}:{})};
+          {submissionState:"not_submitted",...(checkpoint.providerFailures?{providerFailures:checkpoint.providerFailures}:{}),
+            ...(checkpoint.unsubmittedAttempts?{unsubmittedAttempts:checkpoint.unsubmittedAttempts}:{}),...(checkpoint.nextRetryAt?{nextRetryAt:checkpoint.nextRetryAt}:{}),...(priorLocal?{localRecovery:priorLocal}:{})};
         await tx.update(steps).set({status:"running",attempt:step.attempt+1,startedAt:new Date(),errorCode:null,encryptedOutput:seal(key,output),updatedAt:new Date()}).where(eq(steps.id,step.id));
         return {run,step,input,responseCheckpoint,responseRecovery:checkpoint.responseRecovery};
       } finally {key.fill(0);}
@@ -205,7 +249,12 @@ export class OrderDesignProcessor {
       const [current]=await tx.select().from(runs).where(and(eq(runs.id,run.id),eq(runs.processingToken,token),eq(runs.status,"running"))).for("update");
       if(!current)throw new OrderDesignSubmissionNotSentError("agent_claim_lost");
       const work=await assertRunSource(tx,current);await assertExecutionIdentity(tx,context);
-      const key=this.workKey(work.encryptedDataKey!);try{await assertOrderDesignRunMethod(tx,context,current,key);await registerOrderModelSubmission(tx,context,current,step,token);await tx.update(steps).set({encryptedOutput:seal(key,{submissionState:"submitted"}),updatedAt:new Date()}).where(eq(steps.id,step.id));}finally{key.fill(0);}
+      const key=this.workKey(work.encryptedDataKey!);try{
+        await assertOrderDesignRunMethod(tx,context,current,key);await registerOrderModelSubmission(tx,context,current,step,token);
+        const [active]=await tx.select({encryptedOutput:steps.encryptedOutput}).from(steps).where(eq(steps.id,step.id));
+        const checkpoint=active?.encryptedOutput?open<OrderDesignStepCheckpoint>(key,active.encryptedOutput):{};
+        await tx.update(steps).set({encryptedOutput:seal(key,{...checkpoint,submissionState:"submitted"}),updatedAt:new Date()}).where(eq(steps.id,step.id));
+      }finally{key.fill(0);}
     });
   }
   private async recordProviderResponse(context:TenantContext,run:DesignRun,step:DesignStep,token:string,receipt:OrderDesignModelResponseReceipt) {
@@ -236,7 +285,7 @@ export class OrderDesignProcessor {
         await tx.update(steps).set({encryptedOutput:seal(key,updated),updatedAt:new Date()}).where(eq(steps.id,step.id));
         if(receipt.actualCostUsd!==undefined) {
           await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);
-          await tx.update(aiBudgetLedger).set({state:"committed",amountUsd:String(receipt.actualCostUsd)}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));
+          await settleOrderModelReservation(tx,step,token,receipt.actualCostUsd);
         }
         const snapshot=open<OrderDesignSnapshot>(key,current.encryptedSnapshot);
         const costEvidence=await readPaidCostEvidence(tx,run.id,snapshot.plan.plannedModelCalls);
@@ -264,10 +313,12 @@ export class OrderDesignProcessor {
           await tx.update(projects).set({currentVersionId:versionId,versionNumber:project.versionNumber+1,reviewedVersionId:null,reviewedBy:null,reviewedAt:null,updatedAt:new Date()}).where(eq(projects.id,project.id));
         }
         if(result.proof) await tx.insert(renders).values({id:step.requestId,tenantId:context.tenantId,projectId:project.id,versionId:versionId!,status:"completed",requestedBy:context.userId,encryptedOptions:seal(projectKey,{format:result.proofFormat??"png",background:result.proofBackground??"transparent",purpose:"preview",previewFullResolution:true}),encryptedManifest:seal(projectKey,result.proof)});
-        if(paidTool(input.tool) && result.actualCostUsd!==undefined) {await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);await tx.update(aiBudgetLedger).set({state:"committed",amountUsd:String(result.actualCostUsd)}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));}
+        if(paidTool(input.tool) && result.actualCostUsd!==undefined) {await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);await settleOrderModelReservation(tx,step,token,result.actualCostUsd);}
         const [latestStep]=await tx.select({encryptedOutput:steps.encryptedOutput}).from(steps).where(eq(steps.id,step.id));
         const latest=latestStep?.encryptedOutput?open<OrderDesignStepCheckpoint>(workKey,latestStep.encryptedOutput):{};
         const output={...(result.output as Record<string,unknown>??{}),...(latest.localRecovery?{localRecovery:latest.localRecovery}:{}),
+          ...(latest.providerFailures?{providerFailures:latest.providerFailures}:{}),
+          ...(latest.unsubmittedAttempts?{unsubmittedAttempts:latest.unsubmittedAttempts}:{}),
           ...(latest.responseRecovery?{responseRecovery:latest.responseRecovery}:{}),
           ...(latest.responseReceipt?{responseReceipt:latest.responseReceipt}:{}),...(latest.responseCheckpoint?{responseCheckpoint:latest.responseCheckpoint,responseProcessingAttempts:latest.responseProcessingAttempts}:{})};
         await tx.update(steps).set({status:"completed",encryptedOutput:seal(workKey,output),outputAssetId:result.outputAssetId??null,outputVersionId:versionId,completedAt:new Date(),updatedAt:new Date()}).where(eq(steps.id,step.id));
@@ -285,12 +336,18 @@ export class OrderDesignProcessor {
   private workKey(encrypted:string) {return this.vault.withSecret(encrypted,value=>Buffer.from(value,"base64"));}
 }
 
-async function reserveModelBudget(tx:TenantTransaction,context:TenantContext,run:DesignRun,step:DesignStep,snapshot:OrderDesignSnapshot) {
+async function reserveModelBudget(tx:TenantTransaction,context:TenantContext,run:DesignRun,step:DesignStep,snapshot:OrderDesignSnapshot,checkpoint:OrderDesignStepCheckpoint) {
   const unlimited=snapshot.recipe.costPolicy==="unlimited";
   if(!snapshot.plan.budget.allowed || !snapshot.model || !snapshot.recipe.allowOrderImageTransfer || (!unlimited&&snapshot.plan.budget.estimatedCostPerCallUsd===null)) throw new OrderDesignError("agent_model_budget_unavailable");
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);
   const [previous]=await tx.select().from(aiBudgetLedger).where(and(eq(aiBudgetLedger.requestId,step.requestId),inArray(aiBudgetLedger.state,["reserved","committed"]))).limit(1);
-  if(previous) throw new OrderDesignError("agent_model_submission_unknown",true);
+  if(previous) {
+    const calls=await tx.select({attempt:modelCalls.attempt,receivedAt:modelCalls.receivedAt,budgetState:aiBudgetLedger.state}).from(modelCalls)
+      .innerJoin(aiBudgetLedger,eq(aiBudgetLedger.id,modelCalls.budgetLedgerId)).where(eq(modelCalls.stepId,step.id));
+    if(!canRetryRateLimitedStep(checkpoint,step.attempt) || calls.filter(call=>!!call.receivedAt).length!==checkpoint.providerFailures?.length
+      || calls.some(call=>call.receivedAt?!checkpoint.providerFailures?.some(entry=>entry.attempt===call.attempt):!(call.budgetState==="released"&&checkpoint.unsubmittedAttempts?.includes(call.attempt))))
+      throw new OrderDesignError("agent_model_submission_unknown",true);
+  }
   const [policy]=await tx.select().from(aiBudgetPolicies);
   const unit=snapshot.plan.budget.estimatedCostPerCallUsd;
   // A zero reservation for an explicitly unpriced unlimited call is not a zero bill.

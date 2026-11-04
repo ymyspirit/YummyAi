@@ -1,4 +1,5 @@
 export * from "./budget.js";
+export * from "./provider-http-failure.js";
 export {
   assessPaidRequestRecovery,
   type PaidRequestRecovery,

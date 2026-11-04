@@ -1,4 +1,4 @@
-import {and,eq,inArray,sql} from "drizzle-orm";
+import {and,eq,inArray,isNull,notExists,or,sql} from "drizzle-orm";
 import {createEntityId,type TenantContext} from "@yummyai/contracts";
 import {aiBudgetLedger,orderDesignAgentRuns as runs,orderDesignAgentSteps as steps,orderDesignModelCalls as calls,withTenant,type DatabaseConnection,type TenantTransaction} from "@yummyai/database";
 import {lockWork,type DesignRun,type DesignStep} from "./repository.js";
@@ -25,16 +25,38 @@ export function orderModelBudgetAmount(value:number|string):string{
 }
 async function budgetLock(tx:TenantTransaction,context:TenantContext){await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:ai-assist-budget`},0))`);}
 
+/** A rejected/uncertain old attempt retains its reservation. Only a reservation
+ * with no recorded submission can be released by cancellation or local retry. */
+export async function releaseUnsubmittedOrderModelReservations(tx:TenantTransaction,requestId:string,provenNotSent?:{stepId:string;claimToken:string}){
+ const [call]=provenNotSent?await tx.select({budgetId:calls.budgetLedgerId}).from(calls).where(and(eq(calls.stepId,provenNotSent.stepId),eq(calls.claimToken,provenNotSent.claimToken),isNull(calls.receivedAt))):[];
+ await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,requestId),eq(aiBudgetLedger.state,"reserved"),
+  or(notExists(tx.select({id:calls.id}).from(calls).where(eq(calls.budgetLedgerId,aiBudgetLedger.id))),call?eq(aiBudgetLedger.id,call.budgetId):undefined)));
+}
+
+/** Settle only the original call bound to this claim. Older rate-limit receipts
+ * must never inherit a later attempt's reported charge. Legacy unregistered
+ * checkpoints keep their pre-ledger behavior only when there are no call rows. */
+export async function settleOrderModelReservation(tx:TenantTransaction,step:DesignStep,token:string,actualCostUsd:number){
+ const [call]=await tx.select({budgetId:calls.budgetLedgerId}).from(calls).where(and(eq(calls.stepId,step.id),eq(calls.claimToken,token)));
+ await tx.update(aiBudgetLedger).set({state:"committed",amountUsd:String(actualCostUsd)}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved"),
+  call?eq(aiBudgetLedger.id,call.budgetId):notExists(tx.select({id:calls.id}).from(calls).where(eq(calls.stepId,step.id)))));
+}
+
 /** Called in the original guarded submission transaction, before provider I/O. */
 export async function registerOrderModelSubmission(tx:TenantTransaction,context:TenantContext,run:DesignRun,step:DesignStep,token:string){
  await budgetLock(tx,context);
  const [active]=await tx.select({attempt:steps.attempt}).from(steps).where(and(eq(steps.id,step.id),eq(steps.status,"running"),eq(steps.requestId,step.requestId)));
  if(!active)throw new OrderDesignSubmissionNotSentError("agent_model_call_identity_invalid");
- const budgets=await tx.select().from(aiBudgetLedger).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.taskType,"order_design"),eq(aiBudgetLedger.state,"reserved")));
+ const [existing]=await tx.select().from(calls).where(and(eq(calls.stepId,step.id),eq(calls.attempt,active.attempt)));
+ if(existing){if(existing.runId!==run.id||existing.requestId!==step.requestId||existing.claimToken!==token)throw new OrderDesignSubmissionNotSentError("agent_model_call_identity_invalid");return;}
+ // Older rejected calls retain their reservations and unknown fees. Each new
+ // attempt must bind its own unused reservation, never overwrite the old call.
+ const budgets=await tx.select({budget:aiBudgetLedger}).from(aiBudgetLedger).leftJoin(calls,eq(calls.budgetLedgerId,aiBudgetLedger.id))
+  .where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.taskType,"order_design"),eq(aiBudgetLedger.state,"reserved"),isNull(calls.id)));
  if(budgets.length!==1)throw new OrderDesignSubmissionNotSentError("agent_model_budget_unavailable");
- await tx.insert(calls).values({id:createEntityId(),tenantId:context.tenantId,runId:run.id,stepId:step.id,requestId:step.requestId,attempt:active.attempt,claimToken:token,budgetLedgerId:budgets[0]!.id,requestedBy:context.userId}).onConflictDoNothing({target:[calls.tenantId,calls.stepId,calls.attempt]});
+ await tx.insert(calls).values({id:createEntityId(),tenantId:context.tenantId,runId:run.id,stepId:step.id,requestId:step.requestId,attempt:active.attempt,claimToken:token,budgetLedgerId:budgets[0]!.budget.id,requestedBy:context.userId}).onConflictDoNothing({target:[calls.tenantId,calls.stepId,calls.attempt]});
  const [original]=await tx.select().from(calls).where(and(eq(calls.stepId,step.id),eq(calls.attempt,active.attempt)));
- if(!original||original.runId!==run.id||original.requestId!==step.requestId||original.claimToken!==token||original.budgetLedgerId!==budgets[0]!.id)throw new OrderDesignSubmissionNotSentError("agent_model_call_identity_invalid");
+ if(!original||original.runId!==run.id||original.requestId!==step.requestId||original.claimToken!==token||original.budgetLedgerId!==budgets[0]!.budget.id)throw new OrderDesignSubmissionNotSentError("agent_model_call_identity_invalid");
 }
 
 /** Minimal billing capture is independent of private keys and current output-adoption authority. */

@@ -22,6 +22,8 @@ import { productionEditorImages as editorImages,productionOrders,orderWorkEvents
 import { ProductionEditorDocumentSchema } from "@yummyai/contracts";
 import type {OrderDesignRevisionProofLocator,OrderDesignRevisionSource} from "./types.js";
 import type {StepResult} from "./executor.js";
+import { ModelProviderHttpFailureSchema, type ModelProviderHttpFailure } from "@yummyai/contracts/ai/provider-failure";
+import { releaseUnsubmittedOrderModelReservations } from "./model-costs.js";
 
 export type DesignRun=typeof runs.$inferSelect;
 export type DesignStep=typeof steps.$inferSelect;
@@ -224,7 +226,7 @@ export async function takeOverOrderDesignRun(tx:TenantTransaction,context:Tenant
       const uncertain=(!input || paidTool(input.tool)) && recovery.action==="reconcile";
       await tx.update(steps).set({status:uncertain?"uncertain":"skipped",errorCode:uncertain?`agent_model_${recovery.reason}`:"agent_manual_takeover",updatedAt:new Date()}).where(eq(steps.id,step.id));
       if(uncertain && !output.responseReceipt)await tx.update(runs).set({costStatus:"unknown",actualCostUsd:null}).where(eq(runs.id,run.id));
-      else if(input && paidTool(input.tool) && recovery.reservation==="release")await tx.update(aiBudgetLedger).set({state:"released"}).where(and(eq(aiBudgetLedger.requestId,step.requestId),eq(aiBudgetLedger.state,"reserved")));
+      else if(input && paidTool(input.tool) && recovery.reservation==="release")await releaseUnsubmittedOrderModelReservations(tx,step.requestId);
     }
   } finally {key?.fill(0);}
   await tx.update(runs).set({status:"cancelled",revision:current.revision+1,processingToken:null,leaseUntil:null,errorCode:"agent_manual_takeover",updatedAt:new Date()}).where(eq(runs.id,run.id));
@@ -272,6 +274,8 @@ export class OrderDesignRepository {
       let recoveryTarget=null;
       let recoveryBlockedCode:string|null=null;
       const responseRecoveries=new Map<string,OrderDesignResponseRecoveryEvidence>();
+      const providerFailures=new Map<string,ModelProviderHttpFailure>();
+      let nextRetryAt:string|null=null;
       const contourEvidence=new Map<string,PillowContourEvidence>();
       let completion=null;
       let revisionFeedback=null;
@@ -304,8 +308,11 @@ export class OrderDesignRepository {
           ruleSnapshot=snapshot.ruleSnapshot?OrderRuleSnapshotSchema.parse(snapshot.ruleSnapshot):null;
           for(const step of rows) {
             if(!step.encryptedOutput)continue;
-            const output=open<{responseRecovery?:unknown}>(key,step.encryptedOutput);
+            const output=open<OrderDesignStepCheckpoint>(key,step.encryptedOutput);
             if(output.responseRecovery)responseRecoveries.set(step.id,OrderDesignResponseRecoveryEvidenceSchema.parse(output.responseRecovery));
+            const lastFailure=output.providerFailures?.at(-1);
+            if(lastFailure)providerFailures.set(step.id,ModelProviderHttpFailureSchema.parse(lastFailure.failure));
+            if(run.status==="queued"&&run.errorCode==="agent_provider_rate_limited"&&step.status==="pending"&&output.nextRetryAt)nextRetryAt=output.nextRetryAt;
           }
           if(run.status==="needs_attention" && rows.some(step=>step.status==="uncertain")) {
             try {recoveryTarget=(await responseRecoveryTarget(tx,context,run,rows,key)).target;}
@@ -327,9 +334,10 @@ export class OrderDesignRepository {
         usageSummary:summarizeModelUsage(usageRows.filter(call=>call.runId===run.id).map(call=>call.tokenUsage),"order_design_run"),
         modelCalls:callRows.slice(0,1000).map(call=>({...call,submittedAt:call.submittedAt.toISOString(),receivedAt:call.receivedAt?.toISOString()??null})),modelCallsTruncated:callRows.length>1000,
         responseRecoveryTarget:exposePrivate?recoveryTarget:null,responseRecoveryBlockedCode:exposePrivate?recoveryBlockedCode:null,qualityDiagnostics:exposePrivate?run.qualityDiagnostics:[],
+        nextRetryAt:exposePrivate?nextRetryAt:null,
         estimatedCostUsd:run.estimatedCostUsd===null?null:Number(run.estimatedCostUsd),actualCostUsd:run.actualCostUsd===null?null:Number(run.actualCostUsd),
         canResume:!!exposePrivate&&canResumeDesignRun(run,rows),
-        canTakeOver:!!exposePrivate&&run.status!=="cancelled",steps:exposePrivate?rows.map(step=>({...step,responseRecovery:responseRecoveries.get(step.id)??null,contourEvidence:contourEvidence.get(step.id)??null,startedAt:step.startedAt?.toISOString()??null,completedAt:step.completedAt?.toISOString()??null})):[]}});
+        canTakeOver:!!exposePrivate&&run.status!=="cancelled",steps:exposePrivate?rows.map(step=>({...step,providerFailure:providerFailures.get(step.id)??null,responseRecovery:responseRecoveries.get(step.id)??null,contourEvidence:contourEvidence.get(step.id)??null,startedAt:step.startedAt?.toISOString()??null,completedAt:step.completedAt?.toISOString()??null})):[]}});
     });
   }
   async command(context:TenantContext,workItemId:string,action:"resume"|"takeover",raw:unknown) {
@@ -393,6 +401,7 @@ export async function dispatchOrderDesignOutbox(database:DatabaseConnection,disp
 }
 function canResumeDesignRun(run:Pick<DesignRun,"status"|"errorCode">,rows:Pick<DesignStep,"status"|"errorCode">[]){
   const retryable=rows.some(step=>step.status==="failed") || run.errorCode==="agent_method_unavailable"&&rows.some(step=>step.status==="pending");
-  return run.status==="needs_attention"&&retryable&&!rows.some(step=>step.status==="uncertain"||["agent_retry_exhausted","agent_model_response_checkpoint_invalid","agent_scan_rejected","agent_model_cost_report_invalid","agent_model_cost_conflict","agent_model_original_budget_exceeded"].includes(step.errorCode??""));
+  return run.status==="needs_attention"&&retryable&&!rows.some(step=>step.status==="uncertain"||["agent_retry_exhausted","agent_model_response_checkpoint_invalid","agent_scan_rejected","agent_model_cost_report_invalid","agent_model_cost_conflict","agent_model_original_budget_exceeded",
+    "agent_provider_moderation_blocked","agent_provider_authentication_failed","agent_provider_invalid_request","agent_provider_retry_exhausted","agent_provider_retry_deferred"].includes(step.errorCode??""));
 }
 function stepLabel(tool:string) {return ({validate_inputs:"核验并准备素材",compose_template:"模板排版",enhance_image:"顾客图片保真美化",cutout_subject:"主体抠图",measure_subject:"测量可见主体",ensure_resolution:"检查并补强实际分辨率",optimize_contour:"制作裁切轮廓",preflight:"质量检查",render_proof:"生成校样",review_required:"等待人工审核"} as Record<string,string>)[tool]??tool;}

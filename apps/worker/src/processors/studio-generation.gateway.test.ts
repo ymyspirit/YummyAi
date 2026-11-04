@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createEntityId } from "@yummyai/contracts";
+import { ModelProviderHttpError } from "@yummyai/ai-core";
 import { StudioGenerateSchema } from "@yummyai/contracts/pod/creative-studio";
 import { HttpStudioGateway, boundedBody, studioEndpoint, type StudioExecution } from "./studio-generation.gateway.js";
 const request = (): StudioExecution => ({ endpoint: "https://example.test/v1", apiKey: "synthetic", model: "gpt-image-fixture", capability: "image", references: [], providerTaskId: null, input: StudioGenerateSchema.parse({ requestId: createEntityId(), modelId: createEntityId(), prompt: "Synthetic square" }) });
@@ -48,6 +49,54 @@ describe("studio HTTP gateway", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response("synthetic-private-provider-body", { status: 401 }));
     await expect(new HttpStudioGateway(fetch).generate(request(), vi.fn())).rejects.toThrow("studio_provider_http_401");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("retains a moderation rejection and its safe request ID without exposing private error content", async () => {
+    const transport = vi.fn<typeof globalThis.fetch>(async () => Response.json({ error: {
+      type: "image_generation_user_error", code: "moderation_blocked",
+      message: "synthetic-private-prompt-and-image", debug: { authorization: "synthetic-private-key" },
+    } }, { status: 400, headers: { "x-request-id": "request-moderation-fixture", "set-cookie": "synthetic-private-cookie" } }));
+    const remember = vi.fn(), onReceipt = vi.fn();
+    const error = await new HttpStudioGateway(transport).generate(request(), remember, onReceipt).catch(cause => cause);
+    expect(error).toBeInstanceOf(ModelProviderHttpError);
+    expect(error.failure).toMatchObject({ version: 1, status: 400, kind: "moderation", code: "moderation_blocked",
+      providerRequestId: "request-moderation-fixture", retryAfterMs: null });
+    expect(Number.isFinite(Date.parse(error.failure.receivedAt))).toBe(true);
+    expect(error.message).toBe("studio_provider_http_400");
+    expect(JSON.stringify(error)).not.toMatch(/synthetic-private|authorization|set-cookie|debug/);
+    expect(onReceipt).not.toHaveBeenCalled();
+    expect(remember).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("preserves an explicit rate-limit response and Retry-After for durable recovery without retrying here", async () => {
+    const transport = vi.fn<typeof globalThis.fetch>(async () => Response.json({ error: {
+      type: "rate_limit_error", code: "rate_limit_exceeded", message: "synthetic-private-limit-details",
+    } }, { status: 429, headers: { "retry-after": "2", "x-request-id": "request-rate-limit-fixture" } }));
+    const onReceipt = vi.fn();
+    const error = await new HttpStudioGateway(transport).generate(request(), vi.fn(), onReceipt).catch(cause => cause);
+    expect(error).toBeInstanceOf(ModelProviderHttpError);
+    expect(error.failure).toMatchObject({ status: 429, kind: "rate_limit", code: "rate_limit_exceeded",
+      providerRequestId: "request-rate-limit-fixture", retryAfterMs: 2000 });
+    expect(error.failure).not.toHaveProperty("actualCostUsd");
+    expect(error.failure).not.toHaveProperty("tokenUsage");
+    expect(JSON.stringify(error)).not.toContain("synthetic-private");
+    expect(onReceipt).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("does not turn a provider server error or a transport timeout into a second paid image request", async () => {
+    const server = vi.fn<typeof globalThis.fetch>(async () => Response.json({ error: {
+      type: "server_error", code: "internal_error", message: "synthetic-private-server-details",
+    } }, { status: 500 }));
+    const onReceipt = vi.fn();
+    const error = await new HttpStudioGateway(server).generate(request(), vi.fn(), onReceipt).catch(cause => cause);
+    expect(error).toBeInstanceOf(ModelProviderHttpError);
+    expect(error.failure).toMatchObject({ status: 500, kind: "unavailable" });
+    expect(JSON.stringify(error)).not.toContain("synthetic-private");
+    const timeout = new DOMException("Synthetic timeout", "TimeoutError");
+    const disconnected = vi.fn<typeof globalThis.fetch>(async () => { throw timeout; });
+    await expect(new HttpStudioGateway(disconnected).generate(request(), vi.fn(), onReceipt)).rejects.toBe(timeout);
+    expect(server).toHaveBeenCalledTimes(1);
+    expect(disconnected).toHaveBeenCalledTimes(1);
+    expect(onReceipt).not.toHaveBeenCalled();
   });
   it("rejects unsafe endpoints and oversize response streams", async () => {
     for (const endpoint of ["http://example.test", "https://user:pass@example.test", "https://example.test?token=fixture", "file:///tmp/test"]) expect(() => studioEndpoint(endpoint)).toThrow();

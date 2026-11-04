@@ -1,8 +1,8 @@
-import type { SecretVault } from "@yummyai/ai-core";
+import { ModelProviderHttpError, type SecretVault } from "@yummyai/ai-core";
 import { createEntityId } from "@yummyai/contracts";
 import { modelProviderConfigs, modelRoutes, withTenant, type DatabaseConnection } from "@yummyai/database";
 import { createQueue, createTraceId, enqueueJob, OrderDesignJobPayloadSchema, QueueName, type JobEnvelope } from "@yummyai/jobs";
-import { dispatchOrderDesignOutbox, OrderDesignError, OrderDesignSubmissionNotSentError, type OrderDesignImageGateway, type OrderDesignModelResponseReceipt, type OrderDesignProcessor } from "@yummyai/order-design";
+import { dispatchOrderDesignOutbox, OrderDesignError, OrderDesignProviderRejectedError, OrderDesignSubmissionNotSentError, type OrderDesignImageGateway, type OrderDesignModelResponseReceipt, type OrderDesignProcessor } from "@yummyai/order-design";
 import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
 import { HttpStudioGateway, type StudioGateway } from "./studio-generation.gateway.js";
@@ -51,7 +51,12 @@ export class OrderDesignStudioGateway implements OrderDesignImageGateway {
     }, async () => undefined, async original => {
       receipt={requestId:input.requestId,...(original.costUsd!==null?{actualCostUsd:Number(original.costUsd)}:{}),tokenUsage:original.tokenUsage??null};
       await input.onReceipt?.(receipt);
-    }));}finally{for(const item of prepared.feedback)item.bytes.fill(0);}
+    }));}catch(error){
+      // HTTP rejection evidence is distinct from an unknown transport outcome.
+      // The order processor decides whether this exact response permits recovery.
+      if(error instanceof ModelProviderHttpError)throw new OrderDesignProviderRejectedError(error.failure);
+      throw error;
+    }finally{for(const item of prepared.feedback)item.bytes.fill(0);}
     input.signal.throwIfAborted();
     if (!("bytes" in output) || !output.mediaType.startsWith("image/")) throw new OrderDesignError("agent_model_invalid_output", true);
     return { bytes: output.bytes,...(receipt?.actualCostUsd!==undefined?{actualCostUsd:receipt.actualCostUsd}:{}),tokenUsage:receipt?.tokenUsage??null };

@@ -4,6 +4,7 @@ import { OrderRuleSnapshotSchema } from "@yummyai/contracts/rules";
 import { OrderDesignMethodSnapshotSchema, OrderDesignCompletionRecordSchema, OrderDesignModelCallViewSchema } from "@yummyai/contracts/order/design-harness";
 import { PillowContourEvidenceSchema } from "@yummyai/contracts/pod/design-automation";
 import { ModelUsageSummarySchema } from "@yummyai/contracts/ai/model-usage";
+import { ModelProviderHttpFailureSchema } from "@yummyai/contracts/ai/provider-failure";
 
 export const OrderDesignAgentStatusSchema = z.enum(["queued", "running", "awaiting_review", "needs_attention", "cancelled"]);
 export const OrderDesignAgentStepStatusSchema = z.enum(["pending", "running", "completed", "failed", "uncertain", "skipped"]);
@@ -72,6 +73,7 @@ export type OrderDesignRestoreResponse = z.infer<typeof OrderDesignRestoreRespon
 export const OrderDesignAgentStepViewSchema = z.object({
   id: Id, key: z.string(), label: z.string(), status: OrderDesignAgentStepStatusSchema,
   attempt: z.int().nonnegative(), errorCode: z.string().nullable(),
+  providerFailure: ModelProviderHttpFailureSchema.nullable().optional(),
   outputAssetId: Id.nullable(), outputVersionId: Id.nullable(),
   startedAt: z.iso.datetime().nullable(), completedAt: z.iso.datetime().nullable(),
   contourEvidence: PillowContourEvidenceSchema.nullable().optional(),
@@ -95,6 +97,7 @@ export const OrderDesignAgentRunViewSchema = z.object({
   executorKey: z.string(), recipeVersion: z.string(), policyVersion: z.string(), modelRouteId: Id.nullable(),
   projectId: Id.nullable(), currentEditorVersionId: Id.nullable(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
   errorCode: z.string().nullable(), canResume: z.boolean(), canTakeOver: z.boolean(),
+  nextRetryAt: z.iso.datetime().nullable().optional(),
   responseRecoveryTarget: OrderDesignResponseRecoveryTargetSchema.nullable().optional(),
   responseRecoveryBlockedCode: z.string().nullable().optional(),
   estimatedCostUsd: z.number().nonnegative().nullable(), actualCostUsd: z.number().nonnegative().nullable(),

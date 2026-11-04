@@ -326,6 +326,64 @@ Factory acceptance and actual production release remain separate.
 
 Completed steps have durable output references and are reused. Known local failures can be recovered within fixed retry limits. An externally submitted request with an unknown result is held for reconciliation, because an internal request ID does not guarantee provider deduplication. Do not click a different workflow to blindly repeat an uncertain paid operation.
 
+### Provider failures and bounded recovery (2026-11-04)
+
+This update is implemented and locally verified in the working branch. It has
+not been adopted by the daily runtime or validated by GitHub CI. Deployment and
+business acceptance remain separate; this document does not reclassify old runs.
+Local checks, the corrected regression and fixture cleanup are recorded in the
+[verification checkpoint](../project-control/checkpoints/2026-11-04-order-design-interruption-recovery.json).
+
+The Studio transport preserves bounded, structured non-2xx evidence instead of
+discarding the provider error. Only an allowlisted code, HTTP status, safe request
+reference, response time and Retry-After are retained. Provider messages, raw
+error bodies, prompts, images and authorization headers are never copied into
+diagnostics. An error receipt is not a generated image or a zero-cost invoice.
+
+| Evidence | Execution behavior | Operator action |
+| --- | --- | --- |
+| Explicit safety rejection (`moderation_blocked` or supported equivalent) | Failed step, preserved project and original assets, no automatic resubmission | Use human takeover; an administrator can inspect provider records for a possible false positive |
+| Explicit authentication/quota or invalid-request rejection | Specific failure code, no automatic resubmission | Check the channel or pinned inputs; use the existing takeover flow to continue production preparation |
+| Explicit temporary HTTP 429 rate-limit rejection | Queue the same step through the durable outbox, up to three provider submissions including the original attempt | Wait for the displayed retry time; do not dispatch another task |
+| Retry-After exceeds five minutes or recovery is stopped before rescheduling | `agent_provider_retry_deferred`, distinct from exhausted retries | Check the original channel/call record or take over |
+| Three explicit rate-limit rejections | `agent_provider_retry_exhausted`, no further model submission | Check the channel or take over |
+| Transport interruption, unreadable error, unclassified response or HTTP 5xx | Result remains uncertain, with no automatic paid resubmission | Reconcile the original result; use takeover if no trustworthy result exists |
+
+Rate-limit recovery waits at least 5 then 10 seconds, honoring a longer supported
+Retry-After within the five-minute recovery window. The database clock and the
+encrypted `nextRetryAt` checkpoint prevent an early Redis redelivery from
+bypassing the delay. Each new submission gets a new claim and its own model-call
+and budget-ledger entries. A proven local failure before submission, including a
+crash before `markSubmitted`, is not counted as another provider rejection.
+Membership, tenant scope, original source, order availability, pinned method,
+editor authority and organization budgets are rechecked before continuing.
+
+Old rejected attempts keep their unknown fees, usage and reservations. A later
+successful attempt settles only its own ledger; it cannot replace or release an
+older unknown charge. Explicit per-task unlimited use does not remove organization
+budget controls. A trustworthy pre-submission failure releases only its own
+unspent reservation. Existing paid-image checkpoints continue to be processed
+locally without a new provider submission.
+
+The progress view exposes optional `steps[].providerFailure` and `nextRetryAt`
+only within its existing private-evidence permission/retention boundary. The UI
+places the reason, next action and available takeover control before historical
+details, while displaying unknown billing separately. Later quality failures do
+not borrow a completed step's old HTTP error. Legacy uncertain runs retain their
+original state; gateway log timing alone cannot rewrite their execution evidence.
+
+The existing manual original-result import identifies a logical request. It is
+blocked with `agent_response_recovery_multiple_attempts` after multiple recorded
+submissions because that form cannot prove which attempt produced an uploaded
+image. A previously verified response checkpoint remains reusable. The importer
+does not create billing evidence, production approval or a provider reconciliation
+API that the configured channel does not support.
+
+Implementation references: the open-source [OpenAI Node SDK error handling](https://github.com/openai/openai-node/blob/main/docs/configuration.md)
+and [BullMQ backoff/retry model](https://docs.bullmq.io/guide/retrying-failing-jobs).
+YummyAI deliberately restricts paid-generation retries more narrowly than a
+generic HTTP client's retry defaults. No new orchestration framework is introduced.
+
 Successful image-model responses are first pinned as encrypted private raw bytes
 and an encrypted step checkpoint, before decoding, scanning, thumbnail creation
 or registering an image asset. A failure while processing a verified checkpoint
@@ -349,7 +407,7 @@ receipt exists, the step stays uncertain with a response-not-checkpointed reason
 its reported charge is retained. Unknown billing keeps its reservation. Shared
 recovery decisions are described in [incremental Harness](agent-harness.md).
 
-The UI distinguishes configured estimates, reported actual costs, no model required, and unknown billing. The current image gateway does not return actual billing evidence, so a successful paid image operation may still have unknown actual cost. Tenant budget reservations stay in place for uncertain calls. No result is treated as free merely because a request timed out.
+The UI distinguishes configured estimates, reported actual costs, no model required, and unknown billing. When a provider omits actual billing evidence, a successful paid image operation still has unknown actual cost. Available original usage and cost receipts are retained independently of image adoption. Tenant budget reservations stay in place for uncertain calls. No result is treated as free merely because a request timed out.
 
 Technical quality checks cover source provenance/checksums, exact structured text, source versus output resolution, transparent pixels, file scans and manufacturing preflight. Generated pixel dimensions do not establish original detail or visual fidelity. Unknown crop correspondence preserves source PPI as unknown. Model identity/fidelity and supplier fit require manual inspection.
 
@@ -357,4 +415,4 @@ Technical quality checks cover source provenance/checksums, exact structured tex
 
 Add a typed product definition, geometry, render dispatch and product preflight together. Keep browser-safe definitions free of server storage/encryption dependencies. Add representative pixel/physical-size regressions and verify that old documents render identically without regenerating their baselines. A new product may reuse an existing workflow only if its capabilities and supplier rules match; otherwise add a bounded tool/workflow rather than product-name conditionals or free-form executable prompts.
 
-See [architecture decisions](../architecture/2026-09-17-design-agent.md) and [isolated acceptance](../operations/design-agent-acceptance.md).
+See [architecture decisions](../architecture/2026-09-17-design-agent.md) and [local and isolated acceptance](../operations/local-development.md).

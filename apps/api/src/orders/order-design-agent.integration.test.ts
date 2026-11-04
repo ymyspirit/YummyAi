@@ -22,6 +22,7 @@ import {
   registerOrderDesignRun, type OrderDesignImageGateway, type OrderDesignSnapshot,
   PILLOW_REALESRGAN_POLICY, OrderDesignError, orderPillowPhotoPlan, type OrderDesignSuperResolutionGateway,
   OrderDesignResponseRecovery,recordOrderModelResponse,type OrderDesignResponseReceipt,
+  OrderDesignProviderRejectedError,type OrderDesignStepCheckpoint,
 } from "@yummyai/order-design";
 import { decryptProductionBytes, encryptProductionBytes } from "@yummyai/production-editor";
 import { buildDesignAutomationPlan } from "@yummyai/production-editor/design-automation";
@@ -329,6 +330,177 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(after.ledger).toHaveLength(0);
     expect(generate).not.toHaveBeenCalled();
   }, 30_000);
+
+  it.each([
+    { status:400,kind:"moderation",code:"moderation_blocked",expected:"agent_provider_moderation_blocked" },
+    { status:401,kind:"authentication",code:"invalid_api_key",expected:"agent_provider_authentication_failed" },
+    { status:422,kind:"invalid_request",code:"invalid_value",expected:"agent_provider_invalid_request" },
+  ] as const)("retains a definite $kind rejection separately from unknown submission and never repeats or fabricates an image",async failure=>{
+    const fixture=await seed({paid:true,imageCount:2}),firstBytes=await image();
+    const generate=vi.fn<OrderDesignImageGateway["generate"]>().mockResolvedValueOnce({bytes:firstBytes,actualCostUsd:0.1})
+      .mockRejectedValue(new OrderDesignProviderRejectedError({version:1,status:failure.status,kind:failure.kind,code:failure.code,
+        providerRequestId:"synthetic-provider-rejection",receivedAt:new Date().toISOString(),retryAfterMs:null}));
+    const processor=worker(generate);await process(processor,fixture);
+    const result=await state(fixture),first=result.steps.find(step=>step.key==="enhance_image_1")!,rejected=result.steps.find(step=>step.key==="enhance_image_2")!;
+    expect(first).toMatchObject({status:"completed",attempt:1,outputAssetId:expect.any(String)});
+    expect(rejected).toMatchObject({status:"failed",attempt:1,errorCode:failure.expected,outputAssetId:null});
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:failure.expected,costStatus:"unknown",actualCostUsd:null});
+    expect(result.project!.reviewedVersionId).toBeNull();expect(result.work.approvedEditorVersionId).toBeNull();expect(result.renders).toHaveLength(0);
+    const repository=new OrderDesignRepository(database,vault),view=(await repository.view(fixture.context,fixture.lineId)).run!;
+    expect(view).toMatchObject({canResume:false,canTakeOver:true,responseRecoveryTarget:null});
+    expect(view.steps.find(step=>step.id===rejected.id)?.providerFailure).toMatchObject({status:failure.status,kind:failure.kind,code:failure.code});
+    const calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(calls).toHaveLength(2);expect(calls.find(call=>call.stepId===rejected.id)).toMatchObject({reportedCostUsd:null,tokenUsage:null});
+    await expect(command(fixture,"resume")).rejects.toMatchObject({code:"agent_resume_not_safe"});
+    await Promise.all([process(processor,fixture),process(processor,fixture)]);expect(generate).toHaveBeenCalledTimes(2);
+    expect((await state(fixture)).steps.find(step=>step.id===first.id)).toEqual(first);
+    await command(fixture,"takeover");await process(processor,fixture);
+    expect((await state(fixture)).run.status).toBe("cancelled");expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a received 5xx provider failure uncertain and never automatically repeats a possibly billed request",async()=>{
+    const fixture=await seed({paid:true});
+    const generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValue(new OrderDesignProviderRejectedError({version:1,status:503,kind:"unavailable",code:"service_unavailable",
+      providerRequestId:"synthetic-server-error",receivedAt:new Date().toISOString(),retryAfterMs:1000}));
+    const processor=worker(generate);await process(processor,fixture);await process(processor,fixture);
+    const result=await state(fixture),step=result.steps.find(row=>row.key==="enhance_image_1")!;
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_submission_unknown",costStatus:"unknown",actualCostUsd:null});
+    expect(step).toMatchObject({status:"uncertain",attempt:1,outputAssetId:null});expect(generate).toHaveBeenCalledOnce();
+    expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!.canResume).toBe(false);
+  });
+
+  it("durably delays an explicit rate-limit retry, rejects early delivery and preserves every attempt's unknown billing",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>();
+    generate.mockRejectedValueOnce(rateLimitFailure()).mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1}));
+    const processor=worker(generate);await process(processor,fixture);
+    const paused=await state(fixture),step=paused.steps.find(row=>row.key==="enhance_image_1")!;
+    expect(paused.run).toMatchObject({status:"queued",errorCode:"agent_provider_rate_limited",costStatus:"unknown",actualCostUsd:null});
+    expect(step).toMatchObject({status:"pending",attempt:1});
+    const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step.encryptedOutput!);
+    expect(Date.parse(checkpoint.nextRetryAt!)).toBeGreaterThan(Date.now());
+    const view=(await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!;
+    expect(view.nextRetryAt).toBe(checkpoint.nextRetryAt);expect(view.canResume).toBe(false);
+    await process(processor,fixture);expect(generate).toHaveBeenCalledOnce();
+    const enqueue=vi.fn<Parameters<typeof dispatchOrderDesignOutbox>[1]["enqueue"]>(async()=>{});await dispatchOrderDesignOutbox(database,{enqueue});
+    expect(enqueue.mock.calls.some(([event])=>event.runId===fixture.runId)).toBe(false);
+    await dueProviderRetry(fixture);await Promise.all([process(processor,fixture),process(processor,fixture)]);
+    const complete=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(complete.run).toMatchObject({status:"awaiting_review",errorCode:null,costStatus:"unknown",actualCostUsd:null});
+    expect(calls).toHaveLength(2);expect(new Set(calls.map(call=>call.claimToken)).size).toBe(2);expect(new Set(calls.map(call=>call.budgetLedgerId)).size).toBe(2);
+    expect(calls.map(call=>call.attempt).sort()).toEqual([1,2]);
+    expect(calls.find(call=>call.attempt===1)).toMatchObject({reportedCostUsd:null,tokenUsage:null});
+    expect(calls.find(call=>call.attempt===2)).toMatchObject({reportedCostUsd:"0.10000000"});
+    expect(complete.ledger).toHaveLength(2);expect(generate).toHaveBeenCalledTimes(2);
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===2)!.budgetLedgerId)).toMatchObject({state:"committed",amountUsd:"0.100000"});
+    expect(complete.project!.reviewedVersionId).toBeNull();expect(complete.work.approvedEditorVersionId).toBeNull();
+  });
+
+  it("exhausts an explicit rate-limit retry after three provider submissions without resetting unknown fee evidence",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);
+    for(let attempt=2;attempt<=3;attempt++){await dueProviderRetry(fixture);await process(processor,fixture);}
+    const result=await state(fixture),paid=result.steps.find(step=>step.key==="enhance_image_1")!;
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_provider_retry_exhausted",costStatus:"unknown",actualCostUsd:null});
+    expect(paid).toMatchObject({status:"failed",attempt:3,outputAssetId:null});
+    expect(result.ledger).toHaveLength(3);
+    const calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(calls).toHaveLength(3);expect(calls.every(call=>call.reportedCostUsd===null&&call.tokenUsage===null)).toBe(true);
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!).toMatchObject({canResume:false,responseRecoveryTarget:null,nextRetryAt:null});
+    await expect(command(fixture,"resume")).rejects.toMatchObject({code:"agent_resume_not_safe"});
+    await process(processor,fixture);expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it("defers an excessive provider retry hint without claiming that three attempts were exhausted",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValue(new OrderDesignProviderRejectedError({
+      version:1,status:429,kind:"rate_limit",code:"rate_limit_exceeded",providerRequestId:"synthetic-long-delay",receivedAt:new Date().toISOString(),retryAfterMs:600_000,
+    })),processor=worker(generate);
+    await process(processor,fixture);await process(processor,fixture);
+    const result=await state(fixture);
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_provider_retry_deferred",costStatus:"unknown",actualCostUsd:null});
+    expect(result.steps.find(step=>step.key==="enhance_image_1")).toMatchObject({status:"failed",attempt:1,errorCode:"agent_provider_retry_deferred"});
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!).toMatchObject({canResume:false,nextRetryAt:null});
+    expect(generate).toHaveBeenCalledOnce();expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+  });
+
+  it("blocks ambiguous manual response recovery after a rate-limit attempt followed by an unknown submission",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockRejectedValueOnce(new Error("Synthetic unknown transport outcome after rate-limit recovery")),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const before=await state(fixture),step=before.steps.find(row=>row.key==="enhance_image_1")!,objectsBefore=objects.size;
+    const view=(await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!;
+    expect(view).toMatchObject({status:"needs_attention",canResume:false,responseRecoveryTarget:null,responseRecoveryBlockedCode:"agent_response_recovery_multiple_attempts",costStatus:"unknown",actualCostUsd:null});
+    const recovery=new OrderDesignResponseRecovery(database,vault,storage),bytes=await image();
+    await expect(recovery.restore(fixture.context,fixture.lineId,{runId:view.id,expectedRevision:view.revision,idempotencyKey:randomUUID(),
+      stepId:step.id,requestId:step.requestId,contentBase64:bytes.toString("base64"),providerReference:"synthetic-ambiguous-provider-record",
+      verificationNote:"Synthetic operator cannot bind this result to one of two provider attempts",verifiedOriginalResult:true,
+    })).rejects.toMatchObject({code:"agent_response_recovery_multiple_attempts"});
+    expect(objects.size).toBe(objectsBefore);expect((await state(fixture)).versions).toEqual(before.versions);
+    expect(before.ledger).toHaveLength(2);expect(before.ledger.every(row=>row.state==="reserved")).toBe(true);
+    await process(processor,fixture);expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes a proven unsubmitted preparation failure after rate limiting without releasing the prior unknown charge",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockRejectedValueOnce(new OrderDesignSubmissionNotSentError("agent_model_preparation_failed"))
+      .mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1})),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const paused=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(paused.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_preparation_failed",costStatus:"unknown",actualCostUsd:null});
+    expect(paused.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)?.state).toBe("reserved");
+    expect(paused.ledger.find(row=>row.id===calls.find(call=>call.attempt===2)!.budgetLedgerId)?.state).toBe("released");
+    await command(fixture,"resume");await process(processor,fixture);
+    const complete=await state(fixture);
+    expect(complete.run).toMatchObject({status:"awaiting_review",costStatus:"unknown",actualCostUsd:null});
+    expect(complete.ledger.map(row=>row.state).sort()).toEqual(["committed","released","reserved"]);expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it("automatically recovers a pre-submission crash after rate limiting without attributing a charge to the unsent attempt",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1})),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);
+    const paused=await state(fixture),step=paused.steps.find(row=>row.key==="enhance_image_1")!;
+    const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step.encryptedOutput!),unsubmittedLedgerId=createEntityId();
+    // Reproduce the atomic claim checkpoint, before markSubmitted can register
+    // a model call. This fixture never crosses the external provider boundary.
+    await withTenant(database.db,fixture.context,async tx=>{
+      await tx.update(runs).set({status:"running",errorCode:null,processingToken:createEntityId(),leaseUntil:new Date(0),updatedAt:new Date(0)}).where(eq(runs.id,fixture.runId));
+      await tx.update(steps).set({status:"running",attempt:2,errorCode:null,encryptedOutput:seal(fixture.workKey,{...checkpoint,submissionState:"not_submitted"})}).where(eq(steps.id,step.id));
+      await tx.insert(aiBudgetLedger).values({id:unsubmittedLedgerId,tenantId:fixture.context.tenantId,requestId:step.requestId,taskType:"order_design",
+        modelKey:fixture.snapshot.model!.model,provider:fixture.snapshot.model!.providerConfigId,amountUsd:"0.100000",state:"reserved"});
+    });
+    await process(processor,fixture);const complete=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(complete.run).toMatchObject({status:"awaiting_review",costStatus:"unknown",actualCostUsd:null});
+    expect(calls.map(call=>call.attempt).sort()).toEqual([1,3]);expect(generate).toHaveBeenCalledTimes(2);
+    expect(complete.ledger.find(row=>row.id===unsubmittedLedgerId)?.state).toBe("released");
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)?.state).toBe("reserved");
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===3)!.budgetLedgerId)?.state).toBe("committed");
+  });
+
+  it.each(["held","cancelled","revoked","takeover"] as const)("rechecks %s before a delayed provider retry and preserves the original unapproved project",async condition=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);const before=await state(fixture);await dueProviderRetry(fixture);
+    if(condition==="takeover")await command(fixture,"takeover");
+    else await withTenant(database.db,fixture.context,async tx=>{
+      if(condition==="held")await tx.update(orderWorkItems).set({held:true}).where(eq(orderWorkItems.id,fixture.lineId));
+      if(condition==="cancelled")await tx.update(orders).set({sideState:"cancelled"}).where(eq(orders.id,fixture.orderId));
+      if(condition==="revoked")await tx.update(memberships).set({status:"disabled"}).where(eq(memberships.id,fixture.membershipId));
+    });
+    await process(processor,fixture);const after=await state(fixture);
+    expect(generate).toHaveBeenCalledOnce();expect(after.ledger).toHaveLength(1);expect(after.versions).toEqual(before.versions);expect(after.assets).toEqual(before.assets);
+    expect(after.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect(after.run).toMatchObject({status:condition==="takeover"?"cancelled":"needs_attention",costStatus:"unknown",actualCostUsd:null});
+    expect(after.work.approvedEditorVersionId).toBeNull();
+  });
+
+  it("retains organization budget constraints when an automatic rate-limit retry would require a second reservation",async()=>{
+    const fixture=await seed({paid:true,monthlyBudget:0.15}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const result=await state(fixture);
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_monthly_budget_exceeded",costStatus:"unknown",actualCostUsd:null});
+    expect(result.ledger).toHaveLength(1);expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});expect(generate).toHaveBeenCalledOnce();
+  });
 
   it("checkpoints the first paid image and cannot resend the second image after an unknown provider result", async () => {
     const fixture = await seed({ paid: true, imageCount: 2 });
@@ -1486,6 +1658,19 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     });
   }
   function worker(generate: OrderDesignImageGateway["generate"],upscale?:OrderDesignSuperResolutionGateway) { return new OrderDesignProcessor(database, storage, vault, { generate }, scanner,upscale); }
+  function rateLimitFailure(){return new OrderDesignProviderRejectedError({version:1,status:429,kind:"rate_limit",code:"rate_limit_exceeded",
+    providerRequestId:"synthetic-rate-limit",receivedAt:new Date().toISOString(),retryAfterMs:60_000});}
+  /** Only synthetic scheduling evidence is adjusted. No production clock or queue is changed. */
+  async function dueProviderRetry(fixture:Fixture){
+    await withTenant(database.db,fixture.context,async tx=>{
+      const pending=await tx.select().from(steps).where(eq(steps.runId,fixture.runId));
+      const step=pending.find(row=>row.status==="pending"&&row.attempt>0);expect(step?.encryptedOutput).toBeTruthy();
+      const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step!.encryptedOutput!);
+      expect(checkpoint.nextRetryAt).toBeTruthy();
+      await tx.update(steps).set({encryptedOutput:seal(fixture.workKey,{...checkpoint,nextRetryAt:new Date(0).toISOString()})}).where(eq(steps.id,step!.id));
+      await tx.update(outbox).set({nextAttemptAt:new Date(0)}).where(eq(outbox.runId,fixture.runId));
+    });
+  }
   function process(processor: OrderDesignProcessor, fixture: Fixture) { return processor.process({ tenantId: fixture.context.tenantId, requestedBy: fixture.context.userId, runId: fixture.runId }); }
   async function command(fixture: Fixture, action: "resume" | "takeover") {
     const repository = new OrderDesignRepository(database, vault);
