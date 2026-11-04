@@ -12,11 +12,12 @@ import { syntheticProductionPng } from "./production-editor-fixture";
 import { createFactoryFixture } from "./factory-directory-fixture";
 import { syntheticSupplierProfile, syntheticFactoryProfile } from "../../../tools/testing/factory-fixtures";
 import { createCapacityFixture } from "./factory-capacity-fixture";
-export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; materialResponsibility?: "merchant" | "factory" } = {}) {
+export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; materialResponsibility?: "merchant" | "factory"; originCountry?: "US" | "CN" } = {}) {
   const suffix = createEntityId().slice(-8), externalId = `E2E-DELIVERY-${suffix}`, factoryName = `Synthetic delivery factory ${suffix}`;
   const supplier = await centerApi<{ id: string }>("sourcing/suppliers", { name: `Synthetic delivery supplier ${suffix}`, kind: "manual", regionCode: "CN", settlementCurrency: "CNY", profile: syntheticSupplierProfile });
   const factoryProfile = syntheticFactoryProfile(factoryName);
   factoryProfile.productionAddress!.postalCode = "000000";
+  if (options.originCountry) factoryProfile.productionAddress!.countryCode = options.originCountry;
   const factory = await createFactoryFixture(supplier.id, "shaped_pillow", factoryName, factoryProfile);
   const assignments = [factory];
   if (splitFactories && lineCount > 1) {

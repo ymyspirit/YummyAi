@@ -4,19 +4,22 @@ import type { AmazonReportBatchView, AmazonReportDetailView, AmazonReportLineVie
 import { AmazonReportBatchViewSchema, AmazonReportDetailViewSchema, AmazonReportResumeResultSchema, AmazonReportWorkspaceViewSchema } from "@yummyai/contracts/order/report";
 import { Check, ChevronLeft, ChevronRight, Download, FileArchive, FileUp, ImageOff, LoaderCircle, Maximize2, RefreshCw, Search, Upload, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { reportRequest, reportUserError as userError } from "./amazon-report-request";
+import { AmazonReportArchiveImport } from "./amazon-report-archive-import";
 
 const reportLimit = 5 * 1024 * 1024;
 const zipLimit = 20 * 1024 * 1024;
 const pageSize = 20;
+const subscribeHydration = () => () => {};
 const stateLabels: Record<AmazonReportLineView["state"], string> = { none: "无定制附件", pending: "等待解析", processing: "处理中", ready: "可查看", partial: "部分内容可查看", failed: "需要处理", expired: "文件已到期" };
 const errorLabels: Record<string, string> = { unsafe_url: "附件链接不属于允许的亚马逊下载地址，请补传原始 ZIP。", download_failed: "附件下载失败，可以重试或补传 ZIP。", download_timeout: "附件下载超时，请重试。", link_unavailable: "定制链接已失效或不可用，请从亚马逊下载 ZIP 后补传。", archive_too_large: "定制 ZIP 超过允许大小，请检查附件。", scan_unavailable: "文件检查服务暂不可用，请稍后重试。", file_rejected: "附件未通过文件安全检查，无法提供预览。", archive_invalid: "ZIP 结构无法识别，请补传亚马逊原始定制 ZIP。", marketplace_mismatch: "报告站点与所选站点不一致，请核对导入站点。", merchant_mismatch: "报告卖家与所选店铺不一致，请核对订单所属店铺。", quantity_mismatch: "同一订单行的数量发生冲突，请核对原始报告。", report_conflict: "报告与已有订单存在冲突，请检查原始订单。", customization_missing: "此订单应有定制信息，但报告没有提供附件，请补传 ZIP。", source_changed: "定制附件来源已变化，需要重新解析并核对。", retention_expired: "定制内容已达到保存期限，不再提供文件访问。", processing_interrupted: "后台解析连续中断，请检查任务服务后重试。", processing_blocked: "后台解析受阻，请核对店铺状态和附件版本后重试。", attachment_changed: "新下载的附件与已保存版本不同，原文件和复核记录已保留。请核对来源后重新获取或补传正确 ZIP。" };
 const marketplaceNames: Record<string, string> = { ATVPDKIKX0DER: "美国", A2EUQ1WTGCTBG2: "加拿大", A1AM78C64UM0Y8: "墨西哥", A1F83G8C2ARO7P: "英国", A1PA6795UKMFR9: "德国", A13V1IB3VIYZZH: "法国", APJ6JRA9NG5V4: "意大利", A1RKKUPIHCS9HS: "西班牙", A1VC38T7YXB528: "日本", A39IBJ37TRP1C6: "澳大利亚" };
 type Encoding = "utf-8" | "gb18030";
 
 export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError }: { accounts: MarketplaceAccountView[]; initialWorkspace: AmazonReportWorkspaceView; initialError?: string }) {
+  const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [marketplaceId, setMarketplaceId] = useState(accounts[0]?.marketplaceIds[0] ?? "");
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -25,7 +28,9 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
   const [encoding, setEncoding] = useState<Encoding>("utf-8");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState(initialError ?? "");
-  const [busy, setBusy] = useState(false);
+  const [importing, setBusy] = useState(false);
+  const [archivesBusy, setArchivesBusy] = useState(false);
+  const busy = !hydrated || importing || archivesBusy;
   const [loading, setLoading] = useState(false);
   const [queueActive, setQueueActive] = useState(false);
   const [selectedId, setSelectedId] = useState("");
@@ -139,7 +144,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
     finally { if (token === selection.current) setDetailLoading(false); }
   }
   async function lineAction(action: "process" | "review" | "upload", file?: File) {
-    if (!detail || lineBusy) return;
+    if (!detail || lineBusy || archivesBusy) return;
     const token = selection.current;
     const lineId = detail.line.id;
     setLineBusy(true); setDetailError("");
@@ -159,7 +164,7 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
     {accounts.length === 0 ? error ? <section className="ar-empty"><RefreshCw size={28} /><h2>暂时无法读取店铺</h2><p>店铺数据尚未加载，请刷新页面重试。</p><a className="ar-button" href="/orders?view=reports">刷新页面</a></section> : <section className="ar-empty"><FileUp size={28} /><h2>先建立店铺档案</h2><p>导入的订单需要归属到具体店铺。创建 Amazon 店铺连接后即可回来导入，手动导入无需平台授权。</p><Link className="ar-button primary" href="/stores">前往店铺管理</Link></section> : <>
       <section className="ar-import" aria-label="导入订单报告">
         <div className="ar-import-controls">
-          <label>订单所属店铺<select value={accountId} disabled={busy} onChange={(event) => void changeContext(event.target.value, "")}>{accounts.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
+          <label>订单所属店铺<select aria-label="订单所属店铺" value={accountId} disabled={busy} onChange={(event) => void changeContext(event.target.value, "")}>{accounts.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
           <label>报告站点<select value={marketplaceId} disabled={busy} onChange={(event) => setMarketplaceId(event.target.value)}>{account?.marketplaceIds.map((id) => <option key={id} value={id}>{marketplaceNames[id] ?? id}</option>)}</select></label>
           <label>文件编码<select value={encoding} disabled={busy} onChange={(event) => setEncoding(event.target.value as Encoding)}><option value="utf-8">UTF-8（默认）</option><option value="gb18030">GB18030 / 中文 Windows</option></select></label>
         </div>
@@ -171,6 +176,8 @@ export function AmazonReportWorkspace({ accounts, initialWorkspace, initialError
         </div>
         <p className="ar-footnote">上传后自动获取定制附件。下载失败的订单可以单独重试，或补传从亚马逊下载的 ZIP。</p>
       </section>
+      <AmazonReportArchiveImport key={`${accountId}:${batchId}`} accountId={accountId} batchId={batchId} lines={workspace.lines}
+        disabled={importing || loading || lineBusy || queueActive} onBusy={setArchivesBusy} onComplete={() => refreshWorkspace()} />
       {notice && <p className="ar-notice" role="status"><Check size={16} />{notice}</p>}
       <section className="ar-ledger" aria-label="订单报告列表">
         <div className="ar-toolbar">

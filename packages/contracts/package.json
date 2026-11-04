@@ -170,6 +170,7 @@
     "./pod/visual-search": "./src/pod/visual-search.ts",
     "./catalog/composition": "./src/catalog/composition.ts",
     "./logistics": "./src/logistics/logistics.ts",
+    "./logistics/documents": "./src/logistics/documents.ts",
     "./catalog/operation": "./src/catalog/operation.ts",
     "./pod/operation": "./src/pod/operation.ts",
     "./workflow/execution": "./src/workflow/execution.ts",

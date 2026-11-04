@@ -238,6 +238,37 @@ export class OrderProductionDeliveryService {
 
   async get(context: TenantContext, id: string): Promise<ProductionDeliveryPackageView> { return originalOwnerOperation(() => new ProductionDeliveryReadOwner(this.database,this.vault,this.factories).get(context, id)); }
 
+  /** Native document adapters reuse the original immutable package and all current release gates. */
+  async documentItemsInTransaction(tx: TenantTransaction, context: TenantContext, ids: string[]) {
+    const reader = new ProductionDeliveryReadOwner(this.database, this.vault, this.factories);
+    return originalOwnerOperation(async () => {
+      const pins: ProductionDeliverySnapshot[] = [];
+      for (const id of [...ids].sort()) {
+        const before = await reader.getInTransaction(tx, context, id);
+        if (!before.canDownload) throw new ConflictException("生产交付包不可用 请先处理原生产流程的校验");
+        await this.lockSources(tx, before.items.map(item => item.snapshot!));
+        const current = await reader.getInTransaction(tx, context, id);
+        if (!current.canDownload || current.checksum !== before.checksum) throw new ConflictException("生产交付版本已变化 请刷新");
+        pins.push(...current.items.map(item => item.snapshot!));
+      }
+      if (new Set(pins.map(pin => pin.orderLineId)).size !== pins.length)
+        throw new ConflictException("所选交付包包含重复商品 请每个商品只选择一个当前交付版本");
+      return pins;
+    });
+  }
+
+  async verifyDocumentFiles(context: TenantContext, pins: ProductionDeliverySnapshot[]) {
+    this.readAccess(context);
+    for (const pin of pins) {
+      const file = await this.editor.renderFile(context, pin.editorProjectId, pin.renderId, pin.file.key);
+      const bytes = Buffer.from(file.body);
+      try {
+        if (bytes.length !== pin.file.byteSize || sha(bytes) !== pin.file.checksum || file.mediaType !== "image/jpeg")
+          throw new ConflictException("正式文件内容与交付包不一致 请回生产中心处理");
+      } finally { bytes.fill(0); }
+    }
+  }
+
   async download(context: TenantContext, id: string) {
     this.readAccess(context);
     const view = await this.get(context, id);

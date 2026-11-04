@@ -28,6 +28,7 @@
     "@yummyai/knowledge-core": "workspace:*",
     "@yummyai/logistics": "workspace:*",
     "@yummyai/marketplace-connectors": "workspace:*",
+    "@yummyai/mockup-renderer": "workspace:*",
     "@yummyai/order-core": "workspace:*",
     "@yummyai/order-design": "workspace:*",
     "@yummyai/order-intake": "workspace:*",
@@ -37,6 +38,7 @@
     "@yummyai/storage": "workspace:*",
     "@yummyai/workflow-core": "workspace:*",
     "drizzle-orm": "^0.44.0",
+    "exceljs": "4.4.0",
     "fast-xml-parser": "^5.11.1",
     "jose": "^6.0.0",
     "jszip": "3.10.1",
@@ -44,8 +46,7 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
     "sharp": "^0.35.3",
-    "zod": "^4.0.0",
-    "@yummyai/mockup-renderer": "workspace:*"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

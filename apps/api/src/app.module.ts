@@ -322,6 +322,10 @@ import { ShiposController } from "./suppliers/shipos.controller.js";
 import { ShiposService } from "./suppliers/shipos.service.js";
 import { LogisticsService, LogisticsEnqueuer } from "./logistics/logistics.service.js";
 import { LogisticsController } from "./logistics/logistics.controller.js";
+import { LogisticsDocumentsService } from "./logistics/logistics-documents.service.js";
+import { LogisticsDocumentsController } from "./logistics/logistics-documents.controller.js";
+import { LogisticsDocumentLabelsService } from "./logistics/logistics-document-labels.service.js";
+import { DOCUMENT_FILE_SCANNER } from "./platform.tokens.js";
 import { RedisLogisticsEnqueuer } from "./logistics/redis-logistics-enqueuer.js";
 import { HttpLogisticsGateway, LogisticsReadOwner } from "@yummyai/logistics";
 import { ShiposReadGateway, createShiposReadGateway } from "./suppliers/shipos-read.gateway.js";
@@ -554,6 +558,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     FactoryCapacityController,
     ShiposController,
     LogisticsController,
+    LogisticsDocumentsController,
     WorkflowDefinitionController,
     WorkflowRunController,
   ],
@@ -845,6 +850,9 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     FactoryCapacityService,
     ShiposService,
     LogisticsService,
+    LogisticsDocumentsService,
+    LogisticsDocumentLabelsService,
+    { provide: DOCUMENT_FILE_SCANNER, useFactory: () => new ClamAvScanner() },
     {
       provide: LogisticsReadOwner,
       useFactory: (database: DatabaseConnection, pii: SecretVault) =>

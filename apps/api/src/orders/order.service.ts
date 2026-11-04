@@ -446,6 +446,7 @@ export class OrderService {
       await tx.update(orders).set({
         addressStatus: "anonymized", addressCountryCode: null, latestEventSequence: sequence, updatedAt: now,
       }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, command.expectedSequence)));
+      await purgeDocumentExports(tx, now);
     });
     await this.audit.record(context, {
       action: "order.pii.anonymize", resourceType: "order", resourceId: orderId, result: "success",
@@ -682,3 +683,4 @@ function toEventView(row: typeof orderEvents.$inferSelect): OrderEventView {
 function toExceptionView(identity: typeof orderExceptions.$inferSelect, latest: typeof orderExceptionEvents.$inferSelect | undefined): OrderExceptionView {
   return OrderExceptionViewSchema.parse({ id: identity.id, orderId: identity.orderId, category: OrderExceptionCategorySchema.parse(identity.category), code: identity.code, message: identity.message, status: latest?.status ?? "open", resolution: latest?.resolution ?? null, openedAt: identity.openedAt.toISOString(), resolvedAt: latest?.status === "resolved" ? latest.occurredAt.toISOString() : null });
 }
+import { purgeDocumentExports } from "@yummyai/logistics";

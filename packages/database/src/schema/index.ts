@@ -100,3 +100,4 @@ export * from "./publication-submit.js";
 export * from "./order-fulfillment-command.js";
 export * from "./creative-response-adoptions.js";
 export * from "./creative-owner-response-adoptions.js";
+export * from "./logistics-documents.js";

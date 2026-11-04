@@ -5,6 +5,7 @@ import { RefreshCw,Truck } from "lucide-react";
 import { LogisticsOptionsSchema,type LogisticsOptions,type LogisticsTaskView,type LogisticsConnectionView, type LogisticsTaskState } from "@yummyai/contracts/logistics";
 import { LogisticsTaskForm } from "./logistics-task-form";
 import { LogisticsConnectionForm } from "./logistics-connection-form";
+import { DocumentWorkspace } from "./document-workspace";
 import { logisticsError,logisticsRequest,logisticsDiagnostic } from "./logistics-client";
 import "../order-centers/order-centers.css";
 import "./logistics.css";
@@ -31,6 +32,7 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
   }
   return <main className="oc-page logistics-page" aria-busy={loading}>
     <header className="oc-header"><div><h1><Truck size={22}/>物流下单</h1><p>按订单和实际发货工厂准备面单，核对时效、报价与实际费用。</p></div><div className="oc-actions"><Link className="oc-button" href="/production">生产中心</Link><Link className="oc-button" href="/shipments">实际发货</Link><Link className="oc-button" href="/shipments?view=logistics">已有物流订单同步</Link><button className="oc-button" disabled={busy||loading} onClick={()=>{setLoading(true);void reload().catch(e=>setError(logisticsError(e))).finally(()=>setLoading(false));}}><RefreshCw size={16}/>刷新</button></div></header>
+    <DocumentWorkspace key={orderId ?? "all"} orderId={orderId}/>
     {error&&<p role="alert" className="logistics-error">{error}</p>}{loading&&<p role="status">正在读取物流任务…</p>}
     {taskId&&<p className="oc-muted">当前显示指定物流任务 · <Link href="/?attention=logistics#fulfillment-attention">返回履约待办</Link> · <Link href="/logistics">查看全部物流任务</Link></p>}
     {options?.canCreate&&<details className="logistics-section"><summary>为已排期商品创建物流任务</summary><LogisticsTaskForm options={options} connections={connections} onSaved={reload}/></details>}

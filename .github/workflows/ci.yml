@@ -169,6 +169,11 @@ jobs:
           done
       - name: Validate order summary batches and private source lifecycle
         run: pnpm test:e2e:order-daily --suite=order-summary-availability-integration --cache=false
+      - name: Validate native shipping documents and historical ZIP intake
+        run: |
+          python3 -m unittest discover -s tools/scripts -p test_prepare_order_assistant_migration.py
+          pnpm test:e2e:order-daily --suite=logistics-integration
+          pnpm test:e2e:order-daily --suite=order-documents
       - run: pnpm test:integration
       - name: Validate personal Studio model configuration integration
         run: pnpm test:e2e:order-daily --suite=studio-model-selection-integration

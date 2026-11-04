@@ -34,3 +34,4 @@ export * from "./factory-erp-projection.js";
 export * from "./factory-erp-evidence.js";
 export * from "./factory-erp-void-read.js";
 export * from "./factory-erp-source-read-owner.js";
+export * from "./document-source-read.js";

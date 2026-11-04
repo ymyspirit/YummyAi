@@ -7,6 +7,7 @@ import { AmazonOrderReportRetentionJobPayloadSchema, type JobEnvelope } from "@y
 import { eq } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { purgeExpiredOrderDesignFeedback } from "./order-design-feedback-retention.js";
+import { purgeDocumentExports } from "@yummyai/logistics";
 
 export interface AmazonOrderReportRetentionRepository {
   expiry(context: TenantContext, batchId: string): Promise<Date | undefined>;
@@ -44,6 +45,9 @@ export class DrizzleAmazonOrderReportRetentionRepository implements AmazonOrderR
     // Even if object storage is unavailable, expire all private encryption keys.
     // The durable locator stays available for a subsequent ciphertext purge.
     try { await purgeExpiredOrderDesignFeedback(this.database, context, this.storage, now); }
-    finally { await purgeExpiredAmazonOrderReports(this.database, context, now); }
+    finally {
+      await purgeExpiredAmazonOrderReports(this.database, context, now);
+      await withTenant(this.database.db, context, tx => purgeDocumentExports(tx, now));
+    }
   }
 }

@@ -21,7 +21,10 @@ export class ProductionDeliveryReadOwner {
  constructor(private readonly database:DatabaseConnection,private readonly vault:OrderReadVault,private readonly factories:FactoryDirectoryReadPort){}
 async get(context: TenantContext, id: string): Promise<ProductionDeliveryPackageView> {
     this.readAccess(context);
-    return withTenant(this.database.db, context, async tx => {
+    return withTenant(this.database.db, context, tx => this.getInTransaction(tx, context, id));
+  }
+async getInTransaction(tx: TenantTransaction, context: TenantContext, id: string): Promise<ProductionDeliveryPackageView> {
+      this.readAccess(context);
       const factoryPermissions = [Permission.OrderRead, Permission.OrderPiiRead, Permission.DesignRead, Permission.AssetRead];
       const current = await currentOrderAuthority(tx, context, factoryPermissions);
       // The original package API also serves explicit non-membership adapters.
@@ -48,7 +51,6 @@ async get(context: TenantContext, id: string): Promise<ProductionDeliveryPackage
       return ProductionDeliveryPackageViewSchema.parse({ id, supplierId: record.supplierId, supplierName: record.supplierName, checksum: record.checksum,
         schemaVersion: record.schemaVersion, factory: views[0]?.snapshot?.factory ? productionFactoryDestination(views[0].snapshot.factory) : null,
         createdAt: record.createdAt.toISOString(), canDownload: views.length > 0 && views.every(item => !item.blockers.length && item.status !== "rejected"), items: views });
-    });
   }
 async source(tx: TenantTransaction, id: string) {
     const [record] = await tx.select({ order: productionOrders, version: productionOrderVersions, supplier: fulfillmentSuppliers, businessOrder: orders, line: orderLines,
