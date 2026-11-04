@@ -54,19 +54,23 @@ function connection(url) { return postgres(url, { max: 1, onnotice() {}, connect
 function storage() {
   return new S3Client({ endpoint: process.env.S3_ENDPOINT, region: process.env.S3_REGION || "us-east-1", forcePathStyle: true, credentials: { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY } });
 }
-async function dockerContainer() {
+export async function backupComposeTarget(root = workspace) {
+  const marker = await resolveWorkspacePath(root, ".artifacts/yummyai-compose/adopted.json");
+  let managed = false;
+  if (fs.existsSync(marker)) {
+    const adoption = JSON.parse(await fsp.readFile(marker, "utf8"));
+    if (adoption.version !== 1 || adoption.project !== "yummyai" || adoption.status !== "adopted") fail("backup_managed_deployment_invalid");
+    managed = true;
+  }
+  const arguments_ = managed
+    ? ["compose", "-p", "yummyai", "-f", path.join(root, "infra/compose.yummyai.yml"), "ps", "-q", "postgres"]
+    : ["compose", "--env-file", path.join(root, ".env"), "-f", path.join(root, "infra/docker-compose.yml"), "ps", "-q", "postgres"];
+  return { cwd: root, arguments_ };
+}
+async function dockerContainer(root = workspace) {
   try {
-    const marker = path.join(workspace, ".artifacts/yummyai-compose/adopted.json");
-    let managed = false;
-    if (fs.existsSync(marker)) {
-      const adoption = JSON.parse(await fsp.readFile(marker, "utf8"));
-      if (adoption.version !== 1 || adoption.project !== "yummyai" || adoption.status !== "adopted") fail("backup_managed_deployment_invalid");
-      managed = true;
-    }
-    const arguments_ = managed
-      ? ["compose", "-p", "yummyai", "-f", path.join(workspace, "infra/compose.yummyai.yml"), "ps", "-q", "postgres"]
-      : ["compose", "--env-file", path.join(workspace, ".env"), "-f", path.join(workspace, "infra/docker-compose.yml"), "ps", "-q", "postgres"];
-    const { stdout } = await exec("docker", arguments_, { cwd: workspace, windowsHide: true });
+    const { cwd, arguments_ } = await backupComposeTarget(root);
+    const { stdout } = await exec("docker", arguments_, { cwd, windowsHide: true });
     const id = stdout.trim();
     if (!/^[a-f0-9]{12,64}$/.test(id)) fail("backup_postgres_container_missing");
     return id;
@@ -196,7 +200,7 @@ export async function validateBackup(root, directory) {
 export async function createBackup({ outputDirectory, root = workspace }) {
   const config = settings(), output = await resolveWorkspacePath(root, outputDirectory, { fresh: true }), sql = connection(config.databaseUrl), client = storage();
   try {
-    const container = await dockerContainer();
+    const container = await dockerContainer(root);
     await assertCluster(container, sql, config);
     await assertQuiescent(sql);
     const before = await inspectBackupDatabase(config.databaseUrl);
@@ -250,7 +254,7 @@ export async function restoreDrill({ backupDirectory, verificationDatabase, veri
   try {
     const exists = await admin.unsafe("select 1 from pg_database where datname=$1", [database]);
     if (exists.length || await bucketExists(client, bucket)) fail("verification_resource_exists");
-    const container = await dockerContainer(), source = connection(config.databaseUrl);
+    const container = await dockerContainer(root), source = connection(config.databaseUrl);
     try { await assertCluster(container, source, config); } finally { await source.end(); }
     await admin.unsafe("create database " + quote(database)); databaseCreated = true;
     await client.send(new CreateBucketCommand({ Bucket: bucket })); bucketCreated = true;
