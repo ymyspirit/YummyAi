@@ -101,3 +101,4 @@ export * from "./order-fulfillment-command.js";
 export * from "./creative-response-adoptions.js";
 export * from "./creative-owner-response-adoptions.js";
 export * from "./logistics-documents.js";
+export * from "./logistics-accounts.js";

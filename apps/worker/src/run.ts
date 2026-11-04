@@ -6,7 +6,7 @@ import { createWorkerAgentTools } from "./agent-native-owners.js";
 import { createWorkerAgentResources } from "./agent-resources-owners.js";
 import { createWorkerAgentFulfillment } from "./agent-fulfillment-owners.js";
 import { agentPlanRuntimeRouter } from "./agent-plan-runtime-router.js";
-import { redisConnection, QueueName, RedisAgentRuntimePresence, type QueueNameValue } from "@yummyai/jobs";
+import { redisConnection, QueueName, RedisAgentRuntimePresence,createQueue,enqueueJob, type QueueNameValue } from "@yummyai/jobs";
 import { AGENT_RUNTIME_FAMILIES, type AgentRuntimeQueue } from "@yummyai/contracts/ai/agent-runtime-readiness";
 import { RedisConnection } from "bullmq";
 import {
@@ -198,7 +198,9 @@ async function main(): Promise<number> {
     }
     if (selected(QueueName.Logistics)) {
       const executor = new LogisticsExecutor(database, createEnvironmentSecretVault("INTEGRATION_SECRET_ENCRYPTION_KEY", "yummyai-integration-v1"), createEnvironmentSecretVault("ORDER_PII_ENCRYPTION_KEY", "yummyai-order-pii-v1"), storage, new HttpLogisticsGateway());
-      const processor = new LogisticsProcessor(executor);
+      const queue=createQueue(QueueName.Logistics);
+      lifecycle.resource("logistics-label-followup",()=>queue.close());
+      const processor = new LogisticsProcessor(executor,async(envelope,delay)=>{await enqueueJob(queue,"logistics.execute",envelope,{delay});});
       createWorker(QueueName.Logistics, envelope => processor.process(envelope));
     }
     if (selected(QueueName.AiAssist)) {

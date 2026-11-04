@@ -1366,6 +1366,13 @@
       "when": 1793750400000,
       "tag": "0195_logistics_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1793750400001,
+      "tag": "0196_logistics_api_accounts",
+      "breakpoints": true
     }
   ]
 }

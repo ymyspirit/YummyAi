@@ -9,7 +9,7 @@ import { GenerateOrderDocumentsSchema, PreviewOrderDocumentsSchema, SaveFactoryD
   type DocumentOptions, type DocumentExportView, type PreviewOrderDocuments, type OrderDocumentsPreview } from "@yummyai/contracts/logistics/documents";
 import { logisticsDocumentProfiles as profiles, logisticsDocumentExports as exports, logisticsDocumentOrders as links,
   fulfillmentFactories as factories, fulfillmentFactoryVersions as factoryVersions, productSpecifications as specifications,
-  productSpecificationVersions as specificationVersions, spus, orders, orderLines, orderPrivateSourceAvailable,
+  productSpecificationVersions as specificationVersions, spus, orders, orderLines, orderPrivateSourceAvailable,logisticsTasks,
   type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { logisticsLock, planOrderDocument, purgeDocumentExports } from "@yummyai/logistics";
 import { OrderDocumentSourceReader, withOrderAuthority } from "@yummyai/order-core";
@@ -212,8 +212,12 @@ export class LogisticsDocumentsService {
     for (const orderId of [...input.orderIds].sort()) sources.push(await new OrderDocumentSourceReader(this.vault).read(tx, context, orderId));
     if (productionPins.some(pin => !sources.some(source => source.source.lines.some(line => line.id === pin.orderLineId))))
       throw new ConflictException("交付包包含本次未选择订单的商品 请按交付包选择完整订单");
+    const apiTasks=await tx.select({orderId:logisticsTasks.orderId,status:logisticsTasks.status,externalReference:logisticsTasks.externalReference}).from(logisticsTasks).where(inArray(logisticsTasks.orderId,input.orderIds)).orderBy(asc(logisticsTasks.id));
     const planned = sources.map(source => {
       const blockers = [...source.blockers];
+      const activeApiTasks=apiTasks.filter(task=>task.orderId===source.source.id&&task.status!=="cancelled");
+      if(input.adapter!=="printeque_factory"&&activeApiTasks.length)blockers.push("本单已有 API 物流任务 请核对原任务面单 避免再次导表下单");
+      if(input.adapter==="printeque_factory"&&activeApiTasks.some(task=>task.externalReference!==source.source.orderNumber))blockers.push("原 API 物流编号与工厂导单订单号不同 请人工核对原任务 禁止生成错配生产表");
       if (source.production.some(item => !["cancelled", "failed"].includes(item.status) && item.factoryId !== profile.factoryId)) blockers.push("本单已有其他工厂的生产安排 请先到生产中心核对整单工厂");
       for (const line of source.source.lines) {
         const pin = productionPins.find(item => item.orderLineId === line.id);
@@ -226,7 +230,7 @@ export class LogisticsDocumentsService {
     });
     const fingerprint = hash({ version: 1, profileVersionId: profile.id, factoryVersionId: factory.version.id, adapter: input.adapter,
       template: await documentTemplateChecksum(input.adapter), sources: sources.map(source => ({ id: source.source.id, fingerprint: source.fingerprint })),
-      overrides: [...input.overrides].sort((a, b) => a.orderId.localeCompare(b.orderId)), deliveryPackageIds: [...input.deliveryPackageIds].sort(),
+      apiTasks,overrides: [...input.overrides].sort((a, b) => a.orderId.localeCompare(b.orderId)), deliveryPackageIds: [...input.deliveryPackageIds].sort(),
       productionPins: productionPins.map(pin => ({ line: pin.orderLineId, version: pin.productionVersionId, file: pin.file.checksum, path: pin.file.path })), rows: planned.map(plan => plan.rows) });
     const preview: OrderDocumentsPreview = { fingerprint, adapter: input.adapter, factoryName: factory.factory.name,
       profileVersionId: profile.id, orders: planned, ready: planned.every(order => order.blockers.length === 0), rowCount: planned.reduce((total, order) => total + order.rows.length, 0) };

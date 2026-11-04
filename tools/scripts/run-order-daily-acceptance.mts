@@ -1252,7 +1252,7 @@ try {
   if (studioPersonalIntegration || studioPersonalBrowser)
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   if (shipos || wholeOrder || qualityAssessmentBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) shiposFixture = await startShiposFixtureServer();
-  if (logistics) logisticsFixture = await startLogisticsFixtureServer();
+  if (logistics || orderDocuments) logisticsFixture = await startLogisticsFixtureServer();
   const args = forwarded.includes("--suite=design-agent-revision-integration")
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "src/orders/order-design-revision.integration.test.ts", ...extra]
     : studioPersonalBrowser

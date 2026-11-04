@@ -2,9 +2,10 @@
 import Link from "next/link";
 import { useCallback,useEffect,useRef,useState } from "react";
 import { RefreshCw,Truck } from "lucide-react";
-import { LogisticsOptionsSchema,type LogisticsOptions,type LogisticsTaskView,type LogisticsConnectionView, type LogisticsTaskState } from "@yummyai/contracts/logistics";
+import { LogisticsOptionsSchema,type LogisticsOptions,type LogisticsTaskView,type LogisticsConnectionView, type LogisticsTaskState,type LogisticsAccountView } from "@yummyai/contracts/logistics";
 import { LogisticsTaskForm } from "./logistics-task-form";
 import { LogisticsConnectionForm } from "./logistics-connection-form";
+import { LogisticsAccountForm } from "./logistics-account-form";
 import { DocumentWorkspace } from "./document-workspace";
 import { logisticsError,logisticsRequest,logisticsDiagnostic } from "./logistics-client";
 import "../order-centers/order-centers.css";
@@ -13,6 +14,7 @@ export const logisticsStates:Record<LogisticsTaskState,string>={pending:"待询�
 const money=(n:number|null,c:string|null,digits=2)=>n===null?"未返回":`${(n/10**digits).toFixed(digits)} ${c??"币种待核对"}`;
 export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:string}) {
   const [tasks,setTasks]=useState<LogisticsTaskView[]>([]),[connections,setConnections]=useState<LogisticsConnectionView[]>([]),[options,setOptions]=useState<LogisticsOptions|null>(null);
+  const [accounts,setAccounts]=useState<LogisticsAccountView[]>([]);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[configError,setConfigError]=useState("");
   const requestNumber=useRef(0);
   const reload=useCallback(async(signal?:AbortSignal)=>{
@@ -20,11 +22,12 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
     const focused:LogisticsTaskView|undefined=taskId?await logisticsRequest(`tasks/${encodeURIComponent(taskId)}`,undefined,signal):undefined;
     if(focused&&orderId&&focused.orderId!==orderId)throw new Error("此物流任务不属于所选订单，请核对入口");
     const activeOrder=focused?.orderId??orderId,query=activeOrder?`?orderId=${encodeURIComponent(activeOrder)}`:"";
-    const [t,o,c]=await Promise.allSettled([focused?Promise.resolve({tasks:[focused]}):logisticsRequest(`tasks${query}`,undefined,signal),logisticsRequest(`options${query}`,undefined,signal),logisticsRequest("connections",undefined,signal)]);
+    const [t,o,c,a]=await Promise.allSettled([focused?Promise.resolve({tasks:[focused]}):logisticsRequest(`tasks${query}`,undefined,signal),logisticsRequest(`options${query}`,undefined,signal),logisticsRequest("connections",undefined,signal),logisticsRequest("accounts",undefined,signal)]);
     if(signal?.aborted||current!==requestNumber.current)return;
     if(t.status!=="fulfilled"||o.status!=="fulfilled")throw new Error(logisticsError(t.status==="rejected"?t.reason:o.status==="rejected"?o.reason:undefined));
     setTasks(t.value.tasks);setOptions(LogisticsOptionsSchema.parse(o.value));
-    if(c.status==="fulfilled"){setConnections(c.value.connections);setConfigError("");}else setConfigError(logisticsError(c.reason));
+    setConnections(c.status==="fulfilled"?c.value.connections:[]);setAccounts(a.status==="fulfilled"?a.value.accounts:[]);
+    setConfigError(c.status==="rejected"?logisticsError(c.reason):a.status==="rejected"?logisticsError(a.reason):"");
   },[orderId,taskId]);
   useEffect(()=>{const ctl=new AbortController();setLoading(true);setError("");setTasks([]);setOptions(null);void reload(ctl.signal).catch(e=>{if(!ctl.signal.aborted)setError(logisticsError(e));}).finally(()=>{if(!ctl.signal.aborted)setLoading(false);});return()=>ctl.abort();},[reload]);
   async function dispatch(task:LogisticsTaskView,mode:"quote"|"purchase"|"reconcile") {
@@ -48,8 +51,8 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
       {!!task.quotes.length&&<details><summary>查看报价依据（{task.quotes.length}）</summary><div className="logistics-quote-list">{task.quotes.map((q,i)=><p key={i}>{q.channelName} · {money(q.totalMinor,q.currency,task.minorUnitDigits)} · {q.transitDaysMax===null?"时效未核验":`${q.transitDaysMin}–${q.transitDaysMax} 天`} · {q.currencySource??"币种未核验"} · {q.transitSource??"时效未核验"}{q.diagnostic&&` · ${q.diagnostic}`}</p>)}</div></details>}
     </article>)}</div>
     {options?.truncated&&<p>当前显示最近 100 个生产任务，请从订单筛选。</p>}
-    <details className="logistics-section"><summary>发货连接与自动购单规则</summary>{configError&&<p role="alert">{configError}</p>}
-      {options?.canConfigure&&<LogisticsConnectionForm factories={options.factories} connections={connections} onSaved={reload}/>}
+    <details className="logistics-section" inert={loading}><summary>发货连接与自动购单规则</summary>{configError&&<p role="alert">{configError}</p>}
+      {options?.canConfigure&&<><LogisticsAccountForm accounts={accounts} onSaved={reload}/><LogisticsConnectionForm factories={options.factories} connections={connections} accounts={accounts} onSaved={reload}/></>}
       {connections.map(c=><p key={c.id}>{c.profile.name} V{c.version} · {c.profile.provider} · 实际发货地 {c.profile.originCountryCode} · {c.verifiedAt?"账户已核验":"当前版本待核验"} · {c.rule?.autoPurchase?"自动购单已启用":"自动购单未启用"}</p>)}
     </details>
   </main>;

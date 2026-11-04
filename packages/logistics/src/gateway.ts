@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { LogisticsAddress, LogisticsConnectionProfile, LogisticsCredentials, LogisticsQuote, LogisticsTaskSnapshot } from "@yummyai/contracts/logistics";
+import type { LogisticsAccountProfile, LogisticsAddress, LogisticsConnectionProfile, LogisticsCredentials, LogisticsQuote, LogisticsTaskSnapshot } from "@yummyai/contracts/logistics";
 import { decimalMinor } from "./policy.js";
+import { normalizeDocumentRegion, yunexpressRecipientProblem } from "./document-address.js";
 export interface LogisticsProviderResult { providerOrderId: string; trackingNumbers: string[]; labelUrls: string[]; actualCostMinor: number | null; actualCurrency: string | null }
 export interface LogisticsGateway {
   channels(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials): Promise<Array<{ code: string; name: string }>>;
@@ -13,18 +14,23 @@ export interface LogisticsGateway {
 const record = (value: unknown) => z.record(z.string(), z.unknown()).parse(value);
 const text = (v: unknown) => typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const track = (v: unknown) => { const s = text(v); return s && /^[A-Za-z0-9_.-]{1,150}$/.test(s) ? s : null; };
-export class LogisticsTransportError extends Error { constructor(public readonly code: "TRANSPORT_UNCERTAIN" | "PROVIDER_REJECTED" | "INVALID_RESPONSE" | "LABEL_UNAVAILABLE") { super(code); } }
+export class LogisticsTransportError extends Error { constructor(public readonly code: "TRANSPORT_UNCERTAIN" | "PROVIDER_REJECTED" | "INVALID_RESPONSE" | "LABEL_UNAVAILABLE" | "LABEL_PENDING") { super(code); } }
 
 /** Separate write adapter. The existing ShipOS read-only gateway remains unchanged. */
 export class HttpLogisticsGateway implements LogisticsGateway {
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly environment: NodeJS.ProcessEnv = process.env) {}
-  assertProfile(profile: LogisticsConnectionProfile) {
+  assertAccount(profile: Pick<LogisticsAccountProfile,"provider"|"baseUrl">) {
+    if(!profile.baseUrl)throw new Error("LOGISTICS_API_ORIGIN_REQUIRED");
     const url = new URL(profile.baseUrl);
     if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) throw new Error("INVALID_LOGISTICS_ORIGIN");
     if (this.fixtureOrigin(url.origin)) return;
     if (url.protocol !== "https:" || url.port) throw new Error("INVALID_LOGISTICS_ORIGIN");
     if (profile.provider === "shipos" && url.origin !== "https://api.shipos.cn") throw new Error("INVALID_LOGISTICS_ORIGIN");
     if (profile.provider === "yunexpress" && !this.allowed("YUNEXPRESS_ALLOWED_ORIGINS").includes(url.origin)) throw new Error("YUNEXPRESS_ORIGIN_NOT_VERIFIED");
+  }
+  assertProfile(profile: LogisticsConnectionProfile) {
+    this.assertAccount(profile);
+    if(this.fixtureOrigin(new URL(profile.baseUrl).origin))return;
     const allowedLabels = ["shipease.oss-cn-hangzhou.aliyuncs.com", ...this.allowed("LOGISTICS_LABEL_ALLOWED_HOSTS")];
     if (profile.labelHosts.some(host => !allowedLabels.includes(host))) throw new Error("LABEL_HOST_NOT_VERIFIED");
   }
@@ -36,6 +42,11 @@ export class HttpLogisticsGateway implements LogisticsGateway {
       && /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
   }
   async channels(p: LogisticsConnectionProfile, c: LogisticsCredentials) {
+    this.assertProfile(p);
+    return this.accountChannels(p,c);
+  }
+  async accountChannels(p:Pick<LogisticsAccountProfile,"provider"|"baseUrl">,c:LogisticsCredentials) {
+    this.assertAccount(p);
     const result = p.provider === "shipos" ? await this.request(p,c,"POST","/api/getChannel.php",{ module: 2 }) : await this.request(p,c,"GET","/api/Common/GetShippingMethods");
     const rows = p.provider === "shipos" ? result.data : result.Items;
     return z.array(z.unknown()).max(1000).parse(rows).map(raw => {
@@ -48,8 +59,8 @@ export class HttpLogisticsGateway implements LogisticsGateway {
   async quote(p: LogisticsConnectionProfile, c: LogisticsCredentials, t: LogisticsTaskSnapshot, reference: string) {
     this.assertPackages(p,t);
     const available = await this.channels(p,c), quotes: LogisticsQuote[] = [];
-    for (const channel of p.channels.filter(channel => available.some(a => a.code === channel.code))) {
-      if (!channel.countryCodes.includes(t.recipient.countryCode) || t.packages.some(pack => pack.weightGrams > channel.maxWeightGrams || Math.max(...Object.values(pack.dimensionsMm)) > channel.maxDimensionMm || pack.containsBattery && !channel.acceptsBattery)) continue;
+    for (const channel of p.channels.filter(channel => (!t.channelCode||t.channelCode===channel.code)&&available.some(a => a.code === channel.code))) {
+      if (!channelFits(p,channel,t,available.find(item=>item.code===channel.code)?.name)) continue;
       try {
         const raw = p.provider === "shipos"
           ? await this.request(p,c,"POST","/api/getPrice.php",{ ...shiposBody(p,t,reference), channel_id: channel.code })
@@ -71,9 +82,11 @@ export class HttpLogisticsGateway implements LogisticsGateway {
   }
   async create(p: LogisticsConnectionProfile, c: LogisticsCredentials, t: LogisticsTaskSnapshot, reference: string, quote: LogisticsQuote) {
     this.assertPackages(p,t);
+    const channel=p.channels.find(channel=>channel.code===quote.channelCode);
+    if(!channel||t.channelCode&&t.channelCode!==quote.channelCode||!channelFits(p,channel,t))throw new Error("PACKAGE_EXCEEDS_CHANNEL_LIMITS");
     if (p.provider === "shipos") {
       if (!t.recipient.email) throw new Error("SHIPOS_RECIPIENT_EMAIL_REQUIRED");
-      const r = await this.request(p,c,"POST","/api/createOrder.php",{ ...shiposBody(p,t,reference), channelid: quote.channelCode });
+      const r = await this.request(p,c,"POST","/api/createOrder.php",{ ...shiposBody(p,t,reference), channel_id: quote.channelCode });
       const row = record(r.data);
       if (text(row.orderid) !== reference) throw new LogisticsTransportError("INVALID_RESPONSE");
       return shiposResult(row,p,reference);
@@ -132,18 +145,20 @@ export class HttpLogisticsGateway implements LogisticsGateway {
     return bytes;
   }
   private assertPackages(p: LogisticsConnectionProfile, t: LogisticsTaskSnapshot) {
+    normalizedRegion(p.sender);normalizedRegion(t.recipient);
     for(const pack of t.packages){kg(pack.weightGrams);for(const d of pack.declarations)kg(d.unitWeightGrams);}
     if(p.provider==="shipos"){if(!t.recipient.email)throw new Error("SHIPOS_RECIPIENT_EMAIL_REQUIRED");return;}
     if(t.packages.length!==1)throw new Error("YUN_MULTI_PACKAGE_REQUIRES_REVIEW");
     if(["BR","JO"].includes(t.recipient.countryCode))throw new Error("DESTINATION_TAX_OR_CERTIFICATE_REQUIRES_MANUAL_REVIEW");
+    if(yunexpressRecipientProblem(t.recipient.name))throw new Error("YUN_RECIPIENT_FULL_NAME_REQUIRED");
     for(const address of [p.sender,t.recipient])if(address.name.length>50||address.address1.length>200||address.address2.length>200||address.city.length>100||address.region.length>100)throw new Error("YUN_ADDRESS_LENGTH_REQUIRES_REVIEW");
     if(p.sender.phone.length>20)throw new Error("YUN_SENDER_PHONE_REQUIRES_REVIEW");
     for(const pack of t.packages){for(const v of Object.values(pack.dimensionsMm))cm(v,true);for(const d of pack.declarations)if(d.minorUnitDigits>2&&d.unitPriceMinor%10!==0)throw new Error("YUN_DECLARATION_PRICE_PRECISION");}
   }
-  private async request(p: LogisticsConnectionProfile, c: LogisticsCredentials, method: "GET"|"POST", path: string, body?: unknown, query?: Record<string,string>) {
-    this.assertProfile(p);
+  private async request(p:Pick<LogisticsAccountProfile,"provider"|"baseUrl">, c: LogisticsCredentials, method: "GET"|"POST", path: string, body?: unknown, query?: Record<string,string>) {
+    this.assertAccount(p);
     if (c.provider !== p.provider) throw new Error("CREDENTIAL_PROVIDER_MISMATCH");
-    const url = new URL(path,p.baseUrl);
+    const url = new URL(path,p.baseUrl!);
     for (const [key,value] of Object.entries(query ?? {})) url.searchParams.set(key,value);
     const headers: Record<string,string> = { "content-type": "application/json", accept: "application/json" };
     if (c.provider === "shipos") { headers.appkey = c.appKey; headers.appsecret = c.appSecret; }
@@ -155,24 +170,35 @@ export class HttpLogisticsGateway implements LogisticsGateway {
     let data: Record<string,unknown>;
     try { data = record(JSON.parse((await boundedBody(response,1024*1024)).toString("utf8"))); } catch { throw new LogisticsTransportError("INVALID_RESPONSE"); }
     const code=text(p.provider === "shipos" ? data.code : data.Code);
+    if(p.provider==="shipos" && path==="/api/getLabels.php" && code==="300") throw new LogisticsTransportError("LABEL_PENDING");
     if (p.provider === "shipos" ? code!=="200" : !["0000","0"].includes(code)) throw new LogisticsTransportError("PROVIDER_REJECTED");
     return data;
   }
 }
-function kg(grams: number) { if (!Number.isInteger(grams)) throw new Error("PACKAGE_WEIGHT_REQUIRES_GRAM_PRECISION"); return (grams/1000).toFixed(3); }
-function cm(mm: number, integer = false) { if (integer && mm%10 !== 0) throw new Error("YUN_DIMENSIONS_REQUIRE_WHOLE_CM"); return integer ? String(mm/10) : (mm/10).toFixed(2); }
-function shiposAddress(a: LogisticsAddress) { return { name: a.name, company: a.company, addr1: a.address1, addr2: a.address2, city: a.city, state: a.region, country: a.countryCode, postal: a.postalCode, tel: a.phone, ...(a.email ? { email: a.email } : {}) }; }
-function yunAddress(a: LogisticsAddress) { return { FirstName: a.name, LastName: "", Company: a.company, Street: a.address1, StreetAddress1: a.address1, StreetAddress2: a.address2, City: a.city, State: a.region, CountryCode: a.countryCode, Zip: a.postalCode, Phone: a.phone }; }
+// Round upward at the carrier's precision; never understate converted lb/in measurements.
+function kg(grams: number) { if(!Number.isFinite(grams)||grams<=0)throw new Error("INVALID_PACKAGE_WEIGHT");return (Math.ceil(grams)/1000).toFixed(3); }
+function cm(mm: number, integer = false) { const value=integer?mm/10:mm*10,rounded=Math.round(value*1e9)/1e9;return integer ? String(Math.ceil(rounded)) : (Math.ceil(rounded)/100).toFixed(2); }
+function channelFits(p:LogisticsConnectionProfile,channel:LogisticsConnectionProfile["channels"][number],t:LogisticsTaskSnapshot,liveName=channel.name){
+  const name=p.provider==="shipos"?liveName:"",gofo=/gofo/i.test(name),usps=/usps/i.test(name);
+  const maxSide=Math.min(channel.maxDimensionMm,gofo?609.6:usps?558.8:Infinity),maxSum=Math.min(channel.maxSumDimensionsMm??Infinity,gofo?1524:Infinity);
+  return channel.countryCodes.includes(t.recipient.countryCode)&&t.packages.every(pack=>{
+    const dimensions=Object.values(pack.dimensionsMm).map(value=>Number((Number(cm(value,p.provider==="yunexpress"))*10).toFixed(3)));
+    return Math.ceil(pack.weightGrams)<=channel.maxWeightGrams&&Math.max(...dimensions)<=maxSide&&Number(dimensions.reduce((sum,value)=>sum+value,0).toFixed(3))<=maxSum&&(!pack.containsBattery||channel.acceptsBattery);
+  });
+}
+function normalizedRegion(a:LogisticsAddress) { const region=normalizeDocumentRegion(a.region,a.countryCode);if(!region.valid)throw new Error("RECIPIENT_REGION_REQUIRES_REVIEW");return region.value; }
+function shiposAddress(a: LogisticsAddress) { return { name: a.name, company: a.company, addr1: a.address1, addr2: a.address2, city: a.city, state: normalizedRegion(a), country: a.countryCode, postcode: a.postalCode, tel: a.phone, ...(a.email ? { email: a.email } : {}) }; }
+function yunAddress(a: LogisticsAddress) { const parts=a.name.trim().split(/\s+/u),first=parts.shift()!;return { FirstName: first, LastName: parts.join(" "), Company: a.company, Street: a.address1, StreetAddress1: a.address1, StreetAddress2: a.address2, City: a.city, State: normalizedRegion(a), CountryCode: a.countryCode, Zip: a.postalCode, Phone: a.phone }; }
 function shiposBody(p: LogisticsConnectionProfile,t: LogisticsTaskSnapshot,reference: string) {
   return { orderid: reference, module: 2, from_address: shiposAddress(p.sender), to_address: shiposAddress(t.recipient),
     packages: t.packages.map((pack,i) => ({ xh: i+1, weight: kg(pack.weightGrams), length: cm(pack.dimensionsMm.length), width: cm(pack.dimensionsMm.width), height: cm(pack.dimensionsMm.height) })),
-    shenbao: t.packages.flatMap((pack,i) => pack.declarations.map(d => ({ xh: i+1, sku: d.sku, itemcn: d.nameCn, itemen: d.nameEn, price: d.unitPriceMinor/10**d.minorUnitDigits, num: d.quantity, cweight: kg(d.unitWeightGrams), hscode: d.hsCode, cz: d.originCountryCode, currency: d.currency }))) };
+    shenbao: t.packages.flatMap((pack,i) => pack.declarations.map(d => ({ xh: i+1, sku: d.sku, itemcn: d.nameCn, itemen: d.nameEn, price: d.unitPriceMinor/10**d.minorUnitDigits, num: d.quantity, cweight: kg(d.unitWeightGrams), hscode: d.hsCode, origin: d.originCountryCode, currency: d.currency }))) };
 }
 function shiposResult(row: Record<string,unknown>,p: LogisticsConnectionProfile,reference: string): LogisticsProviderResult {
   const source = row.source && typeof row.source === "object" ? record(row.source) : {};
   const labelRows = Array.isArray(row.labels) ? row.labels.map(record) : Array.isArray(source.lables) ? source.lables.map(record) : [];
-  const urls = [row.labelPdf,row.label_pdf,...labelRows.map(r => r.label ?? r.url)].filter((u): u is string => typeof u === "string" && !!u);
-  const numbers = [row.ztrackingno,row.trackingno,row.trackingNo,...labelRows.map(r => r.trackingNo ?? r.trackingno)].map(track).filter((t): t is string => !!t);
+  const urls = [row.labelPdf,row.label_pdf,...labelRows.map(r => r.label ?? r.url ?? r.pdf)].filter((u): u is string => typeof u === "string" && !!u);
+  const numbers = [row.ztrackingno,row.trackingno,row.trackingNo,source.trackingNo,...labelRows.map(r => r.trackingNo ?? r.trackingno)].map(track).filter((t): t is string => !!t);
   const feeData = row.fee_data && typeof row.fee_data === "object" ? record(row.fee_data) : {};
   const value = row.totalFee ?? feeData.total_fee, currency = feeData.currency ?? p.currency;
   return { providerOrderId: reference, trackingNumbers: [...new Set(numbers)], labelUrls: [...new Set(urls)], actualCostMinor: value === undefined || value === null || currency !== p.currency ? null : decimalMinor(value,p.minorUnitDigits), actualCurrency: value === undefined || value === null || currency !== p.currency ? null : p.currency };

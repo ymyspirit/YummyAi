@@ -12,6 +12,7 @@ import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
 import { RecordQualityGroupsInputSchema } from "@yummyai/contracts/order/quality-groups";
 import { CreateShipmentInputSchema } from "@yummyai/contracts/order/shipment";
 import { LogisticsConnectionProfileSchema, type LogisticsQuote, type LogisticsTaskSnapshot, type LogisticsConnectionProfile } from "@yummyai/contracts/logistics";
+import { LogisticsAccountsService } from "../logistics/logistics-accounts.service.js";
 import { orders, orderLines, orderSourceSnapshots, marketplaceAccounts, fulfillmentSuppliers, orderWorkItems, orderWorkRevisions,
   productionEditorProjects, productionEditorVersions, productionEditorImages, memberships, membershipRoles, roles, loadCurrentMembershipContext,
   connectDatabase, withTenant, type DatabaseConnection } from "@yummyai/database";
@@ -111,7 +112,7 @@ export function fulfillmentOwnerPorts(database: DatabaseConnection, vault: Secre
   const noModel = async () => { throw new Error("Fulfillment read acceptance must not call a model"); };
   const renderer = new ProductionEditorRenderProcessor(database, storage, vault, vault, { generate: noModel }, new ClamAvScanner());
   const carrier = new FulfillmentCarrier(), logisticsEnqueues: Parameters<LogisticsEnqueuer["enqueue"]>[0][] = [];
-  const logistics = new LogisticsService(database, integrationVault, vault, storage, carrier, ordersService, { enqueue: async input => { logisticsEnqueues.push(input); } });
+  const logistics = new LogisticsService(database, integrationVault, vault, storage, carrier, ordersService, { enqueue: async input => { logisticsEnqueues.push(input); } },new LogisticsAccountsService(database,integrationVault,carrier));
   const logisticsExecutor = new LogisticsExecutor(database, integrationVault, vault, storage, carrier), logisticsRead = new LogisticsReadOwner(database, vault);
   const clock = async (context: TenantContext) => {
     const [row] = await withTenant(database.db, context, tx => tx.execute<{ now: string | Date }>(sql`select clock_timestamp() as now`));

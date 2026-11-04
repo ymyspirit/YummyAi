@@ -13,7 +13,7 @@ export const LogisticsChannelProfileSchema = z.object({ code: z.string().trim().
   countryCodes: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1).max(250), transitDaysMin: z.int().nonnegative().max(365), transitDaysMax: z.int().positive().max(365),
   transitSource: Note, conditionsVerified: z.boolean(), conditionsEvidence: Note,
   acceptsBattery: z.boolean().default(false), maxWeightGrams: z.number().positive().max(1_000_000),
-  maxDimensionMm: z.number().positive().max(5000) }).strict().refine(v => v.transitDaysMin <= v.transitDaysMax, "渠道时效上限须不小于下限");
+  maxDimensionMm: z.number().positive().max(5000), maxSumDimensionsMm:z.number().positive().max(15000).optional() }).strict().refine(v => v.transitDaysMin <= v.transitDaysMax, "渠道时效上限须不小于下限");
 export const LogisticsConnectionProfileSchema = z.object({ name: z.string().trim().min(1).max(160), provider: LogisticsProviderSchema,
   factoryId: Id, originCountryCode: z.string().regex(/^[A-Z]{2}$/), sender: LogisticsAddressSchema,
   baseUrl: z.url(), module: z.literal(2).default(2), billingDepot: z.string().trim().max(100).default(""),
@@ -29,16 +29,22 @@ export const LogisticsConnectionProfileSchema = z.object({ name: z.string().trim
   });
 export const LogisticsCredentialsSchema = z.discriminatedUnion("provider", [
   z.object({ provider: z.literal("shipos"), appKey: z.string().trim().min(1).max(300), appSecret: z.string().trim().min(1).max(1000) }).strict(),
-  z.object({ provider: z.literal("yunexpress"), customerCode: z.string().trim().min(1).max(200), apiSecret: z.string().trim().min(1).max(1000) }).strict(),
+  z.object({ provider: z.literal("yunexpress"), customerCode: z.string().trim().min(1).max(200), apiSecret: z.string().trim().min(1).max(1000), appId: z.string().trim().min(1).max(200).optional() }).strict(),
 ]);
+export const LogisticsAccountProfileSchema=z.object({name:z.string().trim().min(1).max(160),provider:LogisticsProviderSchema,baseUrl:z.url().nullable()}).strict();
+export const SaveLogisticsAccountSchema=z.object({accountId:Id.optional(),expectedVersion:z.int().nonnegative(),profile:LogisticsAccountProfileSchema,credentials:LogisticsCredentialsSchema.optional(),idempotencyKey:Key}).strict()
+  .refine(v=>!v.credentials || v.credentials.provider===v.profile.provider,"账户和凭据的服务商须一致");
+export type LogisticsAccountProfile=z.infer<typeof LogisticsAccountProfileSchema>;
+export type LogisticsAccountView={id:string;version:number;versionId:string;profile:LogisticsAccountProfile;verifiedAt:string|null;channels:Array<{code:string;name:string}>};
 export const SaveLogisticsConnectionSchema = z.object({ connectionId: Id.optional(), expectedVersion: z.int().nonnegative(), profile: LogisticsConnectionProfileSchema,
-  credentials: LogisticsCredentialsSchema.optional(), idempotencyKey: Key }).strict();
+  credentials: LogisticsCredentialsSchema.optional(), accountVersionId:Id.optional(), idempotencyKey: Key }).strict()
+  .refine(v=>!(v.credentials&&v.accountVersionId),"请选择已保存账户或输入新凭据");
 export const LogisticsRuleSchema = z.object({ name: z.string().trim().min(1).max(160), autoPurchase: z.boolean().default(false), currency: z.string().regex(/^[A-Z]{3}$/),
   maxTicketMinor: z.int().positive().safe(), maxDailyMinor: z.int().positive().safe(), quoteMaxAgeSeconds: z.int().min(30).max(900).default(120),
   allowedChannelCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(200), evidence: Note }).strict().refine(v => v.maxTicketMinor <= v.maxDailyMinor, "单票上限不可超过每日上限");
 export const SaveLogisticsRuleSchema = z.object({ connectionId: Id, expectedVersion: z.int().nonnegative(), rule: LogisticsRuleSchema, idempotencyKey: Key }).strict();
 const CreateLogisticsTaskBaseSchema = z.object({ orderId: Id, productionOrderIds: z.array(Id).min(1).max(50),
-  connectionId: Id, packages: z.array(LogisticsPackageSchema).min(1).max(20),
+  connectionId: Id, packages: z.array(LogisticsPackageSchema).min(1).max(20), channelCode:z.string().trim().min(1).max(100).optional(),
   readyAt: z.iso.datetime(), latestShipAt: z.iso.datetime(), deliverBy: z.iso.datetime(), deadlineSource: Note,
   expectedOrderSequence: z.int().positive(), idempotencyKey: Key }).strict();
 function refineTask(v:Pick<z.infer<typeof CreateLogisticsTaskBaseSchema>,"productionOrderIds"|"readyAt"|"latestShipAt"|"deliverBy">,ctx:z.RefinementCtx) {
@@ -47,7 +53,7 @@ function refineTask(v:Pick<z.infer<typeof CreateLogisticsTaskBaseSchema>,"produc
 }
 export const CreateLogisticsTaskSchema=CreateLogisticsTaskBaseSchema.superRefine(refineTask);
 export const LogisticsTaskSnapshotSchema = CreateLogisticsTaskBaseSchema.omit({ idempotencyKey: true }).extend({ factoryId: Id, factoryVersionId: Id, connectionVersionId: Id, ruleVersionId: Id,
-  recipient: LogisticsAddressSchema, productionPins: z.array(z.object({ productionOrderId: Id, versionId: Id, lineId: Id, quantity: z.int().positive() }).strict()).min(1),
+  recipient: LogisticsAddressSchema,routingDocumentProfileVersionId:Id.optional(), productionPins: z.array(z.object({ productionOrderId: Id, versionId: Id, lineId: Id, quantity: z.int().positive() }).strict()).min(1),
   addressEnvelopeVersion: z.int().positive(), retentionExpiresAt: z.iso.datetime() }).strict().superRefine(refineTask);
 export const LogisticsQuoteSchema = z.object({ channelCode: z.string().min(1).max(100), channelName: z.string().max(200), totalMinor: z.int().nonnegative().safe(),
   currency: z.string().regex(/^[A-Z]{3}$/).nullable(), currencySource: z.string().max(2000).nullable(),

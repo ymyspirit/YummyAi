@@ -3,6 +3,11 @@ import type { DocumentAdapter, DocumentOrderSource, DocumentOrderPreview, Docume
 import { balancedParcel, ceilThree, inches, parcelCarrierChecks, unitWeight } from "./document-parcels.js";
 import { normalizeDocumentRegion, yunexpressRecipientProblem } from "./document-address.js";
 
+export function recommendYunexpressChannel(specifications: Array<Pick<ParcelSpecification,"productKind"|"sizeIn">|undefined>):string|null {
+  if(!specifications.length||specifications.some(spec=>!spec||spec.productKind==="other"||spec.productKind==="shaped_pillow"&&spec.sizeIn===null))return null;
+  return specifications.some(spec=>spec!.productKind==="shaped_pillow"&&spec!.sizeIn!>20)?"ZBZXRPH":"THPHR";
+}
+
 /** Receives already-authorized order sources. This function cannot advance any business state. */
 export function planOrderDocument(adapter: DocumentAdapter, source: DocumentOrderSource, profile: FactoryDocumentProfile,
   override?: DocumentParcelOverride): DocumentOrderPreview {
@@ -32,8 +37,7 @@ export function planOrderDocument(adapter: DocumentAdapter, source: DocumentOrde
   const skus = new Set(lines.map(row => row.spec.supplierSku)), values = new Set(lines.map(row => row.spec.declaredUnitValueMinor));
   const goodsSku = override?.goodsSku ?? (skus.size === 1 ? lines[0]!.spec.supplierSku : "");
   const declared = override?.declaredUnitValueMinor ?? (values.size === 1 ? lines[0]!.spec.declaredUnitValueMinor : null);
-  const maxPillowIn = Math.max(0, ...lines.filter(row => row.spec.productKind === "shaped_pillow").map(row => row.spec.sizeIn ?? 0));
-  const channel = override?.channelCode ?? (maxPillowIn > 20 ? "ZBZXRPH" : "THPHR");
+  const channel = override?.channelCode ?? recommendYunexpressChannel(lines.map(row=>row.spec)) ?? "THPHR";
   result.parcel = { quantity, weightLb, weightKg, lengthIn: length, widthIn: width, heightIn: height, goodsSku,
     declaredUnitValueMinor: declared, gofo: checks.gofo, usps: checks.usps, channelCode: adapter === "yunexpress" ? channel : null };
   const region = normalizeDocumentRegion(a.region, a.countryCode);

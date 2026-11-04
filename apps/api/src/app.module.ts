@@ -321,6 +321,7 @@ import { FactoryCapacityService } from "./suppliers/factory-capacity.service.js"
 import { ShiposController } from "./suppliers/shipos.controller.js";
 import { ShiposService } from "./suppliers/shipos.service.js";
 import { LogisticsService, LogisticsEnqueuer } from "./logistics/logistics.service.js";
+import { LogisticsAccountsService } from "./logistics/logistics-accounts.service.js";
 import { LogisticsController } from "./logistics/logistics.controller.js";
 import { LogisticsDocumentsService } from "./logistics/logistics-documents.service.js";
 import { LogisticsDocumentsController } from "./logistics/logistics-documents.controller.js";
@@ -850,6 +851,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     FactoryCapacityService,
     ShiposService,
     LogisticsService,
+    LogisticsAccountsService,
     LogisticsDocumentsService,
     LogisticsDocumentLabelsService,
     { provide: DOCUMENT_FILE_SCANNER, useFactory: () => new ClamAvScanner() },

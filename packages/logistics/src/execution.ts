@@ -8,6 +8,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { selectLogisticsQuote } from "./policy.js";
 import type { LogisticsGateway, LogisticsProviderResult } from "./gateway.js";
+import { LogisticsTransportError } from "./gateway.js";
 import { purgeLogisticsTasks } from "./retention.js";
 import { Permission } from "@yummyai/authz";
 export const logisticsHash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
@@ -41,6 +42,8 @@ export class LogisticsExecutor {
       await this.recordQuotes(context,loaded,refreshed);
       const selected = selectLogisticsQuote(refreshed,rule.rule,snapshot).selected;
       if (!selected) return this.finish(context,loaded,"attention","PRICE_OR_SERVICE_CHANGED");
+      // Manual spreadsheet orders may already use this reference. Never adopt or buy over them implicitly.
+      if(await this.gateway.lookup(connection.profile,credentials,task.externalReference))return this.finish(context,loaded,"attention","PROVIDER_REFERENCE_CONFLICT");
       const reserved = await this.reserve(context,loaded,selected);
       if (!reserved) return this.finish(context,loaded,"attention","DAILY_BUDGET_EXCEEDED");
       const result = await this.gateway.create(connection.profile,credentials,snapshot,task.externalReference,selected);
@@ -57,7 +60,7 @@ export class LogisticsExecutor {
     return withTenant(this.database.db,context,async tx => {
       await logisticsLock(tx,context,`task:${id}`);
       const [task] = await tx.select().from(tasks).where(eq(tasks.id,id));
-      if (!task || ["completed","cancelled"].includes(task.status) || task.leaseUntil && task.leaseUntil > new Date()) return null;
+      if (!task || ["completed","cancelled"].includes(task.status) || task.diagnostic==="PROVIDER_REFERENCE_CONFLICT" || task.leaseUntil && task.leaseUntil > new Date()) return null;
       const [connection] = await tx.select().from(connections).where(eq(connections.id,task.connectionVersionId));
       const [rule] = await tx.select().from(rules).where(eq(rules.id,task.ruleVersionId));
       if (!connection || !rule || !task.encryptedSnapshot) return null;
@@ -114,16 +117,25 @@ export class LogisticsExecutor {
     });
   }
   private async completeLabels(context: TenantContext,l: Loaded,c: ReturnType<typeof LogisticsCredentialsSchema.parse>,result: LogisticsProviderResult,requestWasUncertain: boolean) {
-    if(l.connection.profile.labelMode==="factory_pull") return this.complete(context,l);
     let source=result;
+    const shipos=l.connection.profile.provider==="shipos";
+    const pending=l.task.diagnostic==="LABEL_GENERATION_PENDING";
+    const waiting=l.task.diagnostic==="LABEL_GENERATION_WAITING";
+    if(!source.labelUrls.length && pending && l.task.labelRequestedAt && Date.now()-l.task.labelRequestedAt.getTime()>600_000)
+      return this.finish(context,l,"reconciliation_required","LABEL_GENERATION_TIMEOUT");
     if(!source.labelUrls.length) {
+      if(shipos&&!l.task.providerOrderId&&!l.task.labelRequestedAt)return this.finish(context,l,"created","LABEL_GENERATION_WAITING");
       // ShipOS issuance may charge. Once issuance has an uncertain outcome, only query existing labels.
-      if(requestWasUncertain && l.connection.profile.provider==="shipos") return this.finish(context,l,"reconciliation_required","LABEL_ISSUANCE_NOT_CONFIRMED");
-      await withTenant(this.database.db,context,async tx => { const [task]=await tx.select().from(tasks).where(and(eq(tasks.id,l.task.id),eq(tasks.processingRunId,l.runId))); if(!task) throw new Error("TASK_LEASE_CHANGED"); await tx.update(tasks).set({status:"label_requesting",labelRequestedAt:new Date(),updatedAt:new Date()}).where(eq(tasks.id,l.task.id)); await this.event(tx,context,l.task.id,"label.request_intent",{}); });
-      source=await this.gateway.labels(l.connection.profile,c,l.task.externalReference);
+      if(requestWasUncertain && shipos && !pending) return this.finish(context,l,"reconciliation_required","LABEL_ISSUANCE_NOT_CONFIRMED");
+      if((pending||waiting) && Date.now()-l.task.updatedAt.getTime()<10_000) return this.finish(context,l,pending?"label_requesting":"created",pending?"LABEL_GENERATION_PENDING":"LABEL_GENERATION_WAITING",undefined,l.task.updatedAt);
+      await withTenant(this.database.db,context,async tx => { const [task]=await tx.select().from(tasks).where(and(eq(tasks.id,l.task.id),eq(tasks.processingRunId,l.runId))); if(!task) throw new Error("TASK_LEASE_CHANGED"); await tx.update(tasks).set({status:"label_requesting",diagnostic:null,labelRequestedAt:task.labelRequestedAt??new Date(),updatedAt:new Date()}).where(eq(tasks.id,l.task.id)); await this.event(tx,context,l.task.id,"label.request_intent",{}); });
+      try { source=await this.gateway.labels(l.connection.profile,c,l.task.externalReference); }
+      catch(error) { if(error instanceof LogisticsTransportError && error.code==="LABEL_PENDING") return this.finish(context,l,"label_requesting","LABEL_GENERATION_PENDING");throw error; }
       await this.acceptCreated(context,l,source);
     }
     if(!source.labelUrls.length) return this.finish(context,l,"attention","LABEL_UNAVAILABLE");
+    if(shipos && !source.trackingNumbers.length && !l.task.trackingNumbers.length) return this.finish(context,l,"reconciliation_required","TRACKING_NUMBER_PENDING");
+    if(l.connection.profile.labelMode==="factory_pull") return this.complete(context,l);
     for(const [index,url] of source.labelUrls.entries()) {
       const bytes=await this.gateway.downloadLabel(l.connection.profile,url);
       const checksum=createHash("sha256").update(bytes).digest("hex"),fileName=`${l.task.externalReference}-${index+1}.pdf`;
@@ -153,11 +165,11 @@ export class LogisticsExecutor {
     if(!received.length) return;
     await withTenant(this.database.db,context,tx=>tx.insert(quotes).values(received.map(quote=>({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,taskId:l.task.id,roundId:l.runId,quote}))));
   }
-  private async finish(context: TenantContext,l: Loaded,status: LogisticsTaskState,diagnostic: string|null,selectedQuote?: LogisticsQuote) {
+  private async finish(context: TenantContext,l: Loaded,status: LogisticsTaskState,diagnostic: string|null,selectedQuote?: LogisticsQuote,updatedAt=new Date()) {
     return withTenant(this.database.db,context,async tx => {
-      const [updated]=await tx.update(tasks).set({status,diagnostic,processingRunId:null,leaseUntil:null,updatedAt:new Date(),...(selectedQuote ? {selectedQuote} : {})}).where(and(eq(tasks.id,l.task.id),eq(tasks.processingRunId,l.runId))).returning({id:tasks.id});
+      const [updated]=await tx.update(tasks).set({status,diagnostic,processingRunId:null,leaseUntil:null,updatedAt,...(selectedQuote ? {selectedQuote} : {})}).where(and(eq(tasks.id,l.task.id),eq(tasks.processingRunId,l.runId))).returning({id:tasks.id});
       if(updated) await this.event(tx,context,l.task.id,`task.${status}`,{ diagnostic });
-      return { taskId:l.task.id,status:updated ? status : "ignored" };
+      return { taskId:l.task.id,status:updated ? status : "ignored",...(updated&&["LABEL_GENERATION_PENDING","LABEL_GENERATION_WAITING"].includes(diagnostic??"")?{retryAfterMs:30_000}:{}) };
     });
   }
   private event(tx: TenantTransaction,c: TenantContext,taskId: string,action: string,data: Record<string,unknown>) { return tx.insert(events).values({id:createEntityId(),tenantId:c.tenantId,createdBy:c.userId,taskId,action,data}); }

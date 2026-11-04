@@ -2,8 +2,8 @@ import { apiFetch } from "../../../../server-api";
 import { isSameOriginRequest } from "../../../../same-origin-request";
 export const dynamic = "force-dynamic";
 const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const read = new RegExp(`^(connections|options|tasks|tasks/${id}(/labels/${id})?|documents/(options|exports|exports/${id}/(file|label-basis)|labels|labels/${id}/file))$`, "i");
-const write = new RegExp(`^(connections|rules|tasks|connections/${id}/verify|tasks/${id}/(dispatch|cancel)|documents/(profiles|preview|generate|labels|labels/${id}/handoff))$`, "i");
+const read = new RegExp(`^(accounts|connections|options|tasks|tasks/${id}(/labels/${id})?|documents/(options|exports|exports/${id}/(file|label-basis)|labels|labels/${id}/file))$`, "i");
+const write = new RegExp(`^(accounts|accounts/${id}/verify|connections|rules|tasks|connections/${id}/verify|tasks/${id}/(dispatch|cancel)|documents/(profiles|preview|generate|labels|labels/${id}/handoff))$`, "i");
 type Context = { params: Promise<{ path: string[] }> };
 export async function GET(request: Request, context: Context) {return proxy(request,context,"GET");}
 export async function POST(request: Request, context: Context) {return proxy(request,context,"POST");}
