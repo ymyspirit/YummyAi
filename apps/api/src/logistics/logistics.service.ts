@@ -5,20 +5,23 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { SaveLogisticsConnectionSchema, SaveLogisticsRuleSchema, CreateLogisticsTaskSchema, LogisticsCredentialsSchema, LogisticsTaskSnapshotSchema, LogisticsAddressSchema,
   LogisticsOptionsSchema, type LogisticsConnectionView, type LogisticsTaskView } from "@yummyai/contracts/logistics";
 import { logisticsConnections as connections, logisticsConnectionVersions as versions, logisticsRuleVersions as rules, logisticsTasks as tasks, logisticsTaskProductions as pins, logisticsLabels as labels, logisticsEvents as events,
-  fulfillmentFactories, fulfillmentFactoryVersions, productionOrders, productionOrderVersions, orderLines, orders, orderProtectedDetails, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
-import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema } from "@yummyai/logistics";
+  fulfillmentFactories, fulfillmentFactoryVersions, productionOrders, productionOrderVersions, orderLines, orders, orderProtectedDetails,logisticsDocumentProfiles, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
+import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel } from "@yummyai/logistics";
+import { OrderDocumentSourceReader } from "@yummyai/order-core";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { z } from "zod";
 import { DATABASE_CONNECTION, INTEGRATION_SECRET_VAULT, ORDER_PII_VAULT, PRIVATE_STORAGE } from "../platform.tokens.js";
 import { OrderService } from "../orders/order.service.js";
 import { originalOwnerOperation } from "../shared/original-owner-error.js";
+import { LogisticsAccountsService } from "./logistics-accounts.service.js";
 export abstract class LogisticsEnqueuer { abstract enqueue(input: { taskId: string; tenantId: string; requestedBy: string; mode: "quote"|"purchase"|"reconcile"|"retention"; requestKey: string; delayMs?:number }): Promise<void>; }
 @Injectable()
 export class LogisticsService {
   constructor(@Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection, @Inject(INTEGRATION_SECRET_VAULT) private readonly vault: SecretVault,
     @Inject(ORDER_PII_VAULT) private readonly pii: SecretVault, @Inject(PRIVATE_STORAGE) private readonly storage: Storage,
-    @Inject(HttpLogisticsGateway) private readonly gateway: HttpLogisticsGateway, @Inject(OrderService) private readonly orderService: OrderService, @Inject(LogisticsEnqueuer) private readonly queue: LogisticsEnqueuer) {}
+    @Inject(HttpLogisticsGateway) private readonly gateway: HttpLogisticsGateway, @Inject(OrderService) private readonly orderService: OrderService, @Inject(LogisticsEnqueuer) private readonly queue: LogisticsEnqueuer,
+    @Inject(LogisticsAccountsService) private readonly accounts:LogisticsAccountsService) {}
   async connections(context: TenantContext): Promise<{ connections: LogisticsConnectionView[] }> {
     this.tenantAccess(context);
     authorize(context,Permission.IntegrationRead);
@@ -45,12 +48,15 @@ export class LogisticsService {
       const origin=factory.version.profile.pickupAddress??factory.version.profile.productionAddress;
       if(!origin || origin.countryCode!==input.profile.originCountryCode || origin.street!==input.profile.sender.address1 || origin.city!==input.profile.sender.city || origin.postalCode!==input.profile.sender.postalCode) throw new ConflictException("发货路线须使用工厂版本中的实际发货地址");
       const prior=current ? await this.connection(tx,id) : null;
-      const credentials=input.credentials ?? (prior ? this.vault.withSecret(prior.encryptedCredentials,s=>LogisticsCredentialsSchema.parse(JSON.parse(s))) : null);
+      const credentials=input.accountVersionId?await this.accounts.credentialsForRoute(tx,context,input.accountVersionId,input.profile):input.credentials ?? (prior ? this.vault.withSecret(prior.encryptedCredentials,s=>LogisticsCredentialsSchema.parse(JSON.parse(s))) : null);
       if(!credentials || credentials.provider!==input.profile.provider) throw new ConflictException("请配置此物流账户的 API 凭据");
+      if(prior&&prior.profile.provider==="yunexpress"&&(prior.profile.yunexpressProtocol??"oms")!==(input.profile.yunexpressProtocol??"oms")&&!input.credentials&&!input.accountVersionId)throw new ConflictException("切换接口协议时请重新选择账户或填写对应凭据");
+      try{this.gateway.assertCredentials(input.profile,credentials);}catch{throw new ConflictException("凭据不符合当前物流接口协议 请重新选择账户或补齐凭据");}
       const number=(current?.version??0)+1,versionId=createEntityId();
       if(!current) await tx.insert(connections).values({id,tenantId:context.tenantId,createdBy:context.userId,factoryId:input.profile.factoryId,version:number});
       await tx.insert(versions).values({id:versionId,tenantId:context.tenantId,createdBy:context.userId,connectionId:id,version:number,profile:input.profile,encryptedCredentials:this.vault.encrypt(JSON.stringify(credentials)),requestKey:input.idempotencyKey,requestHash:digest});
       if(current) await tx.update(connections).set({version:number,verifiedAt:null,verifiedVersionId:null}).where(eq(connections.id,id));
+      if(input.accountVersionId)await tx.insert(events).values({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,connectionId:id,action:"connection.account_pinned",data:{connectionVersionId:versionId,accountVersionId:input.accountVersionId}});
       return {connectionId:id,version:number};
     });
   }
@@ -132,10 +138,31 @@ export class LogisticsService {
       if(priorPins.some(p=>p.task.status!=="cancelled"))throw new ConflictException("生产任务的旧版本已有物流任务，请先查单核对或取消未购单任务，再处理新版");
       const { idempotencyKey: _requestKey, ...basis }=input;
       void _requestKey;
-      const snapshot=LogisticsTaskSnapshotSchema.parse({...basis,factoryId:first.version.factoryId,factoryVersionId:first.version.factoryVersionId,connectionVersionId:connection.id,ruleVersionId:rule.id,recipient:recipientResult.data,
+      let channelCode=input.channelCode,routingDocumentProfileVersionId:string|undefined;
+      if(connection.profile.provider==="yunexpress"&&!channelCode){
+        const [packing]=await tx.select().from(logisticsDocumentProfiles).where(and(eq(logisticsDocumentProfiles.factoryId,first.version.factoryId),eq(logisticsDocumentProfiles.factoryVersionId,first.version.factoryVersionId))).orderBy(desc(logisticsDocumentProfiles.versionNumber)).limit(1);
+        if(packing?.profile.route==="yunexpress"){
+          const source=await new OrderDocumentSourceReader(this.pii).read(tx,context,input.orderId);
+          channelCode=recommendYunexpressChannel(rows.map(row=>{const line=source.source.lines.find(line=>line.id===row.line.id);return packing.profile.specifications.find(spec=>spec.specificationVersionId===line?.specificationVersionId);} ))??undefined;
+          if(channelCode)routingDocumentProfileVersionId=packing.id;
+        }
+        if(!channelCode&&rule.rule.allowedChannelCodes.length===1)channelCode=rule.rule.allowedChannelCodes[0];
+        if(!channelCode)throw new ConflictException("规格尚未匹配云途渠道 请关联工厂包裹规格 或为本单手动选择渠道");
+      }
+      if(channelCode&&(!connection.profile.channels.some(channel=>channel.code===channelCode)||!rule.rule.allowedChannelCodes.includes(channelCode)))throw new ConflictException("本单渠道未在当前路线与预算中启用 请核对特惠普货或中包普货配置");
+      const snapshot=LogisticsTaskSnapshotSchema.parse({...basis,...(channelCode?{channelCode}:{}),...(routingDocumentProfileVersionId?{routingDocumentProfileVersionId}:{}),factoryId:first.version.factoryId,factoryVersionId:first.version.factoryVersionId,connectionVersionId:connection.id,ruleVersionId:rule.id,recipient:recipientResult.data,
         productionPins:rows.map(r=>({productionOrderId:r.production.id,versionId:r.version.id,lineId:r.line.id,quantity:r.version.quantity})),addressEnvelopeVersion:address.envelopeVersion,retentionExpiresAt:address.retentionExpiresAt.toISOString()});
       const id=createEntityId();
-      await tx.insert(tasks).values({id,tenantId:context.tenantId,createdBy:context.userId,orderId:input.orderId,factoryId:snapshot.factoryId,connectionVersionId:connection.id,ruleVersionId:rule.id,identityKey:logisticsHash(rows.map(r=>r.version.id).sort()),requestKey:input.idempotencyKey,requestHash:digest,externalReference:`YMY${id.replaceAll("-","")}`,encryptedSnapshot:this.pii.encrypt(JSON.stringify(snapshot)),snapshotHash:logisticsHash(snapshot),expiresAt:address.retentionExpiresAt});
+      let externalReference=`YMY${id.replaceAll("-","")}`;
+      if(connection.profile.provider==="shipos"&&connection.profile.labelMode==="factory_pull"){
+        const lines=await tx.select().from(orderLines).where(eq(orderLines.orderId,order.id));
+        if(input.packages.length!==1||lines.some(line=>rows.filter(row=>row.line.id===line.id).reduce((sum,row)=>sum+row.version.quantity,0)!==line.quantity))throw new ConflictException("工厂按订单号拉单须整单合包 请选择本单全部商品和数量 并使用一个包裹");
+        if(!/^[A-Za-z0-9_-]{1,64}$/.test(order.externalOrderId))throw new ConflictException("订单号格式不符合工厂拉单要求 请人工核对");
+        externalReference=order.externalOrderId;
+        const [prior]=await tx.select().from(tasks).where(eq(tasks.externalReference,externalReference));
+        if(prior)throw new ConflictException("此订单号已有物流任务 请核对原任务 禁止重复建单");
+      }
+      await tx.insert(tasks).values({id,tenantId:context.tenantId,createdBy:context.userId,orderId:input.orderId,factoryId:snapshot.factoryId,connectionVersionId:connection.id,ruleVersionId:rule.id,identityKey:logisticsHash(rows.map(r=>r.version.id).sort()),requestKey:input.idempotencyKey,requestHash:digest,externalReference,encryptedSnapshot:this.pii.encrypt(JSON.stringify(snapshot)),snapshotHash:logisticsHash(snapshot),expiresAt:address.retentionExpiresAt});
       await tx.insert(pins).values(rows.map(r=>({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,taskId:id,productionVersionId:r.version.id})));
       await tx.insert(events).values({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,taskId:id,action:"task.created",data:{productionOrderIds:input.productionOrderIds,ruleVersionId:rule.id,connectionVersionId:connection.id}});
       return {taskId:id,replayed:false};

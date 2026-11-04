@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { assertVerificationNames, resolveWorkspacePath } from "../scripts/backup-restore.mjs";
+import { assertVerificationNames, backupComposeTarget, resolveWorkspacePath } from "../scripts/backup-restore.mjs";
 
 async function sandbox(run) {
   const base = path.resolve(os.tmpdir()), root = await fs.mkdtemp(path.join(base, "yummyai-backup-unit-"));
@@ -48,3 +48,13 @@ test("restore resource names cannot target normal data or inject database comman
   ]) assert.throws(() => assertVerificationNames(database, bucket, "yummyai", "normal-assets"), { code: "unsafe_verification_resources" });
   assert.doesNotThrow(() => assertVerificationNames("yummyai_restore_verify_test", "yummyai-restore-verify-test", "yummyai", "normal-assets"));
 });
+
+test("a frozen source resolves Docker from the actual operational root without copying adoption authority",()=>sandbox(async root=>{
+  const legacy=await backupComposeTarget(root);
+  assert.equal(legacy.cwd,root);assert.deepEqual(legacy.arguments_,["compose","--env-file",path.join(root,".env"),"-f",path.join(root,"infra/docker-compose.yml"),"ps","-q","postgres"]);
+  const marker=path.join(root,".artifacts/yummyai-compose/adopted.json");await fs.mkdir(path.dirname(marker),{recursive:true});
+  await fs.writeFile(marker,JSON.stringify({version:1,project:"yummyai",status:"adopted"}));
+  assert.deepEqual((await backupComposeTarget(root)).arguments_,["compose","-p","yummyai","-f",path.join(root,"infra/compose.yummyai.yml"),"ps","-q","postgres"]);
+  await fs.writeFile(marker,JSON.stringify({version:1,project:"foreign",status:"adopted"}));
+  await assert.rejects(backupComposeTarget(root),{code:"backup_managed_deployment_invalid"});
+}));

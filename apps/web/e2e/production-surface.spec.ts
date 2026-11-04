@@ -4,6 +4,9 @@ import { createDefaultProductionDocument } from "@yummyai/production-editor/prod
 import { apiFetch } from "../src/server-api";
 import { centerApi } from "./order-centers-fixture";
 import { syntheticProductionPng } from "./production-editor-fixture";
+import { loginErp } from "./erp-identity-fixture";
+
+test.beforeEach(async ({page}) => { if(process.env.WEB_AUTH_MODE==="personal") await loginErp(page,"operator","/production"); });
 
 test("production delivery preserves separate front/back prints in the editor, sheet and saved versions", async ({ page }, testInfo) => {
   test.setTimeout(120_000);

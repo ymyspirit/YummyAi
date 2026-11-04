@@ -4,9 +4,16 @@ import { z } from "zod";
 import { RequiresPermission } from "../auth/permissions.decorator.js";
 import type { AuthenticatedRequest } from "../auth/tenant-context.guard.js";
 import { LogisticsService } from "./logistics.service.js";
+import { LogisticsAccountsService } from "./logistics-accounts.service.js";
 @Controller("v1/logistics")
 export class LogisticsController {
-  constructor(@Inject(LogisticsService) private readonly logistics: LogisticsService) {}
+  constructor(@Inject(LogisticsService) private readonly logistics: LogisticsService,@Inject(LogisticsAccountsService) private readonly accounts:LogisticsAccountsService) {}
+  @Get("accounts") @Header("Cache-Control","private, no-store") @RequiresPermission(Permission.IntegrationRead)
+  accountsList(@Req() req:AuthenticatedRequest){return this.accounts.list(context(req));}
+  @Post("accounts") @RequiresPermission(Permission.IntegrationManage)
+  accountSave(@Req() req:AuthenticatedRequest,@Body() raw:unknown){return this.accounts.save(context(req),raw);}
+  @Post("accounts/:id/verify") @RequiresPermission(Permission.IntegrationManage)
+  accountVerify(@Req() req:AuthenticatedRequest,@Param("id") id:string,@Body() raw:unknown){return this.accounts.verify(context(req),z.uuidv7().parse(id),raw);}
   @Get("connections") @Header("Cache-Control","private, no-store") @RequiresPermission(Permission.IntegrationRead)
   connections(@Req() req: AuthenticatedRequest) { return this.logistics.connections(context(req)); }
   @Post("connections") @RequiresPermission(Permission.IntegrationManage)

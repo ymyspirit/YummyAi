@@ -23,3 +23,14 @@
 .order-report-main .order-header { border-color: var(--line); }
 .order-report-main .order-header h1 { color: var(--ink); }
 .order-report-main .order-header > div > p:last-child { color: var(--muted-ink); }
+/* Local archive intake reuses the report owner and the same compact ledger. */
+.ar-archive-import{border-block:1px solid var(--border,#e5e7eb);padding:14px 0;margin:16px 0;min-width:0}
+.ar-archive-import summary{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;font-weight:600}
+.ar-archive-import p{font-size:13px;line-height:1.6;color:var(--muted-foreground,#64748b)}
+.ar-archive-plan{list-style:none;padding:0;max-height:280px;overflow:auto;font-size:12px}
+.ar-archive-plan li{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--border,#e5e7eb);overflow-wrap:anywhere}
+.ar-archive-import::details-content{opacity:0;block-size:0;overflow:clip;transition:content-visibility .2s allow-discrete,block-size .2s ease-out,opacity .18s ease-out;interpolate-size:allow-keywords}
+.ar-archive-import[open]::details-content{opacity:1;block-size:auto}
+.ar-archive-import :is(button,summary){transition:transform .16s ease-out,background-color .16s ease-out}
+.ar-archive-import button:not(:disabled):hover{transform:translateY(-1px)}.ar-archive-import button:not(:disabled):active{transform:scale(.985)}
+@media(prefers-reduced-motion:reduce){.ar-archive-import::details-content,.ar-archive-import *{transition:none!important;transform:none!important}}

@@ -12,6 +12,9 @@ verifyDepsBeforeRun: error
 
 overrides:
   "@vitejs/plugin-react": "5.2.0"
+  # ExcelJS CSV helpers otherwise load Node 14 globals into the Node 24 workspace.
+  "@fast-csv/format>@types/node": "24.13.3"
+  "@fast-csv/parse>@types/node": "24.13.3"
 
 allowBuilds:
   canvas: false

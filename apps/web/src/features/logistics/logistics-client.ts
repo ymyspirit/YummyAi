@@ -11,6 +11,8 @@ const diagnostics:Record<string,string>={
   REQUESTER_MEMBERSHIP_DISABLED:"派发成员已停用",REQUESTER_PERMISSIONS_REVOKED:"派发成员权限已撤销",ORDER_CANCELLED_OR_HELD:"订单已取消、暂停或收件资料失效",
   ADDRESS_CHANGED_OR_EXPIRED:"收件资料已变更或到期",PRODUCTION_ASSIGNMENT_CHANGED:"工厂、数量、排期或生产版本已变更",ARTWORK_CHANGED_OR_HELD:"审核稿或客户确认状态已变更",
   LABEL_ISSUANCE_NOT_CONFIRMED:"面单申请结果待核实，请先查单",LABEL_UNAVAILABLE:"物流订单已确认，面单尚未取得",LABEL_CONTENT_CHANGED:"同一面单返回不同文件，请人工核对",
+  LABEL_GENERATION_WAITING:"订单已创建 正在等待平台生成面单 系统将自动查询",LABEL_GENERATION_PENDING:"平台正在生成面单 系统每 30 秒查询原订单",LABEL_GENERATION_TIMEOUT:"面单生成超过 10 分钟 请核对平台原订单并联系服务商",TRACKING_NUMBER_PENDING:"面单已返回 跟踪号仍待核对",
+  PROVIDER_REFERENCE_CONFLICT:"物流平台已存在此订单号 请核对已有面单 系统已阻止重复下单",
   ACTUAL_COST_EXCEEDS_BUDGET:"实际单票费用超过预算，请人工核对",ACTUAL_DAILY_COST_EXCEEDS_BUDGET:"实际每日费用超过预算，请人工核对",QUOTE_UNAVAILABLE:"该渠道报价暂未返回",
   OPERATOR_CANCELLED:"运营已取消尚未购单的本地任务",ORDER_DATA_ERASED:"订单私有资料已到期或清理",
 };

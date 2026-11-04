@@ -2,15 +2,15 @@ import { apiFetch } from "../../../../server-api";
 import { isSameOriginRequest } from "../../../../same-origin-request";
 export const dynamic = "force-dynamic";
 const id = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const read = new RegExp(`^(connections|options|tasks|tasks/${id}(/labels/${id})?)$`, "i");
-const write = new RegExp(`^(connections|rules|tasks|connections/${id}/verify|tasks/${id}/(dispatch|cancel))$`, "i");
+const read = new RegExp(`^(accounts|connections|options|tasks|tasks/${id}(/labels/${id})?|documents/(options|exports|exports/${id}/(file|label-basis)|labels|labels/${id}/file))$`, "i");
+const write = new RegExp(`^(accounts|accounts/${id}/verify|connections|rules|tasks|connections/${id}/verify|tasks/${id}/(dispatch|cancel)|documents/(profiles|preview|generate|labels|labels/${id}/handoff))$`, "i");
 type Context = { params: Promise<{ path: string[] }> };
 export async function GET(request: Request, context: Context) {return proxy(request,context,"GET");}
 export async function POST(request: Request, context: Context) {return proxy(request,context,"POST");}
 async function proxy(request: Request, context: Context, method: "GET"|"POST") {
   const target=(await context.params).path.join("/");
   if(!(method==="GET"?read:write).test(target))return failure(404);
-  const url=new URL(request.url), allowed=target==="tasks"?["orderId","factoryId","limit"]:target==="options"?["orderId"]:[];
+  const url=new URL(request.url), allowed=target==="tasks"?["orderId","factoryId","limit"]:target==="documents/options"?["orderId","q"]:["options","documents/exports","documents/labels"].includes(target)||target.endsWith("/label-basis")?["orderId"]:[];
   if([...url.searchParams.keys()].some(k=>!allowed.includes(k)||url.searchParams.getAll(k).length!==1))return failure(400);
   if(method==="POST"&&(!isSameOriginRequest(request)||!request.headers.get("content-type")?.startsWith("application/json")))return failure(403);
   const base=process.env.API_BASE_URL?.replace(/\/$/,"");if(!base)return failure(503);
@@ -18,14 +18,15 @@ async function proxy(request: Request, context: Context, method: "GET"|"POST") {
   if(method==="POST") {
     const reader=request.body?.getReader();if(!reader)return failure(400);
     const chunks: Uint8Array[]=[];let size=0;
-    while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>128*1024){await reader.cancel();return failure(413);}chunks.push(next.value);}
+    const limit=target==="documents/labels"?8*1024*1024:128*1024;
+    while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>limit){await reader.cancel();return failure(413);}chunks.push(next.value);}
     body=Buffer.concat(chunks).toString("utf8");try{JSON.parse(body);}catch{return failure(400);}
   }
   try {
-    const response=await apiFetch(`${base}/v1/logistics/${target}${url.search}`,{method,body,headers:body?{"content-type":"application/json"}:undefined,cache:"no-store",signal:AbortSignal.timeout(40_000)});
+    const response=await apiFetch(`${base}/v1/logistics/${target}${url.search}`,{method,body,headers:body?{"content-type":"application/json"}:undefined,cache:"no-store",signal:AbortSignal.timeout(target.endsWith("/handoff")?110_000:40_000)});
     if(!response.ok){const data=[409,422].includes(response.status)?await response.json().catch(()=>null):null;return failure(response.status,typeof data?.message==="string"&&data.message.length<400?data.message:undefined);}
     const headers=new Headers({"cache-control":"private, no-store","content-type":response.headers.get("content-type")??"application/json","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});
-    if(target.includes("/labels/")){headers.set("content-disposition",response.headers.get("content-disposition")??"attachment; filename=label.pdf");headers.set("content-security-policy","default-src 'none'; sandbox");}
+    if(target.includes("/labels/")||/^documents\/exports\/.+\/file$/.test(target)){headers.set("content-disposition",response.headers.get("content-disposition")??"attachment");headers.set("content-security-policy","default-src 'none'; sandbox");}
     return new Response(response.body,{status:response.status,headers});
   }catch{return failure(502);}
 }

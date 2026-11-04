@@ -1359,6 +1359,20 @@
       "when": 1793577600000,
       "tag": "0194_order_design_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1793750400000,
+      "tag": "0195_logistics_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1793750400001,
+      "tag": "0196_logistics_api_accounts",
+      "breakpoints": true
     }
   ]
 }

@@ -3,9 +3,11 @@ import type { TenantContext } from "@yummyai/contracts";
 import { logisticsTasks as tasks,logisticsLabels as labels,orders,withTenant,type DatabaseConnection } from "@yummyai/database";
 import { and,eq,lte,ne,or } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
+import { purgeDocumentExports } from "./document-retention.js";
 /** Erase private delivery data while preserving the immutable commercial index. */
 export async function purgeLogisticsTasks(database:DatabaseConnection,context:TenantContext,storage:Storage,now=new Date(),taskId?:string) {
   const expired=await withTenant(database.db,context,async tx=>{
+    await purgeDocumentExports(tx,now);
     const rows=await tx.select({id:tasks.id}).from(tasks).innerJoin(orders,eq(orders.id,tasks.orderId)).where(and(taskId?eq(tasks.id,taskId):undefined,or(lte(tasks.expiresAt,now),ne(orders.addressStatus,"protected"))));
     for(const row of rows)await tx.update(tasks).set({encryptedSnapshot:null,trackingNumbers:[],processingRunId:null,leaseUntil:null,updatedAt:now}).where(eq(tasks.id,row.id));
     return rows;

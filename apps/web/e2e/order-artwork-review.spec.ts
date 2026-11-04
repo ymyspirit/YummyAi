@@ -186,10 +186,12 @@ for (const width of [1440, 390]) test(`operator AI design revision supports feed
   await expect(form.getByRole("button", { name: "提交 AI 修改", exact: true })).toBeEnabled();
   expect(await form.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
   for (const choice of await form.locator(".oc-ai-revision-modes > label").all()) {
-    const radio = await choice.getByRole("radio").boundingBox(), title = await choice.locator("strong").boundingBox();
-    expect(radio).not.toBeNull(); expect(title).not.toBeNull();
-    expect(Math.abs(radio!.y - title!.y)).toBeLessThan(12);
-    expect(radio!.x + radio!.width).toBeLessThanOrEqual(title!.x);
+    await choice.scrollIntoViewIfNeeded();
+    // Read both rectangles in one frame: async preview sizing can scroll the drawer between separate calls.
+    await expect.poll(()=>choice.evaluate(node=>{
+      const radio=node.querySelector('input[type="radio"]')?.getBoundingClientRect(),title=node.querySelector("strong")?.getBoundingClientRect();
+      return {aligned:!!radio&&!!title&&Math.abs(radio.y-title.y)<12,nonOverlapping:!!radio&&!!title&&radio.right<=title.x};
+    })).toEqual({aligned:true,nonOverlapping:true});
   }
   await page.screenshot({ path: testInfo.outputPath(`ai-revision-${width}.png`), fullPage: false });
   await form.getByRole("button", { name: "提交 AI 修改", exact: true }).click();

@@ -604,11 +604,13 @@ const factoryPortal = process.argv.includes("--suite=factory-portal"),
   orderRequirementsBrowser = process.argv.includes("--suite=order-requirements"),
   orderReviewGuidanceBrowser = process.argv.includes("--suite=order-review-guidance"),
   orderImageUploadBrowser = process.argv.includes("--suite=order-image-upload"),
+  orderDocumentsBrowser = process.argv.includes("--suite=order-documents"),
+  logisticsBrowser = process.argv.includes("--suite=logistics"),
   compiledWeb = process.argv.includes("--compiled-web"),
   incomingBrowser = process.argv.includes("--suite=incoming-browser"),
   procurementCycleBrowser = process.argv.includes("--suite=procurement-cycle-browser"),
   erpPersonalBrowser =
-    orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser ||
+    logisticsBrowser || orderDocumentsBrowser || orderRequirementsBrowser || orderReviewGuidanceBrowser || orderImageUploadBrowser ||
     ordinaryDailyBrowser ||
     studioPersonalBrowser ||
     shipmentCreateBrowser ||
@@ -653,6 +655,14 @@ const factoryPortalApiPort = orderRequirementsBrowser || orderReviewGuidanceBrow
 if (factoryPortalApiPort) process.env.E2E_FACTORY_PORTAL_API_PORT = String(factoryPortalApiPort);
 else delete process.env.E2E_FACTORY_PORTAL_API_PORT;
 Object.assign(manifest, { factoryPortalApiPort });
+if (orderDocumentsBrowser) {
+  const apiPort = await disposableAdvertisingApiPort(); let webPort = await disposableAdvertisingApiPort();
+  while (webPort === apiPort) webPort = await disposableAdvertisingApiPort();
+  process.env.E2E_ORDER_DOCUMENTS_ISOLATED = "1";
+  process.env.E2E_ORDER_DOCUMENTS_API_PORT = String(apiPort);
+  process.env.E2E_ORDER_DOCUMENTS_WEB_PORT = String(webPort);
+}
+const erpFixtureOrigin = orderDocumentsBrowser ? `http://localhost:${process.env.E2E_ORDER_DOCUMENTS_WEB_PORT}` : "http://localhost:3130";
 process.env.WEB_AUTH_MODE = erpPersonalBrowser ? "personal" : "local-service";
 process.env.E2E_ORDER_IMAGE_UPLOAD_ISOLATED = orderImageUploadBrowser ? "1" : "0";
 process.env.E2E_ORDER_REVIEW_GUIDANCE_ISOLATED = orderReviewGuidanceBrowser || orderRequirementsBrowser ? "1" : "0";
@@ -908,7 +918,7 @@ try {
       factoryIdentity = await (agentMcpV2Browser ? startAgentMcpBrowserIdentityFixture : startFactoryIdentityFixture)(
         tenant,
         claims.sub,
-        "http://localhost:3130",
+        erpFixtureOrigin,
         erpPersonalBrowser
           ? {
               application: "erp",
@@ -935,7 +945,7 @@ try {
       process.env.FACTORY_IDENTITY_FIXTURE_URL = factoryIdentity.baseUrl;
       process.env.FACTORY_FIXTURE_CONTROL_TOKEN = factoryIdentity.controlKey;
       if (erpPersonalBrowser) {
-        process.env.WEB_ORIGIN = "http://localhost:3130";
+        process.env.WEB_ORIGIN = erpFixtureOrigin;
         process.env.OIDC_WEB_CLIENT_ID = "yummyai-web";
         process.env.ERP_SESSION_ENCRYPTION_KEY = randomBytes(32).toString("base64url");
         // Isolated API processes share a dedicated key for private originals.
@@ -1157,7 +1167,8 @@ try {
   );
   const logisticsIntegration = forwarded.includes("--suite=logistics-integration");
   const logistics = forwarded.includes("--suite=logistics");
-  if (logistics) knowledgeSandbox = await createKnowledgeBrowserSandbox(token, 3100);
+  const orderDocuments = forwarded.includes("--suite=order-documents");
+  if (orderDocuments && !compiledWeb) knowledgeSandbox = await createKnowledgeBrowserSandbox(token, Number(process.env.E2E_ORDER_DOCUMENTS_WEB_PORT));
   const publicationLeaseIntegration = forwarded.includes("--suite=publication-lease-integration");
   const allIntegration = forwarded.includes("--suite=all-integration") || publicationLeaseIntegration;
   const productAuthorityIntegration = forwarded.includes("--suite=product-authority-integration");
@@ -1241,7 +1252,7 @@ try {
   if (studioPersonalIntegration || studioPersonalBrowser)
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   if (shipos || wholeOrder || qualityAssessmentBrowser || factoryCapacityBrowser || productionStopBrowser || qualityScrapBrowser) shiposFixture = await startShiposFixtureServer();
-  if (logistics) logisticsFixture = await startLogisticsFixtureServer();
+  if (logistics || orderDocuments) logisticsFixture = await startLogisticsFixtureServer();
   const args = forwarded.includes("--suite=design-agent-revision-integration")
     ? [apiRequire.resolve("vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts", "src/orders/order-design-revision.integration.test.ts", ...extra]
     : studioPersonalBrowser
@@ -1705,6 +1716,7 @@ try {
                                       "--maxWorkers=1",
                                       "--testTimeout=60000",
                                       "src/logistics/logistics.integration.test.ts",
+                                      "src/logistics/logistics-documents.integration.test.ts",
                                       "src/catalog/product-development.integration.test.ts",
                                       "src/orders/order-production-delivery.integration.test.ts",
                                       ...extra,
@@ -1910,6 +1922,8 @@ try {
                                                                       ? "apps/web/playwright.order-review-guidance.config.ts"
                                                                       : orderImageUploadBrowser
                                                                       ? "apps/web/playwright.order-image-upload.config.ts"
+                                                                      : logisticsBrowser ? "apps/web/playwright.logistics.config.ts"
+                                                                      : orderDocuments ? "apps/web/playwright.order-documents.config.ts"
                                                                       : "apps/web/playwright.erp-identity.config.ts"
                                                   : factoryPortal
                                                     ? "apps/web/playwright.factory-portal.config.ts"
@@ -1945,6 +1959,7 @@ try {
                                                                                   ? "apps/web/playwright.navigation.config.ts"
                                                                                   : logistics
                                                                                     ? "apps/web/playwright.logistics.config.ts"
+                                                                                    : orderDocuments ? "apps/web/playwright.order-documents.config.ts"
                                                                                     : advertising
                                                                                       ? "apps/web/playwright.advertising.config.ts"
                                                                                       : orderReview
@@ -1990,7 +2005,7 @@ try {
           ? "./start-web.mjs"
           : "../../apps/web/node_modules/next/dist/bin/next", import.meta.url)) +
         '" start ' + (webCandidateId ? '--candidate ' + webCandidateId + ' ' : '') +
-        '--hostname 127.0.0.1 --port 3130';
+        '--hostname 127.0.0.1 --port ' + (orderDocuments ? process.env.E2E_ORDER_DOCUMENTS_WEB_PORT : '3130');
     }
     const child = spawn(process.execPath, args, {
       cwd: new URL(databaseIntegration ? "../../packages/database/" : integration && !allIntegration ? "../../apps/api/" : "../../", import.meta.url),
@@ -2010,7 +2025,7 @@ try {
         REDIS_URL: `redis://127.0.0.1:${port}`,
         E2E_DISPOSABLE_REDIS_CONTAINER: redis,
         E2E_DISPOSABLE_REDIS_URL: `redis://127.0.0.1:${port}`,
-        API_BASE_URL: factoryPortalApiPort ? `http://127.0.0.1:${factoryPortalApiPort}` : qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
+        API_BASE_URL: orderDocuments ? `http://127.0.0.1:${process.env.E2E_ORDER_DOCUMENTS_API_PORT}` : factoryPortalApiPort ? `http://127.0.0.1:${factoryPortalApiPort}` : qualityScrapBrowser ? `http://127.0.0.1:${qualityScrapApiPort}` : productionStopBrowser ? `http://127.0.0.1:${productionStopApiPort}` : factoryCapacityBrowser ? `http://127.0.0.1:${factoryCapacityApiPort}` : factoryAuthorityBrowser ? `http://127.0.0.1:${factoryAuthorityApiPort}` : advertisingCommandBrowser ? `http://127.0.0.1:${advertisingCommandApiPort}` :
           factoryPortal || factoryCollaboration || erpPersonalBrowser
             ? "http://127.0.0.1:8130"
             : methodWorkbench || businessMethods || canvasSession || executionMethodsBrowser

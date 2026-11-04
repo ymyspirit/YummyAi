@@ -125,7 +125,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   return <AgentFulfillmentProposalHandoff orderId={view.orderId} orderSequence={view.orderSequence}><FulfillmentCommandScope orderId={view.orderId} onChanged={() => { setDetailRefresh(value => value + 1); changed(); }} onStateChange={setFulfillmentState} returnQuery={params.toString()}>
   <section className={`oc-whole-detail${editorOpen ? " oc-whole-editor" : ""}`} aria-label="整单详情" aria-busy={loading}>
     {!editorOpen && <>
-      <header className="oc-header oc-whole-header"><div><h1>{first.externalOrderId}</h1><p>{first.storeName} · {view.items.length} 商品行 · 共 {quantity} 件 · 整单制作、统一打包</p><Link href={`/logistics?orderId=${view.orderId}`}>按发货工厂准备物流面单</Link>{back && <Link className="oc-button" href={back} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>{back.startsWith("/business-tasks?") ? "返回业务任务" : "返回来源页面"}</Link>}</div>
+      <header className="oc-header oc-whole-header"><div><h1>{first.externalOrderId}</h1><p>{first.storeName} · {view.items.length} 商品行 · 共 {quantity} 件 · 整单制作、统一打包</p><Link href={`/logistics?orderId=${view.orderId}#documents`}>按工厂生成物流表与生产导单</Link>{back && <Link className="oc-button" href={back} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>{back.startsWith("/business-tasks?") ? "返回业务任务" : "返回来源页面"}</Link>}</div>
         <button className="oc-button" disabled={disabled || dirty} onClick={() => { setDetailRefresh(value => value + 1); setRefresh(value => value + 1); }}><RefreshCw size={14} />刷新整单</button></header>
       <OrderLifecycleProgress status={first.orderStatus} />
       {error && <p role="alert" className="oc-error">{error} 下方为上次读取的记录。</p>}
