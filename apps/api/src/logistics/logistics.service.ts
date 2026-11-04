@@ -50,6 +50,8 @@ export class LogisticsService {
       const prior=current ? await this.connection(tx,id) : null;
       const credentials=input.accountVersionId?await this.accounts.credentialsForRoute(tx,context,input.accountVersionId,input.profile):input.credentials ?? (prior ? this.vault.withSecret(prior.encryptedCredentials,s=>LogisticsCredentialsSchema.parse(JSON.parse(s))) : null);
       if(!credentials || credentials.provider!==input.profile.provider) throw new ConflictException("请配置此物流账户的 API 凭据");
+      if(prior&&prior.profile.provider==="yunexpress"&&(prior.profile.yunexpressProtocol??"oms")!==(input.profile.yunexpressProtocol??"oms")&&!input.credentials&&!input.accountVersionId)throw new ConflictException("切换接口协议时请重新选择账户或填写对应凭据");
+      try{this.gateway.assertCredentials(input.profile,credentials);}catch{throw new ConflictException("凭据不符合当前物流接口协议 请重新选择账户或补齐凭据");}
       const number=(current?.version??0)+1,versionId=createEntityId();
       if(!current) await tx.insert(connections).values({id,tenantId:context.tenantId,createdBy:context.userId,factoryId:input.profile.factoryId,version:number});
       await tx.insert(versions).values({id:versionId,tenantId:context.tenantId,createdBy:context.userId,connectionId:id,version:number,profile:input.profile,encryptedCredentials:this.vault.encrypt(JSON.stringify(credentials)),requestKey:input.idempotencyKey,requestHash:digest});

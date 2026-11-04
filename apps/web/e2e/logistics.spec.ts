@@ -22,7 +22,8 @@ test("logistics prepares a private Yun label before QC and includes it in the fa
     sender: { name: "Synthetic sender", address1: "Synthetic factory address; not a real business", city: "Synthetic city", region: "Synthetic province", postalCode: "000000", countryCode: "CN", phone: "1234567890" }, currency: "USD", currencySource: "Synthetic verified account currency", labelHosts: ["127.0.0.1"],
     channels: [{ code: "fixture", name: "Synthetic OMS channel", countryCodes: ["US"], transitDaysMin: 3, transitDaysMax: 5, transitSource: "Synthetic calendar-day SLA", conditionsVerified: true, conditionsEvidence: "Synthetic channel conditions", maxWeightGrams: 10000, maxDimensionMm: 1000 }],
     apiCompatibilityEvidence: "Synthetic isolated OMS-compatible service", purchasePermissionEvidence: "Synthetic procurement permission", labelMode: "include" });
-  const connection = await centerApi<{ connectionId: string }>("logistics/connections", { expectedVersion: 0, profile, credentials: { provider: "yunexpress", customerCode: "synthetic-customer", apiSecret: "synthetic-logistics-secret" }, idempotencyKey: randomUUID() });
+  profile.yunexpressProtocol="openapi";
+  const connection = await centerApi<{ connectionId: string }>("logistics/connections", { expectedVersion: 0, profile, credentials: { provider: "yunexpress", appId: "synthetic-app", sourceKey: "synthetic-source", apiSecret: "synthetic-logistics-secret" }, idempotencyKey: randomUUID() });
   await centerApi(`logistics/connections/${connection.connectionId}/verify`, { expectedVersion: 1, idempotencyKey: randomUUID() });
   await centerApi("logistics/rules", { connectionId: connection.connectionId, expectedVersion: 0, rule: { name: "Synthetic fixed budget", currency: "USD", autoPurchase: true, maxTicketMinor: 1000, maxDailyMinor: 10000, quoteMaxAgeSeconds: 120, allowedChannelCodes: ["fixture"], evidence: "Synthetic isolated budget approval" }, idempotencyKey: randomUUID() });
   await page.goto(`/logistics?orderId=${candidate.orderId}`);
@@ -37,7 +38,7 @@ test("logistics prepares a private Yun label before QC and includes it in the fa
   await expect(form.getByRole("status")).toContainText("物流任务已固定");
   let task: LogisticsTaskView | undefined;
   await expect.poll(async () => { const result = await centerApi<{ tasks: LogisticsTaskView[] }>(`logistics/tasks?orderId=${candidate.orderId}`); task = result.tasks[0]; return task?.status; }, { timeout: 60000 }).toBe("completed");
-  expect(task!.actualCostMinor).toBeNull(); expect(task!.quotedCostMinor).toBe(500); expect(task!.labelCount).toBe(1);
+  expect(task!.actualCostMinor).toBe(575); expect(task!.quotedCostMinor).toBe(500); expect(task!.labelCount).toBe(1);
   // The disposable fixture represents an uncertain result after a carrier commit.
   // The browser must open the original task and reconcile, never create another.
   const database=connectDatabase();

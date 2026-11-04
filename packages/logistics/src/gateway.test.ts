@@ -1,4 +1,5 @@
 import { describe,expect,it,vi } from "vitest";
+import { createHmac } from "node:crypto";
 import { createEntityId } from "@yummyai/contracts";
 import { LogisticsConnectionProfileSchema,LogisticsTaskSnapshotSchema,type LogisticsQuote } from "@yummyai/contracts/logistics";
 import { HttpLogisticsGateway } from "./gateway.js";
@@ -70,5 +71,89 @@ describe("supported carrier transports",()=>{
   it("rejects incomplete Yun recipient identity before any credential-bearing request",async()=>{
     const fetcher=vi.fn(),task=logisticsFixtureTask();task.recipient.name="Fady";
     await expect(new HttpLogisticsGateway(fetcher,environment).quote(logisticsFixtureProfile("yunexpress"),credentials,task,"REF")).rejects.toThrow("YUN_RECIPIENT_FULL_NAME_REQUIRED");expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("YunExpress official OpenAPI",()=>{
+  const c={provider:"yunexpress" as const,appId:"synthetic-app",apiSecret:"synthetic-secret",sourceKey:"synthetic-source"};
+  const profile=()=>({...logisticsFixtureProfile("yunexpress"),baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi" as const,currency:"CNY",labelHosts:["yunexpress-oss-pro.oss-cn-shenzhen.aliyuncs.com"]});
+  const ok=(result:unknown)=>Response.json({success:true,result});
+  const info={customer_order_number:"YMYfixture",waybill_number:"YTfixture",tracking_number:"TRACKfixture"};
+  function transport(handler:(url:URL,init:RequestInit)=>Response|Promise<Response>){
+    let tokens=0;
+    const fetcher=vi.fn(async(input:unknown,init:RequestInit={})=>{
+      const url=new URL(String(input));
+      if(url.pathname==="/openapi/oauth2/token"){
+        expect(JSON.parse(String(init.body))).toEqual({grantType:"client_credentials",appId:c.appId,appSecret:c.apiSecret,sourceKey:c.sourceKey});
+        return Response.json({accessToken:`synthetic-token-${++tokens}`,expiresIn:7200});
+      }
+      const headers=init.headers as Record<string,string>;
+      expect(headers.authorization).toBeUndefined();expect(headers.token).toMatch(/^synthetic-token-/);
+      expect(headers["accept-language"]).toBe("zh-CN");
+      expect(headers.sign).toBe(createHmac("sha256",c.apiSecret).update(`${init.body?`body=${init.body}&`:""}date=${headers.date}&method=${init.method}&uri=${url.pathname}`).digest("base64"));
+      expect(init.redirect).toBe("error");return handler(url,init);
+    });
+    return {gateway:new HttpLogisticsGateway(fetcher as typeof fetch),fetcher,tokens:()=>tokens};
+  }
+  it("uses one OAuth exchange for simultaneous signed channel reads and hides source credentials",async()=>{
+    const t=transport(()=>Response.json({success:true,detail:[{product_code:"THPHR",product_name:"特惠普货"}]}));
+    expect(await Promise.all([t.gateway.accountChannels(profile(),c),t.gateway.accountChannels(profile(),c)])).toEqual([[{code:"THPHR",name:"特惠普货"}],[{code:"THPHR",name:"特惠普货"}]]);
+    expect(t.tokens()).toBe(1);
+    expect(()=>t.gateway.assertAccount({...profile(),yunexpressProtocol:"oms"})).toThrow();
+    expect(()=>t.gateway.assertAccount({...profile(),baseUrl:"https://evil.example.invalid"})).toThrow();
+    await expect(t.gateway.accountChannels(profile(),{provider:"yunexpress",customerCode:"legacy",apiSecret:"legacy"})).rejects.toThrow("CREDENTIAL_PROTOCOL_MISMATCH");
+  });
+  it("refreshes an expired token once for a read but never retries a create",async()=>{
+    let count=0;
+    const t=transport(()=>++count===1?Response.json({success:false,code:"0200401002",msg:"must not expose"},{status:401}):Response.json({success:true,detail:[]}));
+    expect(await t.gateway.accountChannels(profile(),c)).toEqual([]);expect(t.tokens()).toBe(2);
+    const write=transport(()=>Response.json({success:false,code:"0200401002"},{status:401}));
+    await expect(write.gateway.create(profile(),c,logisticsFixtureTask(),"YMYfixture",q)).rejects.toMatchObject({code:"PROVIDER_REJECTED"});
+    expect(write.fetcher.mock.calls.filter(([url])=>String(url).includes("package/create"))).toHaveLength(1);
+  });
+  it("aggregates every fee component and signs the query URI correctly",async()=>{
+    const t=transport(url=>{
+      if(url.pathname.endsWith("getlist"))return Response.json({success:true,detail:[{product_code:"fixture",product_name:"Synthetic"}]});
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({weight:"0.5",weight_unit:"KG",size_unit:"CM",package_type:"C",pieces:"1",country_code:"US"});
+      return ok([{product_code:"fixture",fee_name:"E1",calculate_amount:"12.25",currency:"RMB",interval_day:"3-8"},{product_code:"fixture",fee_name:"E2",calculate_amount:"8",currency:"RMB",interval_day:"3-8"}]);
+    });
+    expect((await t.gateway.quote(profile(),c,logisticsFixtureTask(),"YMYfixture"))[0]).toMatchObject({totalMinor:2025,currency:"CNY",transitDaysMax:8,diagnostic:null});
+    expect(t.fetcher.mock.calls.filter(([url])=>String(url).includes("price-trial"))).toHaveLength(1);
+  });
+  it.each(["mixed currency","duplicate fee","different tariff"])("rejects ambiguous quotes: %s",async(mode)=>{
+    const base={product_code:"fixture",fee_name:"E1",calculate_amount:"10",currency:"RMB",price_name:"A"};
+    const second={...base,fee_name:"E2",...(mode==="mixed currency"?{currency:"USD"}:mode==="duplicate fee"?{fee_name:"E1"}:{price_name:"B"})};
+    const t=transport(url=>url.pathname.endsWith("getlist")?Response.json({success:true,detail:[{product_code:"fixture",product_name:"Synthetic"}]}):ok([base,second]));
+    expect((await t.gateway.quote(profile(),c,logisticsFixtureTask(),"YMYfixture"))[0]).toMatchObject({diagnostic:"QUOTE_UNAVAILABLE",conditionsVerified:false});
+  });
+  it("sends a single PDF parcel with upward units and complete declarations",async()=>{
+    const task=logisticsFixtureTask();task.packages[0]!.weightGrams=117.934;task.packages[0]!.dimensionsMm.length=304.8;task.recipient.region="California";
+    const t=transport((url,init)=>{
+      expect(url.pathname).toBe("/v1/order/package/create");
+      const body=JSON.parse(String(init.body));expect(body).toMatchObject({customer_order_number:"YMYfixture",product_code:"fixture",weight_unit:"KG",size_unit:"CM",label_type:"PDF",sensitive_type:"W",receiver:{first_name:"Synthetic",last_name:"buyer",province:"CA",address_lines:["2 Test Street"]},packages:[{weight:0.118,length:30.48}],declaration_info:[{name_en:"Synthetic pillow",name_local:"测试抱枕",quantity:1,unit_price:10,currency:"USD",origin_country:"CN"}]});
+      expect(body).not.toHaveProperty("sourceKey");return ok(info);
+    });
+    expect(await t.gateway.create(profile(),c,task,"YMYfixture",q)).toMatchObject({providerOrderId:"YTfixture",trackingNumbers:["TRACKfixture"],labelUrls:[]});
+  });
+  it("only treats the documented missing-order code as absent",async()=>{
+    const absent=transport(()=>Response.json({success:false,code:"02039006"}));expect(await absent.gateway.lookup(profile(),c,"YMYfixture")).toBeNull();
+    for(const body of [{success:false,code:"0200403101"},{success:true,result:null},{success:true,result:{...info,customer_order_number:"OTHER"}}]){
+      const t=transport(()=>Response.json(body));await expect(t.gateway.lookup(profile(),c,"YMYfixture")).rejects.toThrow();
+    }
+  });
+  it("retrieves matching PDF labels with actual fees and no repeated create",async()=>{
+    const t=transport(url=>url.pathname.includes("fee-details")?ok({...info,total_amount:"7.52",currency:"RMB"}):url.pathname.includes("/label/")?ok({order_number:"YTfixture",label_type:"PDF",url:"https://yunexpress-oss-pro.oss-cn-shenzhen.aliyuncs.com/fixture.pdf"}):ok(info));
+    expect(await t.gateway.labels(profile(),c,"YMYfixture")).toMatchObject({providerOrderId:"YTfixture",trackingNumbers:["TRACKfixture"],actualCostMinor:752,actualCurrency:"CNY",labelUrls:["https://yunexpress-oss-pro.oss-cn-shenzhen.aliyuncs.com/fixture.pdf"]});
+    expect(t.fetcher.mock.calls.every(([url,init])=>String(url).includes("oauth2/token")||init?.method==="GET")).toBe(true);
+  });
+  it.each(["wrong order","PNG","pending"])("guards label response: %s",async(mode)=>{
+    const t=transport(url=>url.pathname.includes("/label/")?ok({order_number:mode==="wrong order"?"OTHER":"YTfixture",label_type:mode==="PNG"?"PNG":"PDF",url:mode==="pending"?"":"https://yunexpress-oss-pro.oss-cn-shenzhen.aliyuncs.com/fixture.pdf"}):ok(info));
+    await expect(t.gateway.labels(profile(),c,"YMYfixture")).rejects.toMatchObject({code:mode==="pending"?"LABEL_PENDING":mode==="PNG"?"LABEL_UNAVAILABLE":"INVALID_RESPONSE"});
+  });
+  it("rejects unsupported customs or incomplete names before authentication",async()=>{
+    const t=transport(()=>ok(info)),task=logisticsFixtureTask();task.recipient.name="Fady";
+    await expect(t.gateway.create(profile(),c,task,"YMYfixture",q)).rejects.toThrow("YUN_RECIPIENT_FULL_NAME_REQUIRED");
+    task.recipient.name="Synthetic Buyer";task.packages[0]!.containsBattery=true;
+    await expect(t.gateway.quote(profile(),c,task,"YMYfixture")).rejects.toThrow("YUN_DANGEROUS_GOODS_REQUIRES_REVIEW");expect(t.fetcher).not.toHaveBeenCalled();
   });
 });

@@ -23,7 +23,8 @@ API、Worker 均需重启。所有业务表启用强制租户 RLS，读写通过
 5. 配置单票、每日预算及允许渠道；默认只询价。预算按租户、币种、UTC 日累计已预留金额与实际费用的较大值，未确认的购单仍占用预算。
 
 服务端 `YUNEXPRESS_ALLOWED_ORIGINS` 限定经部署管理员确认的 OMS HTTPS 源；不预填文档占位地址。
-`LOGISTICS_LABEL_ALLOWED_HOSTS` 限定额外 PDF 下载域名，ShipOS 已允许 `shipease.oss-cn-hangzhou.aliyuncs.com`。
+新版云途账户明确选择 `yunexpressProtocol=openapi`，固定允许官方 `https://openapi.yunexpress.cn` 与沙箱 `https://openapi-sbx.yunexpress.cn`；不需要给旧 OMS 白名单加新版地址。旧版本未记录协议时仍按 OMS 执行，不隐式升级。
+`LOGISTICS_LABEL_ALLOWED_HOSTS` 限定额外 PDF 下载域名，已允许 ShipOS 的 `shipease.oss-cn-hangzhou.aliyuncs.com` 和云途文档指定的 `yunexpress-oss-pro.oss-cn-shenzhen.aliyuncs.com`。
 凭据只在保存时提交，不回显、不记录 HTTP Authorization 或地址。新增版本需重新核验。
 
 ## 任务与费用
@@ -70,14 +71,25 @@ Worker `logistics` 队列执行 quote/purchase/reconcile/retention，每次执�
 物流首版要求租户数据范围，self/team 范围显式拒绝。重复请求复用原任务；改动包裹、路线或交期不会覆盖固定任务，须先核对原物流单。
 
 ShipOS 适配器使用 `getChannel.php/getPrice.php/createOrder.php/queryOrder.php/orderDetail.php/getLabels.php`，独立于原查询同步适配器。
-云途使用 `Common/GetShippingMethods/Freight/GetPriceTrial/WayBill/CreateOrder/WayBill/GetOrder/Label/Print`。
-云途按公开 OMS 2023 规范发送批量数组、客户订单号、公斤三位小数及整厘米尺寸；首版一个任务一个包裹。
-`appId` 可随云途凭据加密保存，但不会被当成 OMS 客户代码或拿来猜测新版 OpenAPI 认证。
-OMS HTTPS 地址未验证前，仅允许保存待配置账户。新版开放平台的认证和请求结构必须以该账户对应的正式文档为准，不能对证书错误降级或将密钥改用 HTTP 发送。
-巴西税号、约旦证书及需要额外税务字段的目的地转人工；不猜填资料。ShipOS 缺少收件邮箱也转人工。
+云途旧 OMS 使用 `Common/GetShippingMethods/Freight/GetPriceTrial/WayBill/CreateOrder/WayBill/GetOrder/Label/Print`，发送批量数组、客户订单号、公斤三位小数及整厘米尺寸；一个任务一个包裹。
+云途 OpenAPI 使用应用的 `appId`、`apiSecret`（即 AppSecret）、用户中心 `sourceKey`。三项保存在独立集成加密域，不回显；客户代码仅为可选账户信息。账户和工厂路线固定相同接口协议、地址及验证版本，切换协议须重新填写凭据或选择已验证账户。
+`POST /openapi/oauth2/token` 使用 client_credentials；令牌按账户和地址隔离缓存并提前 30 秒到期。业务请求使用 `token/date/sign`，HMAC-SHA256 与 Base64 签名严格覆盖原始 JSON、毫秒时间、方法和 URI 路径；查询参数不加入 URI 签名。显式发送 `Accept-Language: zh-CN`，避免 Node 的默认 `*` 被服务商拒绝。GET 遇到明确的令牌过期最多刷新一次；建单不自动重试。
+
+| OpenAPI 接口 | 本地行为 |
+| --- | --- |
+| GET `/v1/basic-data/products/getlist` | 连接测试读取 detail 产品列表 |
+| GET `/v1/price-trial/get` | 显式 KG、CM、普货 C、件数 1；同产品同价目汇总全部费用，币种 RMB 规范为 CNY |
+| POST `/v1/order/package/create` | 单包裹、稳定客户订单号、完整收发件地址和商品申报、PDF 面单 |
+| GET `/v1/order/info/get` | 校验返回客户订单号；只有官方 02039006 才表示未建单 |
+| GET `/v1/order/label/get` | 校验原订单和运单身份、PDF 类型；生成中走原任务有限轮询 |
+| GET `/v1/order/fee-details/get` | 面单就绪后读取实际费用；未返回时保留未知，不以报价冒充扣费 |
+
+OpenAPI 使用三位公斤/厘米精度向上取整。重复费用、多个价目或混合币种不猜取最低一行报价。面单只从核验域名下载，禁止重定向并验证 PDF 内容；不记录上游响应原文、密钥或地址。
+OMS HTTPS 地址未验证前，仅允许保存待配置账户；不会对证书错误降级或改用 HTTP。巴西税号、约旦证书、沙特短地址和未配置危险品类别转人工；不猜填资料。ShipOS 缺少收件邮箱也转人工。
 公开接口价格可能缺少币种或时效，必须使用账户核验来源；启用前确认当前账户兼容性。
 
 基线：[ShipOS 官方文档](https://s.apifox.cn/45f68512-0e9b-41e9-8bd5-d8498f6faccd)、[云途 OMS 2023 规范](https://yunexpress-fileupload.oss-cn-shenzhen.aliyuncs.com/%E4%BA%91%E9%80%94%E7%89%A9%E6%B5%81API%E6%8E%A5%E5%8F%A3%E5%BC%80%E5%8F%91%E8%A7%84%E8%8C%83OMS20230706.pdf)。
+OpenAPI 基线于 2026-11-05 核验：[OAuth2](https://open.yunexpress.cn/openApi/doc?type=article&mid=1651108581694787586&pid=1651110034228400130&id=1651110591705927682)、[签名规则](https://open.yunexpress.cn/openApi/doc?type=article&mid=1651108581694787586&pid=1651110094496354305&id=1651110700187406338)、[单票寄件](https://open.yunexpress.cn/openApi/doc?type=dict&category=36&classify=16&id=1659033029213650946)、[运费试算](https://open.yunexpress.cn/openApi/doc?type=dict&category=41&classify=17&id=1658756304147808257)、[面单打印](https://open.yunexpress.cn/openApi/doc?type=dict&category=36&classify=15&id=1659094586882752513)、[实际扣费](https://open.yunexpress.cn/openApi/doc?type=dict&category=41&classify=18&id=1659012280482496513)。复用官方 SDK/示例的协议，使用 Node 内置 crypto，不引入第三方持有密钥。
 
 ## 工厂交付与验收
 

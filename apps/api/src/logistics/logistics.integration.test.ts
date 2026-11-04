@@ -169,6 +169,23 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect((await verifying)?.message).toContain("账户已更新");expect((await accounts.list(context)).accounts.find(a=>a.id===saved.accountId)?.verifiedAt).toBeNull();
     await expect(s.service.saveConnection(context,{...connection,idempotencyKey:randomUUID()})).rejects.toThrow("已测试通过");expect(s.carrier.creates).toBe(0);expect(s.carrier.labelRequests).toBe(0);
   });
+  it("pins OpenAPI authentication without exposing source identifiers or upgrading legacy versions",async()=>{
+    const s=await setup(new Carrier(),"CN"),accounts=new LogisticsAccountsService(database,vault,s.carrier);
+    const profile={name:"Synthetic OpenAPI account",provider:"yunexpress" as const,baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi" as const};
+    const credentials={provider:"yunexpress",appId:"synthetic-app",apiSecret:"synthetic-openapi-secret",sourceKey:"synthetic-private-source"};
+    await expect(accounts.save(context,{expectedVersion:0,profile,credentials:{provider:"yunexpress",customerCode:"old",apiSecret:"old"},idempotencyKey:randomUUID()})).rejects.toThrow();
+    const saved=await accounts.save(context,{expectedVersion:0,profile,credentials,idempotencyKey:randomUUID()});
+    await accounts.verify(context,saved.accountId,{expectedVersion:1});
+    const list=await accounts.list(context),account=list.accounts.find(a=>a.id===saved.accountId)!;
+    expect(JSON.stringify(list)).not.toContain("synthetic-private-source");expect(JSON.stringify(list)).not.toContain("synthetic-openapi-secret");
+    const routeProfile={...s.profile,baseUrl:profile.baseUrl,yunexpressProtocol:profile.yunexpressProtocol};
+    await expect(withTenant(database.db,context,tx=>accounts.credentialsForRoute(tx,context,account.versionId,{...routeProfile,yunexpressProtocol:"oms"}))).rejects.toThrow("接口协议");
+    const route=await s.service.saveConnection(context,{expectedVersion:0,profile:routeProfile,accountVersionId:account.versionId,idempotencyKey:randomUUID()});
+    const [version]=await withTenant(database.db,context,tx=>tx.select().from(logisticsConnectionVersions).where(eq(logisticsConnectionVersions.connectionId,route.connectionId)));
+    expect(version!.profile.yunexpressProtocol).toBe("openapi");expect(vault.withSecret(version!.encryptedCredentials,value=>JSON.parse(value).sourceKey)).toBe("synthetic-private-source");
+    await expect(accounts.save(context,{accountId:saved.accountId,expectedVersion:1,profile:{...profile,baseUrl:null,yunexpressProtocol:"oms"},idempotencyKey:randomUUID()})).rejects.toThrow("切换接口协议");
+    expect(s.profile.yunexpressProtocol).toBeUndefined();expect(s.carrier.creates).toBe(0);
+  });
   it("keeps the original whole-order reference for factory pull and rejects partial quantities",async()=>{
     const s=await setup(),p=await production(s.factory,undefined,2),input=taskInput(s,p);
     await expect(s.service.createTask(context,input)).rejects.toThrow("整单合包");
