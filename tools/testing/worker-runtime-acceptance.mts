@@ -10,16 +10,19 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveWorkspacePath } from "../scripts/backup-restore.mjs";
 import { inspectLocalWorkerQueues } from "../scripts/inspect-local-worker-queues.mts";
-import { orderWorkerQueues, orderWorkerSchedulers, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
+import { orderWorkerQueues, orderWorkerSchedulers, orderWorkerProfiles, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
 import { schedulerOwners } from "../../apps/worker/src/runtime-plan.js";
 import { studioImageWorkerConfigured } from "../../apps/worker/src/processors/studio-image-paid-admission.js";
 import { Permission } from "../../packages/authz/src/index.js";
+import { SecretVault } from "../../packages/ai-core/src/index.js";
 import { createEntityId, type TenantContext } from "../../packages/contracts/src/index.js";
 import { assetFiles, connectDatabase, designVersionFiles, designVersions, memberships, membershipRoles, podArtworkExecutions as executions, podArtworkInvocations as invocations, podArtworkTasks as tasks, recordAuditInTransaction, roles, withTenant } from "../../packages/database/src/index.js";
 import { createQueue, createTraceId, enqueueJob, QueueName } from "../../packages/jobs/src/index.js";
 import { PodArtworkOwner, RedisPodArtworkDispatcher } from "../../packages/pod-core/src/index.js";
 import { createStorageFromEnvironment } from "../../packages/storage/src/index.js";
 import { DrizzleCatalogRepository, ProductService } from "../../apps/api/src/catalog/product.service.js";
+import { RedisAmazonReportRetentionEnqueuer } from "../../apps/api/src/orders/redis-amazon-report-retention-enqueuer.js";
+import { amazonOrderReportBatches, marketplaceAccounts } from "../../packages/database/src/index.js";
 import { and, eq, sql } from "../../apps/api/node_modules/drizzle-orm/index.js";
 import type Sharp from "../../apps/api/node_modules/sharp/lib/index.js";
 
@@ -203,6 +206,32 @@ try {
     assert.equal(await orderWorker.stop(), 0);
     await assert.rejects(fetch(`http://127.0.0.1:${healthAddress.port}/health`, { signal: AbortSignal.timeout(1000) }));
     pass("W14", "Daily order profile exposes the actual six consumers and PID on loopback; unrelated work is untouched and graceful stop closes health");
+
+    const retention = new RedisAmazonReportRetentionEnqueuer(), retentionQueue = createQueue(QueueName.AmazonOrderReportRetention);
+    const expiredBatchId = createEntityId(), currentBatchId = createEntityId(), accountId = createEntityId();
+    try {
+      const envelope = new SecretVault(Buffer.from(keys.ORDER_PII_ENCRYPTION_KEY!, "base64url")).encrypt("Synthetic private report body");
+      await withTenant(database.db, context, async tx => {
+        await tx.insert(marketplaceAccounts).values({ id: accountId, tenantId: context.tenantId, platform: "amazon", authorizationMode: "amazon_private", displayName: "Synthetic retention store", region: "NA", createdBy: context.userId });
+        await tx.insert(amazonOrderReportBatches).values([expiredBatchId, currentBatchId].map((id, index) => ({ id, tenantId: context.tenantId, accountId,
+          marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-retention.txt", reportChecksum: String(index + 1).repeat(64), encryptedReport: envelope,
+          rowCount: 0, orderCount: 0, status: "completed", createdBy: context.userId, expiresAt: new Date(Date.now() + (index ? 86400_000 : -1000)) })));
+      });
+      await retention.schedule(context, expiredBatchId, new Date(0));
+      const profile = "order-fulfillment-v2", configuration = orderWorkerProfiles[profile];
+      const currentWorker = launch({ WORKER_QUEUES: configuration.queues.join(","), WORKER_SCHEDULERS: configuration.schedulers.join(","), WORKER_HEALTH_PORT: String(healthAddress.port) });
+      try {
+        await currentWorker.ready();
+        const currentHealth = await fetch(`http://127.0.0.1:${healthAddress.port}/health`, { signal: AbortSignal.timeout(5000) });
+        assert.equal(currentHealth.status, 200); assert.equal(orderWorkerReady(await currentHealth.json(), currentWorker.child.pid, profile), true);
+        await waitFor(async () => (await (await retentionQueue.getJob(expiredBatchId))?.getState()) === "completed");
+        const batches = await withTenant(database.db, context, tx => tx.select().from(amazonOrderReportBatches).where(eq(amazonOrderReportBatches.accountId, accountId)));
+        assert.equal(batches.find(batch => batch.id === expiredBatchId)?.encryptedReport, null);
+        assert.equal(batches.find(batch => batch.id === currentBatchId)?.encryptedReport, envelope);
+        assert.equal(await (await profileQueue.getJob(profileJob))?.getState(), "waiting");
+        pass("W15", "The v2 daily Worker consumes the original retention job, erases only expired report content and leaves unrelated work queued");
+      } finally { await currentWorker.stop(); }
+    } finally { await (await retentionQueue.getJob(expiredBatchId))?.remove(); await retention.onModuleDestroy(); await retentionQueue.close(); }
     await (await profileQueue.getJob(profileJob))!.remove();
     pass("W12", "Unowned timers and unavailable optional consumers fail selection before opening a database");
   } finally { await profileQueue.close(); }
@@ -223,5 +252,5 @@ try {
   for (const child of children) await writeFile(path.join(outputDirectory, `child-${++sequence}.log`), child.logs());
   await writeFile(path.join(outputDirectory, "runtime-proof.json"), JSON.stringify({ standaloneStandardRunTs: true, cases, childProcesses: children.length, childrenTerminal: children.every(child => child.child.exitCode !== null || child.child.signalCode !== null), modelRequests: [...requests].map(([taskId, count]) => ({ taskId, count })), realPaidCalls: 0 }, null, 2));
 }
-assert.equal(cases.length, 14);
-process.stdout.write(JSON.stringify({ runtimeCasesPassed: cases.length, orderConsumersVerified: orderWorkerQueues.length, childProcesses: children.length, syntheticModelRequests: 4, realPaidCalls: 0, outputDirectory }) + "\n");
+assert.equal(cases.length, 15);
+process.stdout.write(JSON.stringify({ runtimeCasesPassed: cases.length, orderConsumersVerified: Object.fromEntries(Object.entries(orderWorkerProfiles).map(([profile, configuration]) => [profile, configuration.queues.length])), childProcesses: children.length, syntheticModelRequests: 4, realPaidCalls: 0, outputDirectory }) + "\n");

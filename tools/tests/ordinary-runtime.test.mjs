@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import test from "node:test";
 import { acquireStartupGate, applyStorageOverlay, componentDecision, localPath, runtimeEnvironment, runtimePlans, stopSpawnedChildren, validateRuntimeManifest } from "../scripts/ordinary-runtime.mjs";
-import { orderWorkerProfile, orderWorkerQueues, orderWorkerSchedulers, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
+import { orderWorkerProfile, orderWorkerQueues, orderWorkerSchedulers, orderWorkerProfiles, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
 
 const root = path.resolve("ordinary-runtime-fixture");
 const manifest = {
@@ -84,6 +84,24 @@ test("Worker HTTP success cannot hide a different PID or extra background consum
   assert.equal(orderWorkerReady({ ...healthy, queues: [...healthy.queues].reverse() }, 1234), true);
   for (const change of [{ state: "starting" }, { pid: 5678 }, { queues: [...healthy.queues, "media"] }, { queues: healthy.queues.slice(1) },
     { schedulers: [...healthy.schedulers, "aiAssistScheduler"] }]) assert.equal(orderWorkerReady({ ...healthy, ...change }, 1234), false);
+});
+
+test("the new order profile adds only private-order retention and never widens a restored v1 manifest", () => {
+  const selected = { ...manifest, schemaVersion: 3, studioRuntime: { bundleId: "a".repeat(64), deploymentSha256: "b".repeat(64) },
+    workerRuntime: { profile: "order-fulfillment-v2" } };
+  const [,, worker] = runtimePlans(root, selected, { ...environment, WORKER_QUEUES: "all", WORKER_SCHEDULERS: "all" });
+  assert.equal(worker.workerProfile, "order-fulfillment-v2");
+  assert.deepEqual(worker.env.WORKER_QUEUES.split(","), [...orderWorkerQueues, "amazon-order-report-retention"]);
+  assert.equal(worker.env.WORKER_SCHEDULERS, orderWorkerSchedulers.join(","));
+  const current = { state: "ready", pid: 1234, ...orderWorkerProfiles[worker.workerProfile] };
+  assert.equal(orderWorkerReady(current, 1234, worker.workerProfile), true);
+  assert.equal(orderWorkerReady(current, 1234, orderWorkerProfile), false);
+  assert.equal(orderWorkerReady({ ...current, queues: orderWorkerQueues }, 1234, worker.workerProfile), false);
+  assert.equal(orderWorkerReady(current, 1234, "all"), false);
+  const [,, restored] = runtimePlans(root, { ...selected, workerRuntime: { profile: orderWorkerProfile } }, environment);
+  assert.deepEqual(restored.env.WORKER_QUEUES.split(","), orderWorkerQueues);
+  for (const profile of ["toString", "__proto__", "order-fulfillment-v3"])
+    assert.throws(() => validateRuntimeManifest({ ...selected, workerRuntime: { profile } }), /INVALID_WORKER_PROFILE/);
 });
 
 test("owned daily Worker receives graceful shutdown and waits for its real process exit", { skip: process.platform !== "win32", timeout: 10_000 }, async () => {

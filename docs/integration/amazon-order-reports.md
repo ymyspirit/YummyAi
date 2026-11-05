@@ -90,6 +90,12 @@ A background download whose ZIP checksum differs from an existing saved version 
 
 Monitor the `amazon-order-report-processing` queue as well as retention. A stopped Worker leaves visible pending lines; restart Worker and allow existing durable jobs to continue. If a job exhausts queue retries, explicitly use **继续后台解析** after resolving the runtime problem. Missing attachment sources still require the original ZIP. Rollback can stop this processing queue without deleting report versions; deploy API, Worker and their shared package together. Existing legacy pending lines are adopted only through explicit recovery or a changed-source import, not an automatic scan of historical orders.
 
+The pinned daily runtime profile `order-fulfillment-v2` includes the original
+`amazon-order-report-retention` consumer. Health must confirm that consumer and
+the actual Worker PID before treating expiry cleanup as running. Restoring the
+older v1 profile preserves its six consumers and does not silently enable
+retention; that rollback alone does not provide scheduled report cleanup.
+
 Migration `0084_order_report_read_models.sql` adds a derived read table keyed to the
 immutable source version, with forced tenant RLS and the same order-PII vault.
 Metadata and 320 px thumbnails have separate encrypted envelopes. Summary queries

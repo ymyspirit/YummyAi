@@ -135,9 +135,10 @@ Printeque 面单创建与工厂 ERP 接单是两个外部系统。当前只掌�
 独立站尚无原生授权连接时不能声称已支持自动回传。
 
 运行变量：`FULFILLMENT_FLOW_COORDINATOR=off` 仅关闭协调器，保留意图。
-日用 manifest v3 可固定 `order-fulfillment-v1` 后台配置。`pnpm daily:start` 同时
+日用 manifest v3 可固定 `order-fulfillment-v2` 后台配置。`pnpm daily:start` 同时
 恢复报表处理、附件扫描、设计、正式渲染、物流和回传队列，以及设计/渲染发现
-调度器；不启用通用 AI、发布和历史媒体队列。旧 manifest 保持原启动范围。
+调度器，并执行原报表内容到期清理队列；不启用通用 AI、发布和历史媒体队列。
+旧 `order-fulfillment-v1` 保持原六个队列，回退清单不会自动扩展后台范围。
 `pnpm daily:status` 核对后台 PID、当前消费者和本机 8001 端口的实际就绪状态，
 仅 API/Web 健康不能算自动处理可用。`WORKER_HEALTH_PORT` 只供本机运行监管，
 接口不返回订单、租户或密钥。首次启用前需核对现有队列，不能把历史付费任务

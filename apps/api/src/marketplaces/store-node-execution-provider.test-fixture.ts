@@ -26,7 +26,7 @@ export async function startStoreNodeExecutionProvider(files: { key: Buffer; cert
   const needles = new Set<string>(Object.values(secrets));
   const records: ProviderRecord[] = [], sockets = new Set<Duplex>();
   let user = 20_000_000 + randomBytes(3).readUIntBE(0, 3), gate: { kind: RequestKind; entered: ReturnType<typeof executionLatch>; release: ReturnType<typeof executionLatch>; used: boolean } | undefined;
-  const controls = { fault: "none" as Fault, faultKind: null as RequestKind | null, schemaOutsideDefinition: false };
+  const controls = { fault: "none" as Fault, faultKind: null as RequestKind | null, schemaOutsideDefinition: false, orderForeignSite: false };
   const schema = { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { item_name: { type: "string", minLength: 1 },
     fixture_unit_amount_minor: { const: 12345 }, fixture_currency: { const: "USD" } }, required: ["item_name"], additionalProperties: false };
   const metaSchema = { $schema: "https://json-schema.org/draft/2020-12/schema", title: "Synthetic original Amazon meta schema", type: "object" };
@@ -36,6 +36,7 @@ export async function startStoreNodeExecutionProvider(files: { key: Buffer; cert
     if (method === "POST" && path === "/v3/public/oauth/token") return body.get("grant_type") === "authorization_code" ? "etsy_oauth" : "etsy_refresh";
     if (method !== "GET") return undefined;
     if (path === "/sellers/v1/marketplaceParticipations") return "amazon_participations";
+    if (path === "/orders/2026-01-01/orders") return "amazon_orders";
     if (/^\/definitions\/2020-09-01\/productTypes\/[A-Z0-9_]+$/.test(path)) return "amazon_product_definition";
     if (path === "/synthetic-bound-schema/schema.json") return "amazon_schema";
     if (path === "/synthetic-bound-schema/meta.json") return "amazon_meta_schema";
@@ -95,7 +96,24 @@ export async function startStoreNodeExecutionProvider(files: { key: Buffer; cert
       }
       if (kind !== "amazon_schema" && kind !== "amazon_meta_schema" && !access.has(String(request.headers["x-amz-access-token"] ?? ""))) { send(401, {}); return; }
       record.credentialAccepted = true;
-      if (kind === "amazon_participations") send(200, { payload: [{ marketplace: { id: "ATVPDKIKX0DER", countryCode: "US", name: "Synthetic Amazon US" }, participation: { isParticipating: true, hasSuspendedListings: false } }] });
+      if (kind === "amazon_orders") {
+        if (url.searchParams.get("marketplaceIds") !== "ATVPDKIKX0DER" || url.searchParams.get("maxResultsPerPage") !== "50"
+          || url.searchParams.get("includedData") !== "BUYER,RECIPIENT,PROCEEDS,CANCELLATION,FULFILLMENT"
+          || !url.searchParams.has("lastUpdatedAfter") || !url.searchParams.has("lastUpdatedBefore")) { send(400, {}); return; }
+        const at = url.searchParams.get("lastUpdatedAfter");
+        send(200, { totalCount: 2, orders: [
+          { orderId: "SYNTHETIC-NODE-PENDING", createdTime: at, lastUpdatedTime: at,
+            salesChannel: { marketplaceId: "ATVPDKIKX0DER" }, fulfillment: { fulfillmentStatus: "PENDING", fulfilledBy: "MERCHANT" },
+            orderItems: [{ orderItemId: "pending-line", quantityOrdered: 1, product: { title: "Synthetic pending item" } }] },
+          { orderId: "SYNTHETIC-NODE-CUSTOM", createdTime: at, lastUpdatedTime: at,
+            salesChannel: { marketplaceId: controls.orderForeignSite ? "A2EUQ1WTGCTBG2" : "ATVPDKIKX0DER" },
+            fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" }, proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
+            recipient: { deliveryAddress: { name: "Synthetic Private Recipient", addressLine1: "Synthetic Private Street", city: "Test", stateOrRegion: "CA", postalCode: "00000", countryCode: "US" } },
+            orderItems: [{ orderItemId: "custom-line", quantityOrdered: 1, product: { title: "Synthetic custom pillow", sellerSku: "SYNTHETIC-NODE-CUSTOM",
+              price: { unitPrice: { amount: "25.00", currencyCode: "USD" } }, customization: { customizedUrl: "https://zme-caps.amazon.com/synthetic/node-custom-private.zip" } } }] },
+        ] });
+      }
+      else if (kind === "amazon_participations") send(200, { payload: [{ marketplace: { id: "ATVPDKIKX0DER", countryCode: "US", name: "Synthetic Amazon US" }, participation: { isParticipating: true, hasSuspendedListings: false } }] });
       else if (kind === "amazon_product_definition") send(200, { marketplaceIds: ["ATVPDKIKX0DER"], productType: url.pathname.split("/").at(-1), productTypeVersion: { version: "synthetic-original-1" }, requirements: "LISTING", requirementsEnforced: "ENFORCED",
         schema: { link: { resource: controls.schemaOutsideDefinition ? "https://outside.invalid/schema.json" : "https://schema.amazonaws.com/synthetic-bound-schema/schema.json", checksum: sha(schema) } },
         metaSchema: { link: { resource: "https://schema.amazonaws.com/synthetic-bound-schema/meta.json", checksum: sha(metaSchema) } } });

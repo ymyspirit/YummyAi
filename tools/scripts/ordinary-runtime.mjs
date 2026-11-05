@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL, URL } from "node:url";
 import { parseEnv } from "node:util";
 import { verifyLocalWebCandidate } from "./local-web-candidate.mjs";
 import { acquireStartupGate, closeStartupGate } from "./runtime-startup-gate.mjs";
-import { orderWorkerProfile, orderWorkerQueues, orderWorkerSchedulers, orderWorkerReady } from "./ordinary-worker-runtime.mjs";
+import { orderWorkerProfiles, orderWorkerReady } from "./ordinary-worker-runtime.mjs";
 export { acquireStartupGate } from "./runtime-startup-gate.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
@@ -42,7 +42,7 @@ export function validateRuntimeManifest(value) {
   if (value.schemaVersion >= 2 && (!value.studioRuntime || Object.keys(value.studioRuntime).sort().join() !== "bundleId,deploymentSha256"
       || !hashPattern.test(value.studioRuntime.bundleId) || !hashPattern.test(value.studioRuntime.deploymentSha256))) fail("INVALID_STUDIO_PAIR");
   if (value.schemaVersion === 3 && (!value.workerRuntime || Object.keys(value.workerRuntime).join() !== "profile"
-      || value.workerRuntime.profile !== orderWorkerProfile)) fail("INVALID_WORKER_PROFILE");
+      || !Object.hasOwn(orderWorkerProfiles, value.workerRuntime.profile))) fail("INVALID_WORKER_PROFILE");
   const endpoint = new URL(value.storageEndpoint);
   if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !["9000", "19000", "19001", "19002", "19003"].includes(endpoint.port) ||
       endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) fail("UNTRUSTED_STORAGE_ENDPOINT");
@@ -65,12 +65,16 @@ export function runtimePlans(root, manifest, environment) {
       env: { NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
         CANVAS_STUDIO_PRODUCTION_ENABLED: manifest.studioRuntime ? "1" : "0", CANVAS_STUDIO_URL: "http://127.0.0.1:4176" } },
   ];
-  if (manifest.workerRuntime) plans.push({
+  if (manifest.workerRuntime) {
+    const worker = orderWorkerProfiles[manifest.workerRuntime.profile];
+    plans.push({
     component: "worker", port: 8001, health: "http://127.0.0.1:8001/health", cwd: path.join(snapshot, "apps/worker"),
+    workerProfile: manifest.workerRuntime.profile,
     args: [...files, "--import", "tsx", "src/run.ts"],
     env: { NODE_ENV: "development", TSX_DISABLE_CACHE: "1", WORKER_HEALTH_PORT: "8001",
-      WORKER_QUEUES: orderWorkerQueues.join(","), WORKER_SCHEDULERS: orderWorkerSchedulers.join(",") },
+      WORKER_QUEUES: worker.queues.join(","), WORKER_SCHEDULERS: worker.schedulers.join(",") },
   });
+  }
   return plans;
 }
 
@@ -148,7 +152,7 @@ async function componentHealth(plan, pid) {
   try {
     const response = await globalThis.fetch(plan.health, { signal: globalThis.AbortSignal.timeout(5000), redirect: "manual" });
     if (response.status !== 200) { await response.body?.cancel(); return false; }
-    return orderWorkerReady(await response.json(), pid);
+    return orderWorkerReady(await response.json(), pid, plan.workerProfile);
   } catch { return false; }
 }
 
@@ -307,7 +311,8 @@ export function createOrdinaryRuntimeRunner({ acquireGate = acquireStartupGate, 
           report = { mode, recordedAt: new Date().toISOString(), sourceSha256: prepared.manifest.sourceSha256, migrations: prepared.manifest.migrations,
             candidate: prepared.manifest.candidate, buildId: prepared.manifest.buildId, components: observations,
             ...(studio ? { studioRuntime: studio } : {}),
-            ...(prepared.manifest.workerRuntime ? { workerRuntime: { profile: orderWorkerProfile, queues: orderWorkerQueues, schedulers: orderWorkerSchedulers } } : {}),
+            ...(prepared.manifest.workerRuntime ? { workerRuntime: { profile: prepared.manifest.workerRuntime.profile,
+              ...orderWorkerProfiles[prepared.manifest.workerRuntime.profile] } } : {}),
             backgroundConsumersStarted: observations.some(row => row.component === "worker" && row.decision === "reuse"), noSecurityPolicyChanged: true };
           assertNotInterrupted();
           if (mode === "status" || observations.every(row => row.decision === "reuse")) return report;
