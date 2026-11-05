@@ -252,7 +252,8 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       if (fulfillment.items.some(item => item.productionBlockers.length)) throw new FlowAttention([...new Set(fulfillment.items.flatMap(item => item.productionBlockers))].join("；"));
       const factory = fulfillment.factories.find(factory => factory.factoryId === route.factoryId);
       if (!factory) throw new FlowAttention(fulfillment.factoryDiagnostics.find(factory => factory.factoryId === route.factoryId)?.blockers.join("；") || "该工厂尚未核验本单商品与工艺的承接能力");
-      const latest = new Date(flow.createdAt.getTime()+route.profile.productionDays*86_400_000);
+      // Design revisions precede this production window; the persisted command freezes it for retries.
+      const latest = new Date(Date.now()+route.profile.productionDays*86_400_000);
       const capacity = planFlowCapacity(await this.capacity.workspace(context,route.factoryId,{days:31}),
         factory.items.map(item => ({...item,quantity:fulfillment.items.find(line => line.lineId===item.lineId)!.quantity})),latest);
       const items = [];

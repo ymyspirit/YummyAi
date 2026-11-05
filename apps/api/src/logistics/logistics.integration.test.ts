@@ -126,6 +126,15 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     await expect(yun.service.createTask(context,crossBorder,{mode:"quote"})).rejects.toThrow();
     expect(yun.enqueued).toHaveLength(0);
   });
+  it("allows an omitted OpenAPI customs code through task creation and quoting without inventing one",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,false,undefined,undefined,{yunexpressProtocol:"openapi",baseUrl:"https://openapi.yunexpress.cn"});
+    const input=taskInput(s,await production(s.factory));input.packages[0]!.declarations[0]!.hsCode="";
+    const saved=await s.service.createTask(context,input,{mode:"quote"});
+    const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+    expect(pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret).packages[0].declarations[0].hsCode)).toBe("");
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");expect(s.carrier.creates).toBe(0);
+  });
   async function production(factory:typeof usFactory,existingOrderId?:string,totalQuantity=1){
     if(!capacities.has(factory.id))capacities.set(factory.id,await createSyntheticFactoryCapacity(database,context,{factory,bindings:[{capabilityVersionId:capabilities.get(factory.id)!,unitsPerItem:1}],capacityUnits:10_000}));
     const capacity=capacities.get(factory.id)!;

@@ -59,11 +59,13 @@ describe("whole-order fulfillment planning",()=>{
     expect(compared.channelCode).toBeUndefined();expect(compared.packages).toEqual(legacy.packages);
     expect(compared.packages[0]!.declarations[0]).toMatchObject({quantity:2,unitPriceMinor:800,currency:"USD"});
   });
-  it("rejects invalid YunExpress names, missing customs data and oversized packages",()=>{
+  it("preserves an omitted optional customs code while rejecting invalid names, codes and oversized packages",()=>{
     const ca=fixture("CA");ca.order.address.recipient="Buyer";
     expect(()=>planFlowParcel(ca.order,ca.profile)).toThrow();
     ca.order.address.recipient="Synthetic Buyer";ca.profile.profile.specifications[0]!.hsCode="";
-    expect(()=>planFlowParcel(ca.order,ca.profile)).toThrow("海关编码");
+    expect(planFlowParcel(ca.order,ca.profile).packages[0]!.declarations[0]!.hsCode).toBe("");
+    ca.profile.profile.specifications[0]!.hsCode="invented";
+    expect(()=>planFlowParcel(ca.order,ca.profile)).toThrow();
     const us=fixture();us.profile.profile.specifications[0]!.length=25;
     expect(()=>planFlowParcel(us.order,us.profile)).toThrow();
   });

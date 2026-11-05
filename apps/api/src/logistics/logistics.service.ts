@@ -123,7 +123,8 @@ export class LogisticsService {
       const first=rows[0];
       if(rows.length!==input.productionOrderIds.length || !first?.version.factoryId || !first.version.factoryVersionId || rows.some(r=>r.version.factoryId!==first.version.factoryId || r.version.factoryVersionId!==first.version.factoryVersionId || ["cancelled","cancel_requested","failed"].includes(r.production.status) || r.version.expectedCompletionAt>new Date(input.readyAt))) throw new ConflictException("请按已确认工厂拆分物流任务，并核对数量和预计完工时间");
       const connection=await this.connection(tx,input.connectionId); const [parent]=await tx.select().from(connections).where(eq(connections.id,input.connectionId));
-      if(connection.profile.provider==="yunexpress"&&input.packages.some(pack=>pack.declarations.some(item=>!/^\d{6,12}$/.test(item.hsCode))))
+      // Only OpenAPI documents HS codes as optional; keep the legacy OMS requirement.
+      if(connection.profile.provider==="yunexpress"&&connection.profile.yunexpressProtocol!=="openapi"&&input.packages.some(pack=>pack.declarations.some(item=>!/^\d{6,12}$/.test(item.hsCode))))
         throw new ConflictException("云途跨境申报须填写有效的海关编码");
       const rule=await this.rule(tx,input.connectionId,parent!.ruleVersion); if(!rule || rule.connectionVersionId!==connection.id) throw new ConflictException("请为当前发货连接设置预算和时效规则");
       if(parent!.factoryId!==first.version.factoryId) throw new ConflictException("物流路线须属于生产任务的实际工厂");

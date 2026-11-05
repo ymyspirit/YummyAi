@@ -24,7 +24,6 @@ export function planFlowParcel(source: DocumentOrderSource, profile: DocumentPro
     const spec = profile.profile.specifications.find(spec => spec.specificationVersionId === line.specificationVersionId)!;
     if (!line.skuCode) throw new Error("商品缺少可核对的销售 SKU");
     if (!spec.declaredUnitValueMinor) throw new Error("规格缺少申报价值");
-    if (profile.profile.route === "yunexpress" && !/^\d{6,12}$/.test(spec.hsCode)) throw new Error("云途规格缺少有效的海关编码");
     const grams = spec.weight * (spec.weightUnit === "kg" ? 1000 : spec.weightUnit === "lb" ? 453.59237 : 1);
     const existing = declarations.get(line.skuCode);
     if (existing) {

@@ -100,6 +100,10 @@ OMS HTTPS 地址未验证前，仅允许保存待配置账户；不会对证书�
 基线：[ShipOS 官方文档](https://s.apifox.cn/45f68512-0e9b-41e9-8bd5-d8498f6faccd)、[云途 OMS 2023 规范](https://yunexpress-fileupload.oss-cn-shenzhen.aliyuncs.com/%E4%BA%91%E9%80%94%E7%89%A9%E6%B5%81API%E6%8E%A5%E5%8F%A3%E5%BC%80%E5%8F%91%E8%A7%84%E8%8C%83OMS20230706.pdf)。
 OpenAPI 基线于 2026-11-05 核验：[OAuth2](https://open.yunexpress.cn/openApi/doc?type=article&mid=1651108581694787586&pid=1651110034228400130&id=1651110591705927682)、[签名规则](https://open.yunexpress.cn/openApi/doc?type=article&mid=1651108581694787586&pid=1651110094496354305&id=1651110700187406338)、[单票寄件](https://open.yunexpress.cn/openApi/doc?type=dict&category=36&classify=16&id=1659033029213650946)、[运费试算](https://open.yunexpress.cn/openApi/doc?type=dict&category=41&classify=17&id=1658756304147808257)、[面单打印](https://open.yunexpress.cn/openApi/doc?type=dict&category=36&classify=15&id=1659094586882752513)、[实际扣费](https://open.yunexpress.cn/openApi/doc?type=dict&category=41&classify=18&id=1659012280482496513)。复用官方 SDK/示例的协议，使用 Node 内置 crypto，不引入第三方持有密钥。
 
+2026-11-06 复核单票寄件文档的 declaration_info：hs_code 为非必须。
+OpenAPI 订单未填写时省略该字段，填写时仍校验格式，不自动推断商品归类。
+特定渠道或目的国另外要求申报资料时保留提供方异常；旧 OMS 的既有校验不变。
+
 ## 工厂交付与验收
 
 整单详情 → 工厂交付与回执：按工厂版本生成正式 JPG、逐商品 CSV 清单、不可变 manifest 和物流关联信息。

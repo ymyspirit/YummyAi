@@ -167,12 +167,16 @@ describe("YunExpress official OpenAPI",()=>{
     const t=transport(url=>url.pathname.endsWith("getlist")?Response.json({success:true,detail:[{product_code:"fixture",product_name:"Synthetic"}]}):ok([base,second]));
     expect((await t.gateway.quote(profile(),c,logisticsFixtureTask(),"YMYfixture"))[0]).toMatchObject({diagnostic:"QUOTE_UNAVAILABLE",conditionsVerified:false});
   });
-  it("sends a single PDF parcel with upward units and complete declarations",async()=>{
+  it.each(["940490", ""])("sends a single PDF parcel with upward units and preserves optional HS code %s",async(hsCode)=>{
     const task=logisticsFixtureTask();task.packages[0]!.weightGrams=117.934;task.packages[0]!.dimensionsMm.length=304.8;task.recipient.region="California";
+    task.packages[0]!.declarations[0]!.hsCode=hsCode;
     const t=transport((url,init)=>{
       expect(url.pathname).toBe("/v1/order/package/create");
       const body=JSON.parse(String(init.body));expect(body).toMatchObject({customer_order_number:"YMYfixture",product_code:"fixture",weight_unit:"KG",size_unit:"CM",label_type:"PDF",sensitive_type:"W",receiver:{first_name:"Synthetic",last_name:"buyer",province:"CA",address_lines:["2 Test Street"]},packages:[{weight:0.118,length:30.48}],declaration_info:[{name_en:"Synthetic pillow",name_local:"测试抱枕",quantity:1,unit_price:10,currency:"USD",origin_country:"CN"}]});
-      expect(body).not.toHaveProperty("sourceKey");return ok(info);
+      expect(body).not.toHaveProperty("sourceKey");
+      if(hsCode)expect(body.declaration_info[0].hs_code).toBe(hsCode);
+      else expect(body.declaration_info[0]).not.toHaveProperty("hs_code");
+      return ok(info);
     });
     expect(await t.gateway.create(profile(),c,task,"YMYfixture",q)).toMatchObject({providerOrderId:"YTfixture",trackingNumbers:["TRACKfixture"],labelUrls:[]});
   });

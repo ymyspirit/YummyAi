@@ -53,16 +53,17 @@ describe.sequential("durable automatic fulfillment coordination",()=>{
       await tx.update(flows).set({nextRunAt:new Date(0)}).where(eq(flows.orderId,order.id));
     });
     const [flow]=await withTenant(database.db,context,tx=>tx.select().from(flows).where(eq(flows.orderId,order.id)));
-    const production={wholeOrderFulfillment:vi.fn().mockResolvedValue({items:[{lineId,operationBlockers:[],productionBlockers:[],renderId:null,renderFailure:null,production:null}],factories:[],factoryDiagnostics:[]}),releaseWholeOrderReceipt:vi.fn()};
+    const production={wholeOrderFulfillment:vi.fn().mockResolvedValue({items:[{lineId,operationBlockers:[],productionBlockers:[],renderId:null,renderFailure:null,production:null}],factories:[],factoryDiagnostics:[]}),releaseWholeOrderReceipt:vi.fn(),manufacturingOptions:vi.fn()};
+    const capacity={workspace:vi.fn()};
     const logistics={get:vi.fn(),dispatch:vi.fn(),createTask:vi.fn()};
     const routes={workspace:vi.fn().mockResolvedValue({view:{routes:[route],canConfigure:true},documents:{profiles:[profile]},connections:[{id:route.profile.connectionId}]})};
     const work={action:vi.fn()};
-    const service=new OrderFlowService(database,vault,routes as unknown as FulfillmentRoutesService,production as unknown as OrderProductionService,{} as FactoryCapacityService,logistics as unknown as LogisticsService,{} as OrderProductionDeliveryService,{} as LogisticsDocumentsService,{} as OrderShipmentService,work as unknown as OrderWorkspaceService);
+    const service=new OrderFlowService(database,vault,routes as unknown as FulfillmentRoutesService,production as unknown as OrderProductionService,capacity as unknown as FactoryCapacityService,logistics as unknown as LogisticsService,{} as OrderProductionDeliveryService,{} as LogisticsDocumentsService,{} as OrderShipmentService,work as unknown as OrderWorkspaceService);
     // Provider and domain-owner behavior is covered in their own integration suites.
     // This suite keeps real RLS, authority, leases, approval intents and command journals.
     vi.spyOn((service as unknown as {source:OrderDocumentSourceReader}).source,"read").mockResolvedValue({source,blockers:[],orderSequence:order.latestEventSequence,fingerprint:"a".repeat(64),expiresAt:new Date(Date.now()+86400000),production:[]});
     const read=async()=> (await withTenant(database.db,context,tx=>tx.select().from(flows).where(eq(flows.id,flow!.id))))[0]!;
-    return {service,flow:flow!,read,production,logistics,route,routes,lineId,order,versionId,profile,work};
+    return {service,flow:flow!,read,production,capacity,logistics,route,routes,lineId,order,versionId,profile,work};
   }
 
   it("deduplicates approval intents, rolls back with approval, and isolates tenants",async()=>{
@@ -95,6 +96,44 @@ describe.sequential("durable automatic fulfillment coordination",()=>{
     await Promise.all([s.service.advance(context,s.flow.id),s.service.advance(context,s.flow.id)]);
     expect(s.production.releaseWholeOrderReceipt).toHaveBeenCalledTimes(1);
     expect(await s.read()).toMatchObject({stage:"logistics",productionOrderIds:[productionId],pendingCommand:null,leaseToken:null});
+  });
+  it("starts the factory window after artwork readiness and keeps the original booking after a lost receipt",async()=>{
+    const s=await fixture(),capabilityVersionId=createEntityId(),poolId=createEntityId(),poolVersionId=createEntityId(),productionId=createEntityId();
+    const start=new Date(Date.now()+3600000),end=new Date(Date.now()+4*3600000),localDate=start.toISOString().slice(0,10);
+    await withTenant(database.db,context,tx=>tx.update(flows).set({createdAt:new Date(Date.now()-7*86400000)}).where(eq(flows.id,s.flow.id)));
+    s.production.wholeOrderFulfillment.mockResolvedValue({items:[{lineId:s.lineId,quantity:1,expectedRevision:0,expectedProjectionVersion:1,operationBlockers:[],productionBlockers:[],renderId:createEntityId(),renderFailure:null,production:null}],factories:[{factoryId:s.profile.factoryId,factoryVersionId:s.profile.factoryVersionId,supplierId:createEntityId(),items:[{lineId:s.lineId,capabilityVersionId}]}],factoryDiagnostics:[]});
+    s.production.manufacturingOptions.mockResolvedValue({source:{packageQuantity:1},items:[{versionId:createEntityId(),outputQuantity:1,outputUnit:"each"}],nextCursor:null,diagnostics:[]});
+    s.capacity.workspace.mockResolvedValue({pools:[{id:poolId,versionId:poolVersionId,profile:{status:"active",bindings:[{capabilityVersionId,unitsPerItem:1}]}}],calendar:[{poolId,poolVersionId,localDate,blockers:[],availableUnits:1,intervals:[{start:start.toISOString(),end:end.toISOString()}]}]});
+    s.production.releaseWholeOrderReceipt.mockRejectedValueOnce(new ServiceUnavailableException("Synthetic receipt lost"))
+      .mockResolvedValueOnce({productionOrderIds:[productionId]});
+    await s.service.advance(context,s.flow.id);
+    const retained=(await s.read()).pendingCommand;
+    expect(retained).toMatchObject({kind:"production",input:{expectedCompletionAt:end.toISOString(),items:[{capacityPlan:{allocations:[{poolId,poolVersionId,localDate}]}}]}});
+    await withTenant(database.db,context,tx=>tx.update(flows).set({nextRunAt:new Date(0)}).where(eq(flows.id,s.flow.id)));
+    await s.service.advance(context,s.flow.id);
+    expect(s.capacity.workspace).toHaveBeenCalledTimes(1);
+    expect(s.production.releaseWholeOrderReceipt.mock.calls[1]).toEqual(s.production.releaseWholeOrderReceipt.mock.calls[0]);
+    expect(await s.read()).toMatchObject({stage:"logistics",productionOrderIds:[productionId],pendingCommand:null});
+  });
+  it("waits through AI and human revisions and only continues after the replacement version is approved",async()=>{
+    const s=await fixture(false);
+    for(const artwork of ["changes_requested","in_progress","in_review"] as const){
+      await withTenant(database.db,context,async tx=>{
+        await tx.update(orderWorkItems).set({artwork,approvedEditorVersionId:null}).where(eq(orderWorkItems.id,s.lineId));
+        await tx.update(flows).set({nextRunAt:new Date(0)}).where(eq(flows.id,s.flow.id));
+      });
+      await s.service.advance(context,s.flow.id);
+      expect((await s.read()).stage).toBe("waiting_artwork");
+    }
+    expect(s.production.wholeOrderFulfillment).not.toHaveBeenCalled();expect(s.logistics.createTask).not.toHaveBeenCalled();
+    await withTenant(database.db,context,async tx=>{
+      await tx.update(orderWorkItems).set({artwork:"approved",approvedEditorVersionId:createEntityId()}).where(eq(orderWorkItems.id,s.lineId));
+      await scheduleOrderFlow(tx,context,s.order.id);
+      await tx.update(flows).set({nextRunAt:new Date(0)}).where(eq(flows.id,s.flow.id));
+    });
+    await s.service.advance(context,s.flow.id);
+    expect((await s.read()).stage).toBe("waiting_render");expect(s.production.wholeOrderFulfillment).toHaveBeenCalledTimes(1);
+    expect(s.logistics.createTask).not.toHaveBeenCalled();
   });
   it.each([["quoted","paused"],["reconciliation_required","exception"]])("stops %s without purchasing again",async(status,stage)=>{
     const s=await fixture(),productionId=createEntityId();
