@@ -108,7 +108,7 @@ export class LogisticsService {
     const fulfillment=await this.orderService.fulfillmentDetails(context,input.orderId,"fulfillment");
     if(!fulfillment.protectedDetails) throw new ConflictException("订单缺少有效的收件地址和联系方式");
     const {shippingAddress:a,buyer}=fulfillment.protectedDetails;
-    const recipientResult=LogisticsAddressSchema.safeParse({name:a.recipient,address1:a.lines[0],address2:a.lines.slice(1).join(" "),city:a.city,region:a.region,postalCode:a.postalCode,countryCode:a.countryCode,phone:buyer.phone,email:buyer.email});
+    const recipientResult=LogisticsAddressSchema.safeParse({name:a.recipient,address1:a.lines[0],address2:a.lines.slice(1).join(" "),city:a.city,region:a.region,postalCode:a.postalCode,countryCode:a.countryCode,phone:a.phone !== undefined ? a.phone : buyer.phone,email:buyer.email});
     if(!recipientResult.success) throw new ConflictException("收件地址或联系方式不完整，请先审单核对");
     const outcome=await withTenant(this.database.db,context,async tx=>{
       await logisticsLock(tx,context,`order:${input.orderId}`);

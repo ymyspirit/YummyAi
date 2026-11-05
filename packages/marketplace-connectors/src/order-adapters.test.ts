@@ -19,6 +19,9 @@ describe("authorized order HTTP adapters", () => {
 
     expect(result).toMatchObject({ nextCursor: "page-3", reportedCount: 9, sourceVersion: "amazon-orders-2026-01-01" });
     expect(result.records[0]?.order.externalOrderId).toBe("111-2222222-3333333");
+    expect(result.records[0]?.order.protectedDetails).toMatchObject({ buyer: { name: "Buyer", email: "buyer@example.test" },
+      shippingAddress: { recipient: "Recipient", lines: ["Secret street"], phone: "0123456789" },
+      customizations: [{ values: [{ type: "file_reference", externalReference: "https://custom.example.test/private.zip" }] }] });
     const url = new URL(String(request.mock.calls[1]![0]));
     expect(url.pathname).toBe("/orders/2026-01-01/orders");
     expect(url.searchParams.get("paginationToken")).toBe("page-2");
@@ -91,9 +94,10 @@ function amazonOrder() {
     fulfillment: { fulfillmentStatus: "UNSHIPPED", shipByWindow: { latestDateTime: "2026-07-24T23:59:59Z" } },
     salesChannel: { marketplaceId: "ATVPDKIKX0DER" },
     proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
-    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } } }, quantityOrdered: 1 }],
-    buyer: { name: "Buyer", email: "buyer@example.test" },
-    recipient: { name: "Buyer", addressLines: ["Secret street"], city: "Seattle", stateOrRegion: "WA", postalCode: "98101", countryCode: "US" },
+    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } },
+      customization: { customizedUrl: "https://custom.example.test/private.zip" } }, quantityOrdered: 1 }],
+    buyer: { buyerName: "Buyer", buyerEmail: "buyer@example.test" },
+    recipient: { deliveryAddress: { name: "Recipient", addressLine1: "Secret street", city: "Seattle", stateOrRegion: "WA", postalCode: "98101", countryCode: "US", phone: "0123456789" } },
   };
 }
 

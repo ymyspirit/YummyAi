@@ -74,6 +74,22 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect((await attention.workspace(context,{source:"production"},new Date(future(4)))).items.some(item=>item.priority==="overdue")).toBe(true);
     expect(s.carrier.creates).toBe(0);expect(s.carrier.lookups).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
   });
+  it.each([undefined,"0222222222",null])("uses the delivery phone and preserves legacy contact fallback only when absent: %s",async phone=>{
+    const s=await setup(),p=await production(s.factory),input=taskInput(s,p);
+    if(phone!==undefined)await withTenant(database.db,context,async tx=>{
+      const [stored]=await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId,input.orderId));
+      const details=pii.withSecret(stored!.encryptedEnvelope!,secret=>JSON.parse(secret));
+      details.shippingAddress.phone=phone;
+      await tx.update(orderProtectedDetails).set({encryptedEnvelope:pii.encrypt(JSON.stringify(details))}).where(eq(orderProtectedDetails.orderId,input.orderId));
+    });
+    if(phone===null)await expect(s.service.createTask(context,input,{mode:"quote"})).rejects.toThrow();
+    else {
+      const saved=await s.service.createTask(context,input,{mode:"quote"});
+      const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+      expect(pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret).recipient.phone)).toBe(phone??"1234567890");
+    }
+    expect(s.carrier.creates).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
+  });
   async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number,profilePatch?:Partial<LogisticsConnectionProfile>){
     const factory=country==="US"?usFactory:cnFactory;
     const enqueued:unknown[]=[];const queue={enqueue:async(input:unknown)=>{enqueued.push(input);return undefined;}};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);

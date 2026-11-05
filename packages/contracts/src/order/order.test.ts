@@ -14,6 +14,12 @@ describe("order contracts", () => {
     });
     expect(parsed.orderTotal?.amountMinor).toBe(2640);
     expect(parsed.protectedDetails?.buyer.email).toBe("buyer@example.test");
+    expect(parsed.protectedDetails?.shippingAddress).not.toHaveProperty("phone");
+    const withDeliveryPhone = { ...parsed, protectedDetails: { ...parsed.protectedDetails!,
+      shippingAddress: { ...parsed.protectedDetails!.shippingAddress, phone: "0123456789" } } };
+    expect(NormalizeOrderInputSchema.parse(withDeliveryPhone).protectedDetails?.shippingAddress.phone).toBe("0123456789");
+    withDeliveryPhone.protectedDetails.shippingAddress.phone = " ";
+    expect(NormalizeOrderInputSchema.safeParse(withDeliveryPhone).success).toBe(false);
   });
 
   it("rejects PII and encrypted envelopes on the public order view", () => {

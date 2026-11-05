@@ -22,6 +22,12 @@ function diagnosticFor(text: string) {
 }
 
 describe("Amazon order report parser", () => {
+  it("keeps delivery phone separate when it differs from the buyer phone", () => {
+    const result = parseAmazonOrderReport(report([{ ...base, "buyer-phone-number": "1111111111", "ship-phone-number": "0222222222" }],
+      [...headers, "buyer-phone-number", "ship-phone-number"]));
+    expect(result.orders[0].protectedDetails.buyer.phone).toBe("1111111111");
+    expect(result.orders[0].protectedDetails.shippingAddress.phone).toBe("0222222222");
+  });
   it("keeps item-price as the line total and parses protected shipping details separately", () => {
     const result = parseAmazonOrderReport(report());
     expect(result.rowCount).toBe(1);

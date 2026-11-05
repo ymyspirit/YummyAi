@@ -6,7 +6,8 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import type { FactoryDocumentProfile } from "@yummyai/contracts/logistics/documents";
 import { connectDatabase, withTenant, marketplaceAccounts, fulfillmentSuppliers, orderWorkItems, orderWorkRevisions,
   logisticsDocumentExports, logisticsDocumentLabels, orderProtectedDetails, roles } from "@yummyai/database";
-import { sealWork } from "@yummyai/order-core";
+import { sealWork, OrderDocumentSourceReader } from "@yummyai/order-core";
+import { normalizeAmazonOrder } from "@yummyai/marketplace-connectors";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { requireDisposableIntegrationEnvironment } from "../../../../tools/testing/require-disposable-integration.mjs";
@@ -76,6 +77,36 @@ describe.sequential("native daily order documents", () => {
     const file = await service.download(context, id), book = new ExcelJS.Workbook();
     try { await book.xlsx.load(Uint8Array.from(file.body).buffer); return book; } finally { file.body.fill(0); }
   }
+  it("carries official API private fields through encrypted ingestion into shipping documents", async () => {
+    const f = await setup("CA"), at = new Date().toISOString();
+    const normalized = normalizeAmazonOrder(accountId, randomUUID(), {
+      orderId: f.input.externalOrderId, createdTime: f.input.placedAt, lastUpdatedTime: at,
+      salesChannel: { marketplaceId: "A2EUQ1WTGCTBG2" }, fulfillment: { fulfillmentStatus: "UNSHIPPED" },
+      proceeds: { grandTotal: { amount: "24.00", currencyCode: "USD" } },
+      buyer: { buyerName: "Synthetic Buyer", buyerEmail: "buyer@example.invalid", phone: "1111111111" },
+      recipient: { deliveryAddress: { name: "Synthetic Recipient", addressLine1: "2 Private Street", city: "Toronto",
+        stateOrRegion: "Ontario", postalCode: "M1B 1B1", countryCode: "CA", phone: "0222222222" } },
+      orderItems: f.input.lines.map(line => ({ orderItemId: line.externalLineId, quantityOrdered: line.quantity,
+        product: { title: line.title, sellerSku: line.skuCode, price: { unitPrice: { amount: "8.00", currencyCode: "USD" } },
+          customization: { customizedUrl: "https://custom.example.invalid/private.zip?signature=synthetic" } } })),
+    }).order;
+    const receipt = await orderService.materializeNormalized(context, normalized);
+    expect(receipt.order.id).toBe(f.order.id);
+    expect((await orderService.materializeNormalized(context, normalized)).replayed).toBe(true);
+    const [stored] = await withTenant(database.db, context, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, f.order.id)));
+    expect(JSON.stringify(stored)).not.toMatch(/Private Street|0222222222|private.zip|buyer@example/);
+    expect(vault.withSecret(stored!.encryptedEnvelope!, secret => JSON.parse(secret))).toMatchObject({
+      shippingAddress: { phone: "0222222222", countryCode: "CA" }, customizations: [{ externalLineId: "line-a" }, { externalLineId: "line-b" }],
+    });
+    const source = await withTenant(database.db, context, tx => new OrderDocumentSourceReader(vault).read(tx, context, f.order.id));
+    expect(source.source.address).toMatchObject({ recipient: "Synthetic Recipient", phone: "0222222222", address1: "2 Private Street", countryCode: "CA" });
+    expect((await service.preview(context, f.selection)).ready).toBe(true);
+    expect(JSON.stringify(await orderService.get(context, f.order.id))).not.toMatch(/Private Street|0222222222|private.zip|buyer@example/);
+    await expect(withTenant(database.db, other, tx => new OrderDocumentSourceReader(vault).read(tx, other, f.order.id))).rejects.toThrow();
+    await orderService.ingestNormalized(context, { ...normalized, externalEventId: randomUUID(), protectedDetails: {
+      ...normalized.protectedDetails!, shippingAddress: { ...normalized.protectedDetails!.shippingAddress, phone: null } } });
+    expect((await withTenant(database.db, context, tx => new OrderDocumentSourceReader(vault).read(tx, context, f.order.id))).source.address.phone).toBe("");
+  });
   it("uses native specification pins despite new seller SKUs, groups the entire order and preserves text/numeric cells", async () => {
     const f = await setup(), preview = await service.preview(context, f.selection);
     expect(preview).toMatchObject({ ready: true, rowCount: 1 });

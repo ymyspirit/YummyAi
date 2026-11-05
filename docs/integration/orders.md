@@ -117,6 +117,26 @@ The `order-ingestion` queue contract carries only `snapshotId` and `accountId`; 
 
 The provider normalizers target Amazon Orders API `v2026-01-01`, Amazon `ORDER_CHANGE` payload version 1.0, and Etsy Open API v3 receipts/transactions. They validate provider payloads before producing `NormalizeOrderInput`, keep only identifiers, states, timestamps, versions, and line references in redacted evidence, and route buyer/address/customization fields to protected details. `ORDER_CHANGE` produces an enrichment reference because its high-level event does not contain all money and product fields required by the normalized order.
 
+Amazon normalization reads `buyer.buyerName` / `buyer.buyerEmail`, `recipient.deliveryAddress`,
+and `orderItems.product.customization.customizedUrl` from the
+[official Orders model](https://github.com/amzn/selling-partner-api-models/blob/main/models/orders-api-model/orders_2026-01-01.json).
+The Custom URL remains an encrypted `file_reference`, never redacted snapshot or public-list data;
+a reference alone does not prove a file was downloaded, scanned or approved. A supplied customization
+marker without an accessible URL retains a missing-customization diagnostic. Official nested addresses
+do not fall back to legacy aliases when a field is missing or redacted.
+
+Protected shipping addresses can carry their own nullable `phone`, separate from the buyer contact.
+Shipping documents and carrier tasks use it when present, including explicit `null` as unavailable;
+old encrypted envelopes without that property retain their previous buyer-phone fallback. No historical
+envelope is rewritten. Manual reports preserve a supplied `ship-phone-number` separately too.
+Amazon customer addresses and Custom links require the appropriate authorized app roles; normal ERP
+login does not provide these permissions. See [Access Orders PII](https://developer-docs.amazon/sp-api/docs/access-orders-pii).
+
+Current daily intake still uses uploaded Amazon reports. `OrderSyncCoordinator` and the provider adapters
+are reusable service components; they are not connected to a production account polling scheduler.
+Automatic intake still needs that execution wiring, current credential-owner integration, store authorization,
+and controlled live acceptance. Enabling the unrelated snapshot-materialization queue alone does not supply it.
+
 `AmazonOrdersAdapter` sends bounded `searchOrders` requests with the minimum required included-data sets and opaque pagination tokens. `EtsyReceiptsAdapter` uses `min_last_modified`/`max_last_modified`, stable updated-time ordering, and offset pagination. Both normalize authorization, validation, rate-limit, retryable upstream, and terminal errors; a `Retry-After` value is returned to the job boundary instead of performing a blind retry. `executeOrderSync` rejects repeated cursors or source-version drift, enforces the page bound, materializes each delivery idempotently, and returns a completed or partial summary. Live authorized pagination and refresh-token-rotation persistence remain pending acceptance work.
 
 `OrderSyncCoordinator` starts one account/platform/stream run, verifies the persisted checkpoint version, executes the bounded adapter loop, materializes immutable evidence, and advances the checkpoint only when the summary commits. Failures finalize the run with a static error code without advancing the checkpoint. A partial run retains an opaque cursor and the previous high-water mark for the next run.
