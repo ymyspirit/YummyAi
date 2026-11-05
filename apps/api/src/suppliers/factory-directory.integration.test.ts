@@ -81,6 +81,23 @@ describe("tenant supplier has distinct factories and immutable manufacturing cap
     expect((await service.history(context, draft.id)).factories).toHaveLength(1);
     await expect(withTenant(database.db, context, tx => service.pinForRelease(tx, draft.id, draft.versionId, capability.versionId, unknownSupplierId, { productType: "shaped_pillow", productPlanId: null, skuId: null, quantity: 1 }))).rejects.toBeInstanceOf(ConflictException);
   });
+  it("activates a draft without a street or contact, then revises those details without rewriting the active version", async () => {
+    const draft = await service.create(context, {
+      supplierId, code: "OPTIONAL-DETAILS", idempotencyKey: randomUUID(),
+      profile: { ...syntheticFactoryProfile(), status: "draft", productionAddress: { countryCode: "CN", city: "Synthetic city" }, contacts: [] },
+    });
+    const active = await service.revise(context, draft.id, {
+      expectedVersion: draft.versionNumber, idempotencyKey: randomUUID(), profile: { ...draft.profile, status: "active" },
+    });
+    expect(active.profile).toMatchObject({ status: "active", productionAddress: { street: "" }, contacts: [] });
+    const completed = await service.revise(context, active.id, {
+      expectedVersion: active.versionNumber, idempotencyKey: randomUUID(),
+      profile: { ...active.profile, productionAddress: { ...active.profile.productionAddress, street: "Synthetic street" }, contacts: [{ role: "production", name: "Synthetic operator" }] },
+    });
+    expect(completed.profile).toMatchObject({ status: "active", productionAddress: { street: "Synthetic street" }, contacts: [{ name: "Synthetic operator", phone: "" }] });
+    const history = await service.history(context, active.id);
+    expect(history.factories.find(version => version.versionId === active.versionId)?.profile).toMatchObject({ productionAddress: { street: "" }, contacts: [] });
+  });
   it("pins exact versions, rejects foreign and stale pins, and blocks paused factories or changed parent roles", async () => {
     const f = await createSyntheticFactory(service, context, supplierId, "shaped_pillow"), requirement = { productType: "shaped_pillow", productPlanId: null, skuId: null, quantity: 1, longestMm: 254, sideMode: "single" as const, factoryStandardId: f.capability.profile.factoryStandardId };
     const pin = await withTenant(database.db, context, tx => service.pinForRelease(tx, f.pins.factoryId, f.pins.factoryVersionId, f.pins.capabilityVersionId, supplierId, requirement));

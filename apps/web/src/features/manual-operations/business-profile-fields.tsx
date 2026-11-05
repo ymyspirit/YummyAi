@@ -7,7 +7,7 @@ import { formText } from "./operation-types";
 import "./factory-directory.css";
 
 export function AddressFields({ prefix, title, address, forActivation = false }: { prefix: string; title: string; address?: BusinessAddress | null; forActivation?: boolean }) {
-  return <fieldset className="factory-form-section"><legend>{title}</legend><p className="record-help">{forActivation ? "草稿可留空或先填一部分；启用工厂前补齐国家、城市和详细地址。" : "选填，可留空或先填一部分，稍后补充。"}</p><div className="record-grid">
+  return <fieldset className="factory-form-section"><legend>{title}</legend><p className="record-help">{forActivation ? "启用时填写国家和城市，详细地址可后补。" : "选填，可留空或先填一部分，稍后补充。"}</p><div className="record-grid">
     <Field label={`${title}国家`}><input name={`${prefix}.countryCode`} maxLength={2} defaultValue={address?.countryCode ?? ""} placeholder="选填，CN / US" /></Field>
     <Field label={`${title}省／州`}><input name={`${prefix}.province`} maxLength={200} defaultValue={address?.province ?? ""} /></Field>
     <Field label={`${title}城市`}><input name={`${prefix}.city`} maxLength={200} defaultValue={address?.city ?? ""} /></Field>
@@ -24,9 +24,9 @@ export function addressFromForm(form: FormData, prefix: string): BusinessAddress
   return { countryCode: read("countryCode").toUpperCase(), province: read("province"), city: read("city"), district: read("district"), street: read("street"), postalCode: read("postalCode"), recipient: read("recipient"), phone: read("phone") };
 }
 const roles = { business: "商务", production: "生产跟单", quality: "质检", shipping: "收发货" } as const;
-export function ContactFields({ prefix, contacts, defaultRole = "business", forActivation = false }: { prefix: string; contacts: SupplierProfile["contacts"]; defaultRole?: keyof typeof roles; forActivation?: boolean }) {
+export function ContactFields({ prefix, contacts, defaultRole = "business" }: { prefix: string; contacts: SupplierProfile["contacts"]; defaultRole?: keyof typeof roles }) {
   const [rows, setRows] = useState(() => (contacts.length ? contacts : [{ name: "", role: defaultRole, phone: "", wechat: "", email: "" }]).map(contact => ({ ...contact, key: crypto.randomUUID() })));
-  return <fieldset className="factory-form-section"><legend>联系人</legend><p className="record-help">{forActivation ? "草稿可留空或先填一部分；启用工厂前填写生产联系人姓名及至少一种联系方式。" : "选填，可先记录姓名或一种联系方式，稍后补充。"}</p>{rows.map((contact, index) => <div className="factory-contact-row" key={contact.key}>
+  return <fieldset className="factory-form-section"><legend>联系人</legend><p className="record-help">选填，可先记录姓名或一种联系方式，稍后补充。</p>{rows.map((contact, index) => <div className="factory-contact-row" key={contact.key}>
     <input type="hidden" name={`${prefix}.indexes`} value={index} /><div className="record-grid">
       <Field label={`联系人 ${index + 1} 职责`}><select name={`${prefix}.${index}.role`} defaultValue={contact.role}>{Object.entries(roles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></Field>
       <Field label={`联系人 ${index + 1} 姓名`}><input name={`${prefix}.${index}.name`} maxLength={200} defaultValue={contact.name} /></Field>

@@ -10,13 +10,23 @@ describe("supplier and factory business boundaries", () => {
     expect(SupplierProfileSchema.parse({})).toMatchObject({ entityKind: "unconfirmed", roles: [], officeAddress: null, contacts: [] });
     expect(SupplierProfileSchema.safeParse({ tenantId: createEntityId() }).success).toBe(false);
   });
-  it("requires actual production address and reachable production contact before activation", () => {
-    const profile = syntheticFactoryProfile();
+  it("activates a factory with a country, city and time zone while street and contacts are optional", () => {
+    const profile = {
+      ...syntheticFactoryProfile(),
+      productionAddress: { countryCode: "CN", city: "Synthetic city" },
+      contacts: [],
+    };
+    expect(FactoryProfileSchema.parse(profile)).toMatchObject({
+      status: "active", productionAddress: { street: "" }, contacts: [],
+    });
+    expect(FactoryProfileSchema.safeParse({
+      ...profile, contacts: [{ role: "production", name: "Synthetic contact" }],
+    }).success).toBe(true);
     expect(FactoryProfileSchema.safeParse({ ...profile, productionAddress: null }).success).toBe(false);
-    expect(FactoryProfileSchema.safeParse({ ...profile, contacts: [{ ...profile.contacts[0], role: "business" }] }).success).toBe(false);
-    expect(FactoryProfileSchema.safeParse({ ...profile, contacts: [{ ...profile.contacts[0], phone: "" }] }).success).toBe(false);
-    expect(FactoryProfileSchema.safeParse({ ...profile, contacts: [{ ...profile.contacts[0], name: "" }] }).success).toBe(false);
-    for (const field of ["countryCode", "city", "street"]) expect(FactoryProfileSchema.safeParse({ ...profile, productionAddress: { ...profile.productionAddress, [field]: "" } }).success).toBe(false);
+    expect(FactoryProfileSchema.safeParse({ ...profile, timeZone: null }).success).toBe(false);
+    for (const field of ["countryCode", "city"]) {
+      expect(FactoryProfileSchema.safeParse({ ...profile, productionAddress: { ...profile.productionAddress, [field]: "" } }).success).toBe(false);
+    }
     expect(FactoryProfileSchema.safeParse({ ...profile, status: "draft", productionAddress: null, contacts: [] }).success).toBe(true);
   });
   it("saves unnamed address parts and partial contacts without inventing missing information", () => {

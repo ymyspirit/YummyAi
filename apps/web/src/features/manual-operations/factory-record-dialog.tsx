@@ -17,7 +17,7 @@ const factoryStatuses = { draft: "草稿", active: "启用", suspended: "暂停"
 export function FactoryRecordDialog({ supplierId, record, onClose, onSaved, onDenied }: { supplierId: string; record?: FactoryView; onClose(): void; onSaved(): void; onDenied?(): void }) {
   const [code] = useState(() => `FAC-${crypto.randomUUID().slice(0, 8).toUpperCase()}`), profile = record?.profile;
   return <RecordDialog title={record ? "编辑工厂" : "新增工厂"} onClose={onClose} protectEdits><RecordForm operation={record ? "factory.revise" : "factory.create"} id={record?.id} onCancel={onClose} onSaved={onSaved} onDenied={onDenied} submitLabel="保存工厂"
-    description="填写工厂名称即可保存草稿，编码已自动生成。地址和联系人可稍后补充；启用前须确认所属主体性质、生产加工角色、完整生产地址和可联系的生产负责人。"
+    description="填写名称即可保存草稿。启用时确认供应商的生产加工角色，并填写生产国家、城市和时区。"
     build={form => ({ ...(record ? { expectedVersion: record.versionNumber } : { supplierId, code: formText(form, "code") }), profile: {
       name: formText(form, "name"), ownership: formText(form, "ownership"), cooperationMode: formText(form, "cooperationMode"), status: formText(form, "status"),
       productionAddress: addressFromForm(form, "productionAddress"), pickupAddress: addressFromForm(form, "pickupAddress"), returnAddress: addressFromForm(form, "returnAddress"), contacts: contactsFromForm(form, "contacts"),
@@ -28,7 +28,7 @@ export function FactoryRecordDialog({ supplierId, record, onClose, onSaved, onDe
       <Field label="工厂性质"><select name="ownership" defaultValue={profile?.ownership ?? "partner"}><option value="partner">外部合作工厂</option><option value="owned">自有工厂／车间</option></select></Field>
       <Field label="合作关系"><select name="cooperationMode" defaultValue={profile?.cooperationMode ?? "direct"}><option value="direct">直接合作／直营</option><option value="subcontract">委外／转包</option></select></Field>
       <Field label="工厂状态"><select name="status" defaultValue={profile?.status ?? "draft"}>{Object.entries(factoryStatuses).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></Field>
-    </div><AddressFields title="生产地址" prefix="productionAddress" address={profile?.productionAddress} forActivation /><ContactFields prefix="contacts" defaultRole="production" contacts={profile?.contacts ?? []} forActivation />
+    </div><AddressFields title="生产地址" prefix="productionAddress" address={profile?.productionAddress} forActivation /><ContactFields prefix="contacts" defaultRole="production" contacts={profile?.contacts ?? []} />
     <AddressFields title="提货地址" prefix="pickupAddress" address={profile?.pickupAddress} /><AddressFields title="退货地址" prefix="returnAddress" address={profile?.returnAddress} />
     <div className="record-grid"><Field label="工厂时区" help="未知时留空保存草稿，启用前须确认"><select name="timeZone" defaultValue={profile?.timeZone ?? ""}><option value="">尚未确认</option>{[...new Set([profile?.timeZone, "Asia/Shanghai", "America/Los_Angeles", "America/New_York", "UTC"])].filter((zone): zone is string => Boolean(zone)).map(zone => <option key={zone}>{zone}</option>)}</select></Field>
       <Field label="工作时间"><input name="workingHours" maxLength={300} defaultValue={profile?.workingHours ?? ""} placeholder="例如周一至周六 09:00–18:00" /></Field>
