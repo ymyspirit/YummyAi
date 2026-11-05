@@ -22,7 +22,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   await expect(dialog).not.toBeVisible();
   const supplier = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(item => item.name === company)!;
   expect(supplier).toMatchObject({ regionCode: "", profile: { officeAddress: null, contacts: [] } });
-  await page.getByRole("link", { name: company, exact: true }).click();
+  await page.goto(`/suppliers/${supplier.id}`);
   await page.getByRole("button", { name: `编辑供应商 ${company}`, exact: true }).click();
   dialog = page.getByRole("dialog", { name: "编辑供应商", exact: true });
   await expect(dialog.getByText("仅供应商名称必填。地址、联系人及商务资料可留空或先填一部分，之后再补充。", { exact: true })).toBeVisible();
@@ -40,6 +40,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   await expect(dialog).not.toBeVisible();
   let saved = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(item => item.id === supplier.id)!;
   expect(saved.profile).toMatchObject({ officeAddress: { province: "Synthetic province", countryCode: "", city: "", street: "" }, contacts: [{ name: "Synthetic partial contact", phone: "" }, { name: "", phone: "synthetic-phone-only" }] });
+  await expect(page.getByText("Synthetic province", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: `编辑供应商 ${company}`, exact: true }).click();
   dialog = page.getByRole("dialog", { name: "编辑供应商", exact: true });
   await dialog.getByLabel("办公地址国家").fill("US");
@@ -157,6 +158,7 @@ test("factory directory manages two sites, manufacturing capabilities and immuta
   dialog = page.getByRole("dialog", { name: "编辑工厂", exact: true });
   await dialog.getByLabel("生产地址详细地址").fill("Synthetic revised production address");
   await dialog.getByRole("button", { name: "保存工厂", exact: true }).click(); await expect(dialog).not.toBeVisible();
+  await expect(page.getByText(/外部合作工厂 · 启用 · .* · 资料 V2/)).toBeVisible();
   await page.getByRole("button", { name: "查看版本历史", exact: true }).click();
   const history = page.getByRole("region", { name: "工厂版本历史", exact: true });
   await history.getByText(new RegExp(`资料 V1 · ${name}`)).click();
