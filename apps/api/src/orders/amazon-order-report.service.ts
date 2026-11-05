@@ -117,7 +117,7 @@ export class AmazonOrderReportService {
   async materializeApiOrder(context: TenantContext, input: NormalizeOrderInput) {
     return withTenant(this.database.db, context, async tx => {
       const result = await this.orderService.materializeNormalizedInTransaction(tx, context, input);
-      if (!result.replayed) await this.registerApiSourcesInTransaction(tx, context, result.orderId, input);
+      if (result.sourceAccepted) await this.registerApiSourcesInTransaction(tx, context, result.orderId, input);
       return result;
     });
   }

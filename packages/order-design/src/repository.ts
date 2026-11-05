@@ -41,7 +41,7 @@ export async function assertExecutionIdentity(tx:TenantTransaction,context:Tenan
 export async function assertRunSource(tx:TenantTransaction,run:DesignRun) {
   const [source]=await tx.select({work:works,order:orders}).from(works).innerJoin(orderLines,eq(orderLines.id,works.id)).innerJoin(orders,eq(orders.id,orderLines.orderId)).where(eq(works.id,run.workItemId));
   if(!source?.work.encryptedDataKey || source.work.expiresAt<=new Date() || source.order.addressStatus==="anonymized") throw new OrderDesignError("agent_source_expired");
-  if(source.work.held || source.work.archivedAt || source.order.sideState==="cancelled") throw new OrderDesignError("agent_order_unavailable");
+  if(source.work.held || source.work.archivedAt || source.order.sideState) throw new OrderDesignError("agent_order_unavailable");
   if(source.work.pushedRevisionId!==run.workRevisionId || !["queued","starting","in_progress","changes_requested"].includes(source.work.artwork)
     && !(run.status==="awaiting_review"&&source.work.artwork==="in_review")) throw new OrderDesignError("agent_work_changed");
   if(source.work.reportLineId) {

@@ -66,7 +66,7 @@ describe("automatic order sync persistence and authority", () => {
   }
   function page(input: OrderSyncNodeInput, accountId: string, nextCursor: string | null = null) {
     const raw = { orderId: "synthetic-order", createdTime: input.request.updatedAfter, lastUpdatedTime: input.request.updatedAfter,
-      fulfillment: { fulfillmentStatus: "UNSHIPPED" }, salesChannel: { marketplaceId: "ATVPDKIKX0DER" }, proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
+      fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" }, salesChannel: { marketplaceId: "ATVPDKIKX0DER" }, proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
       orderItems: [{ orderItemId: "synthetic-line", quantityOrdered: 1, product: { title: "Synthetic pillow", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } } } }] };
     return { records: [normalizeAmazonOrder(accountId, "same-source-event", raw)], nextCursor, reportedCount: 1, fetchedAt: new Date().toISOString(),
       highWaterAt: input.request.updatedBefore, sourceVersion: "amazon-orders-2026-01-01" };
@@ -95,6 +95,24 @@ describe("automatic order sync persistence and authority", () => {
     const rows = await withTenant(database.db, authority, tx => tx.select().from(orders).where(eq(orders.accountId, s.accountId)));
     expect(rows).toHaveLength(1);
     expect(await withTenant(database.db, authority, tx => tx.select().from(orderSourceSnapshots).where(eq(orderSourceSnapshots.normalizedOrderId, rows[0]!.id)))).toHaveLength(1);
+  });
+  it("accepts an unpriced pending order without losing the ready order or page checkpoint", async () => {
+    const s = await scene(); await s.due();
+    const job = await s.job(), input = OrderSyncNodeInputSchema.parse(job.input), payload = page(input, s.accountId);
+    payload.records.unshift(normalizeAmazonOrder(s.accountId, "pending-event", {
+      orderId: "synthetic-pending", createdTime: input.request.updatedAfter, lastUpdatedTime: input.request.updatedAfter,
+      fulfillment: { fulfillmentStatus: "PENDING", fulfilledBy: "MERCHANT" }, salesChannel: { marketplaceId: "ATVPDKIKX0DER" },
+      orderItems: [{ orderItemId: "pending-line", quantityOrdered: 1, product: { title: "Synthetic pending pillow" } }],
+    }));
+    payload.reportedCount = 2;
+    await withTenant(database.db, authority, tx => coordinator.adoptNodePageInTransaction(tx, { ...job, startedAt: new Date() }, payload));
+    const rows = await withTenant(database.db, authority, tx => tx.select().from(orders).where(eq(orders.accountId, s.accountId)));
+    expect(rows).toHaveLength(2);
+    expect(rows.find(row => row.externalOrderId === "synthetic-pending")).toMatchObject({ sideState: "on_hold", providerBlockReason: "payment_pending", orderTotalMinor: null });
+    expect(rows.find(row => row.externalOrderId === "synthetic-order")).toMatchObject({ sideState: null, providerBlockReason: null, orderTotalMinor: 2500 });
+    expect((await s.read()).request).toBeNull();
+    const [run] = await withTenant(database.db, authority, tx => tx.select().from(orderIngestionRuns).where(eq(orderIngestionRuns.id, input.runId)));
+    expect(run).toMatchObject({ status: "completed", collectedCount: 2 });
   });
   it("rolls back the whole page and rejects repeated cursors and foreign-account results", async () => {
     const s = await scene(); await s.due();

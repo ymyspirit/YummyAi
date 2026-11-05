@@ -224,7 +224,8 @@ export function assessOrderIngestion(input: AssessOrderIngestionInput): OrderIng
         risks.push(risk("unsupported_mapping", "warning", order.externalOrderId, line.externalLineId, "Order line has no listing or SKU mapping reference"));
       }
     }
-    if (record.buyerRequestedCancellation || /cancel(?:led|ed|ation|_requested)/i.test(order.providerStatus)) {
+    if (record.buyerRequestedCancellation || [order.redactedSource.cancelledLineIds, order.redactedSource.cancellationRequestedLineIds].some(ids => Array.isArray(ids) && ids.length > 0)
+      || /cancel(?:led|ed|ation|_requested)/i.test(order.providerStatus)) {
       risks.push(risk("cancellation_requested", "blocker", order.externalOrderId, null, "Provider reports a cancellation request or cancelled state"));
     }
     const providerUpdatedAt = Date.parse(z.iso.datetime().parse(record.providerUpdatedAt));

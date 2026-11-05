@@ -614,12 +614,22 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(objects.size).toBe(count); expect((await state(fixture)).run.status).toBe("needs_attention");
   }, 30_000);
 
-  it.each(["held", "expired", "cancelled", "editor_changed"] as const)("refuses recovery for %s without rewriting a source or production version", async condition => {
+  it("stops a paused whole order before reserving money or calling the design provider", async () => {
+    const fixture = await seed({ paid: true }), generate = vi.fn<OrderDesignImageGateway["generate"]>();
+    await withTenant(database.db, fixture.context, tx => tx.update(orders).set({ sideState: "on_hold" }).where(eq(orders.id, fixture.orderId)));
+    await process(worker(generate), fixture);
+    const result = await state(fixture);
+    expect(result.run).toMatchObject({ status: "needs_attention", errorCode: "agent_order_unavailable" });
+    expect(generate).not.toHaveBeenCalled(); expect(result.ledger).toHaveLength(0); expect(result.project).toBeNull();
+  });
+
+  it.each(["held", "order_hold", "expired", "cancelled", "editor_changed"] as const)("refuses recovery for %s without rewriting a source or production version", async condition => {
     const fixture = await seed({ paid: true });
     await process(worker(async () => { throw new Error("Synthetic unknown provider result"); }), fixture);
     const input = await restoreInput(fixture, await image()), before = await state(fixture), count = objects.size;
     await withTenant(database.db, fixture.context, async tx => {
       if (condition === "held") await tx.update(orderWorkItems).set({ held: true }).where(eq(orderWorkItems.id, fixture.lineId));
+      if (condition === "order_hold") await tx.update(orders).set({ sideState: "on_hold" }).where(eq(orders.id, fixture.orderId));
       if (condition === "expired") await tx.update(orderWorkItems).set({ expiresAt: new Date(0) }).where(eq(orderWorkItems.id, fixture.lineId));
       if (condition === "cancelled") await tx.update(orders).set({ sideState: "cancelled" }).where(eq(orders.id, fixture.orderId));
       if (condition === "editor_changed") await tx.update(projects).set({ currentVersionId: null }).where(eq(projects.id, before.project!.id));

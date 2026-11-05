@@ -19,7 +19,12 @@ const AmazonOrderItemSchema = z.object({
   }).passthrough(),
   quantityOrdered: z.number().int().positive(),
   unitPrice: AmazonMoneySchema.optional(),
-  proceeds: z.object({ total: AmazonMoneySchema.optional() }).passthrough().optional(),
+  proceeds: z.object({ proceedsTotal: AmazonMoneySchema.optional(),
+    breakdowns: z.array(z.object({ type: z.string(), subtotal: AmazonMoneySchema }).passthrough()).optional(),
+  }).passthrough().optional(),
+  cancellation: z.object({ cancellationRequest: z.object({ requester: z.string().optional() }).passthrough().optional(),
+    cancellationExecution: z.object({ cancelledBy: z.string().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
   customization: z.array(z.object({ name: z.string().min(1), value: z.string() }).passthrough()).optional(),
 }).passthrough();
 const AmazonOrderSchema = z.object({
@@ -29,6 +34,7 @@ const AmazonOrderSchema = z.object({
   fulfillmentStatus: z.string().min(1).optional(),
   fulfillment: z.object({
     fulfillmentStatus: z.string().min(1).optional(),
+    fulfilledBy: z.string().min(1).optional(),
     shipByWindow: z.object({ latestDateTime: z.iso.datetime({ offset: true }).nullish() }).passthrough().nullish(),
   }).passthrough().optional(),
   salesChannel: z.object({ marketplaceId: z.string().min(1) }).passthrough(),
@@ -83,17 +89,17 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
   if (order.fulfillment?.fulfillmentStatus && order.fulfillmentStatus && order.fulfillment.fulfillmentStatus !== order.fulfillmentStatus)
     throw new Error("Amazon fulfillment statuses conflict");
   const total = order.proceeds?.grandTotal ?? order.orderTotal ?? order.proceeds?.total;
-  if (!total) throw new Error("Amazon order total was not included");
   const lines = order.orderItems.map((line) => {
-    const price = line.product.price?.unitPrice ?? line.unitPrice ?? line.proceeds?.total;
-    if (!price) throw new Error(`Amazon order item ${line.orderItemId} has no price`);
+    const price = line.product.price?.unitPrice ?? line.unitPrice;
+    const itemTotal = amazonItemTotal(line);
     return {
       externalLineId: line.orderItemId,
       externalListingId: line.product.asin ?? null,
       skuCode: line.product.sellerSku ?? null,
       title: line.product.title,
       quantity: line.quantityOrdered,
-      unitPrice: amazonMoney(price),
+      unitPrice: price ? amazonMoney(price) : itemTotal && itemTotal.amountMinor % line.quantityOrdered === 0
+        ? { ...itemTotal, amountMinor: itemTotal.amountMinor / line.quantityOrdered } : null,
       customizationCount: (line.customization?.length ?? 0) + (line.product.customization ? 1 : 0),
     };
   });
@@ -106,11 +112,15 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
     externalOrderId: order.orderId,
     providerStatus,
     placedAt: order.createdTime,
-    orderTotal: amazonMoney(total),
+    orderTotal: total ? amazonMoney(total) : null,
     lines,
     redactedSource: {
       apiVersion: "2026-01-01", orderId: order.orderId, marketplaceId: order.salesChannel.marketplaceId,
       fulfillmentStatus: providerStatus, lastUpdatedTime: order.lastUpdatedTime,
+      fulfilledBy: order.fulfillment?.fulfilledBy ?? null,
+      cancellationRequestedLineIds: order.orderItems.filter(line => line.cancellation?.cancellationRequest).map(line => line.orderItemId),
+      cancelledLineIds: order.orderItems.filter(line => line.cancellation?.cancellationExecution).map(line => line.orderItemId),
+      itemTotals: order.orderItems.flatMap(line => { const amount = amazonItemTotal(line); return amount ? [{ externalLineId: line.orderItemId, ...amount }] : []; }),
       orderItemIds: order.orderItems.map((line) => line.orderItemId),
       platformShipByAt: platformShipByAt ? new Date(platformShipByAt).toISOString() : null,
       platformShipBySource: "amazon_orders_2026_fulfillment_ship_by_window",
@@ -119,7 +129,14 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
     protectedDetails,
   });
   return { order: normalized, providerUpdatedAt: order.lastUpdatedTime,
+    buyerRequestedCancellation: order.orderItems.some(line => line.cancellation?.cancellationRequest?.requester === "BUYER"),
     requiresCustomizationLineIds: order.orderItems.filter(line => line.product.customization || line.customization?.length).map(line => line.orderItemId) };
+}
+
+function amazonItemTotal(line: z.infer<typeof AmazonOrderItemSchema>) {
+  const items = line.proceeds?.breakdowns?.filter(item => item.type === "ITEM") ?? [];
+  if (items.length > 1) throw new Error("Amazon item proceeds are ambiguous");
+  return items[0] ? amazonMoney(items[0].subtotal) : null;
 }
 
 export function normalizeAmazonOrderChange(raw: unknown): AmazonOrderChangeReference {

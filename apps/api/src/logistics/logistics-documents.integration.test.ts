@@ -81,7 +81,7 @@ describe.sequential("native daily order documents", () => {
     const f = await setup("CA"), at = new Date().toISOString();
     const normalized = normalizeAmazonOrder(accountId, randomUUID(), {
       orderId: f.input.externalOrderId, createdTime: f.input.placedAt, lastUpdatedTime: at,
-      salesChannel: { marketplaceId: "A2EUQ1WTGCTBG2" }, fulfillment: { fulfillmentStatus: "UNSHIPPED" },
+      salesChannel: { marketplaceId: "A2EUQ1WTGCTBG2" }, fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" },
       proceeds: { grandTotal: { amount: "24.00", currencyCode: "USD" } },
       buyer: { buyerName: "Synthetic Buyer", buyerEmail: "buyer@example.invalid", phone: "1111111111" },
       recipient: { deliveryAddress: { name: "Synthetic Recipient", addressLine1: "2 Private Street", city: "Toronto",

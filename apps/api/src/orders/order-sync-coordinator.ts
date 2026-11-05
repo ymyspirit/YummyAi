@@ -69,7 +69,7 @@ export class OrderSyncCoordinator {
     for (const record of result.records) {
       const materialized = await this.orders.materializeNormalizedInTransaction(tx, authority, record.order);
       if (materialized.replayed) duplicateCount++;
-      else await this.reports.registerApiSourcesInTransaction(tx, authority, materialized.orderId, record.order);
+      else if (materialized.sourceAccepted) await this.reports.registerApiSourcesInTransaction(tx, authority, materialized.orderId, record.order);
       for (const externalLineId of materialized.unlinkedLineIds) {
         if (!risks.some(risk => risk.code === "unsupported_mapping" && risk.externalOrderId === record.order.externalOrderId && risk.externalLineId === externalLineId))
           risks.push({ code: "unsupported_mapping", severity: "warning", externalOrderId: record.order.externalOrderId,

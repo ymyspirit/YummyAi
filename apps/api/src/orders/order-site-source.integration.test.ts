@@ -129,7 +129,7 @@ describe.sequential("order site provenance and exact channel resolution", () => 
   function input(owner: Actor, code: string, options: { site?: string; accountId?: string; placedAt?: string; externalOrderId?: string; source?: Record<string, unknown> } = {}) {
     const id = options.externalOrderId ?? `SYNTHETIC-${randomUUID()}`;
     const record = normalizeAmazonOrder(options.accountId ?? owner.amazon, randomUUID(), {
-      orderId: id, createdTime: options.placedAt ?? at, lastUpdatedTime: options.placedAt ?? at, fulfillmentStatus: "UNSHIPPED",
+      orderId: id, createdTime: options.placedAt ?? at, lastUpdatedTime: options.placedAt ?? at, fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" },
       salesChannel: { marketplaceId: options.site ?? us }, orderTotal: { amount: "20.00", currencyCode: "USD" },
       orderItems: [{ orderItemId: "LINE-1", product: { asin, sellerSku: code, title: "Synthetic site item" }, quantityOrdered: 1, unitPrice: { amount: "20.00", currencyCode: "USD" } }],
     });

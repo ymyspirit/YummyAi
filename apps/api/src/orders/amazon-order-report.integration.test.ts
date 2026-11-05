@@ -154,6 +154,17 @@ describe("manual Amazon order reports and private customization files", () => {
     expect((await withTenant(database.db, contextA, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, result.orderId))))[0]).toEqual(before);
   });
 
+  it("does not replace the private Custom source or enqueue new work from an older platform update", async () => {
+    const row = sourceRow(), source = apiInput(row);
+    const result = await service.materializeApiOrder(contextA, source), before = await apiBatch(result.orderId);
+    const requests = () => withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, before.id)));
+    const queued = await requests(), older = apiInput({ ...row, url: sourceUrl(row) + "?synthetic=older" });
+    older.redactedSource.lastUpdatedTime = new Date(Date.parse(String(source.redactedSource.lastUpdatedTime)) - 60_000).toISOString();
+    await service.materializeApiOrder(contextA, older);
+    expect(await apiBatch(result.orderId)).toEqual(before);
+    expect(await requests()).toEqual(queued);
+  });
+
   it("retains an explicit missing-file diagnostic and rechecks membership before downloading API sources", async () => {
     const row = sourceRow(), missing = apiInput(row);
     missing.protectedDetails!.customizations = [];
