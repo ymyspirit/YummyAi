@@ -12,8 +12,9 @@ export const FactoryProfileSchema = z.object({
 }).strict().superRefine((value, context) => {
   if (value.status !== "active") return;
   if (value.timeZone === null) context.addIssue({ code: "custom", path: ["timeZone"], message: "启用工厂须确认实际时区；未知时可留空保存草稿" });
-  if (!value.productionAddress?.countryCode || !value.productionAddress.city || !value.productionAddress.street) context.addIssue({ code: "custom", path: ["productionAddress"], message: "启用工厂须补齐生产地址的国家、城市和详细地址；资料不完整时可保存为草稿" });
-  if (!value.contacts.some(contact => contact.role === "production" && contact.name && (contact.phone || contact.wechat || contact.email))) context.addIssue({ code: "custom", path: ["contacts"], message: "启用工厂须填写生产联系人姓名及至少一种联系方式；资料不完整时可保存为草稿" });
+  if (!value.productionAddress?.countryCode || !value.productionAddress.city) {
+    context.addIssue({ code: "custom", path: ["productionAddress"], message: "启用工厂须补齐生产地址的国家和城市" });
+  }
 });
 export const FactoryCapabilityProfileSchema = z.object({
   name: z.string().trim().min(1).max(200), productType: z.enum(["shaped_pillow", "tire_cover", "rectangular_print", "engraving", "other"]), productPlanId: Id.nullable(), skuId: Id.nullable(), fulfillmentScope: z.enum(["full_product", "process_only"]),
