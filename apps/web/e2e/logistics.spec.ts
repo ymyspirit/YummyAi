@@ -20,6 +20,9 @@ test("logistics Canada preset saves a shared version and keeps purchase opt-in",
   test.setTimeout(180000);
   const order=await prepareDeliveryOrder();
   await page.goto("/logistics#connections");
+  // A hash-only navigation preserves the page's original factory options.
+  // Reload after creating the isolated fixture, as the compiled app has no HMR.
+  await page.reload();
   const section=page.locator("#connections"),form=section.locator("form").filter({has:page.getByRole("combobox",{name:"连接版本",exact:true})});
   await form.getByRole("combobox",{name:"实际发货工厂",exact:true}).selectOption(order.factoryId);
   await form.getByRole("button",{name:"应用加拿大抱枕渠道规则",exact:true}).click();
