@@ -59,7 +59,7 @@ export function FulfillmentRoutesWorkspace(){
         <label>平台物流回传<select name="autoWriteback" aria-label="平台物流回传" defaultValue={edit?.profile.autoWriteback?"on":"off"}><option value="off">先人工核对回传</option><option value="on">实际交运后自动回传至已授权店铺</option></select></label>
         <label>审图通过后<select name="mode" aria-label="审图通过后" defaultValue={edit?.profile.mode??"quote"}><option value="quote">自动询价 先不扣费</option><option value="purchase" disabled={!connections.find(connection=>connection.id===connectionId)?.autoPurchase}>自动购单并准备工厂文件</option><option value="disabled">暂停自动处理</option></select></label>
       </fieldset>
-      <p className="oc-hint">同一规格和国家只能启用一条规则 自动购单沿用已授权的单票与每日费用上限 超限订单进入异常处理</p>
+      <p className="oc-hint">同一规格和国家只能启用一条规则 自动购单沿用物流连接的费用规则 超过每件均价阈值或已设置的总额上限时进入异常处理</p>
       <div className="oc-actions"><button className="oc-button primary" disabled={busy} type="submit"><Save size={15}/>{busy?"正在保存":"保存规则"}</button><button className="oc-button" type="button" disabled={busy} onClick={()=>transition.change(()=>setEdit(undefined))}>取消</button></div>
     </form>}
   </main>;

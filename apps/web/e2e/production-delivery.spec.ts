@@ -47,6 +47,7 @@ test("production delivery submitted-only default scheduling keeps real approved 
   const order = await prepareDeliveryOrder(); await loginErp(page, "operator", `/production?q=${order.externalId}&line=${order.lines[0]}`);
   await page.locator("summary").filter({ hasText: /^工厂交付与回执/ }).click();
   const panel = page.getByRole("region", { name: "抱枕交付与工厂回执", exact: true });
+  await expect(panel).toHaveAttribute("aria-busy", "false", { timeout: 30000 });
   const original = await centerApi<ProductionDeliveryWorkspace>(`order-centers/deliveries?factory=${order.factoryId}`);
   const candidate = original.candidates.find(row => row.orderLineId === order.lines[0]); expect(candidate).toBeTruthy();
   const productionId = candidate!.productionOrderId;
@@ -117,6 +118,7 @@ test("production delivery splits a complete order into factory-specific packages
   const order = await prepareDeliveryOrder(2, true); await loginErp(page, "operator", `/production?q=${order.externalId}&line=${order.lines[0]}`);
   await page.locator("summary").filter({ hasText: /^工厂交付与回执/ }).click();
   const panel = page.getByRole("region", { name: "抱枕交付与工厂回执", exact: true });
+  await expect(panel).toHaveAttribute("aria-busy", "false", { timeout: 30000 });
   await expect(panel).toContainText("本单由多个工厂生产");
   for (const factory of order.factories) {
     await panel.getByLabel("交付工厂", { exact: true }).selectOption(factory.id);
@@ -138,6 +140,7 @@ test("production delivery batches two lines, preserves draft replies and tracks 
   const order = await prepareDeliveryOrder(2); await loginErp(page, "operator", `/production?q=${order.externalId}&line=${order.lines[0]}`);
   await page.locator("summary").filter({ hasText: /^工厂交付与回执/ }).click();
   const panel = page.getByRole("region", { name: "抱枕交付与工厂回执", exact: true });
+  await expect(panel).toHaveAttribute("aria-busy", "false", { timeout: 30000 });
   const selection = panel.getByRole("checkbox", { name: new RegExp(`选择交付 ${order.externalId}`) }); await expect(selection).toHaveCount(2); await expect(selection.nth(0)).toBeChecked(); await expect(selection.nth(1)).toBeChecked();
   await panel.getByRole("button", { name: "生成本单完整交付包（2）", exact: true }).click(); await expect(panel.getByRole("status").filter({ hasText: "正式交付包已锁定" })).toBeVisible();
   await expect(panel.locator("details.oc-delivery-package")).toHaveAttribute("open", "");
@@ -174,7 +177,7 @@ test("production delivery batches two lines, preserves draft replies and tracks 
   await expect(remake.getByLabel("制造版本", { exact: true })).toHaveValue(order.manufacturing.versionId);
   for (const check of await remake.getByRole("checkbox").all()) await check.check();
   await fillProductionCapacity(remake, order.capacity);
-  const requests: Array<{ command: { input: { reviewedArtwork: { instructions: string } } } }> = []; let loseReply = true, executions = 0;
+  const requests: Array<{ input: { reviewedArtwork: { instructions: string } } }> = []; let loseReply = true, executions = 0;
   page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/order-centers/fulfillment-commands") requests.push(request.postDataJSON()); });
   await page.route("**/api/order-centers/fulfillment-commands/*/execute", async route => {
     executions++; const response = await route.fetch(); expect(response.status()).toBe(200);
@@ -187,9 +190,14 @@ test("production delivery batches two lines, preserves draft replies and tracks 
   await page.getByRole("button", { name: "只读核对本单原提交", exact: true }).click();
   await acknowledgeOriginal(page);
   expect(requests).toHaveLength(1); expect(executions).toBe(1);
-  const reviewed = requests[0]!.command.input.reviewedArtwork;
+  const reviewed = requests[0]!.input.reviewedArtwork;
   expect(reviewed.instructions).toContain("ps-pillow-2026-09-17"); expect(reviewed.instructions).toContain("Synthetic controlled remake supplement");
-  await expect(remake).toHaveCount(0);
+  const recovered = await centerApi<ProductionDeliveryWorkspace>(`order-centers/deliveries?factory=${order.factoryId}`);
+  const replacements = recovered.candidates.filter(candidate => candidate.parentProductionOrderId);
+  expect(replacements).toHaveLength(1); expect(replacements[0]!.quantity).toBe(1);
+  // A late original receipt refreshes business facts without discarding the
+  // still-open local draft. Close it; never submit that draft as another remake.
+  await remakeSummary.click();
   await openReply(form);
   await form.getByLabel("关联返工生产单").selectOption({ index: 1 }); await form.getByLabel("涉及数量").fill("1"); await fillReply(form, "SYNTHETIC_REWORK", "Factory confirmed replacement quantity and final remake cost");
   await form.getByLabel("费用金额（可留空）").fill("15.50"); await form.getByLabel("费用口径").selectOption("confirmed"); await form.getByLabel("费用依据").fill("SYNTHETIC_AGREEMENT"); await form.getByRole("button", { name: "登记回执", exact: true }).click();
