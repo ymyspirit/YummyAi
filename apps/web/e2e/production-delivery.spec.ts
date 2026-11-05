@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
@@ -19,6 +19,15 @@ let worker: ChildProcess | undefined;
 test.beforeAll(async () => { worker = await startProductionEditorWorker(); });
 test.afterAll(async () => { worker?.kill(); });
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+async function acknowledgeOriginal(page: Page) {
+  const recovery = page.getByRole("region", { name: "本单原履约提交恢复", exact: true });
+  await expect(recovery.getByLabel("原业务履约回执", { exact: true })).toBeVisible();
+  const response = page.waitForResponse(value => value.request().method() === "POST"
+    && /\/api\/order-centers\/fulfillment-commands\/[^/]+\/acknowledge$/.test(new URL(value.url()).pathname));
+  await recovery.getByRole("button", { name: "已核对本次履约结果", exact: true }).click();
+  const actual = await response; expect(actual.status()).toBe(200);
+  expect(await actual.json()).toMatchObject({ status: "acknowledged", acknowledged: true, receipt: null });
+}
 async function openReply(form: Locator) {
   const details = form.locator("xpath=ancestor::details[1]"), summary = details.locator(":scope > summary");
   await expect(summary).toHaveText(/^(登记真实文件提交凭据|可选补充回执与异常处理)$/);
@@ -50,6 +59,7 @@ test("production delivery submitted-only default scheduling keeps real approved 
   const item = panel.locator(".oc-delivery-item"), heading = item.locator(":scope > .oc-delivery-item-heading");
   await expect(item).toHaveCount(1); await expect(heading.getByText("待提交", { exact: true })).toBeVisible();
   await expect(heading.locator(":scope > span").filter({ hasText: "已排产" })).toHaveCount(0);
+  await acknowledgeOriginal(page);
   const pending = page.waitForEvent("download"); await panel.getByRole("button", { name: "下载正式交付包" }).click(); const download = await pending;
   try { const zip = await JSZip.loadAsync(await readFile((await download.path())!)), manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
     const entry = manifest.items[0]; expect(hash(await zip.file(entry.file.path)!.async("nodebuffer"))).toBe(entry.file.checksum); expect(entry.file.dpi).toBe(150);
@@ -65,6 +75,7 @@ test("production delivery submitted-only default scheduling keeps real approved 
   await expect(form.getByLabel("回执类型")).toHaveValue("received");
   await expect(form.locator("xpath=ancestor::details[1]")).not.toHaveAttribute("open");
   await expect(heading.locator(":scope > span").filter({ hasText: "已排产" })).toBeVisible(); await expect(heading.getByText("按提交默认", { exact: true })).toBeVisible();
+  await acknowledgeOriginal(page);
   const submitted = await centerApi<ProductionDeliveryWorkspace>(`order-centers/deliveries?factory=${order.factoryId}`), saved = submitted.packages.find(row => row.id === packet.id)!;
   expect(saved.items[0]).toMatchObject({ status: "submitted", sequence: 1 }); expect(saved.items[0]!.feedback.map(row => row.kind)).toEqual(["submitted"]);
   const production = await actualProduction(); expect(production.productionOrder).toMatchObject({ status: "submitted", projectionVersion: originalProduction.productionOrder.projectionVersion + 1 });
@@ -83,10 +94,12 @@ test("production delivery submitted-only default scheduling keeps real approved 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await fillReply(form, "SYNTHETIC_RECEIVED", "Factory confirmed receipt of this exact fixture file"); await form.getByRole("button", { name: "登记回执", exact: true }).click();
   await expect(form.getByLabel("回执类型")).toHaveValue("accepted");
+  await acknowledgeOriginal(page);
   await fillReply(form, "SYNTHETIC_ACCEPTED", "Factory accepted this exact reviewed fixture artwork"); await form.getByRole("button", { name: "登记回执", exact: true }).click();
   const historySummary = item.getByText("查看回执与返工历史（3）", { exact: true }), history = historySummary.locator("..");
   await expect(historySummary).toBeVisible(); await historySummary.click();
   await expect(history.getByText("工厂接受文件", { exact: true })).toBeVisible();
+  await acknowledgeOriginal(page);
   await expect(heading.locator(":scope > span").filter({ hasText: "已排产" })).toBeVisible(); await page.reload();
   await page.locator("summary").filter({ hasText: /^工厂交付与回执/ }).click();
   await expect(panel.locator("details.oc-delivery-package")).toHaveAttribute("open", "");
@@ -110,6 +123,7 @@ test("production delivery splits a complete order into factory-specific packages
     await expect(panel.getByRole("checkbox", { name: new RegExp(`选择交付 ${order.externalId}`) })).toBeChecked();
     await panel.getByRole("button", { name: "生成本工厂交付包（1）", exact: true }).click();
     await expect(panel.getByRole("status").filter({ hasText: "正式交付包已锁定" })).toBeVisible();
+    await acknowledgeOriginal(page);
   }
   await expect(panel.locator("details.oc-delivery-package")).toHaveCount(2);
   const detail = await centerApi<OrderWorkDetail>(`order-centers/lines/${order.lines[0]}`);
@@ -127,12 +141,14 @@ test("production delivery batches two lines, preserves draft replies and tracks 
   const selection = panel.getByRole("checkbox", { name: new RegExp(`选择交付 ${order.externalId}`) }); await expect(selection).toHaveCount(2); await expect(selection.nth(0)).toBeChecked(); await expect(selection.nth(1)).toBeChecked();
   await panel.getByRole("button", { name: "生成本单完整交付包（2）", exact: true }).click(); await expect(panel.getByRole("status").filter({ hasText: "正式交付包已锁定" })).toBeVisible();
   await expect(panel.locator("details.oc-delivery-package")).toHaveAttribute("open", "");
+  await acknowledgeOriginal(page);
   const forms = panel.getByRole("form", { name: new RegExp(`登记工厂回执 ${order.externalId}`), includeHidden: true }), form = forms.first();
   await openReply(form);
   await form.getByLabel("文件提交说明", { exact: true }).fill("Synthetic unsaved factory reply"); await panel.getByRole("button", { name: "刷新交付", exact: true }).click(); await expect(form.getByLabel("文件提交说明", { exact: true })).toHaveValue("Synthetic unsaved factory reply");
   await form.getByLabel("回执类型").selectOption("rejected"); await fillReply(form, "SYNTHETIC_REJECT", "Factory rejected one piece and agreed a partial remake"); await form.getByLabel("涉及数量").fill("1");
   await form.getByLabel("费用金额（可留空）").fill("25.00"); await form.getByLabel("费用依据").fill("SYNTHETIC_QUOTE"); await form.getByRole("button", { name: "登记回执", exact: true }).click();
   await expect(panel.getByRole("button", { name: "下载正式交付包", exact: true })).toBeDisabled();
+  await acknowledgeOriginal(page);
   const originalItem = form.locator("xpath=ancestor::div[@class='oc-delivery-item'][1]");
   await originalItem.getByText("按需登记返工生产", { exact: true }).click();
   const remakeSummary = originalItem.getByText("创建关联返工生产单", { exact: true }), remakeDetails = remakeSummary.locator("..");
@@ -158,24 +174,27 @@ test("production delivery batches two lines, preserves draft replies and tracks 
   await expect(remake.getByLabel("制造版本", { exact: true })).toHaveValue(order.manufacturing.versionId);
   for (const check of await remake.getByRole("checkbox").all()) await check.check();
   await fillProductionCapacity(remake, order.capacity);
-  const requests: Record<string, unknown>[] = []; let loseReply = true;
-  await page.route("**/api/order-centers/recoveries", async route => {
-    requests.push(route.request().postDataJSON()); const response = await route.fetch(); expect(response.status()).toBe(201);
+  const requests: Array<{ command: { input: { reviewedArtwork: { instructions: string } } } }> = []; let loseReply = true, executions = 0;
+  page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/order-centers/fulfillment-commands") requests.push(request.postDataJSON()); });
+  await page.route("**/api/order-centers/fulfillment-commands/*/execute", async route => {
+    executions++; const response = await route.fetch(); expect(response.status()).toBe(200);
     if (loseReply) { loseReply = false; await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Synthetic committed remake response unavailable" }) }); }
     else await route.fulfill({ response });
   });
   await remake.getByRole("button", { name: "创建返工生产单", exact: true }).click();
   await expect(remake.getByLabel("返工补充说明", { exact: true })).toBeDisabled();
-  await panel.getByRole("button", { name: "恢复本次提交结果", exact: true }).click();
-  expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
-  const reviewed = requests[0]!.reviewedArtwork as { instructions: string };
+  await expect(panel.getByRole("alert")).toContainText("请在本单原履约提交恢复区核对");
+  await page.getByRole("button", { name: "只读核对本单原提交", exact: true }).click();
+  await acknowledgeOriginal(page);
+  expect(requests).toHaveLength(1); expect(executions).toBe(1);
+  const reviewed = requests[0]!.command.input.reviewedArtwork;
   expect(reviewed.instructions).toContain("ps-pillow-2026-09-17"); expect(reviewed.instructions).toContain("Synthetic controlled remake supplement");
-  await expect(panel.getByRole("status").filter({ hasText: "返工生产单" })).toBeVisible();
   await expect(remake).toHaveCount(0);
   await openReply(form);
   await form.getByLabel("关联返工生产单").selectOption({ index: 1 }); await form.getByLabel("涉及数量").fill("1"); await fillReply(form, "SYNTHETIC_REWORK", "Factory confirmed replacement quantity and final remake cost");
   await form.getByLabel("费用金额（可留空）").fill("15.50"); await form.getByLabel("费用口径").selectOption("confirmed"); await form.getByLabel("费用依据").fill("SYNTHETIC_AGREEMENT"); await form.getByRole("button", { name: "登记回执", exact: true }).click();
   await expect(panel).toContainText("已确认费用 15.50 CNY");
+  await acknowledgeOriginal(page);
   const saved = await centerApi<ProductionDeliveryWorkspace>(`order-centers/deliveries?factory=${order.factoryId}`), packet = saved.packages.find(packet => packet.factory?.factoryId === order.factoryId)!;
   expect(packet.items).toHaveLength(2); expect(new Set(packet.items.map(item => item.snapshot!.file.path)).size).toBe(2);
   expect(packet.items.some(item => item.feedback.some(event => event.cost?.basis === "confirmed" && event.cost.amountMinor === 1550 && event.replacementProductionOrderId))).toBe(true);
