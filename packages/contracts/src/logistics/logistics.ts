@@ -18,12 +18,18 @@ export const LogisticsChannelProfileSchema = z.object({ code: z.string().trim().
   maxDimensionMm: z.number().positive().max(5000), maxSumDimensionsMm:z.number().positive().max(15000).optional() }).strict().refine(v => v.transitDaysMin <= v.transitDaysMax, "渠道时效上限须不小于下限");
 export const LogisticsConnectionProfileSchema = z.object({ name: z.string().trim().min(1).max(160), provider: LogisticsProviderSchema,
   yunexpressProtocol: YunexpressProtocolSchema.optional(),
-  factoryId: Id, originCountryCode: z.string().regex(/^[A-Z]{2}$/), sender: LogisticsAddressSchema,
+  factoryId: Id, originCountryCode: z.string().regex(/^[A-Z]{2}$/),
+  // The physical factory address remains pinned locally even when ShipOS owns
+  // the contact details. Only its documented faddid mode permits no local phone.
+  sender: LogisticsAddressSchema.extend({ phone: z.string().trim().max(60) }),
+  shiposSenderAddressId: z.int().positive().safe().optional(),
   baseUrl: z.url(), module: z.literal(2).default(2), billingDepot: z.string().trim().max(100).default(""),
   currency: z.string().regex(/^[A-Z]{3}$/), currencySource: Note, minorUnitDigits: z.int().min(0).max(3).default(2),
   labelHosts: z.array(z.string().regex(/^[a-z0-9][a-z0-9.-]+$/)).min(1).max(10),
   channels: z.array(LogisticsChannelProfileSchema).max(200), apiCompatibilityEvidence: Note, purchasePermissionEvidence: Note,
   labelMode: z.enum(["factory_pull", "include"]).default("include") }).strict().superRefine((v, ctx) => {
+    if (v.shiposSenderAddressId !== undefined && v.provider !== "shipos") ctx.addIssue({ code: "custom", path: ["shiposSenderAddressId"], message: "平台发件地址 ID 仅适用于 ShipOS" });
+    if (!v.sender.phone && !(v.provider === "shipos" && v.shiposSenderAddressId)) ctx.addIssue({ code: "custom", path: ["sender", "phone"], message: "请填写发件电话 或使用当前 ShipOS 账户已核对的发件地址 ID" });
     if (v.sender.countryCode !== v.originCountryCode) ctx.addIssue({ code: "custom", path: ["sender"], message: "发货地址国家须与实际发货路线一致" });
     if (v.originCountryCode === "CN" && v.provider !== "yunexpress") ctx.addIssue({ code: "custom", path: ["provider"], message: "中国实际发货路线使用云途" });
     if (v.provider === "yunexpress" && v.originCountryCode !== "CN") ctx.addIssue({ code: "custom", path: ["originCountryCode"], message: "云途路线须以工厂实际中国发货地为依据" });

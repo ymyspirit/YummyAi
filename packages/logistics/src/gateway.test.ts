@@ -10,6 +10,23 @@ const environment={YUNEXPRESS_ALLOWED_ORIGINS:"https://oms.example.invalid",LOGI
 const credentials={provider:"yunexpress" as const,customerCode:"synthetic",apiSecret:"fixture-secret"};
 const q:LogisticsQuote={channelCode:"fixture",channelName:"Synthetic channel",totalMinor:500,currency:"USD",currencySource:"Synthetic account confirmation",transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic SLA",conditionsVerified:true,priceSource:"fixture",quotedAt:new Date().toISOString(),diagnostic:null};
 describe("supported carrier transports",()=>{
+  it("reuses a verified ShipOS sender ID for quoting and creation without inventing a contact phone",async()=>{
+    const base=logisticsFixtureProfile(),profile=LogisticsConnectionProfileSchema.parse({...base,shiposSenderAddressId:123456,sender:{...base.sender,phone:""}});
+    const sent:Array<{url:string;body:Record<string,unknown>}>=[];
+    const fetcher=vi.fn<typeof fetch>(async(url,init)=>{sent.push({url:String(url),body:JSON.parse(String(init?.body))});return Response.json({code:200,data:String(url).endsWith("getChannel.php")?[{channel_id:"fixture",qudao:"Synthetic channel"}]:String(url).endsWith("getPrice.php")?{total_fee:5}:{orderid:"synthetic-ref"}});});
+    const gateway=new HttpLogisticsGateway(fetcher,environment),auth={provider:"shipos" as const,appKey:"synthetic",appSecret:"synthetic"},task=logisticsFixtureTask();
+    expect(await gateway.quote(profile,auth,task,"synthetic-ref")).toHaveLength(1);
+    expect(sent.some(row=>row.url.endsWith("createOrder.php"))).toBe(false);
+    await gateway.create(profile,auth,task,"synthetic-ref",q);
+    for(const row of sent.filter(row=>/getPrice|createOrder/.test(row.url))){
+      expect(row.body.from_address).toEqual({faddid:123456});
+      expect(row.body.to_address).toMatchObject({name:task.recipient.name,tel:task.recipient.phone});
+    }
+    expect(()=>LogisticsConnectionProfileSchema.parse({...base,sender:{...base.sender,phone:""}})).toThrow();
+    const yun=logisticsFixtureProfile("yunexpress");
+    expect(()=>LogisticsConnectionProfileSchema.parse({...yun,shiposSenderAddressId:123456,sender:{...yun.sender,phone:""}})).toThrow();
+    for(const invalid of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1])expect(()=>LogisticsConnectionProfileSchema.parse({...base,shiposSenderAddressId:invalid})).toThrow();
+  });
   it("reuses the confirmed Yun size strategy independently of the sales SKU",()=>{
     expect(recommendYunexpressChannel([{productKind:"shaped_pillow",sizeIn:20}])).toBe("THPHR");
     expect(recommendYunexpressChannel([{productKind:"shaped_pillow",sizeIn:20},{productKind:"shaped_pillow",sizeIn:22}])).toBe("ZBZXRPH");

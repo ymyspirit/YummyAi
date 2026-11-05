@@ -74,15 +74,26 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect((await attention.workspace(context,{source:"production"},new Date(future(4)))).items.some(item=>item.priority==="overdue")).toBe(true);
     expect(s.carrier.creates).toBe(0);expect(s.carrier.lookups).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
   });
-  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull"){
+  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number){
     const factory=country==="US"?usFactory:cnFactory;
     const enqueued:unknown[]=[];const queue={enqueue:async(input:unknown)=>{enqueued.push(input);return undefined;}};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
     const profile=LogisticsConnectionProfileSchema.parse({name:`Synthetic route ${randomUUID()}`,provider:country==="US"?"shipos":"yunexpress",factoryId:factory.id,originCountryCode:country,sender:{name:"Synthetic sender",address1:"1 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:country,phone:"1234567890",email:"sender@example.invalid"},baseUrl:country==="US"?"https://api.shipos.cn":"https://oms.example.invalid",currency:"USD",currencySource:"Synthetic account billing proof",labelHosts:["shipease.oss-cn-hangzhou.aliyuncs.com"],channels:carrier.channelRows.map(channel=>({...channel,countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic calendar-day SLA",conditionsVerified:true,conditionsEvidence:"Synthetic route conditions",maxWeightGrams:10000,maxDimensionMm:1000})),apiCompatibilityEvidence:"Synthetic account compatibility",purchasePermissionEvidence:"Synthetic purchase permissions",labelMode:labelMode??(country==="US"?"factory_pull":"include")});
+    if(senderAddressId){profile.shiposSenderAddressId=senderAddressId;profile.sender.phone="";}
     const original=process.env.YUNEXPRESS_ALLOWED_ORIGINS;process.env.YUNEXPRESS_ALLOWED_ORIGINS="https://oms.example.invalid";
     let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
     await service.verify(context,saved.connectionId,{expectedVersion:1,idempotencyKey:randomUUID()});await service.saveRule(context,{connectionId:saved.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:auto,maxTicketMinor:ticket,maxDailyMinor:daily,quoteMaxAgeSeconds:120,allowedChannelCodes:carrier.channelRows.map(channel=>channel.code),evidence:"Synthetic budget authorization"},idempotencyKey:randomUUID()});
     return {service,executor,carrier,factory,profile,connectionId:saved.connectionId,enqueued};
   }
+  it("pins a ShipOS saved sender address without requiring invented contact details or weakening factory and tenant checks",async()=>{
+    const s=await setup(new Carrier(),"US",1000000,1000,false,undefined,123456);
+    expect((await s.service.connections(context)).connections.find(row=>row.id===s.connectionId)?.profile).toMatchObject({shiposSenderAddressId:123456,sender:{phone:""}});
+    expect((await s.service.connections(other)).connections).toHaveLength(0);
+    await expect(s.service.saveConnection(context,{connectionId:s.connectionId,expectedVersion:1,profile:{...s.profile,sender:{...s.profile.sender,address1:"Different factory"}},idempotencyKey:randomUUID()})).rejects.toThrow("实际发货地址");
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)),{mode:"quote"});
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");
+    expect(s.carrier.creates).toBe(0);
+  });
   it("honors explicit quote-only mode even on an automatic purchase connection",async()=>{
     const s=await setup(),input=taskInput(s,await production(s.factory));
     input.packages[0]!.declarations[0]!.hsCode="";

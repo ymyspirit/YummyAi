@@ -216,7 +216,8 @@ function normalizedRegion(a:LogisticsAddress) { const region=normalizeDocumentRe
 function shiposAddress(a: LogisticsAddress) { return { name: a.name, company: a.company, addr1: a.address1, addr2: a.address2, city: a.city, state: normalizedRegion(a), country: a.countryCode, postcode: a.postalCode, tel: a.phone, ...(a.email ? { email: a.email } : {}) }; }
 function yunAddress(a: LogisticsAddress) { const parts=a.name.trim().split(/\s+/u),first=parts.shift()!;return { FirstName: first, LastName: parts.join(" "), Company: a.company, Street: a.address1, StreetAddress1: a.address1, StreetAddress2: a.address2, City: a.city, State: normalizedRegion(a), CountryCode: a.countryCode, Zip: a.postalCode, Phone: a.phone }; }
 function shiposBody(p: LogisticsConnectionProfile,t: LogisticsTaskSnapshot,reference: string) {
-  return { orderid: reference, module: 2, from_address: shiposAddress(p.sender), to_address: shiposAddress(t.recipient),
+  return { orderid: reference, module: 2,
+    from_address: p.shiposSenderAddressId ? { faddid: p.shiposSenderAddressId } : shiposAddress(p.sender), to_address: shiposAddress(t.recipient),
     packages: t.packages.map((pack,i) => ({ xh: i+1, weight: kg(pack.weightGrams), length: cm(pack.dimensionsMm.length), width: cm(pack.dimensionsMm.width), height: cm(pack.dimensionsMm.height) })),
     shenbao: t.packages.flatMap((pack,i) => pack.declarations.map(d => ({ xh: i+1, sku: d.sku, itemcn: d.nameCn, itemen: d.nameEn, price: d.unitPriceMinor/10**d.minorUnitDigits, num: d.quantity, cweight: kg(d.unitWeightGrams), hscode: d.hsCode, origin: d.originCountryCode, currency: d.currency }))) };
 }

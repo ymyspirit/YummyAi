@@ -54,9 +54,25 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
     currency:"USD",currencySource:"Synthetic billing currency",labelHosts:["127.0.0.1"],labelMode:"factory_pull",
     channels:[{code:"fixture",name:"Synthetic ShipOS channel",countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic transit calendar",conditionsVerified:true,conditionsEvidence:"Synthetic channel evidence",maxWeightGrams:10000,maxDimensionMm:1000}],
     apiCompatibilityEvidence:"Synthetic local carrier",purchasePermissionEvidence:"Synthetic local purchase only"});
+  if(mode==="quote"){connectionProfile.shiposSenderAddressId=123456;connectionProfile.sender.phone="";}
   const connection=await centerApi<{connectionId:string}>("logistics/connections",{expectedVersion:0,profile:connectionProfile,credentials:{provider:"shipos",appKey:"synthetic-appkey",appSecret:"synthetic-secret"},idempotencyKey:randomUUID()});
   await centerApi(`logistics/connections/${connection.connectionId}/verify`,{expectedVersion:1,idempotencyKey:randomUUID()});
   await centerApi("logistics/rules",{connectionId:connection.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:true,maxTicketMinor:1000,maxDailyMinor:10000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic authorized purchase ceiling"},idempotencyKey:randomUUID()});
+  if(mode==="quote"){
+    await page.goto("/logistics");
+    await expect(page.locator("main.logistics-page")).toHaveAttribute("aria-busy","false");
+    await page.getByText("发货连接与自动购单规则",{exact:true}).click();
+    await page.getByLabel("连接版本",{exact:true}).selectOption(connection.connectionId);
+    const savedAddress=page.getByLabel("ShipOS 发件地址 ID（可选）",{exact:true}),phone=page.getByLabel("发货联系电话",{exact:true});
+    await expect(savedAddress).toHaveValue("123456");await expect(phone).toHaveValue("");await expect(phone).not.toHaveAttribute("required");
+    await savedAddress.fill("");await expect(phone).toHaveAttribute("required","");
+    await page.getByRole("button",{name:"放弃本次路线与预算修改",exact:true}).click();
+    await expect(savedAddress).toHaveValue("123456");await expect(phone).not.toHaveAttribute("required");
+    await page.setViewportSize({width:390,height:844});await savedAddress.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath("shipos-saved-sender-narrow.png"),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+  }
   await page.goto("/fulfillment-routes");
   await page.getByRole("button",{name:"新增规则",exact:true}).click();
   await page.getByLabel("规则名称",{exact:true}).fill(`Synthetic flow ${mode}`);
