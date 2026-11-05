@@ -22,6 +22,7 @@ import { LocalPillowSuperResolutionGateway } from "./processors/pillow-super-res
 
 import { createWorker as createQueueWorker, type EnvelopeProcessor } from "./main.js";
 import { WorkerLifecycle, workerDeadline, type WorkerLifecycleEvent } from "./lifecycle.js";
+import { WorkerReadinessServer, workerReadinessPort } from "./runtime-readiness.js";
 import { AgentRuntimeObserver } from "./agent-runtime-observer.js";
 import { resolveWorkerRuntimePlan, runtimeQueues, WorkerSelectionError, type WorkerSchedulerName } from "./runtime-plan.js";
 import { CaptureMediaProcessor, CaptureMediaScheduler } from "./processors/capture-media.processor.js";
@@ -111,10 +112,11 @@ function report(event: WorkerLifecycleEvent) {
 
 async function main(): Promise<number> {
   let agentObserver: AgentRuntimeObserver | undefined;
+  let readiness: WorkerReadinessServer | undefined;
   const lifecycle = new WorkerLifecycle({
     startupTimeoutMs: workerDeadline(process.env.WORKER_STARTUP_TIMEOUT_MS, 15_000),
     shutdownTimeoutMs: workerDeadline(process.env.WORKER_SHUTDOWN_TIMEOUT_MS, 30_000),
-    report: event => { agentObserver?.lifecycle(event); report(event); },
+    report: event => { readiness?.report(event); agentObserver?.lifecycle(event); report(event); },
   });
   const signal = () => { void lifecycle.shutdown("signal"); };
   const parent = (message: unknown) => {
@@ -122,6 +124,13 @@ async function main(): Promise<number> {
   };
   process.on("SIGINT", signal); process.on("SIGTERM", signal); process.on("message", parent);
   try {
+    const healthPort = workerReadinessPort(process.env.WORKER_HEALTH_PORT);
+    if (healthPort !== undefined) {
+      readiness = new WorkerReadinessServer(healthPort);
+      const server = readiness;
+      lifecycle.resource("runtime-readiness", () => server.close());
+      await lifecycle.preflight(() => server.start());
+    }
     const available = runtimeQueues.filter(queue => {
       if (queue === QueueName.StudioGeneration) return studioImageWorkerConfigured();
       if (queue === QueueName.OrderDesign) return process.env.ORDER_DESIGN_AGENT_ENABLED !== "false";

@@ -95,6 +95,8 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
     const current=await centerApi<OrderWorkDetail>(`order-centers/lines/${order.lines[0]}`);
     await page.goto(`/orders?line=${current.line.id}`);
     const panel=page.getByRole("region",{name:"本单自动履约",exact:true});
+    await expect(page.getByRole("button",{name:"刷新整单",exact:true})).toBeEnabled();
+    await expect(panel).toBeInViewport();
     await expect(panel.getByRole("link",{name:"下载工厂 ERP 表"})).toBeVisible();
     await expect(panel).toContainText("待提交工厂");
     const downloadPending=page.waitForEvent("download");

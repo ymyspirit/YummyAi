@@ -70,6 +70,11 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   }, [id, module, editorOpen]);
   useEffect(() => {
     if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || !focusReady || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
+    const selected = view.items.find(item => item.line.id === id)!.line;
+    // Opening an automatically handled order should keep its progress and
+    // factory files in view. Explicit item operations still focus their form.
+    if (!pendingAction.action && module === "orders" && selected.fulfillmentFlowStage && selected.artwork === "approved"
+      && !selected.held && !selected.sourceChanged) { setPendingAction(null); return; }
     if (module !== "production" && deliveryOpen && !deliveryState.dirty) { setDeliveryOpen(false); return; }
     const element = pendingAction.target
       ? operation.current?.querySelector<HTMLElement>(`[data-order-action="${pendingAction.target}"]`)

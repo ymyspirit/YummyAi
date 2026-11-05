@@ -10,6 +10,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveWorkspacePath } from "../scripts/backup-restore.mjs";
 import { inspectLocalWorkerQueues } from "../scripts/inspect-local-worker-queues.mts";
+import { orderWorkerQueues, orderWorkerSchedulers, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
+import { schedulerOwners } from "../../apps/worker/src/runtime-plan.js";
+import { studioImageWorkerConfigured } from "../../apps/worker/src/processors/studio-image-paid-admission.js";
 import { Permission } from "../../packages/authz/src/index.js";
 import { createEntityId, type TenantContext } from "../../packages/contracts/src/index.js";
 import { assetFiles, connectDatabase, designVersionFiles, designVersions, memberships, membershipRoles, podArtworkExecutions as executions, podArtworkInvocations as invocations, podArtworkTasks as tasks, recordAuditInTransaction, roles, withTenant } from "../../packages/database/src/index.js";
@@ -120,11 +123,13 @@ try {
   } finally { await workflowQueue.close(); }
 
   modelMode = "hold"; const draining = launch(), ready = await draining.ready();
-  const reserved = new Set(["ai-analysis", "capture", "export", "metrics", "order-ingestion"]), expected = Object.values(QueueName).filter(name => !reserved.has(name)).sort();
-  assert.equal(expected.length, 27); assert.deepEqual([...ready.queues!].sort(), expected); assert.equal(ready.schedulers?.length, 10);
+  const reserved = new Set(["ai-analysis", "capture", "export", "metrics", "order-ingestion"]);
+  const expected = Object.values(QueueName).filter(name => !reserved.has(name) && (name !== QueueName.StudioGeneration || studioImageWorkerConfigured())).sort();
+  const expectedSchedulers = Object.entries(schedulerOwners).filter(([, owner]) => owner === null || expected.includes(owner)).map(([name]) => name).sort();
+  assert.deepEqual([...ready.queues!].sort(), expected); assert.deepEqual([...ready.schedulers!].sort(), expectedSchedulers);
   const active = await createTask(); await waitFor(async () => held.has(active.id));
   draining.child.send("shutdown", () => undefined); await waitFor(async () => draining.events.some(event => event.state === "stopping"));
-  assert.equal(draining.child.exitCode, null); sendResult(active.id, held.get(active.id)!); assert.equal(await bounded(draining.closed), 0); await verifyOutput(active.id); assert.equal(requests.get(active.id), 1); pass("W04", "All 27 consumers ready; graceful stop drains active POD before closing database");
+  assert.equal(draining.child.exitCode, null); sendResult(active.id, held.get(active.id)!); assert.equal(await bounded(draining.closed), 0); await verifyOutput(active.id); assert.equal(requests.get(active.id), 1); pass("W04", `All ${expected.length} available consumers ready; graceful stop drains active POD before closing database`);
 
   const timed = launch({ WORKER_SHUTDOWN_TIMEOUT_MS: "1000" }); await timed.ready(); const pending = await createTask(); await waitFor(async () => held.has(pending.id));
   assert.equal(await timed.stop(), 1); assert(timed.events.some(event => event.state === "stopped" && event.clean === false));
@@ -186,6 +191,18 @@ try {
       assert(invalid.events.some(event => event.code === "WORKER_RUNTIME_SELECTION_INVALID"));
     }
     assert.equal(await (await profileQueue.getJob(profileJob))?.getState(), "waiting");
+    const healthReservation = createTcpServer();
+    healthReservation.listen(0, "127.0.0.1"); await once(healthReservation, "listening");
+    const healthAddress = healthReservation.address(); assert(healthAddress && typeof healthAddress !== "string");
+    await new Promise<void>(resolve => healthReservation.close(() => resolve()));
+    const orderWorker = launch({ WORKER_QUEUES: orderWorkerQueues.join(","), WORKER_SCHEDULERS: orderWorkerSchedulers.join(","), WORKER_HEALTH_PORT: String(healthAddress.port) });
+    await orderWorker.ready();
+    const health = await fetch(`http://127.0.0.1:${healthAddress.port}/health`, { signal: AbortSignal.timeout(5000) });
+    assert.equal(health.status, 200); assert.equal(orderWorkerReady(await health.json(), orderWorker.child.pid), true);
+    assert.equal(await (await profileQueue.getJob(profileJob))?.getState(), "waiting");
+    assert.equal(await orderWorker.stop(), 0);
+    await assert.rejects(fetch(`http://127.0.0.1:${healthAddress.port}/health`, { signal: AbortSignal.timeout(1000) }));
+    pass("W14", "Daily order profile exposes the actual six consumers and PID on loopback; unrelated work is untouched and graceful stop closes health");
     await (await profileQueue.getJob(profileJob))!.remove();
     pass("W12", "Unowned timers and unavailable optional consumers fail selection before opening a database");
   } finally { await profileQueue.close(); }
@@ -206,5 +223,5 @@ try {
   for (const child of children) await writeFile(path.join(outputDirectory, `child-${++sequence}.log`), child.logs());
   await writeFile(path.join(outputDirectory, "runtime-proof.json"), JSON.stringify({ standaloneStandardRunTs: true, cases, childProcesses: children.length, childrenTerminal: children.every(child => child.child.exitCode !== null || child.child.signalCode !== null), modelRequests: [...requests].map(([taskId, count]) => ({ taskId, count })), realPaidCalls: 0 }, null, 2));
 }
-assert.equal(cases.length, 13);
-process.stdout.write(JSON.stringify({ runtimeCasesPassed: cases.length, standardConsumersVerified: 27, childProcesses: children.length, syntheticModelRequests: 4, realPaidCalls: 0, outputDirectory }) + "\n");
+assert.equal(cases.length, 14);
+process.stdout.write(JSON.stringify({ runtimeCasesPassed: cases.length, orderConsumersVerified: orderWorkerQueues.length, childProcesses: children.length, syntheticModelRequests: 4, realPaidCalls: 0, outputDirectory }) + "\n");
