@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Locator } from "@playwright/test";
 import { createEntityId, type FulfillmentSupplierView } from "@yummyai/contracts";
 import { SHAPED_PILLOW_FACTORY_STANDARD } from "@yummyai/contracts/pod/production-editor";
 import type { FactoryDirectory } from "@yummyai/contracts/suppliers/factory-directory";
@@ -9,6 +9,12 @@ import { loginErp } from "./erp-identity-fixture";
 
 test.beforeEach(async ({ page }) => { await loginErp(page, "operator", "/suppliers"); });
 
+async function saveAndReload(page: Page, dialog: Locator, label: string) {
+  await dialog.getByRole("button", { name: label, exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.reload();
+}
+
 // All business records and files belong to the disposable runner and are removed in its finally block.
 test("factory directory saves name-only and partial profiles without requiring all fields", async ({ page }, testInfo) => {
   test.setTimeout(150_000);
@@ -18,8 +24,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   let dialog = page.getByRole("dialog", { name: "新增供应商", exact: true });
   await expect(dialog.getByLabel("办公地址国家")).toHaveValue("");
   await dialog.getByLabel("供应商名称", { exact: true }).fill(company);
-  await dialog.getByRole("button", { name: "保存供应商", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存供应商");
   const supplier = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(item => item.name === company)!;
   expect(supplier).toMatchObject({ regionCode: "", profile: { officeAddress: null, contacts: [] } });
   await page.goto(`/suppliers/${supplier.id}`);
@@ -36,8 +41,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("supplier-optional-mobile.png"), fullPage: true });
-  await dialog.getByRole("button", { name: "保存供应商", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存供应商");
   let saved = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(item => item.id === supplier.id)!;
   expect(saved.profile).toMatchObject({ officeAddress: { province: "Synthetic province", countryCode: "", city: "", street: "" }, contacts: [{ name: "Synthetic partial contact", phone: "" }, { name: "", phone: "synthetic-phone-only" }] });
   await expect(page.getByText("Synthetic province", { exact: true })).toBeVisible();
@@ -45,8 +49,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   dialog = page.getByRole("dialog", { name: "编辑供应商", exact: true });
   await dialog.getByLabel("办公地址国家").fill("US");
   await dialog.getByLabel("办公地址省／州").fill("");
-  await dialog.getByRole("button", { name: "保存供应商", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存供应商");
   saved = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(item => item.id === supplier.id)!;
   expect(saved.profile.officeAddress).toMatchObject({ countryCode: "US", province: "", city: "", street: "" });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -54,8 +57,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   dialog = page.getByRole("dialog", { name: "新增工厂", exact: true });
   await expect(dialog.getByLabel("工厂时区", { exact: true })).toHaveValue("");
   await dialog.getByLabel("工厂名称", { exact: true }).fill(factoryName);
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂");
   const factory = (await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`)).factories[0]!;
   expect(factory.profile).toMatchObject({ status: "draft", timeZone: null, productionAddress: null, contacts: [] });
   await page.getByRole("link", { name: factoryName, exact: true }).click();
@@ -69,8 +71,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   await expect(dialog.getByRole("alert")).toContainText("启用工厂须补齐生产地址");
   expect((await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`)).factories[0]!.versionNumber).toBe(1);
   await dialog.getByLabel("工厂状态").selectOption("draft");
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂");
   const revised = (await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`)).factories[0]!;
   expect(revised).toMatchObject({ versionNumber: 2, profile: { status: "draft", productionAddress: { province: "Synthetic factory province", countryCode: "", city: "", street: "" }, contacts: [{ name: "Synthetic incomplete production contact", phone: "" }] } });
   await expect(page.getByText("生产：Synthetic incomplete production contact", { exact: true })).toBeVisible();
@@ -80,17 +81,14 @@ test("factory directory saves name-only and partial profiles without requiring a
   await dialog.getByLabel("生产地址国家").fill("CN");
   await dialog.getByLabel("生产地址城市").fill("Synthetic city");
   await dialog.getByLabel("联系人 1 姓名").fill("");
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
-  await page.reload();
+  await saveAndReload(page, dialog, "保存工厂");
   const activated = (await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`)).factories[0]!;
   expect(activated).toMatchObject({ versionNumber: 3, profile: { status: "active", productionAddress: { city: "Synthetic city", street: "" }, contacts: [] } });
   await page.getByRole("button", { name: "新增产品与工艺能力", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "新增产品与工艺能力", exact: true });
   await expect(dialog.getByLabel("最低接单量", { exact: true })).toHaveValue("");
   await dialog.getByLabel("能力名称", { exact: true }).fill(`Synthetic draft capability ${suffix}`);
-  await dialog.getByRole("button", { name: "保存工厂能力", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂能力");
   const directory = await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`);
   expect(directory.capabilities[0]!.profile).toMatchObject({ status: "draft", processCodes: [], verificationStatus: "pending", unitCostMinor: null, minimumOrderQuantity: null });
   await expect(page.getByText("最低接单量未确认", { exact: false })).toBeVisible();
@@ -109,8 +107,7 @@ test("factory directory manages two sites, manufacturing capabilities and immuta
   await dialog.getByLabel("办公地址城市").fill("Synthetic company city");
   await dialog.getByLabel("办公地址详细地址").fill("Synthetic office; separate from production site");
   await dialog.getByLabel("付款与结算条件").fill("Synthetic test agreement");
-  await dialog.getByRole("button", { name: "保存供应商", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存供应商");
   await page.getByRole("link", { name: company, exact: true }).click();
   const supplier = (await centerApi<FulfillmentSupplierView[]>("sourcing/suppliers")).find(supplier => supplier.name === company)!;
   expect(supplier.profile.entityKind).toBe("external_supplier"); expect(supplier.profile.officeAddress!.street).toContain("separate from production");
@@ -127,8 +124,7 @@ test("factory directory manages two sites, manufacturing capabilities and immuta
   page.once("dialog", prompt => prompt.dismiss());
   await dialog.getByRole("button", { name: "关闭新增工厂", exact: true }).click();
   await expect(dialog).toBeVisible(); await expect(dialog.getByLabel("工厂名称")).toHaveValue(name);
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂");
   const second = await createFactoryFixture(supplier.id, "engraving", `Synthetic south site ${suffix}`);
   await page.reload();
   const sites = page.getByRole("region", { name: "所属与合作工厂", exact: true });
@@ -151,13 +147,12 @@ test("factory directory manages two sites, manufacturing capabilities and immuta
   await dialog.getByLabel("最长边下限（mm）", { exact: true }).fill("254");
   await dialog.getByLabel("最长边上限（mm）", { exact: true }).fill("762");
   await dialog.getByLabel("生产交期（天）").fill("3");
-  await dialog.getByRole("button", { name: "保存工厂能力", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂能力");
   await expect(page.getByRole("cell", { name: /18.50 CNY/ })).toBeVisible();
   await page.getByRole("button", { name: "编辑工厂资料", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "编辑工厂", exact: true });
   await dialog.getByLabel("生产地址详细地址").fill("Synthetic revised production address");
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click(); await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂");
   await expect(page.getByText(/外部合作工厂 · 启用 · .* · 资料 V2/)).toBeVisible();
   await page.getByRole("button", { name: "查看版本历史", exact: true }).click();
   const history = page.getByRole("region", { name: "工厂版本历史", exact: true });
@@ -184,12 +179,12 @@ test("factory directory distinguishes owned manufacturing and keeps legacy suppl
   await page.getByRole("button", { name: "新增工厂", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "新增工厂", exact: true });
   await dialog.getByLabel("工厂名称").fill(`Synthetic draft site ${suffix}`);
-  await dialog.getByRole("button", { name: "保存工厂", exact: true }).click(); await expect(dialog).not.toBeVisible();
+  await saveAndReload(page, dialog, "保存工厂");
   const company = await centerApi<{ id: string }>("sourcing/suppliers", { name: `Synthetic internal entity ${suffix}`, kind: "manual", regionCode: "US", settlementCurrency: "USD", profile: { ...syntheticSupplierProfile, entityKind: "internal_entity" } });
   await page.goto(`/suppliers/${company.id}`); await page.getByRole("button", { name: "新增工厂", exact: true }).click();
   const owned = page.getByRole("dialog", { name: "新增工厂", exact: true });
   await owned.getByLabel("工厂名称").fill(`Synthetic owned site ${suffix}`); await owned.getByLabel("工厂性质").selectOption("owned");
-  await owned.getByRole("button", { name: "保存工厂", exact: true }).click(); await expect(owned).not.toBeVisible();
+  await saveAndReload(page, owned, "保存工厂");
   await expect(page.getByRole("cell", { name: /自有 · 草稿/ })).toBeVisible();
   expect((await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${company.id}`)).factories[0]!.profile.ownership).toBe("owned");
 });
