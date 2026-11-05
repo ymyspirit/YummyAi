@@ -75,6 +75,10 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
     await savedAddress.fill("");await expect(phone).toHaveAttribute("required","");
     await page.getByRole("button",{name:"放弃本次路线与预算修改",exact:true}).click();
     await expect(savedAddress).toHaveValue("123456");await expect(phone).not.toHaveAttribute("required");
+    const dimension=page.getByLabel("任一边上限（毫米）",{exact:true});
+    await dimension.fill("558.8");
+    expect(await dimension.evaluate((input:HTMLInputElement)=>input.validity.valid)).toBe(true);
+    await page.getByRole("button",{name:"放弃本次路线与预算修改",exact:true}).click();
     await page.setViewportSize({width:390,height:844});await savedAddress.scrollIntoViewIfNeeded();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:testInfo.outputPath("shipos-saved-sender-narrow.png"),fullPage:true});
