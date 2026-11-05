@@ -118,8 +118,8 @@ test("template workflow reviews candidates, continues with approved images and o
   await expect(page).toHaveURL(sourceUrl);
   const session = page.getByRole("region", { name: "当前任务生产作图" });
   await expect(session.getByRole("heading", { name: "最终生产图案", exact: true })).toBeVisible();
-  await expect(session.getByRole("combobox", { name: "打开生产项目" })).toHaveValue(projectId);
-  await expect(session.getByRole("combobox", { name: "打开生产项目" }).locator("option")).toHaveCount(2);
+  await expect(session.getByRole("combobox", { name: "打开生产文件" })).toHaveValue(projectId);
+  await expect(session.getByRole("combobox", { name: "打开生产文件" }).locator("option")).toHaveCount(2);
   const documentName = session.getByRole("textbox", { name: "图稿名称", exact: true });
   await documentName.fill("Edited in creative workspace");
   page.once("dialog", (dialog) => void dialog.dismiss());

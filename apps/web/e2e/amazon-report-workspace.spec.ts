@@ -171,7 +171,7 @@ test(`real ${productType} report requires operator push and preserves original m
     await editor.getByRole("button", { name: "返回制图任务" }).click();
     await expect(page.getByRole("button", { name: "打开生产文件" })).toBeVisible();
     await page.getByRole("button", { name: "打开生产文件" }).click();
-    await expect(editor.getByRole("combobox", { name: "打开生产项目" })).toHaveValue(projectId);
+    await expect(editor.getByRole("combobox", { name: "打开生产文件" })).toHaveValue(projectId);
     await expect(editor.getByRole("textbox", { name: "图稿名称" })).toHaveValue(`E2E Operator draft ${suffix}`);
     await expect(editor.getByRole("button", { name: "创建生产草稿" })).toHaveCount(0);
     if (productType === "shaped_pillow") {

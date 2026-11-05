@@ -9,8 +9,8 @@ export default async function ProductionEditorPage({ searchParams }: {
   searchParams: Promise<{ kind?: string; projectId?: string; versionId?: string; reportLineId?: string }>;
 }) {
   const query = await searchParams;
-  if (!query.projectId && !query.reportLineId) redirect("/production-templates");
   const kind = query.kind === "shaped_pillow" || query.kind === "tire_cover" || query.kind === "rectangular_print" ? query.kind : undefined;
+  if (!query.projectId && !query.reportLineId) redirect(`/production-templates${kind ? `?kind=${kind}` : ""}`);
   const id = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return <div className="research-shell production-editor-shell">
     <main className="research-main production-editor-main">

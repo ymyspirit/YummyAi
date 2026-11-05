@@ -93,7 +93,7 @@ test("designer tools preserve subject geometry, source identity, history and key
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: "test-results/designer-tools-mobile.png", fullPage: true });
-    await page.reload(); await page.getByLabel("打开生产项目", { exact: true }).selectOption(projectId);
+    await page.reload(); await page.getByLabel("打开工艺底稿", { exact: true }).selectOption(projectId);
     await page.getByRole("button", { name: "replacement-background.png", exact: true }).click();
     await expect(page.getByLabel("图片宽（mm）", { exact: true })).toHaveValue("100");
     await expect(page.getByRole("button", { name: "生成生产文件", exact: true })).toBeDisabled();

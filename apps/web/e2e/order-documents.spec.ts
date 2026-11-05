@@ -115,8 +115,11 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
     await page.goto(`/production-files?projectId=${current.line.editorProjectId}`);
     await expect(page.getByRole("heading",{name:"生产文件",exact:true})).toBeVisible();
     await expect(page.getByRole("button",{name:"新建项目",exact:true})).toHaveCount(0);
-    await page.goto("/production-templates");
+    await page.goto("/pod-workbench/production-editor?kind=tire_cover");
     await expect(page.getByRole("heading",{name:"工艺底稿",exact:true})).toBeVisible();
+    await expect(page).toHaveURL(/\/production-templates\?kind=tire_cover$/);
+    await expect(page.getByLabel("产品类型",{exact:true})).toHaveValue("tire_cover");
+    await expect(page.getByRole("combobox",{name:"打开工艺底稿",exact:true})).toBeVisible();
     const production=await centerApi<{projects:Array<{id:string}>}>("production-editor/projects?scope=production");
     const templates=await centerApi<{projects:Array<{id:string}>}>("production-editor/projects?scope=templates");
     expect(production.projects.some(project=>project.id===current.line.editorProjectId)).toBe(true);
