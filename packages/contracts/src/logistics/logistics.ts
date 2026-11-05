@@ -15,13 +15,23 @@ export const LogisticsChannelProfileSchema = z.object({ code: z.string().trim().
   countryCodes: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1).max(250), transitDaysMin: z.int().nonnegative().max(365), transitDaysMax: z.int().positive().max(365),
   transitSource: Note, conditionsVerified: z.boolean(), conditionsEvidence: Note,
   acceptsBattery: z.boolean().default(false), maxWeightGrams: z.number().positive().max(1_000_000),
-  maxDimensionMm: z.number().positive().max(5000), maxSumDimensionsMm:z.number().positive().max(15000).optional() }).strict().refine(v => v.transitDaysMin <= v.transitDaysMax, "渠道时效上限须不小于下限");
+  maxDimensionMm: z.number().positive().max(5000), maxSumDimensionsMm:z.number().positive().max(15000).optional(),
+  maxSecondDimensionMm: z.number().positive().max(5000).optional(),
+  maxLengthPlusGirthMm: z.number().positive().max(25000).optional(),
+  minLongestDimensionMm: z.number().positive().max(5000).optional(),
+  minSecondDimensionMm: z.number().positive().max(5000).optional(),
+  volumetricBilling: z.object({ divisorCm3PerKg: z.number().positive().max(100000),
+    actualWeightThresholdMultiple: z.number().positive().max(10),
+    minimumGrams: z.number().nonnegative().max(1_000_000), stepGrams: z.number().positive().max(1000) }).strict().optional(),
+}).strict().refine(v => v.transitDaysMin <= v.transitDaysMax, "渠道时效上限须不小于下限");
 export const LogisticsConnectionProfileSchema = z.object({ name: z.string().trim().min(1).max(160), provider: LogisticsProviderSchema,
   yunexpressProtocol: YunexpressProtocolSchema.optional(),
+  yunexpressSenderMode: z.enum(["manual", "platform_default"]).optional(),
+  channelSelection: z.enum(["specification", "compare_eligible"]).optional(),
   factoryId: Id, originCountryCode: z.string().regex(/^[A-Z]{2}$/),
   // The physical factory address remains pinned locally even when ShipOS owns
   // the contact details. Only its documented faddid mode permits no local phone.
-  sender: LogisticsAddressSchema.extend({ phone: z.string().trim().max(60) }),
+  sender: LogisticsAddressSchema.extend({ name: z.string().trim().max(200), address1: z.string().trim().max(300), postalCode: z.string().trim().max(40), phone: z.string().trim().max(60) }),
   shiposSenderAddressId: z.int().positive().safe().optional(),
   baseUrl: z.url(), module: z.literal(2).default(2), billingDepot: z.string().trim().max(100).default(""),
   currency: z.string().regex(/^[A-Z]{3}$/), currencySource: Note, minorUnitDigits: z.int().min(0).max(3).default(2),
@@ -29,7 +39,12 @@ export const LogisticsConnectionProfileSchema = z.object({ name: z.string().trim
   channels: z.array(LogisticsChannelProfileSchema).max(200), apiCompatibilityEvidence: Note, purchasePermissionEvidence: Note,
   labelMode: z.enum(["factory_pull", "include"]).default("include") }).strict().superRefine((v, ctx) => {
     if (v.shiposSenderAddressId !== undefined && v.provider !== "shipos") ctx.addIssue({ code: "custom", path: ["shiposSenderAddressId"], message: "平台发件地址 ID 仅适用于 ShipOS" });
-    if (!v.sender.phone && !(v.provider === "shipos" && v.shiposSenderAddressId)) ctx.addIssue({ code: "custom", path: ["sender", "phone"], message: "请填写发件电话 或使用当前 ShipOS 账户已核对的发件地址 ID" });
+    const platformSender = v.provider === "yunexpress" && v.yunexpressProtocol === "openapi" && v.yunexpressSenderMode === "platform_default";
+    if (v.yunexpressSenderMode === "platform_default" && !platformSender) ctx.addIssue({ code: "custom", path: ["yunexpressSenderMode"], message: "云途默认发件人仅适用于开放平台 OpenAPI" });
+    if (!platformSender) {
+      for (const field of ["name", "address1", "postalCode"] as const) if (!v.sender[field]) ctx.addIssue({ code: "custom", path: ["sender", field], message: "请填写完整的发件信息" });
+      if (!v.sender.phone && !(v.provider === "shipos" && v.shiposSenderAddressId)) ctx.addIssue({ code: "custom", path: ["sender", "phone"], message: "请填写发件电话 或使用当前 ShipOS 账户已核对的发件地址 ID" });
+    }
     if (v.sender.countryCode !== v.originCountryCode) ctx.addIssue({ code: "custom", path: ["sender"], message: "发货地址国家须与实际发货路线一致" });
     if (v.originCountryCode === "CN" && v.provider !== "yunexpress") ctx.addIssue({ code: "custom", path: ["provider"], message: "中国实际发货路线使用云途" });
     if (v.provider === "yunexpress" && v.originCountryCode !== "CN") ctx.addIssue({ code: "custom", path: ["originCountryCode"], message: "云途路线须以工厂实际中国发货地为依据" });
@@ -53,11 +68,12 @@ export const SaveLogisticsConnectionSchema = z.object({ connectionId: Id.optiona
   .refine(v=>!(v.credentials&&v.accountVersionId),"请选择已保存账户或输入新凭据")
   .refine(v=>!v.credentials||logisticsCredentialsMatchProfile(v.profile,v.credentials),"凭据须符合所选物流协议");
 export const LogisticsRuleSchema = z.object({ name: z.string().trim().min(1).max(160), autoPurchase: z.boolean().default(false), currency: z.string().regex(/^[A-Z]{3}$/),
+  costControl: z.enum(["amount_limits", "lowest_eligible"]).optional(),
   maxTicketMinor: z.int().positive().safe().nullable(), maxDailyMinor: z.int().positive().safe().nullable(),
   maxPerItemMinor: z.int().positive().safe().optional(), quoteMaxAgeSeconds: z.int().min(30).max(900).default(120),
   allowedChannelCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(200), evidence: Note }).strict()
   .refine(v => v.maxTicketMinor === null || v.maxDailyMinor === null || v.maxTicketMinor <= v.maxDailyMinor, "单票上限不可超过每日上限")
-  .refine(v => v.maxTicketMinor !== null && v.maxDailyMinor !== null || v.maxPerItemMinor !== undefined, "不设总额上限时须明确单件运费异常阈值");
+  .refine(v => v.maxTicketMinor !== null && v.maxDailyMinor !== null || v.maxPerItemMinor !== undefined || v.costControl === "lowest_eligible", "不设总额上限时须明确单件运费异常阈值 或明确选择不设固定金额上限");
 export const SaveLogisticsRuleSchema = z.object({ connectionId: Id, expectedVersion: z.int().nonnegative(), rule: LogisticsRuleSchema, idempotencyKey: Key }).strict();
 const CreateLogisticsTaskBaseSchema = z.object({ orderId: Id, productionOrderIds: z.array(Id).min(1).max(50),
   connectionId: Id, packages: z.array(LogisticsPackageSchema).min(1).max(20), channelCode:z.string().trim().min(1).max(100).optional(),

@@ -14,8 +14,8 @@ export function matchFulfillmentRoute(source: DocumentOrderSource, routes: Fulfi
   return { route: null, reasons: [matches.length ? "有多条发货规则同时适用 请在产品与发货规则中消除重叠" : "整单商品与收货国家没有匹配的发货规则 请配置商品规格和承接工厂"] };
 }
 
-export function planFlowParcel(source: DocumentOrderSource, profile: DocumentProfileView) {
-  const planned = planOrderDocument(profile.profile.route === "printeque" ? "printeque_shipping" : "yunexpress", source, profile.profile);
+export function planFlowParcel(source: DocumentOrderSource, profile: DocumentProfileView, channelSelection?: "specification" | "compare_eligible") {
+  const planned = planOrderDocument(profile.profile.route === "printeque" ? "printeque_shipping" : "yunexpress", source, profile.profile, undefined, "api");
   if (planned.blockers.length || !planned.parcel) throw new Error(planned.blockers.join("；") || "包裹数据缺失");
   const parcel = planned.parcel;
   if (!parcel.lengthIn || !parcel.widthIn || !parcel.heightIn) throw new Error("自动打单需要准确的包装长宽高 请补齐规格包裹数据");
@@ -37,7 +37,7 @@ export function planFlowParcel(source: DocumentOrderSource, profile: DocumentPro
   const pack = LogisticsPackageSchema.parse({ weightGrams: Math.ceil(parcel.weightKg * 1000),
     dimensionsMm: { length: parcel.lengthIn * 25.4, width: parcel.widthIn * 25.4, height: parcel.heightIn * 25.4 },
     evidence: profile.profile.evidence, containsBattery: false, declarations: [...declarations.values()] });
-  return { packages: [pack], channelCode: parcel.channelCode ?? undefined };
+  return { packages: [pack], channelCode: channelSelection === "compare_eligible" ? undefined : parcel.channelCode ?? undefined };
 }
 
 /** Pick actual published calendar capacity. Never infer unlimited capacity from

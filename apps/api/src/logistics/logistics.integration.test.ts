@@ -74,16 +74,32 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect((await attention.workspace(context,{source:"production"},new Date(future(4)))).items.some(item=>item.priority==="overdue")).toBe(true);
     expect(s.carrier.creates).toBe(0);expect(s.carrier.lookups).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
   });
-  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number){
+  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number,profilePatch?:Partial<LogisticsConnectionProfile>){
     const factory=country==="US"?usFactory:cnFactory;
     const enqueued:unknown[]=[];const queue={enqueue:async(input:unknown)=>{enqueued.push(input);return undefined;}};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
     const profile=LogisticsConnectionProfileSchema.parse({name:`Synthetic route ${randomUUID()}`,provider:country==="US"?"shipos":"yunexpress",factoryId:factory.id,originCountryCode:country,sender:{name:"Synthetic sender",address1:"1 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:country,phone:"1234567890",email:"sender@example.invalid"},baseUrl:country==="US"?"https://api.shipos.cn":"https://oms.example.invalid",currency:"USD",currencySource:"Synthetic account billing proof",labelHosts:["shipease.oss-cn-hangzhou.aliyuncs.com"],channels:carrier.channelRows.map(channel=>({...channel,countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic calendar-day SLA",conditionsVerified:true,conditionsEvidence:"Synthetic route conditions",maxWeightGrams:10000,maxDimensionMm:1000})),apiCompatibilityEvidence:"Synthetic account compatibility",purchasePermissionEvidence:"Synthetic purchase permissions",labelMode:labelMode??(country==="US"?"factory_pull":"include")});
     if(senderAddressId){profile.shiposSenderAddressId=senderAddressId;profile.sender.phone="";}
+    Object.assign(profile,profilePatch);
     const original=process.env.YUNEXPRESS_ALLOWED_ORIGINS;process.env.YUNEXPRESS_ALLOWED_ORIGINS="https://oms.example.invalid";
-    let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
+    let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:profile.yunexpressProtocol==="openapi"?{provider:"yunexpress",appId:"fixture-app",sourceKey:"fixture-source",apiSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
     await service.verify(context,saved.connectionId,{expectedVersion:1,idempotencyKey:randomUUID()});await service.saveRule(context,{connectionId:saved.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:auto,maxTicketMinor:ticket,maxDailyMinor:daily,quoteMaxAgeSeconds:120,allowedChannelCodes:carrier.channelRows.map(channel=>channel.code),evidence:"Synthetic budget authorization"},idempotencyKey:randomUUID()});
     return {service,executor,carrier,factory,profile,connectionId:saved.connectionId,enqueued};
   }
+  it("pins compared Yun channels and default sender without inventing a size recommendation or buying in quote mode",async()=>{
+    const carrier=new Carrier();carrier.channelRows=[{code:"THPHR",name:"Synthetic special"},{code:"ZBZXRPH",name:"Synthetic medium"}];
+    const s=await setup(carrier,"CN",1000000,1000,false,undefined,undefined,{yunexpressProtocol:"openapi",baseUrl:"https://openapi.yunexpress.cn",yunexpressSenderMode:"platform_default",channelSelection:"compare_eligible"});
+    await s.service.saveRule(context,{connectionId:s.connectionId,expectedVersion:1,rule:{name:"Synthetic comparison only",currency:"USD",costControl:"lowest_eligible",autoPurchase:false,maxTicketMinor:null,maxDailyMinor:null,quoteMaxAgeSeconds:120,allowedChannelCodes:["THPHR","ZBZXRPH"],evidence:"Synthetic no fixed limit quote-only configuration"},idempotencyKey:randomUUID()});
+    const input=taskInput(s,await production(s.factory)),saved=await s.service.createTask(context,input,{mode:"quote"});
+    const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+    const snapshot=pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret));
+    expect(snapshot.channelCode).toBeUndefined();expect(snapshot.routingDocumentProfileVersionId).toBeUndefined();
+    expect(snapshot.connectionVersionId).toBeDefined();expect(snapshot.packages).toMatchObject(input.packages);
+    const next=await production(s.factory),manual=await s.service.createTask(context,{...taskInput(s,next),channelCode:"THPHR"},{mode:"quote"});
+    const [manualStored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,manual.taskId)));
+    expect(pii.withSecret(manualStored!.encryptedSnapshot!,secret=>JSON.parse(secret).channelCode)).toBe("THPHR");
+    await expect(s.service.saveConnection(context,{connectionId:s.connectionId,expectedVersion:1,profile:{...s.profile,sender:{...s.profile.sender,address1:"Different factory"}},idempotencyKey:randomUUID()})).rejects.toThrow("实际发货地址");
+    expect((await s.service.connections(other)).connections).toEqual([]);expect(carrier.creates).toBe(0);
+  });
   it("pins a ShipOS saved sender address without requiring invented contact details or weakening factory and tenant checks",async()=>{
     const s=await setup(new Carrier(),"US",1000000,1000,false,undefined,123456);
     expect((await s.service.connections(context)).connections.find(row=>row.id===s.connectionId)?.profile).toMatchObject({shiposSenderAddressId:123456,sender:{phone:""}});

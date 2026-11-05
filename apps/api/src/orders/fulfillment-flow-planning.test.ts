@@ -53,6 +53,12 @@ describe("whole-order fulfillment planning",()=>{
     const {profile,order}=fixture("CA",size as number);
     expect(planFlowParcel(order,profile).channelCode).toBe(code);
   });
+  it.each([10,20,22,24])("compares eligible carriers for Canada size %s without changing its parcel or declarations",size=>{
+    const {profile,order}=fixture("CA",size);order.lines[0]!.quantity=2;
+    const legacy=planFlowParcel(order,profile),compared=planFlowParcel(order,profile,"compare_eligible");
+    expect(compared.channelCode).toBeUndefined();expect(compared.packages).toEqual(legacy.packages);
+    expect(compared.packages[0]!.declarations[0]).toMatchObject({quantity:2,unitPriceMinor:800,currency:"USD"});
+  });
   it("rejects invalid YunExpress names, missing customs data and oversized packages",()=>{
     const ca=fixture("CA");ca.order.address.recipient="Buyer";
     expect(()=>planFlowParcel(ca.order,ca.profile)).toThrow();
@@ -60,6 +66,15 @@ describe("whole-order fulfillment planning",()=>{
     expect(()=>planFlowParcel(ca.order,ca.profile)).toThrow("海关编码");
     const us=fixture();us.profile.profile.specifications[0]!.length=25;
     expect(()=>planFlowParcel(us.order,us.profile)).toThrow();
+  });
+  it("combines mixed Canada sizes in one parcel while preserving each declaration",()=>{
+    const {profile,order}=fixture("CA",12),secondId=createEntityId();
+    profile.profile.specifications.push({...profile.profile.specifications[0]!,specificationVersionId:secondId,sizeIn:24,weight:1.41,length:20,width:8,height:8,supplierSku:"CP-24"});
+    order.lines.push({...order.lines[0]!,id:createEntityId(),externalLineId:"second",skuCode:"different-sku",specificationVersionId:secondId});
+    const result=planFlowParcel(order,profile,"compare_eligible");
+    expect(result.packages).toHaveLength(1);expect(result.packages[0]!.declarations).toHaveLength(2);
+    expect(result.packages[0]!.declarations.map(row=>row.unitPriceMinor)).toEqual([800,800]);
+    expect(result.packages[0]!.dimensionsMm.length).toBe(508);expect(result.channelCode).toBeUndefined();
   });
   it("allocates shared capacity across the entire order without overbooking or invented capacity",()=>{
     const poolId=createEntityId(),versionId=createEntityId(),capabilityVersionId=createEntityId();

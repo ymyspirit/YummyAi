@@ -274,7 +274,7 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       throw new FlowAttention("当前生产安排与自动履约记录不一致 请核对改稿、返工或人工调整");
     if (!flow.logisticsTaskId) {
       let parcel;
-      try { parcel=planFlowParcel(data.source.source,profile); }
+      try { parcel=planFlowParcel(data.source.source,profile,connection.profile.channelSelection); }
       catch(error) { throw new FlowAttention(error instanceof Error ? error.message : "包裹规则待完善"); }
       const options=await this.logistics.options(context,{orderId:flow.orderId});
       const candidates=options.candidates.filter(row=>flow.productionOrderIds.includes(row.productionOrderId));

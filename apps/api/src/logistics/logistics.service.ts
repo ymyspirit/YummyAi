@@ -150,7 +150,7 @@ export class LogisticsService {
       const { idempotencyKey: _requestKey, ...basis }=input;
       void _requestKey;
       let channelCode=input.channelCode,routingDocumentProfileVersionId:string|undefined;
-      if(connection.profile.provider==="yunexpress"&&!channelCode){
+      if(connection.profile.provider==="yunexpress"&&connection.profile.channelSelection!=="compare_eligible"&&!channelCode){
         const [packing]=await tx.select().from(logisticsDocumentProfiles).where(and(eq(logisticsDocumentProfiles.factoryId,first.version.factoryId),eq(logisticsDocumentProfiles.factoryVersionId,first.version.factoryVersionId))).orderBy(desc(logisticsDocumentProfiles.versionNumber)).limit(1);
         if(packing?.profile.route==="yunexpress"){
           const source=await new OrderDocumentSourceReader(this.pii).read(tx,context,input.orderId);

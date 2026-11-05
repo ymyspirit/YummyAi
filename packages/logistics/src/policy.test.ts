@@ -18,5 +18,7 @@ describe("deadline and cost constrained logistics selection",()=>{
     }
     expect(selectLogisticsQuote([quote()],perItem,task,now).rejected[0]?.reason).toBe("PURCHASE_QUANTITY_UNAVAILABLE");
     expect(LogisticsRuleSchema.safeParse({...rule,maxTicketMinor:null,maxDailyMinor:null}).success).toBe(false);
+    const compared=LogisticsRuleSchema.parse({...rule,maxTicketMinor:null,maxDailyMinor:null,costControl:"lowest_eligible",autoPurchase:false});
+    expect(compared.maxPerItemMinor).toBeUndefined();
   });
 });

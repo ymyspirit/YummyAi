@@ -20,7 +20,7 @@ export function LogisticsRuleForm({
     digits = connection.profile.minorUnitDigits,
     factor = 10 ** digits;
   const [mode, setMode] = useState(
-    rule?.maxTicketMinor === null && rule.maxDailyMinor === null ? "per_item" : "total",
+    rule?.costControl === "lowest_eligible" ? "lowest_eligible" : rule?.maxTicketMinor === null && rule.maxDailyMinor === null ? "per_item" : "total",
   );
   const [error, setError] = useState("");
   function amount(value: FormDataEntryValue | null) {
@@ -51,9 +51,10 @@ export function LogisticsRuleForm({
               name: String(data.get("ruleName")),
               currency: connection.profile.currency,
               autoPurchase: data.get("auto") === "on",
-              maxTicketMinor: mode === "per_item" ? null : amount(data.get("ticket")),
-              maxDailyMinor: mode === "per_item" ? null : amount(data.get("daily")),
-              ...(perItem ? { maxPerItemMinor: amount(perItem) } : {}),
+              costControl: mode === "lowest_eligible" ? "lowest_eligible" : "amount_limits",
+              maxTicketMinor: mode === "total" ? amount(data.get("ticket")) : null,
+              maxDailyMinor: mode === "total" ? amount(data.get("daily")) : null,
+              ...(mode !== "lowest_eligible" && perItem ? { maxPerItemMinor: amount(perItem) } : {}),
               quoteMaxAgeSeconds: 120,
               allowedChannelCodes:
                 rule?.allowedChannelCodes ??
@@ -82,6 +83,7 @@ export function LogisticsRuleForm({
           >
             <option value="total">设置单票与每日上限</option>
             <option value="per_item">只按平均每件运费拦截 不设总额上限</option>
+            <option value="lowest_eligible">合规最低价 不设固定金额上限</option>
           </select>
         </label>
         {mode === "total" && (
@@ -106,7 +108,7 @@ export function LogisticsRuleForm({
             </label>
           </>
         )}
-        <label>
+        {mode !== "lowest_eligible" && <label>
           平均每件运费异常阈值（{connection.profile.currency}）
           <input
             name="perItem"
@@ -114,10 +116,9 @@ export function LogisticsRuleForm({
             inputMode="decimal"
             defaultValue={rule?.maxPerItemMinor ? rule.maxPerItemMinor / factor : ""}
           />
-        </label>
+        </label>}
         <p className="oc-muted logistics-wide">
-          整单运费 ÷ 商品总件数 超过阈值转异常且不购单 等于阈值可继续 系统始终先检查尺寸、国家和时效
-          再选合规最低价
+          {mode === "lowest_eligible" ? "不设置单票、每日或平均每件金额上限 启用自动购单前请确认费用授权 系统按尺寸、重量、国家和时效筛选后选择含附加费的最低报价" : "整单运费 ÷ 商品总件数 超过阈值转异常且不购单 等于阈值可继续 系统始终先检查尺寸、国家和时效 再选合规最低价"}
         </p>
         <label className="logistics-wide">
           费用授权依据

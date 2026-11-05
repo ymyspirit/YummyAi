@@ -10,7 +10,7 @@ export function recommendYunexpressChannel(specifications: Array<Pick<ParcelSpec
 
 /** Receives already-authorized order sources. This function cannot advance any business state. */
 export function planOrderDocument(adapter: DocumentAdapter, source: DocumentOrderSource, profile: FactoryDocumentProfile,
-  override?: DocumentParcelOverride): DocumentOrderPreview {
+  override?: DocumentParcelOverride, purpose: "template" | "api" = "template"): DocumentOrderPreview {
   const blockers: string[] = [], notices: string[] = [], a = source.address;
   const result: DocumentOrderPreview = { orderId: source.id, orderNumber: source.orderNumber, blockers, notices, parcel: null, rows: [] };
   const correctRoute = adapter === "yunexpress" ? profile.route === "yunexpress" : profile.route === "printeque";
@@ -70,12 +70,12 @@ export function planOrderDocument(adapter: DocumentAdapter, source: DocumentOrde
   } else {
     const nameProblem = yunexpressRecipientProblem(a.recipient);
     if (nameProblem) blockers.push(nameProblem);
-    if (!profile.useAccountSender) blockers.push("请确认使用云途账户默认发件人后再导出");
+    if (purpose === "template" && !profile.useAccountSender) blockers.push("请确认使用云途账户默认发件人后再导出");
     if (lines.some(row => row.spec.productKind === "shaped_pillow" && row.spec.sizeIn === null)) blockers.push("抱枕尺寸尚未确认 无法选择云途渠道");
     if (weightKg < declarationKg) blockers.push("包裹总重不能小于商品申报重量合计");
     const declarations = lines.map(({ spec }) => ({ nameEn: spec.nameEn, nameCn: spec.nameCn,
       value: spec.declaredUnitValueMinor, weight: unitWeight(spec, "kg") }));
-    if (new Set(declarations.map(row => JSON.stringify(row))).size !== 1) blockers.push("同单商品的申报品名、单价或单重不同 请先核对申报方案");
+    if (purpose === "template" && new Set(declarations.map(row => JSON.stringify(row))).size !== 1) blockers.push("同单商品的申报品名、单价或单重不同 请先核对申报方案");
     const first = declarations[0]!;
     if (first.value === null) blockers.push("申报单价尚未配置");
     const fullAddress = [a.address1, a.address2].filter(Boolean).join(" ");
