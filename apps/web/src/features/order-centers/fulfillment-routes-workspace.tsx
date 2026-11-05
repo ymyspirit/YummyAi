@@ -41,7 +41,7 @@ export function FulfillmentRoutesWorkspace(){
     <header className="oc-header"><div><h1>产品与发货规则</h1><p>按商品规格和收货国家确定工厂 共用工厂包裹数据与物流账户</p></div>
       <div className="oc-actions"><Link className="oc-button" href="/orders">返回订单工作台</Link>
         {view?.canConfigure&&<button className="oc-button primary" disabled={busy} onClick={()=>select(null)}><Plus size={16}/>新增规则</button>}</div></header>
-    <div className="oc-route-setup"><Link href="/product-specifications">商品与规格</Link><ArrowRight size={14}/><Link href="/suppliers">工厂与承接工艺</Link><ArrowRight size={14}/><Link href="/logistics#documents">包裹与导单数据</Link><ArrowRight size={14}/><Link href="/logistics#connections">物流账户与费用上限</Link></div>
+    <div className="oc-route-setup"><Link href="/product-specifications">商品与规格</Link><ArrowRight size={14}/><Link href="/suppliers">工厂与承接工艺</Link><ArrowRight size={14}/><Link href="/logistics#documents">包裹与导单数据</Link><ArrowRight size={14}/><Link href="/logistics#connections">物流账户与费用规则</Link></div>
     <p className="oc-hint">管理员配置一次 运营审单时核对自动匹配结果 每单无需重新填写账户、地址和包裹数据</p>
     {error&&<div className="oc-error" role="alert">{error}<button className="oc-text-button" disabled={busy} onClick={()=>setReload(value=>value+1)}>重新读取</button></div>}
     {notice&&<p className="oc-notice" role="status">{notice}</p>}

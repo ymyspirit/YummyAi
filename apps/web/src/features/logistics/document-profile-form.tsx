@@ -15,7 +15,7 @@ function emptySpec(id: string): ParcelSpecification {
     weightUnit: "lb", length: null, width: null, height: null, dimensionUnit: "in", declaredUnitValueMinor: null,
     nameEn: "Pillow", nameCn: "抱枕", hsCode: "" };
 }
-export function DocumentProfileForm({ options, onSaved, onStateChange }: { options: DocumentOptions; onSaved(): Promise<void>; onStateChange?(state: { dirty: boolean; busy: boolean }): void }) {
+export function DocumentProfileForm({ options, onSaved, onStateChange }: { options: DocumentOptions; onSaved(profileVersionId: string): Promise<void>; onStateChange?(state: { dirty: boolean; busy: boolean }): void }) {
   const [factoryId, setFactoryId] = useState(""), [profile, setProfile] = useState<FactoryDocumentProfile>(() => emptyProfile(""));
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [baseVersion, setBaseVersion] = useState(0);
   const alive = useRef(true), key = useRef(crypto.randomUUID());
@@ -38,7 +38,7 @@ export function DocumentProfileForm({ options, onSaved, onStateChange }: { optio
     try {
       const result = await logisticsRequest("documents/profiles", { factoryId, expectedVersion: baseVersion, profile: parsed.data, idempotencyKey: key.current });
       if (!alive.current) return;
-      setBaseVersion(result.version); setDirty(false); setNotice("已保存工厂导单配置 新导出使用此版本"); await onSaved();
+      setBaseVersion(result.version); setDirty(false); setNotice("已保存工厂导单配置 新导出使用此版本"); await onSaved(result.id);
     } catch (e) { if (alive.current) setError(logisticsError(e)); }
     finally { if (alive.current) setBusy(false); }
   }
