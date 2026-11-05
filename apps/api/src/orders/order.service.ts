@@ -63,12 +63,19 @@ export class OrderService {
   }
 
   async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput, options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
+    const outcome = await withTenant(this.database.db, context, tx => this.materializeNormalizedInTransaction(tx, context, rawInput, options));
+    return { order: await this.get(context, outcome.orderId), replayed: outcome.replayed, unlinkedLineIds: outcome.unlinkedLineIds };
+  }
+
+  /** Node receipt adoption commits the original order facts and its checkpoint together. */
+  async materializeNormalizedInTransaction(tx: TenantTransaction, context: TenantContext, rawInput: NormalizeOrderInput,
+    options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ orderId: string; replayed: boolean; unlinkedLineIds: string[] }> {
     const input = NormalizeOrderInputSchema.parse(rawInput);
     assertRedactedSource(input.redactedSource);
     const orderId = createEntityId();
     const snapshotId = createEntityId();
     const encryptedEnvelope = input.protectedDetails ? this.piiVault.encrypt(JSON.stringify(input.protectedDetails)) : undefined;
-    const outcome = await withTenant(this.database.db, context, async (tx) => {
+    const outcome = await (async () => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${input.accountId}:${input.platform}:${input.externalOrderId}`}, 0))`);
       const [existingDelivery] = await tx.select().from(orderSourceSnapshots).where(and(
         eq(orderSourceSnapshots.accountId, input.accountId), eq(orderSourceSnapshots.platform, input.platform), eq(orderSourceSnapshots.externalEventId, input.externalEventId),
@@ -197,14 +204,12 @@ export class OrderService {
         metadata: { sourceSnapshotId: snapshotId, lineCount: input.lines.length },
       });
       return { orderId, replayed: false };
-    });
-    await this.audit.record(context, { action: "order.ingest", resourceType: "order", resourceId: outcome.orderId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, replayed: outcome.replayed } });
-    const order = await this.get(context, outcome.orderId);
-    const links = await withTenant(this.database.db, context, (tx) => tx.select({
-      orderLineId: orderLineCatalogLinks.orderLineId,
-    }).from(orderLineCatalogLinks).where(inArray(orderLineCatalogLinks.orderLineId, order.lines.map((line) => line.id))));
-    const linked = new Set(links.map((entry) => entry.orderLineId));
-    return { order, replayed: outcome.replayed, unlinkedLineIds: order.lines.filter((line) => !linked.has(line.id)).map((line) => line.externalLineId) };
+    })();
+    await this.audit.recordInTransaction(tx, context, { action: "order.ingest", resourceType: "order", resourceId: outcome.orderId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, replayed: outcome.replayed } });
+    const unlinked = await tx.select({ externalLineId: orderLines.externalLineId }).from(orderLines)
+      .leftJoin(orderLineCatalogLinks, eq(orderLineCatalogLinks.orderLineId, orderLines.id))
+      .where(and(eq(orderLines.orderId, outcome.orderId), isNull(orderLineCatalogLinks.orderLineId)));
+    return { ...outcome, unlinkedLineIds: unlinked.map(line => line.externalLineId) };
   }
 
   async list(context:TenantContext,rawInput:ListOrdersInput):Promise<OrderView[]>{return originalOwnerOperation(()=>new OrderReadOwner(this.database).list(context,rawInput));}

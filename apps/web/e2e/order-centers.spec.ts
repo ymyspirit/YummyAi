@@ -24,6 +24,30 @@ import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/
 
 test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page); });
 
+test("six centers store automatic order sync shows missing authorization without a new setup form", async ({ page }, testInfo) => {
+  test.skip(process.env.E2E_ISOLATED_DAILY !== "1" || process.env.WEB_AUTH_MODE !== "personal", "Disposable personal acceptance only");
+  requireDisposableIntegrationEnvironment();
+  const account = await centerApi<MarketplaceAccountView>("marketplace-accounts", { platform: "amazon", displayName: `Synthetic sync UI ${createEntityId()}`,
+    region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private", requestedScopes: [] });
+  try {
+    await page.goto(`/stores/${account.id}`);
+    const panel = page.getByRole("region", { name: "自动拉单", exact: true });
+    await expect(panel.getByRole("heading", { name: "自动拉单 · 未启用" })).toBeVisible();
+    await expect(panel.getByText("请先完成本店平台授权", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "启用自动拉单", exact: true })).toBeDisabled();
+    await expect(panel.locator("input")).toHaveCount(0);
+    await panel.getByRole("button", { name: "重新读取拉单状态", exact: true }).click();
+    await expect(panel).toHaveAttribute("aria-busy", "false");
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 }); await panel.scrollIntoViewIfNeeded();
+      await noOverflow(page); await panel.screenshot({ path: testInfo.outputPath(`order-sync-${width}.png`), animations: "disabled" });
+    }
+  } finally {
+    const response = await apiFetch(`${process.env.API_BASE_URL}/v1/marketplace-accounts/${account.id}`, { method: "DELETE" });
+    expect(response.ok).toBe(true);
+  }
+});
+
 test("six centers show real filtered order, product-row and unit totals without production or model actions", async ({ page }, testInfo) => {
   test.skip(process.env.E2E_ISOLATED_DAILY !== "1", "This acceptance leaf owns disposable resources only");
   requireDisposableIntegrationEnvironment();
@@ -267,6 +291,7 @@ test("six centers preserve an existing human order through operator edits, artwo
     await page.goto(`/orders?q=${externalId}`);
     await page.getByRole("button", { name: externalId, exact: true }).click();
     const whole = page.getByRole("dialog", { name: "整单详情", exact: true });
+    await expect(whole.getByRole("button", { name: "刷新整单", exact: true })).toBeEnabled({ timeout: 60_000 });
     await expect(whole.getByText("本单已保存美工制作方式", { exact: true })).toBeVisible();
     await expect(whole.getByLabel("设计执行方式", { exact: true })).toHaveCount(0);
     await page.locator("details.oc-platform-editor > summary").click();
@@ -420,7 +445,9 @@ test("six centers preserve an existing human order through operator edits, artwo
     await expect(page.getByText("质检通过 2/2 件 · 已出库 2 件", { exact: true })).toBeVisible();
     const operations = await centerApi<OrderOperationsView>(`order-centers/lines/${id}/operations`);
     expect(operations.shipments[0]!.writebacks).toHaveLength(0);
-    await page.getByLabel("整单下一步").getByRole("button", { name: "登记平台确认", exact: true }).click();
+    // This legacy manual-order fixture has no authorized automatic fulfillment route.
+    await page.getByRole("navigation", { name: "本单操作" }).getByRole("button", { name: "发货", exact: true }).click();
+    await page.getByText("登记平台发货确认", { exact: true }).click();
     await expect(page.getByLabel("平台确认时间")).toBeVisible();
     await page.getByLabel("平台确认时间").fill(await currentLocalMinute());
     await page.getByLabel("平台发货确认凭证").fill("Synthetic Seller Central accepted tracking receipt");

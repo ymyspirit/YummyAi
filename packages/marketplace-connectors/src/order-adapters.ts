@@ -15,7 +15,7 @@ import { normalizeAmazonOrder, normalizeEtsyReceipt } from "./provider-orders.js
 
 const AccessTokenSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1).optional() }).passthrough();
 const AmazonSearchResponseSchema = z.object({
-  orders: z.array(z.unknown()).default([]),
+  orders: z.array(z.unknown()),
   pagination: z.object({ nextToken: z.string().min(1).nullable().optional() }).passthrough().optional(),
   totalCount: z.number().int().nonnegative().optional(),
 }).passthrough();
@@ -31,7 +31,7 @@ export class AmazonOrdersAdapter implements MarketplaceOrderIngestionAdapter {
   ) {}
 
   fetchPage(
-    context: MarketplaceConnectorContext,
+    context: Omit<MarketplaceConnectorContext, "tenantId">,
     credentials: MarketplaceCredentialAccessor,
     rawRequest: OrderSyncRequest,
     signal: AbortSignal,
@@ -85,7 +85,7 @@ export class EtsyReceiptsAdapter implements MarketplaceOrderIngestionAdapter {
   ) {}
 
   fetchPage(
-    context: MarketplaceConnectorContext,
+    context: Omit<MarketplaceConnectorContext, "tenantId">,
     credentials: MarketplaceCredentialAccessor,
     rawRequest: OrderSyncRequest,
     signal: AbortSignal,

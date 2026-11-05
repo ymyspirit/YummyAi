@@ -366,6 +366,8 @@ import {
   FactoryPortalController,
 } from "./orders/factory-portal.controller.js";
 import { OrderSyncCoordinator } from "./orders/order-sync-coordinator.js";
+import { OrderSyncScheduleService } from "./orders/order-sync-schedule.service.js";
+import { OrderSyncController } from "./orders/order-sync.controller.js";
 import { RedisCustomizationFileScanEnqueuer } from "./orders/redis-customization-file-scan-enqueuer.js";
 import {
   DrizzleNotificationRepository,
@@ -523,6 +525,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     OrderDesignAgentController,
     OrderTaskController,
     OrderFlowController,
+    OrderSyncController,
     OrderResponsibilityController,
     BusinessFollowupController,
     RuleCenterController,
@@ -871,6 +874,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     { provide: LogisticsEnqueuer, useClass: RedisLogisticsEnqueuer },
     { provide: ShiposReadGateway, useFactory: () => createShiposReadGateway() },
     OrderSyncCoordinator,
+    OrderSyncScheduleService,
     ProcurementService,
     InvoiceReconciliationService,
     IncomingInspectionService,

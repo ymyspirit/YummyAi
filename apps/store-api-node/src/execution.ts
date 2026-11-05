@@ -12,6 +12,9 @@ import { HttpMarketplaceCapabilityGateway, MarketplaceConnectorError, StoreNodeC
 import { STORE_NODE_PUBLICATION_OPERATION } from "@yummyai/contracts/marketplace/publication-preview";
 import { STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION } from "@yummyai/contracts/marketplace/publication-submit";
 import { assertStoreNodeSubmissionLease, StoreNodeSubmissionPolicyError } from "@yummyai/marketplace-connectors";
+import { assertStoreNodeOrdersLease, StoreNodeOrdersPolicyError } from "@yummyai/marketplace-connectors";
+import { STORE_NODE_ORDER_SYNC_OPERATION } from "@yummyai/contracts/order/sync";
+import { executeStoreNodeOrderSync } from "./order-sync-execution.js";
 import { StoreNodeError, nodeCheck, safeStoreNodeCode } from "./error.js";
 import { StoreNodeExecutionJournal, cacheStoreNodeResponse, replayStoreNodeResponse, type StoreNodeExecutionJournalRow } from "./execution-journal.js";
 import { StoreNodeExecutionTransport, StoreNodeExecutionRpcError } from "./execution-transport.js";
@@ -48,7 +51,7 @@ export async function runStoreNodeExecution(options: StoreNodeExecutionOptions):
           protocol: STORE_NODE_EXECUTION_PROTOCOL, nodeId: options.identity.nodeId, certificateGeneration: options.identity.certificateGeneration,
           sessionId: heartbeat.sessionId, supportedAuthorizationModes: ["amazon_private", ...(options.etsy ? ["etsy_oauth"] : []),
             ...(options.amazonApplication?.clientId && options.amazonApplication.clientSecret ? ["amazon_public"] : [])],
-          supportedOperations: [STORE_NODE_EXECUTION_OPERATION, STORE_NODE_PUBLICATION_OPERATION, STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION],
+          supportedOperations: [STORE_NODE_EXECUTION_OPERATION, STORE_NODE_PUBLICATION_OPERATION, STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION, STORE_NODE_ORDER_SYNC_OPERATION],
         }));
         if (!claim.lease) { options.onState?.({ state: "waiting" }); await pause(options); continue; }
         const lease = claim.lease;
@@ -81,6 +84,7 @@ async function executeJournal(options: StoreNodeExecutionOptions, journal: Store
   let exchanges: Promise<void> = Promise.resolve(), exchangeStopped = false, exchangeFailure: unknown;
   try {
     if (lease.operation === STORE_NODE_PUBLICATION_OPERATION) assertStoreNodePublicationLease(lease, seed);
+    else if (lease.operation === STORE_NODE_ORDER_SYNC_OPERATION) assertStoreNodeOrdersLease(lease, seed);
     else if (lease.operation === STORE_NODE_PUBLICATION_SUBMIT_OPERATION || lease.operation === STORE_NODE_PUBLICATION_STATUS_OPERATION) assertStoreNodeSubmissionLease(lease, seed);
     else {
       const expectedRequest = storeNodeExecutionRequestText(lease.accountId, { requestId: lease.requestId, requestChecksum: lease.requestChecksum,
@@ -112,6 +116,10 @@ async function executeJournal(options: StoreNodeExecutionOptions, journal: Store
         const result = await executeStoreNodeSubmission({ seed, lease, signal: options.signal, request: options.request, exchange, amazonApplication: options.amazonApplication,
           observeSecret: value => { if (value) secrets.add(value); } });
         await storeCompletion({ outcome: lease.operation === STORE_NODE_PUBLICATION_SUBMIT_OPERATION ? "publication_submit" : "publication_status", result });
+      } else if (lease.operation === STORE_NODE_ORDER_SYNC_OPERATION) {
+        const result = await executeStoreNodeOrderSync({ seed, lease, signal: options.signal, request: options.request, exchange,
+          amazonApplication: options.amazonApplication, observeSecret: value => { if (value) secrets.add(value); } });
+        await storeCompletion({ outcome: "order_sync", result });
       } else if (lease.operation === STORE_NODE_PUBLICATION_OPERATION) {
         // Cached physical responses may finish their original receipt even after
         // local work stops. exchangeOnce still fences every new platform I/O.
@@ -187,7 +195,7 @@ async function executeJournal(options: StoreNodeExecutionOptions, journal: Store
     async function exchangeOnce(request: StoreNodeCapabilityExchange, send: (signal?: AbortSignal) => Promise<Response>): Promise<Response> {
       let row = journal.data.rows.find(value => value.requestDigest === request.requestDigest);
       if (!row && (request.requestClass === "etsy_refresh" || request.requestClass === "amazon_lwa" || request.requestClass === "amazon_listing_validation_preview"
-        || request.requestClass === "amazon_listing_submit" || request.requestClass === "amazon_listing_status"))
+        || request.requestClass === "amazon_listing_submit" || request.requestClass === "amazon_listing_status" || request.requestClass === "amazon_orders"))
         nodeCheck(!journal.data.rows.some(value => value.requestClass === request.requestClass), "store_node_policy_rejected");
       if (!row) row = await journal.update(data => {
         nodeCheck(data.rows.length < 128, "store_node_policy_rejected");
@@ -282,7 +290,7 @@ async function executeJournal(options: StoreNodeExecutionOptions, journal: Store
 }
 function checkReceipt(value: { executionId: string; claimId: string }, lease: StoreNodeExecutionLease) { nodeCheck(value.executionId === lease.id && value.claimId === lease.claimId, "store_node_operation_unknown"); }
 function safeCode(error: unknown) {
-  if (error instanceof StoreNodeCapabilityPolicyError || error instanceof StoreNodePublicationPolicyError || error instanceof StoreNodeSubmissionPolicyError || error instanceof StoreNodeAmazonApplicationError) return error.code;
+  if (error instanceof StoreNodeCapabilityPolicyError || error instanceof StoreNodePublicationPolicyError || error instanceof StoreNodeSubmissionPolicyError || error instanceof StoreNodeOrdersPolicyError || error instanceof StoreNodeAmazonApplicationError) return error.code;
   if (error instanceof MarketplaceConnectorError) return ({ authorization: "store_node_upstream_authorization", validation: "store_node_upstream_validation", conflict: "store_node_policy_rejected",
     rate_limited: "store_node_upstream_rate_limited", upstream_retryable: "store_node_upstream_retryable", upstream_terminal: "store_node_upstream_terminal" } as const)[error.code];
   const value = StoreNodeExecutionErrorSchema.safeParse(safeStoreNodeCode(error)); return value.success ? value.data : "store_node_execution_failed";

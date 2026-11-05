@@ -4,6 +4,7 @@ import type { TenantContext, SyncMarketplaceCapabilitiesInput } from "@yummyai/c
 import type { StoreNodeSealedCredential, StoreNodeExecutionState, StoreNodeExecutionPhase, StoreNodeExecutionRequestClass } from "@yummyai/contracts/marketplace/store-node-execution";
 import type { PublicationPreviewNodeInput } from "@yummyai/contracts/marketplace/publication-preview";
 import type {PublicationSubmitNodeInput,PublicationStatusNodeInput} from "@yummyai/contracts/marketplace/publication-submit";
+import type { OrderSyncNodeInput } from "@yummyai/contracts/order/sync";
 import { organizations } from "./identity.js";
 import { marketplaceAccounts, marketplaceCapabilitySnapshots } from "./marketplace.js";
 import { marketplaceStoreNodes } from "./store-node.js";
@@ -14,7 +15,7 @@ export const marketplaceStoreNodeExecutions = pgTable("marketplace_store_node_ex
   id: uuid("id").primaryKey(), tenantId: uuid("tenant_id").notNull().references(() => organizations.id), accountId: uuid("account_id").notNull(),
   nodeId: uuid("node_id").notNull(), certificateGeneration: integer("certificate_generation").notNull(), authorizationGeneration: uuid("authorization_generation").notNull(),
   bindingRevision: integer("binding_revision").notNull(), requestId: uuid("request_id").notNull(), requestChecksum: text("request_checksum").notNull(),
-  operation: text("operation").default("marketplace.capabilities.sync.v1").notNull(), input: jsonb("input").$type<SyncMarketplaceCapabilitiesInput|PublicationPreviewNodeInput|PublicationSubmitNodeInput|PublicationStatusNodeInput>().notNull(),
+  operation: text("operation").default("marketplace.capabilities.sync.v1").notNull(), input: jsonb("input").$type<SyncMarketplaceCapabilitiesInput|PublicationPreviewNodeInput|PublicationSubmitNodeInput|PublicationStatusNodeInput|OrderSyncNodeInput>().notNull(),
   createdBy: uuid("created_by").notNull(), membershipId: uuid("membership_id").notNull(), authorityCeiling: jsonb("authority_ceiling").$type<TenantContext>().notNull(),
   state: text("state").$type<StoreNodeExecutionState>().default("waiting_node").notNull(), phase: text("phase").$type<StoreNodeExecutionPhase>().default("queued").notNull(), errorCode: text("error_code"),
   claimId: uuid("claim_id"), sessionId: uuid("session_id"), credentialUseId: uuid("credential_use_id"), credentialId: uuid("credential_id"),
@@ -27,8 +28,8 @@ export const marketplaceStoreNodeExecutions = pgTable("marketplace_store_node_ex
   check("store_node_execution_id_check", sql`substring(${t.id}::text from 15 for 1)='7' and substring(${t.requestId}::text from 15 for 1)='7'`),
   check("store_node_execution_digest_check", sql`${t.requestChecksum}~'^[a-f0-9]{64}$'`),
   check("store_node_execution_pins_check", sql`${t.certificateGeneration}>0 and ${t.bindingRevision}>0`),
-  check("store_node_execution_operation_check", sql`${t.operation} in ('marketplace.capabilities.sync.v1','marketplace.publication.validation-preview.v1','marketplace.publication.amazon-submit.v1','marketplace.publication.amazon-status.v1')`),
-  check("store_node_execution_success_shape",sql`(${t.operation}='marketplace.capabilities.sync.v1' and (${t.state}='succeeded')=(${t.snapshotId} is not null) and (${t.snapshotId} is null or ${t.completionChecksum} is not null)) or (${t.operation} in ('marketplace.publication.validation-preview.v1','marketplace.publication.amazon-submit.v1','marketplace.publication.amazon-status.v1') and ${t.snapshotId} is null and (${t.state}<>'succeeded' or ${t.completionChecksum} is not null))`),
+  check("store_node_execution_operation_check", sql`${t.operation} in ('marketplace.capabilities.sync.v1','marketplace.publication.validation-preview.v1','marketplace.publication.amazon-submit.v1','marketplace.publication.amazon-status.v1','marketplace.orders.sync.v1')`),
+  check("store_node_execution_success_shape",sql`(${t.operation}='marketplace.capabilities.sync.v1' and (${t.state}='succeeded')=(${t.snapshotId} is not null) and (${t.snapshotId} is null or ${t.completionChecksum} is not null)) or (${t.operation} in ('marketplace.publication.validation-preview.v1','marketplace.publication.amazon-submit.v1','marketplace.publication.amazon-status.v1','marketplace.orders.sync.v1') and ${t.snapshotId} is null and (${t.state}<>'succeeded' or ${t.completionChecksum} is not null))`),
   foreignKey({ columns: [t.tenantId,t.accountId], foreignColumns: [marketplaceAccounts.tenantId,marketplaceAccounts.id], name: "store_node_execution_account_fk" }),
   foreignKey({ columns: [t.tenantId,t.accountId,t.nodeId], foreignColumns: [marketplaceStoreNodes.tenantId,marketplaceStoreNodes.accountId,marketplaceStoreNodes.id], name: "store_node_execution_node_fk" }),
   foreignKey({ columns: [t.tenantId,t.snapshotId], foreignColumns: [marketplaceCapabilitySnapshots.tenantId,marketplaceCapabilitySnapshots.id], name: "store_node_execution_snapshot_fk" }),
@@ -47,7 +48,7 @@ export const marketplaceStoreNodeExecutionSteps = pgTable("marketplace_store_nod
   createdAt: instant("created_at").defaultNow().notNull(), completedAt: instant("completed_at"),
 }, t => [
   check("store_node_step_ordinal_check",sql`${t.ordinal} between 1 and 128`),
-  check("store_node_step_request_class_check",sql`${t.requestClass} in ('amazon_lwa','amazon_participations','amazon_product_definition','amazon_schema','amazon_meta_schema','amazon_listing_validation_preview','amazon_listing_submit','amazon_listing_status','etsy_refresh','etsy_shop','etsy_sections','etsy_return_policies','etsy_taxonomy','etsy_shipping_profiles','etsy_readiness_profiles','etsy_taxonomy_properties')`),
+  check("store_node_step_request_class_check",sql`${t.requestClass} in ('amazon_lwa','amazon_participations','amazon_product_definition','amazon_schema','amazon_meta_schema','amazon_listing_validation_preview','amazon_listing_submit','amazon_listing_status','amazon_orders','etsy_refresh','etsy_shop','etsy_sections','etsy_return_policies','etsy_taxonomy','etsy_shipping_profiles','etsy_readiness_profiles','etsy_taxonomy_properties')`),
   foreignKey({columns:[t.tenantId,t.executionId],foreignColumns:[marketplaceStoreNodeExecutions.tenantId,marketplaceStoreNodeExecutions.id],name:"store_node_step_execution_fk"}),
   uniqueIndex("store_node_step_ordinal_unique").on(t.tenantId,t.executionId,t.ordinal),
 ]);
