@@ -18,6 +18,7 @@ import {
   AmazonReportDetailViewSchema,
   AmazonReportImportInputSchema,
   AmazonReportLineViewSchema,
+  NormalizeOrderInputSchema,
   createEntityId,
   type AmazonReportImportInput,
   type AmazonReportBatchView,
@@ -39,6 +40,7 @@ import {
   orderLines,
   orderProtectedDetails,
   orderProtectedAccessEvents,
+  orderSyncDispatchTenants,
   purgeExpiredAmazonOrderReports,
   withTenant,
   type DatabaseConnection,
@@ -53,6 +55,7 @@ import {
   parseAmazonOrderReport,
   AmazonReportParseError,
   type ParsedAmazonReportOrder,
+  type ParsedAmazonReportLine,
 } from "./amazon-report-parser.js";
 import {
   AmazonReportArchiveGateway,
@@ -109,6 +112,99 @@ export class AmazonOrderReportService {
   /** Native, authorized source refresh; no order, PII, work or queue is rewritten. */
   refreshPlatformDeadlines(context: TenantContext, batchId: string) {
     return refreshAmazonReportPlatformDeadlines({ database: this.database, vault: this.vault, audit: this.audit }, context, batchId);
+  }
+
+  async materializeApiOrder(context: TenantContext, input: NormalizeOrderInput) {
+    return withTenant(this.database.db, context, async tx => {
+      const result = await this.orderService.materializeNormalizedInTransaction(tx, context, input);
+      if (!result.replayed) await this.registerApiSourcesInTransaction(tx, context, result.orderId, input);
+      return result;
+    });
+  }
+
+  /** API and report sources share the original archive, review and retention owners. */
+  async registerApiSourcesInTransaction(tx: TenantTransaction, context: TenantContext, orderId: string, raw: NormalizeOrderInput) {
+    const input = NormalizeOrderInputSchema.parse(raw);
+    if (input.platform !== "amazon" || input.redactedSource.apiVersion !== "2026-01-01" || !input.lines.some(line => line.customizationCount > 0)) return;
+    await currentOrderAuthority(tx, context, [Permission.OrderWrite, Permission.OrderPiiRead], { requireMembership: true });
+    const marketplaceId = input.redactedSource.marketplaceId;
+    if (typeof marketplaceId !== "string" || !marketplaceId) throw new ConflictException("订单站点资料缺失");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${orderId}:amazon-report`}, 0))`);
+    const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for("update");
+    if (!order || order.accountId !== input.accountId || order.externalOrderId !== input.externalOrderId) throw new ConflictException("订单来源不一致");
+    const [privacy] = await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, orderId));
+    const existing = await tx.select().from(reportLines).where(eq(reportLines.orderId, orderId));
+    const now = new Date();
+    // A later platform read cannot revive erased customer files or extend their original deadline.
+    if (order.addressStatus === "anonymized" || privacy?.status === "anonymized" || privacy && privacy.retentionExpiresAt <= now
+      || existing.some(line => line.state === "expired" || line.expiresAt <= now)) return;
+    const lines = await tx.select().from(orderLines).where(eq(orderLines.orderId, orderId));
+    const sources = input.lines.map(line => {
+      const references = input.protectedDetails?.customizations.find(item => item.externalLineId === line.externalLineId)?.values
+        .filter(value => value.type === "file_reference" && value.key === "amazon:customized-url") ?? [];
+      if (references.length > 1) throw new ConflictException("订单定制来源不唯一");
+      const reference = references[0];
+      const total = line.unitPrice ? line.unitPrice.amountMinor * line.quantity : null;
+      if (total !== null && !Number.isSafeInteger(total)) throw new ConflictException("订单金额超出范围");
+      const source: ParsedAmazonReportLine = { externalLineId: line.externalLineId, skuCode: line.skuCode, title: line.title, quantity: line.quantity,
+        currency: line.unitPrice?.currency ?? null, itemTotalMinor: total, shippingTotalMinor: null, taxTotalMinor: null,
+        customizedUrl: reference?.type === "file_reference" ? reference.externalReference : null, customizedPage: null };
+      return source;
+    });
+    if (sources.every(source => existing.some(line => line.orderLineId === lines.find(item => item.externalLineId === source.externalLineId)?.id
+      && line.sourceChecksum === checksum(JSON.stringify({ marketplaceId, line: source }))))) return;
+    const batchId = createEntityId(), expiresAt = new Date(Math.min(now.getTime() + 30 * 86400_000, privacy?.retentionExpiresAt.getTime() ?? Infinity));
+    await tx.insert(batches).values({ id: batchId, tenantId: context.tenantId, accountId: input.accountId, marketplaceId,
+      sourceType: "orders_api", fileName: "Amazon API 自动同步", reportChecksum: checksum(canonicalJson({ externalEventId: input.externalEventId, sources })),
+      rowCount: sources.length, orderCount: 1, duplicateOrderCount: 1, status: "completed", createdBy: context.userId, expiresAt });
+    for (const source of sources) {
+      const line = lines.find(item => item.externalLineId === source.externalLineId);
+      if (!line) throw new ConflictException("订单商品项尚未完成同步");
+      await this.storeSourceInTransaction(tx, context, orderId, line, batchId, expiresAt, { line: source, marketplaceId, warnings: [] });
+    }
+    await tx.insert(batchItems).values({ id: createEntityId(), tenantId: context.tenantId, batchId, orderId, externalOrderId: input.externalOrderId, status: "duplicate" });
+    await tx.insert(orderSyncDispatchTenants).values({ tenantId: context.tenantId }).onConflictDoNothing();
+    await this.audit.recordInTransaction(tx, context, { action: "order.customization.api_source", resourceType: "amazon_order_report", resourceId: batchId,
+      result: "success", metadata: { orderId, sourceType: "orders_api", rowCount: sources.length } });
+  }
+
+  /** Only committed batches are dispatched; a failed queue write leaves the original outbox pending. */
+  async dispatchApiSources(scope: TenantContext) {
+    await withTenant(this.database.db, scope, async tx => {
+      const pending = await tx.select().from(batches).where(and(eq(batches.sourceType, "orders_api"), isNull(batches.dispatchedAt)))
+        .orderBy(asc(batches.createdAt), asc(batches.id)).limit(20).for("update", { skipLocked: true });
+      for (const batch of pending) {
+        if (!batch.createdBy) throw new ConflictException("原订单同步人员不存在");
+        const context = { ...scope, userId: batch.createdBy };
+        await this.retention.schedule(context, batch.id, batch.expiresAt);
+        await this.processing.schedule(context, batch.id);
+        await tx.update(batches).set({ dispatchedAt: new Date() }).where(eq(batches.id, batch.id));
+      }
+    });
+  }
+
+  private async storeSourceInTransaction(tx: TenantTransaction, context: TenantContext, orderId: string,
+    line: { id: string; quantity: number; skuCode: string | null; customizationCount: number }, batchId: string, expiresAt: Date, source: StoredSource) {
+    const [prior] = await tx.select().from(reportLines).where(eq(reportLines.orderLineId, line.id)).for("update").limit(1);
+    if (prior && (prior.state === "expired" || prior.expiresAt <= new Date())) throw new ConflictException("订单定制资料已到保存期限");
+    const sourceChecksum = checksum(JSON.stringify({ marketplaceId: source.marketplaceId, line: source.line }));
+    if (prior?.sourceChecksum === sourceChecksum) return;
+    const conflict = line.quantity !== source.line.quantity || line.skuCode !== source.line.skuCode;
+    const missingCustomization = !source.line.customizedUrl && (!!source.line.customizedPage || line.customizationCount > 0 || !!prior?.currentVersionId);
+    const state = conflict || missingCustomization ? "failed" : source.line.customizedUrl ? "pending" : "none";
+    const values = { batchId, sourceChecksum, encryptedSource: this.vault.encrypt(JSON.stringify(source)),
+      itemTotalMinor: source.line.itemTotalMinor, currency: source.line.currency, state,
+      lastErrorCode: conflict ? "report_conflict" : missingCustomization ? "customization_missing" : prior ? "source_changed" : null,
+      hasPreview: false, processingToken: null, processingStartedAt: null, updatedAt: new Date() };
+    const reportLineId = prior?.id ?? createEntityId();
+    if (prior) await tx.update(reportLines).set(values).where(eq(reportLines.id, prior.id));
+    else await tx.insert(reportLines).values({ id: reportLineId, tenantId: context.tenantId, orderId, orderLineId: line.id, expiresAt, ...values });
+    if (state === "pending") {
+      const request = { tenantId: context.tenantId, reportLineId, requestId: createEntityId(), dispatchId: null, batchId,
+        sourceChecksum, expectedVersionId: prior?.currentVersionId ?? null, requestedBy: context.userId,
+        status: "pending", attemptCount: 0, lastErrorCode: null, createdAt: new Date(), updatedAt: new Date() };
+      await tx.insert(processingRequests).values(request).onConflictDoUpdate({ target: processingRequests.reportLineId, set: request });
+    } else await tx.update(processingRequests).set({ status: "superseded", updatedAt: new Date() }).where(eq(processingRequests.reportLineId, reportLineId));
   }
 
   async importReport(
@@ -260,76 +356,8 @@ export class AmazonOrderReportService {
               (candidate) => candidate.externalLineId === sourceLine.externalLineId,
             );
             if (!line) throw new Error("missing_order_line");
-            const [prior] = await tx
-              .select()
-              .from(reportLines)
-              .where(eq(reportLines.orderLineId, line.id))
-              .for("update")
-              .limit(1);
-            if (prior && (prior.state === "expired" || prior.expiresAt <= new Date()))
-              throw new ConflictException("订单定制资料已到保存期限");
-            const sourceChecksum = checksum(
-              JSON.stringify({ marketplaceId: input.marketplaceId, line: sourceLine }),
-            );
-            if (prior?.sourceChecksum === sourceChecksum) continue;
-            const sourceChanged = !!prior;
-            const conflict =
-              line.quantity !== sourceLine.quantity || line.skuCode !== sourceLine.skuCode;
-            const missingCustomization =
-              !sourceLine.customizedUrl &&
-              (!!sourceLine.customizedPage ||
-                line.customizationCount > 0 ||
-                !!prior?.currentVersionId);
-            const nextState =
-              conflict || missingCustomization
-                ? "failed"
-                : sourceLine.customizedUrl
-                  ? "pending"
-                  : "none";
-            const values = {
-              batchId,
-              sourceChecksum,
-              encryptedSource: this.vault.encrypt(
-                JSON.stringify({
-                  line: sourceLine,
-                  marketplaceId: input.marketplaceId,
-                  warnings: parsed.warnings,
-                } satisfies StoredSource),
-              ),
-              itemTotalMinor: sourceLine.itemTotalMinor,
-              currency: sourceLine.currency,
-              state: nextState,
-              lastErrorCode: conflict
-                ? "report_conflict"
-                : missingCustomization
-                  ? "customization_missing"
-                  : sourceChanged
-                    ? "source_changed"
-                    : null,
-              hasPreview: false,
-              processingToken: null,
-              processingStartedAt: null,
-              updatedAt: new Date(),
-            };
-            const reportLineId = prior?.id ?? createEntityId();
-            if (prior) await tx.update(reportLines).set(values).where(eq(reportLines.id, prior.id));
-            else
-              await tx.insert(reportLines).values({
-                id: reportLineId,
-                tenantId: context.tenantId,
-                orderId: result.order.id,
-                orderLineId: line.id,
-                expiresAt,
-                ...values,
-              });
-            if (nextState === "pending") {
-              const request = { tenantId: context.tenantId, reportLineId, requestId: createEntityId(), dispatchId: null, batchId,
-                sourceChecksum, expectedVersionId: prior?.currentVersionId ?? null, requestedBy: context.userId,
-                status: "pending", attemptCount: 0, lastErrorCode: null, createdAt: new Date(), updatedAt: new Date() };
-              await tx.insert(processingRequests).values(request).onConflictDoUpdate({ target: processingRequests.reportLineId, set: request });
-            } else {
-              await tx.update(processingRequests).set({ status: "superseded", updatedAt: new Date() }).where(eq(processingRequests.reportLineId, reportLineId));
-            }
+            await this.storeSourceInTransaction(tx, context, result.order.id, line, batchId, expiresAt,
+              { line: sourceLine, marketplaceId: input.marketplaceId, warnings: parsed.warnings });
           }
           const [currentOrder] = await tx
             .select()

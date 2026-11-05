@@ -19,6 +19,7 @@ import {
 
 import { OrderIngestionService } from "./order-ingestion.service.js";
 import { OrderService } from "./order.service.js";
+import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 
 export interface RunOrderSyncInput {
   connectorContext: MarketplaceConnectorContext;
@@ -33,6 +34,7 @@ export class OrderSyncCoordinator {
   constructor(
     @Inject(OrderIngestionService) private readonly ingestion: OrderIngestionService,
     @Inject(OrderService) private readonly orders: OrderService,
+    @Inject(AmazonOrderReportService) private readonly reports: AmazonOrderReportService,
   ) {}
 
   async assertNodeRunInTransaction(tx: TenantTransaction, row: typeof marketplaceStoreNodeExecutions.$inferSelect) {
@@ -67,6 +69,7 @@ export class OrderSyncCoordinator {
     for (const record of result.records) {
       const materialized = await this.orders.materializeNormalizedInTransaction(tx, authority, record.order);
       if (materialized.replayed) duplicateCount++;
+      else await this.reports.registerApiSourcesInTransaction(tx, authority, materialized.orderId, record.order);
       for (const externalLineId of materialized.unlinkedLineIds) {
         if (!risks.some(risk => risk.code === "unsupported_mapping" && risk.externalOrderId === record.order.externalOrderId && risk.externalLineId === externalLineId))
           risks.push({ code: "unsupported_mapping", severity: "warning", externalOrderId: record.order.externalOrderId,
@@ -120,7 +123,7 @@ export class OrderSyncCoordinator {
           if (order.accountId !== input.connectorContext.accountId || order.platform !== input.adapter.platform) {
             throw new UnprocessableEntityException("Normalized order identity does not match the ingestion run");
           }
-          const result = await this.orders.materializeNormalized(context, order);
+          const result = await this.reports.materializeApiOrder(context, order);
           return { replayed: result.replayed, unlinkedLineIds: result.unlinkedLineIds };
         },
       });

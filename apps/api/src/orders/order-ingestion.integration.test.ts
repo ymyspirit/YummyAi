@@ -10,6 +10,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { OrderIngestionService } from "./order-ingestion.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderSyncCoordinator } from "./order-sync-coordinator.js";
+import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 
 describe("order ingestion persistence", () => {
   const database = connectDatabase();
@@ -36,7 +37,11 @@ describe("order ingestion persistence", () => {
     );
     service = new OrderIngestionService(database, new AuditService(database));
     orderService = new OrderService(database, new SecretVault(Buffer.alloc(32, 23)), new AuditService(database));
-    coordinator = new OrderSyncCoordinator(service, orderService);
+    const reports = new AmazonOrderReportService(database, new SecretVault(Buffer.alloc(32, 23)), orderService, new AuditService(database), {
+      download: async () => { throw new Error("No remote attachments in ingestion fixtures"); },
+      scan: async () => { throw new Error("No remote attachments in ingestion fixtures"); },
+    }, { schedule: async () => undefined }, { schedule: async () => undefined });
+    coordinator = new OrderSyncCoordinator(service, orderService, reports);
   });
 
   afterAll(async () => { await database.client.end(); });

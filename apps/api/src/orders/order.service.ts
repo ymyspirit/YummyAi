@@ -140,7 +140,8 @@ export class OrderService {
             }).where(eq(orders.id, existingOrder.id));
           }
         }
-        if (input.protectedDetails && encryptedEnvelope && !options.manualReport) {
+        let protectedDetailsUpdated = false;
+        if (input.protectedDetails && encryptedEnvelope && !options.manualReport && existingOrder.addressStatus !== "anonymized") {
           const [currentProtected] = await tx.select().from(orderProtectedDetails)
             .where(eq(orderProtectedDetails.orderId, existingOrder.id)).limit(1);
           if (!currentProtected) {
@@ -148,15 +149,17 @@ export class OrderService {
               id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, encryptedEnvelope,
               countryCode: input.protectedDetails.shippingAddress.countryCode, retentionExpiresAt: retentionExpiry(),
             });
-          } else if (currentProtected.status === "protected") {
+            protectedDetailsUpdated = true;
+          } else if (currentProtected.status === "protected" && currentProtected.retentionExpiresAt > new Date()) {
             await tx.update(orderProtectedDetails).set({
               encryptedEnvelope, envelopeVersion: currentProtected.envelopeVersion + 1,
               countryCode: input.protectedDetails.shippingAddress.countryCode,
-              retentionExpiresAt: retentionExpiry(), updatedAt: new Date(),
+              updatedAt: new Date(),
             }).where(and(
               eq(orderProtectedDetails.id, currentProtected.id),
               eq(orderProtectedDetails.envelopeVersion, currentProtected.envelopeVersion),
             ));
+            protectedDetailsUpdated = true;
           }
         }
         await tx.insert(orderEvents).values({
@@ -167,7 +170,7 @@ export class OrderService {
         });
         await tx.update(orders).set({
           providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
-          ...(input.protectedDetails && !options.manualReport && existingOrder.addressStatus !== "anonymized" ? {
+          ...(input.protectedDetails && protectedDetailsUpdated ? {
             addressStatus: "protected" as const,
             addressCountryCode: input.protectedDetails.shippingAddress.countryCode,
           } : {}),

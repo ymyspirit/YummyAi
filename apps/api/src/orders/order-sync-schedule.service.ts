@@ -14,6 +14,7 @@ import { databaseNow, lockMarketplaceAccount, type MarketplaceAccountRow } from 
 import { StoreNodeService } from "../marketplaces/store-node.service.js";
 import { StoreNodeExecutionService } from "../marketplaces/store-node-execution.service.js";
 import { OrderIngestionService } from "./order-ingestion.service.js";
+import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 
 const required = [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead, Permission.StoreRead] as const;
 const stream = "automatic-orders";
@@ -30,7 +31,8 @@ export class OrderSyncScheduleService implements OnApplicationBootstrap, OnAppli
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StoreNodeService) private readonly nodes: StoreNodeService,
     @Inject(StoreNodeExecutionService) private readonly execution: StoreNodeExecutionService,
-    @Inject(OrderIngestionService) private readonly ingestion: OrderIngestionService) {}
+    @Inject(OrderIngestionService) private readonly ingestion: OrderIngestionService,
+    @Inject(AmazonOrderReportService) private readonly reports: AmazonOrderReportService) {}
 
   onApplicationBootstrap() {
     if (process.env.ORDER_SYNC_COORDINATOR === "off") return;
@@ -102,6 +104,7 @@ export class OrderSyncScheduleService implements OnApplicationBootstrap, OnAppli
     for (const tenant of tenants) {
       if (this.closing) return;
       const scope: TenantContext = { tenantId: tenant.tenantId, userId: tenant.tenantId, permissions: [], dataScope: "tenant" };
+      await this.reports.dispatchApiSources(scope);
       const due = await withTenant(this.database.db, scope, tx => tx.select({ id: schedules.id }).from(schedules)
         .where(and(eq(schedules.enabled, true), sql`${schedules.nextRunAt}<=clock_timestamp()`)).orderBy(asc(schedules.nextRunAt)).limit(10));
       for (const row of due) await this.advance(scope, row.id);

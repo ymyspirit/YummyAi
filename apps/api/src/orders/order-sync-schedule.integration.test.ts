@@ -4,7 +4,8 @@ import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { OrderSyncNodeInputSchema, type OrderSyncNodeInput } from "@yummyai/contracts/order/sync";
 import { connectDatabase, withTenant, marketplaceAccounts, marketplaceStoreNodes, marketplaceStoreNodeExecutions as executions,
-  memberships, membershipRoles, roles, orderSyncSchedules as schedules, orderConnectorCheckpoints, orderIngestionRuns, orders, orderSourceSnapshots } from "@yummyai/database";
+  memberships, membershipRoles, roles, orderSyncSchedules as schedules, orderConnectorCheckpoints, orderIngestionRuns, orders, orderSourceSnapshots,
+  amazonOrderReportLines, amazonOrderReportProcessingRequests } from "@yummyai/database";
 import { normalizeAmazonOrder } from "@yummyai/marketplace-connectors";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,20 +17,25 @@ import { OrderService } from "./order.service.js";
 import { OrderIngestionService } from "./order-ingestion.service.js";
 import { OrderSyncCoordinator } from "./order-sync-coordinator.js";
 import { OrderSyncScheduleService } from "./order-sync-schedule.service.js";
+import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 
 // The disposable runner owns all tenants and database cleanup. Provider/node I/O is not part of this DB suite.
 describe("automatic order sync persistence and authority", () => {
   const database = connectDatabase(), tenantId = createEntityId(), userId = createEntityId(), membershipId = createEntityId(), roleId = createEntityId();
   const authority: TenantContext = { tenantId, userId, permissions: [Permission.StoreRead, Permission.StoreManage, Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead], dataScope: "tenant" };
   const audit = new AuditService(database), vault = new SecretVault(Buffer.alloc(32, 21)), ingestion = new OrderIngestionService(database, audit), orderOwner = new OrderService(database, vault, audit);
-  const coordinator = new OrderSyncCoordinator(ingestion, orderOwner);
+  const reports = new AmazonOrderReportService(database, vault, orderOwner, audit, {
+    download: async () => { throw new Error("No remote I/O in node persistence fixtures"); },
+    scan: async () => { throw new Error("No remote I/O in node persistence fixtures"); },
+  }, { schedule: async () => undefined }, { schedule: async () => undefined });
+  const coordinator = new OrderSyncCoordinator(ingestion, orderOwner, reports);
   const binding = vi.fn(async (_tx, account) => {
     const [node] = await withTenant(database.db, authority, tx => tx.select().from(marketplaceStoreNodes).where(eq(marketplaceStoreNodes.accountId, account.id)));
     return { node: node!, binding: { revision: 1 }, now: new Date() };
   });
   const nodes = { executionBinding: binding } as unknown as StoreNodeService;
   const execution = new StoreNodeExecutionService(database, vault, audit, nodes, {} as MarketplaceCapabilityService, undefined, coordinator);
-  const scheduler = new OrderSyncScheduleService(database, audit, nodes, execution, ingestion);
+  const scheduler = new OrderSyncScheduleService(database, audit, nodes, execution, ingestion, reports);
   beforeAll(async () => {
     vi.stubEnv("STORE_NODE_EXECUTION_ENABLED", "1"); vi.stubEnv("STORE_NODE_RUNTIME_ENABLED", "1");
     await scheduler.onApplicationShutdown(); // Drive exact ticks; no wall-clock background activity in this fixture.
@@ -102,6 +108,29 @@ describe("automatic order sync persistence and authority", () => {
     expect((await s.read()).request?.checkpoint.version).toBe(2);
     const foreign = { ...authority, tenantId: createEntityId() };
     expect(await withTenant(database.db, foreign, tx => tx.select().from(schedules))).toEqual([]);
+  });
+  it("commits the native order receipt and its private Custom download request together", async () => {
+    const s = await scene(); await s.due();
+    const job = await s.job(), input = OrderSyncNodeInputSchema.parse(job.input), payload = page(input, s.accountId);
+    const record = payload.records[0]!;
+    record.order.lines[0]!.customizationCount = 1;
+    record.order.protectedDetails = { buyer: { name: null, email: null, phone: null },
+      shippingAddress: { recipient: "Synthetic", lines: ["Synthetic"], city: "Test", region: "CA", postalCode: "00000", countryCode: "US" },
+      customizations: [{ externalLineId: "synthetic-line", values: [{ key: "amazon:customized-url", label: "Amazon Custom file", type: "file_reference",
+        externalReference: "https://zme-caps.amazon.com/synthetic/private-api.zip" }] }] };
+    const adoptCustom = (rollback: boolean) => withTenant(database.db, authority, async tx => {
+      await coordinator.adoptNodePageInTransaction(tx, { ...job, startedAt: new Date() }, payload);
+      if (rollback) throw new Error("synthetic-custom-rollback");
+    });
+    await expect(adoptCustom(true)).rejects.toThrow("synthetic-custom-rollback");
+    expect(await withTenant(database.db, authority, tx => tx.select().from(amazonOrderReportProcessingRequests))).toHaveLength(0);
+    await adoptCustom(false);
+    const [request] = await withTenant(database.db, authority, tx => tx.select().from(amazonOrderReportProcessingRequests));
+    expect(request).toMatchObject({ status: "pending", requestedBy: userId });
+    expect(JSON.stringify(request)).not.toContain("private-api");
+    const [source] = await withTenant(database.db, authority, tx => tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.id, request!.reportLineId)));
+    expect(source).toMatchObject({ state: "pending", currentVersionId: null });
+    expect((await s.read()).request).toBeNull();
   });
   it("keeps the exact request on retry, and cancels the pending run when the administrator pauses", async () => {
     const s = await scene(); await s.due(); const original = (await s.read()).request, job = await s.job();
