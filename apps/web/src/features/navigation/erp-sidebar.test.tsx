@@ -36,7 +36,9 @@ describe("ErpSidebar", () => {
     const catalog = html.slice(catalogStart, commerceStart);
     for (const label of ["商品库", "印花库", "销售 SKU 组合", "商品套图", "上架工作台", "刊登管理"]) expect(catalog).toContain(label);
     const commerce = html.slice(commerceStart, creativeStart);
-    expect(commerce).toContain('href="/logistics"');
+    expect(commerce).toContain('href="/orders"');
+    expect(commerce).toContain('href="/production-files"');
+    expect(commerce).not.toContain('href="/logistics"');
     expect(commerce).not.toContain('href="/stores"');
     expect(html).toContain('href="/business-tasks"');
   });

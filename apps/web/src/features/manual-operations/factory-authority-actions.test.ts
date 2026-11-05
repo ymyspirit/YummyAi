@@ -17,7 +17,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("preserves factory directory and history authority and binds the requested factory", async () => {
   api.mockResolvedValue(Response.json({ ...envelope, products: [], templates: [] }));
-  expect(await loadFactoryDirectory(id)).toEqual({ data: { ...envelope, products: [], templates: [] } });
+  expect(await loadFactoryDirectory(id)).toEqual({ data: { ...envelope, products: [], templates: [], spus: [] } });
   api.mockResolvedValue(Response.json({ ...envelope, factoryId: id }));
   expect(await loadFactoryHistory(id)).toEqual({ data: { ...envelope, factoryId: id } });
   api.mockResolvedValue(Response.json({ ...envelope, factoryId: other }));
