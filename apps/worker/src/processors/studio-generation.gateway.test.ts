@@ -23,12 +23,23 @@ describe("studio HTTP gateway", () => {
   });
   it("uses bounded OpenAI-compatible image requests without returning credentials", async () => {
     const bytes = Buffer.from("89504e470d0a1a0a", "hex"), fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ data: [{ b64_json: bytes.toString("base64") }] }));
-    const output = await new HttpStudioGateway(fetch).generate(request(), async () => undefined);
+    const execution = request();
+    const output = await new HttpStudioGateway(fetch).generate(execution, async () => undefined);
     expect(output).toEqual({ bytes, mediaType: "image/png" });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0]![0]).toBe("https://example.test/v1/images/generations");
     expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body))).toMatchObject({ n: 1, model: "gpt-image-fixture", size: "1024x1024" });
     expect(fetch.mock.calls[0]![1]!.redirect).toBe("error");
+    expect(new Headers(fetch.mock.calls[0]![1]!.headers).get("x-client-request-id")).toBe(execution.input.requestId);
+    expect(new Headers(fetch.mock.calls[0]![1]!.headers).has("idempotency-key")).toBe(false);
+  });
+  it("omits an invalid correlation value and never retries an unknown transport outcome", async () => {
+    const execution = request();
+    execution.input.requestId = "invalid-private-value\r\nheader";
+    const transport = vi.fn<typeof globalThis.fetch>(async () => { throw new TypeError("connection interrupted"); });
+    await expect(new HttpStudioGateway(transport).generate(execution, vi.fn())).rejects.toThrow("connection interrupted");
+    expect(transport).toHaveBeenCalledOnce();
+    expect(new Headers(transport.mock.calls[0]![1]!.headers).has("x-client-request-id")).toBe(false);
   });
   it("uses multipart edits and never sends a reference URL to the model", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ data: [{ b64_json: "iVBORw0KGgo=" }] }));

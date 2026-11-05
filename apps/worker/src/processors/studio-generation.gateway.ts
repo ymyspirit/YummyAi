@@ -31,7 +31,11 @@ export class HttpStudioGateway implements StudioGateway {
       const multipart = body instanceof FormData;
       const response = await this.transport(`${endpoint}${path}`, {
         method: body ? "POST" : "GET", redirect: "error", signal,
-        headers: { authorization: `Bearer ${execution.apiKey}`, ...(body && !multipart ? { "content-type": "application/json" } : {}) },
+        // Correlation only: this never promises provider deduplication. Keep the
+        // opaque logical request discoverable even if the response is lost.
+        headers: { authorization: `Bearer ${execution.apiKey}`,
+          ...(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(input.requestId) ? { "x-client-request-id": input.requestId } : {}),
+          ...(body && !multipart ? { "content-type": "application/json" } : {}) },
         body: multipart ? body : body ? JSON.stringify(body) : undefined,
       });
       if (!response.ok) throw await parseModelProviderHttpFailure(response);

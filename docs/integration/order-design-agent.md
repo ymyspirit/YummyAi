@@ -328,10 +328,11 @@ Completed steps have durable output references and are reused. Known local failu
 
 ### Provider failures and bounded recovery (2026-11-04)
 
-This update is implemented and locally verified in the working branch. It has
-not been adopted by the daily runtime or validated by GitHub CI. Deployment and
-business acceptance remain separate; this document does not reclassify old runs.
-Local checks, the corrected regression and fixture cleanup are recorded in the
+The provider-recovery changes are included in the unified order-flow development
+branch. The pinned daily-runtime manifest and delivery checkpoint, rather than
+this protocol description, determine which version is active. Deployment and
+business acceptance remain separate; this change does not reclassify old runs.
+Earlier local checks, the corrected regression and fixture cleanup are recorded in the
 [verification checkpoint](../project-control/checkpoints/2026-11-04-order-design-interruption-recovery.json).
 
 The Studio transport preserves bounded, structured non-2xx evidence instead of
@@ -378,6 +379,15 @@ submissions because that form cannot prove which attempt produced an uploaded
 image. A previously verified response checkpoint remains reusable. The importer
 does not create billing evidence, production approval or a provider reconciliation
 API that the configured channel does not support.
+
+Studio requests now send the opaque logical UUID in `X-Client-Request-Id`, so
+gateway logs can be correlated after a lost response. It contains no order number,
+buyer data or credential. It is a tracing reference, not a provider idempotency
+guarantee; multiple allowed rate-limit attempts still have separate call records.
+An invalid identifier is not forwarded. Historical records without a returned
+provider reference cannot be assigned a response solely from similar timestamps.
+If a historical gateway log suggests a safety rejection, preserve it as diagnostic
+context; do not manufacture a received image, a zero-cost bill or production approval.
 
 Implementation references: the open-source [OpenAI Node SDK error handling](https://github.com/openai/openai-node/blob/main/docs/configuration.md)
 and [BullMQ backoff/retry model](https://docs.bullmq.io/guide/retrying-failing-jobs).
