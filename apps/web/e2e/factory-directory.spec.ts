@@ -72,6 +72,7 @@ test("factory directory saves name-only and partial profiles without requiring a
   await expect(dialog).not.toBeVisible();
   const revised = (await centerApi<FactoryDirectory>(`sourcing/factories?supplier=${supplier.id}`)).factories[0]!;
   expect(revised).toMatchObject({ versionNumber: 2, profile: { status: "draft", productionAddress: { province: "Synthetic factory province", countryCode: "", city: "", street: "" }, contacts: [{ name: "Synthetic incomplete production contact", phone: "" }] } });
+  await expect(page.getByText("生产：Synthetic incomplete production contact", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "编辑工厂资料", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "编辑工厂", exact: true });
   await dialog.getByLabel("工厂状态").selectOption("active");
