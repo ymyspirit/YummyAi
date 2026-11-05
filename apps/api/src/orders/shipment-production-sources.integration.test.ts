@@ -191,7 +191,7 @@ describe("shipment production source identity and concurrent quantity reservatio
     expect((await shipping.get(context, created.shipment.id)).versions).toHaveLength(1);
   });
 
-  it("preserves unexpected carrier facts after QC changes and keeps their consumed quantities", async () => {
+  it.each(["picked_up", "delivered"] as const)("preserves unexpected %s facts after QC changes and keeps their consumed quantities", async status => {
     const f = await fixture([2], [{ index: 0, quantity: 1 }, { index: 0, quantity: 1 }]);
     const created = await shipping.create(context, f.orderId, f.input(0));
     await shipping.reviewVersion(context, created.shipment.id, created.versions[0]!.id, review());
@@ -200,12 +200,18 @@ describe("shipment production source identity and concurrent quantity reservatio
       result: "failed", scoreBps: 5000, assessment: { formatVersion: 2, criterionResults: [{ code: "STOCK", scoreBps: 5000, passed: false, evidenceAssetIds: [] }] },
       evidenceAssetIds: [], defects: [{ code: "STOCK", severity: "major", responsibility: "supplier", disposition: "remake", note: "Synthetic actual defect", evidenceAssetIds: [] }],
       inspectedAt: await databaseTime(), idempotencyKey: randomUUID() });
-    const tracking = { packageId: created.packages[0]!.id, status: "picked_up" as const, provider: "synthetic-carrier", externalEventId: randomUUID(), detailCode: "SYNTHETIC_PHYSICAL_HANDOVER", occurredAt: new Date(Date.now() - 1000).toISOString(), estimatedDeliveryAt: null };
+    const tracking = { packageId: created.packages[0]!.id, status, provider: "synthetic-carrier", externalEventId: randomUUID(), detailCode: "SYNTHETIC_PHYSICAL_HANDOVER", occurredAt: new Date(Date.now() - 1000).toISOString(), estimatedDeliveryAt: null };
     const observed = await shipping.recordTrackingEvent(context, created.shipment.id, tracking);
     expect(observed.tracking).toHaveLength(1); expect(observed.shipment.status).toBe("exception");
     expect((await orders.exceptions(context, f.orderId)).some(row => row.code === "PRODUCTION_SOURCE_CHANGED_AT_HANDOVER")).toBe(true);
     expect((await shipping.productionSources(context, f.orderId)).find(row => row.productionOrderId === source.productionOrderId)?.allocatedQuantity).toBe(1);
     expect((await shipping.recordTrackingEvent(context, created.shipment.id, tracking)).tracking).toHaveLength(1);
     await expect(shipping.recordTrackingEvent(context, created.shipment.id, { ...tracking, detailCode: "CHANGED_RETRY" })).rejects.toBeInstanceOf(ConflictException);
+    const lateInformation = await shipping.recordTrackingEvent(context, created.shipment.id, { ...tracking,
+      status: "information_received", externalEventId: randomUUID(), detailCode: "SYNTHETIC_INFORMATION",
+      occurredAt: new Date(Date.parse(tracking.occurredAt) - 1000).toISOString() });
+    expect(lateInformation.tracking).toHaveLength(2);
+    expect(lateInformation.shipment.status).toBe("exception");
+    expect((await orders.get(context, f.orderId)).workflowState).not.toBe("completed");
   });
 });

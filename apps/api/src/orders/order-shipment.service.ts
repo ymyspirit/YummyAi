@@ -420,11 +420,6 @@ export class OrderShipmentService {
       const [version] = await tx.select({ id: shipmentVersions.id, versionNumber: shipmentVersions.versionNumber, promisedDeliveryAt: shipmentVersions.promisedDeliveryAt }).from(shipmentVersions)
         .where(and(eq(shipmentVersions.id, pkg.shipmentVersionId), eq(shipmentVersions.shipmentId, shipmentId))).limit(1);
       if (!version) throw new NotFoundException("Original package version not found");
-      if (["picked_up", "in_transit", "out_for_delivery", "delivered", "returned"].includes(input.status)) {
-        sourceException = shipment.status === "cancelled" || shipment.currentVersionNumber !== shipment.approvedVersionNumber || version.versionNumber !== shipment.approvedVersionNumber;
-        try { await assertStoredShipmentProductionSources(tx, shipment.orderId, shipmentId, version!.id); }
-        catch (error) { if (!(error instanceof ConflictException)) throw error; sourceException = true; }
-      }
       if (!replayed) {
         await tx.insert(shipmentTrackingEvents).values({
           id: createEntityId(), tenantId: context.tenantId, shipmentId, packageId: input.packageId,
@@ -439,7 +434,13 @@ export class OrderShipmentService {
         .orderBy(desc(shipmentTrackingEvents.occurredAt), desc(shipmentTrackingEvents.recordedAt));
       const latest = new Map<string, typeof shipmentTrackingEvents.$inferSelect>();
       for (const event of events) if (!latest.has(event.packageId)) latest.set(event.packageId, event);
-      shouldComplete = version.versionNumber === shipment.approvedVersionNumber && packages.length > 0 && packages.every((entry) => latest.get(entry.id)?.status === "delivered");
+      // Late informational events cannot clear a physical source conflict.
+      if (events.some(event => ["picked_up", "in_transit", "out_for_delivery", "delivered", "returned"].includes(event.status))) {
+        sourceException = shipment.status === "cancelled" || shipment.currentVersionNumber !== shipment.approvedVersionNumber || version.versionNumber !== shipment.approvedVersionNumber;
+        try { await assertStoredShipmentProductionSources(tx, shipment.orderId, shipmentId, version.id); }
+        catch (error) { if (!(error instanceof ConflictException)) throw error; sourceException = true; }
+      }
+      shouldComplete = !sourceException && version.versionNumber === shipment.approvedVersionNumber && packages.length > 0 && packages.every((entry) => latest.get(entry.id)?.status === "delivered");
       needsException = sourceException || ["delivery_exception", "returned"].includes(input.status)
         || Boolean(version!.promisedDeliveryAt && input.estimatedDeliveryAt && new Date(input.estimatedDeliveryAt) > version!.promisedDeliveryAt);
       const physicallyDispatched = (await physicalHandover(tx, shipment)).dispatchedPackageCount > 0;
