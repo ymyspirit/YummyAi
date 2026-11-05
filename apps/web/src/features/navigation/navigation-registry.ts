@@ -406,7 +406,7 @@ export const AUXILIARY_DESTINATIONS = [
   {
     id: "logistics-purchase",
     href: "/logistics",
-    label: "物流下单",
+    label: "自动发货",
     description: "按实际工厂、时效和预算准备 ShipOS 或云途面单",
     keywords: "物流 下单 购单 询价 ShipOS 云途 运单 面单 工厂",
     parentId: "orders",

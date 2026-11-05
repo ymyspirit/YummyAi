@@ -13,7 +13,7 @@ import { createPillowPipeline, PILLOW_CONTOUR_GRAPH_VERSION,DesignAutomationPlan
 import {
   aiBudgetLedger, aiBudgetPolicies, amazonOrderReportLines, connectDatabase, marketplaceAccounts, memberships, membershipRoles,
   migrateDatabase, modelProviderConfigs, modelRoutes, orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderDesignDispatchTenants,
-  orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions,
+  orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions, orderFulfillmentFlows,
   productionEditorImages as images, productionEditorProjects as projects, productionEditorRenders as renders,
   productionEditorVersions as versions, productionOrders, roles, withTenant,knowledgeVersions,orderDesignModelCalls as modelCalls,purgeExpiredAmazonOrderReports,
 } from "@yummyai/database";
@@ -1462,6 +1462,9 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
       expectedSourceVersionId: initial.report!.versionId, expectedProjectionVersion: initial.line.projectionVersion,
       draft: checked.normalizedDraft, status: "ready_to_push", reason: "Synthetic operator confirms intake only", idempotencyKey: randomUUID() });
     expect(saved.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", production: "not_released" });
+    const followups=await withTenant(database.db,f.context,tx=>tx.select().from(orderFulfillmentFlows).where(eq(orderFulfillmentFlows.orderId,saved.line.orderId)));
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({requestedBy:f.context.userId,stage:"waiting_artwork",pendingCommand:null});
     const confirmed = await reviewState();
     expect(confirmed.report).toEqual({ reviewedVersionId: f.sourceVersionId, reviewedBy: f.context.userId, reviewedAt: expect.any(Date) });
     expect(confirmed.revisions).toHaveLength(beforeConfirmation.revisions.length + 1);

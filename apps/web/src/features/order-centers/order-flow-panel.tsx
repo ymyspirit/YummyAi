@@ -34,7 +34,7 @@ export function OrderFlowPanel({orderId,refreshToken,disabled,onChanged,onAutoma
     catch(error){setError(error instanceof Error?error.message:"继续处理失败");}finally{setBusy(false);}
   }
   return <section className="oc-flow-panel" aria-label="本单自动履约" aria-busy={busy}>
-    <div className="oc-flow-heading"><h2>本单履约</h2><span>{view?.stage?FULFILLMENT_FLOW_LABELS[view.stage]:view?"审图通过后按规则继续":"正在读取"}</span>
+    <div className="oc-flow-heading"><h2>本单履约</h2><span>{view?.stage?FULFILLMENT_FLOW_LABELS[view.stage]:view?"审单通过后自动接续":"正在读取"}</span>
       <button className="oc-text-button" aria-label="刷新本单履约状态" disabled={busy||disabled} onClick={()=>setReload(value=>value+1)}><RefreshCw size={14}/></button></div>
     {view?.route && <div className="oc-flow-route"><span>{view.route.products.join("、")}</span><ArrowRight size={14}/><span>{view.route.factoryName}</span><ArrowRight size={14}/><span>{view.route.connectionName}</span><small>{view.route.profile.mode==="quote"?"只询价":view.route.profile.mode==="purchase"?"审核后自动购单":"已停用"}</small></div>}
     {!!view?.reasons.length && <p className="oc-hint">{view.stage==="exception"&&<CircleAlert size={14}/>} {view.reasons.join("；")}</p>}

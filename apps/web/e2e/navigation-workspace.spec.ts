@@ -138,13 +138,13 @@ test("single sidebar follows the business sequence and supports keyboard collaps
   await page.keyboard.press("Enter");
   await expect(commerce).toHaveAttribute("aria-expanded", "true");
   await expect(sidebar.getByRole("link", { name: "商品库", exact: true })).toBeHidden();
-  await sidebar.getByRole("link", { name: "物流下单", exact: true }).click();
+  await sidebar.getByRole("link", { name: "自动发货", exact: true }).click();
   await expect(page).toHaveURL(/\/logistics$/);
-  await expect(sidebar.locator('[aria-current="page"]')).toHaveText("物流下单");
+  await expect(sidebar.locator('[aria-current="page"]')).toHaveText("自动发货");
   await commerce.focus();
   await page.keyboard.press("Enter");
   await expect(commerce).toHaveAttribute("aria-expanded", "false");
-  await expect(sidebar.getByRole("link", { name: "物流下单", exact: true })).toBeHidden();
+  await expect(sidebar.getByRole("link", { name: "自动发货", exact: true })).toBeHidden();
 });
 
 test("task workspaces have direct routes, compatible links and responsive layouts", async ({ page }, testInfo) => {
@@ -193,7 +193,7 @@ test("mobile drawer navigates, restores focus and preserves desktop compact mode
   await expect(menu.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { includeHidden: true })).toHaveCount(PRIMARY_DESTINATIONS.length);
   await page.screenshot({ caret: "initial", animations: "disabled", path: testInfo.outputPath("sidebar-mobile.png") });
   await menu.getByRole("button", { name: "订单与履约", exact: true }).click();
-  await menu.getByRole("link", { name: "物流下单", exact: true }).click();
+  await menu.getByRole("link", { name: "自动发货", exact: true }).click();
   await expect(menu).toHaveCount(0);
   await expect(page).toHaveURL(/\/logistics$/);
   await trigger.click();
@@ -206,7 +206,7 @@ test("mobile drawer navigates, restores focus and preserves desktop compact mode
   await page.screenshot({ caret: "initial", animations: "disabled", path: testInfo.outputPath("sidebar-compact.png") });
   await page.locator(".erp-sidebar").getByRole("button", { name: "订单与履约", exact: true }).click();
   await expect(page.locator(".erp-sidebar")).toHaveCSS("width", "244px");
-  await expect(page.locator(".erp-sidebar").getByRole("link", { name: "物流下单", exact: true })).toBeVisible();
+  await expect(page.locator(".erp-sidebar").getByRole("link", { name: "自动发货", exact: true })).toBeVisible();
 });
 
 test("favorites validate saved IDs, persist edits and open real pages", async ({ page }) => {

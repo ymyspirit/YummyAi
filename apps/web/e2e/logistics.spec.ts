@@ -29,7 +29,7 @@ test("logistics prepares a private Yun label before QC and includes it in the fa
   await centerApi(`logistics/connections/${connection.connectionId}/verify`, { expectedVersion: 1, idempotencyKey: randomUUID() });
   await centerApi("logistics/rules", { connectionId: connection.connectionId, expectedVersion: 0, rule: { name: "Synthetic fixed budget", currency: "USD", autoPurchase: true, maxTicketMinor: 1000, maxDailyMinor: 10000, quoteMaxAgeSeconds: 120, allowedChannelCodes: ["fixture"], evidence: "Synthetic isolated budget approval" }, idempotencyKey: randomUUID() });
   await page.goto(`/logistics?orderId=${candidate.orderId}`);
-  const section = page.locator("details.logistics-section").filter({ has: page.locator("summary", { hasText: "为已排期商品创建物流任务" }) });
+  const section = page.locator("details.logistics-section").filter({ has: page.locator("summary", { hasText: "手工创建特殊物流任务" }) });
   await section.locator("summary").click(); const form = section.locator("form");
   await form.getByLabel("订单与工厂", { exact: true }).selectOption(candidate.productionOrderId);
   await form.getByLabel("实际发货连接", { exact: true }).selectOption(connection.connectionId);

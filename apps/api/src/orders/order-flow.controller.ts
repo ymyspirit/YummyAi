@@ -12,6 +12,10 @@ export class OrderFlowController {
     @Inject(OrderFlowService) private readonly flows: OrderFlowService) {}
   @Get("routes") @Header("Cache-Control","private, no-store") @RequiresPermission(Permission.OrderRead,Permission.OrderPiiRead)
   async list(@Req() req:AuthenticatedRequest) { return (await this.routes.workspace(context(req))).view; }
+  @Get("orders") @Header("Cache-Control","private, no-store") @RequiresPermission(Permission.OrderRead,Permission.OrderPiiRead)
+  queue(@Req() req:AuthenticatedRequest) { return this.flows.queue(context(req)); }
+  @Post("orders/resume") @RequiresPermission(Permission.OrderWrite,Permission.OrderRead,Permission.OrderPiiRead)
+  resumeBatch(@Req() req:AuthenticatedRequest,@Body() raw:unknown) { return this.flows.resumeBatch(context(req),raw); }
   @Post("routes") @RequiresPermission(Permission.IntegrationManage,Permission.OrderRead,Permission.OrderPiiRead)
   save(@Req() req:AuthenticatedRequest,@Body() raw:unknown) { return this.routes.save(context(req),raw); }
   @Get("orders/:id") @Header("Cache-Control","private, no-store") @RequiresPermission(Permission.OrderRead,Permission.OrderPiiRead)

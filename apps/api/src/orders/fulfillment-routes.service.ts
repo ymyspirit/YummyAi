@@ -46,7 +46,7 @@ export class FulfillmentRoutesService {
       if (!factory || factory.status !== "active" || factory.supplierStatus !== "active") blockers.push("承接工厂或供应商尚未启用");
       if (!connection || connection.profile.factoryId !== profile?.factoryId) blockers.push("物流账户未关联到该工厂");
       if (!connection?.verifiedAt) blockers.push("物流接口尚未验证");
-      if (!connection?.rule) blockers.push("物流渠道与费用上限尚未配置");
+      if (!connection?.rule) blockers.push("物流渠道与费用规则尚未配置");
       if (row.profile.mode === "purchase" && !connection?.rule?.autoPurchase) blockers.push("物流连接尚未授权自动购单");
       return { id: row.id, version: row.version, profile: row.profile,
         factoryId: profile?.factoryId ?? connection?.profile.factoryId ?? row.id,
@@ -79,7 +79,7 @@ export class FulfillmentRoutesService {
       const profile = workspace.documents.profiles.find(profile => profile.id === input.profile.documentProfileVersionId);
       const connection = workspace.connections.find(connection => connection.id === input.profile.connectionId);
       if (!profile || !connection || connection.profile.factoryId !== profile.factoryId) throw new ConflictException("请选择同一工厂的包裹规则和物流连接");
-      if (input.profile.mode === "purchase" && (!connection.verifiedAt || !connection.rule?.autoPurchase)) throw new ConflictException("请先在物流账户中确认渠道、单票及每日费用上限，再开启审核后自动购单");
+      if (input.profile.mode === "purchase" && (!connection.verifiedAt || !connection.rule?.autoPurchase)) throw new ConflictException("请先在物流账户中确认渠道与费用异常规则，再开启审核后自动购单");
       if (input.profile.mode !== "disabled") {
         for (const other of workspace.view.routes.filter(route => route.id !== input.id && route.profile.mode !== "disabled")) {
           const otherProfile = workspace.documents.profiles.find(item => item.id === other.profile.documentProfileVersionId);

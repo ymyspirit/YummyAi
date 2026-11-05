@@ -6,7 +6,7 @@ import { logisticsTasks as tasks, logisticsConnectionVersions as connections, lo
   productionOrders, productionOrderVersions, orderProtectedDetails, orders, orderWorkItems, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
-import { selectLogisticsQuote } from "./policy.js";
+import { logisticsCostBlocker, selectLogisticsQuote } from "./policy.js";
 import type { LogisticsGateway, LogisticsProviderResult } from "./gateway.js";
 import { LogisticsTransportError } from "./gateway.js";
 import { purgeLogisticsTasks } from "./retention.js";
@@ -35,13 +35,13 @@ export class LogisticsExecutor {
       const received = (await this.gateway.quote(connection.profile,credentials,snapshot,task.externalReference)).map(q => LogisticsQuoteSchema.parse(q));
       await this.recordQuotes(context,loaded,received);
       const selection = selectLogisticsQuote(received,rule.rule,snapshot);
-      if (!selection.selected) return this.finish(context,loaded,"attention","NO_ELIGIBLE_CHANNEL");
+      if (!selection.selected) return this.finish(context,loaded,"attention",this.rejectedCost(selection.rejected)??"NO_ELIGIBLE_CHANNEL");
       if (mode === "quote" || !rule.rule.autoPurchase) return this.finish(context,loaded,"quoted",null,selection.selected);
       // Reprice immediately before the irreversible request; select again across available services.
       const refreshed = (await this.gateway.quote(connection.profile,credentials,snapshot,task.externalReference)).map(q => LogisticsQuoteSchema.parse(q));
       await this.recordQuotes(context,loaded,refreshed);
-      const selected = selectLogisticsQuote(refreshed,rule.rule,snapshot).selected;
-      if (!selected) return this.finish(context,loaded,"attention","PRICE_OR_SERVICE_CHANGED");
+      const rechecked = selectLogisticsQuote(refreshed,rule.rule,snapshot),selected=rechecked.selected;
+      if (!selected) return this.finish(context,loaded,"attention",this.rejectedCost(rechecked.rejected)??"PRICE_OR_SERVICE_CHANGED");
       // Manual spreadsheet orders may already use this reference. Never adopt or buy over them implicitly.
       if(await this.gateway.lookup(connection.profile,credentials,task.externalReference))return this.finish(context,loaded,"attention","PROVIDER_REFERENCE_CONFLICT");
       const reserved = await this.reserve(context,loaded,selected);
@@ -56,6 +56,9 @@ export class LogisticsExecutor {
     }
   }
   purge(context:TenantContext,taskId:string){return purgeLogisticsTasks(this.database,context,this.storage,new Date(),taskId);}
+  private rejectedCost(rejected:Array<{reason:string}>){
+    return rejected.find(item=>["PER_ITEM_COST_EXCEEDED","PURCHASE_QUANTITY_UNAVAILABLE"].includes(item.reason))?.reason;
+  }
   private async claim(context: TenantContext, id: string): Promise<Loaded|null> {
     return withTenant(this.database.db,context,async tx => {
       await logisticsLock(tx,context,`task:${id}`);
@@ -99,9 +102,13 @@ export class LogisticsExecutor {
       const problem=await this.blocker(tx,context,latest,l.snapshot); if(problem) throw new Error(problem);
       const [enabled]=await tx.select().from(logisticsConnections).where(eq(logisticsConnections.id,l.connection.connectionId));
       if (!enabled || enabled.verifiedVersionId!==l.connection.id || enabled.version!==l.connection.version || enabled.ruleVersion!==l.rule.version || l.rule.connectionVersionId!==l.connection.id || !l.rule.rule.autoPurchase) throw new Error("AUTOMATIC_PURCHASE_NOT_VERIFIED");
-      const used=await tx.select().from(tasks).where(and(eq(tasks.reservedDay,day),sql`${tasks.selectedQuote}->>'currency'=${l.rule.rule.currency}`));
-      const spend=used.reduce((sum,t)=>sum+Math.max(t.reservationMinor,t.actualCostMinor??0),0);
-      if(spend+quote.totalMinor>l.rule.rule.maxDailyMinor) return false;
+      if(l.rule.rule.maxDailyMinor!==null){
+        const used=await tx.select().from(tasks).where(and(eq(tasks.reservedDay,day),sql`${tasks.selectedQuote}->>'currency'=${l.rule.rule.currency}`));
+        const spend=used.reduce((sum,t)=>sum+Math.max(t.reservationMinor,t.actualCostMinor??0),0);
+        if(spend+quote.totalMinor>l.rule.rule.maxDailyMinor) return false;
+      }
+      const costBlocker=logisticsCostBlocker(quote.totalMinor,l.rule.rule,l.snapshot);
+      if(costBlocker)throw new Error(costBlocker);
       await tx.update(tasks).set({ status:"purchasing", selectedQuote:quote, reservationMinor:quote.totalMinor, reservedDay:day, diagnostic:null, updatedAt:new Date() }).where(eq(tasks.id,l.task.id));
       await this.event(tx,context,l.task.id,"purchase.intent",{ channelCode:quote.channelCode, totalMinor:quote.totalMinor, currency:quote.currency });
       return true;
@@ -151,8 +158,11 @@ export class LogisticsExecutor {
   private async complete(context:TenantContext,l:Loaded){
     const diagnostic=await withTenant(this.database.db,context,async tx=>{
       const [latest]=await tx.select().from(tasks).where(eq(tasks.id,l.task.id));
-      if(latest?.actualCostMinor!==null&&latest?.actualCostMinor!==undefined&&latest.actualCostMinor>l.rule.rule.maxTicketMinor)return "ACTUAL_COST_EXCEEDS_BUDGET";
-      if(latest?.reservedDay){
+      if(latest?.actualCostMinor!==null&&latest?.actualCostMinor!==undefined){
+        const problem=logisticsCostBlocker(latest.actualCostMinor,l.rule.rule,l.snapshot);
+        if(problem)return problem==="PER_ITEM_COST_EXCEEDED"?"ACTUAL_PER_ITEM_COST_EXCEEDED":"ACTUAL_COST_EXCEEDS_BUDGET";
+      }
+      if(latest?.reservedDay && l.rule.rule.maxDailyMinor!==null){
         await logisticsLock(tx,context,`budget:${l.rule.rule.currency}:${latest.reservedDay}`);
         const dayTasks=await tx.select().from(tasks).where(and(eq(tasks.reservedDay,latest.reservedDay),sql`${tasks.selectedQuote}->>'currency'=${l.rule.rule.currency}`));
         if(dayTasks.reduce((sum,t)=>sum+Math.max(t.reservationMinor,t.actualCostMinor??0),0)>l.rule.rule.maxDailyMinor)return "ACTUAL_DAILY_COST_EXCEEDS_BUDGET";

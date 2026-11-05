@@ -7,6 +7,7 @@ import { LogisticsTaskForm } from "./logistics-task-form";
 import { LogisticsConnectionForm } from "./logistics-connection-form";
 import { LogisticsAccountForm } from "./logistics-account-form";
 import { DocumentWorkspace } from "./document-workspace";
+import { FulfillmentQueue } from "./fulfillment-queue";
 import { logisticsError,logisticsRequest,logisticsDiagnostic } from "./logistics-client";
 import "../order-centers/order-centers.css";
 import "./logistics.css";
@@ -17,6 +18,12 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
   const [accounts,setAccounts]=useState<LogisticsAccountView[]>([]);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[configError,setConfigError]=useState("");
   const requestNumber=useRef(0);
+  const [manualOpen,setManualOpen]=useState(false);
+  const [connectionsOpen,setConnectionsOpen]=useState(false);
+  useEffect(()=>{
+    const locate=()=>{if(window.location.hash==="#documents")setManualOpen(true);if(window.location.hash==="#connections")setConnectionsOpen(true);};
+    locate();window.addEventListener("hashchange",locate);return()=>window.removeEventListener("hashchange",locate);
+  },[orderId]);
   const reload=useCallback(async(signal?:AbortSignal)=>{
     const current=++requestNumber.current;
     const focused:LogisticsTaskView|undefined=taskId?await logisticsRequest(`tasks/${encodeURIComponent(taskId)}`,undefined,signal):undefined;
@@ -34,13 +41,12 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
     setBusy(true);setError("");try{await logisticsRequest(`tasks/${task.id}/dispatch`,{mode,idempotencyKey:crypto.randomUUID()});await reload();}catch(e){setError(logisticsError(e));}finally{setBusy(false);}
   }
   return <main className="oc-page logistics-page" aria-busy={loading}>
-    <header className="oc-header"><div><h1><Truck size={22}/>物流下单</h1><p>按订单和实际发货工厂准备面单，核对时效、报价与实际费用。</p></div><div className="oc-actions"><Link className="oc-button" href="/production">生产中心</Link><Link className="oc-button" href="/shipments">实际发货</Link><Link className="oc-button" href="/shipments?view=logistics">已有物流订单同步</Link><button className="oc-button" disabled={busy||loading} onClick={()=>{setLoading(true);void reload().catch(e=>setError(logisticsError(e))).finally(()=>setLoading(false));}}><RefreshCw size={16}/>刷新</button></div></header>
-    <DocumentWorkspace key={orderId ?? "all"} orderId={orderId}/>
+    <header className="oc-header"><div><h1><Truck size={22}/>自动发货</h1><p>查看审核后的自动处理进度 集中处理异常与工厂交付</p></div><div className="oc-actions"><Link className="oc-button primary" href="/orders">回到订单工作台</Link><Link className="oc-button" href="/production">工厂交付</Link><Link className="oc-button" href="/shipments">实际发货</Link><button className="oc-button" disabled={busy||loading} onClick={()=>{setLoading(true);void reload().catch(e=>setError(logisticsError(e))).finally(()=>setLoading(false));}}><RefreshCw size={16}/>刷新</button></div></header>
+    {!orderId&&!taskId&&<FulfillmentQueue/>}
     {error&&<p role="alert" className="logistics-error">{error}</p>}{loading&&<p role="status">正在读取物流任务…</p>}
     {taskId&&<p className="oc-muted">当前显示指定物流任务 · <Link href="/?attention=logistics#fulfillment-attention">返回履约待办</Link> · <Link href="/logistics">查看全部物流任务</Link></p>}
-    {options?.canCreate&&<details className="logistics-section"><summary>为已排期商品创建物流任务</summary><LogisticsTaskForm options={options} connections={connections} onSaved={reload}/></details>}
-    {!loading&&!error&&!tasks.length&&<p className="oc-muted">尚无物流任务。生产排期确认工厂、数量和完工时间后，可按工厂创建任务。</p>}
-    <div className="logistics-tasks">{tasks.map(task=><article key={task.id} className="logistics-task">
+    {!loading&&!error&&!tasks.length&&(orderId||taskId)&&<p className="oc-muted">本单尚未创建物流任务 请在订单工作台查看审核进度和自动处理原因</p>}
+    {!!tasks.length&&<details className="logistics-section" open={!!orderId||!!taskId}><summary>物流任务与费用明细 · {tasks.length}</summary><div className="logistics-tasks">{tasks.map(task=><article key={task.id} className="logistics-task">
       <div className="logistics-task-title"><strong>{task.orderNumber} · {task.factoryName}</strong><span>{logisticsStates[task.status]}</span></div>
       <p className="oc-muted">{task.connectionName} · {task.externalReference} · <Link href={`/production?order=${task.orderId}`}>生产与工厂交付</Link></p>
       <dl><div><dt>已选报价</dt><dd>{money(task.quotedCostMinor,task.quotedCurrency,task.minorUnitDigits)}</dd></div><div><dt>实际费用</dt><dd>{money(task.actualCostMinor,task.actualCurrency,task.minorUnitDigits)}</dd></div><div><dt>最晚发货</dt><dd>{task.latestShipAt?new Date(task.latestShipAt).toLocaleString():"资料已到期"}</dd></div><div><dt>送达要求</dt><dd>{task.deliverBy?new Date(task.deliverBy).toLocaleString():"资料已到期"}</dd></div></dl>
@@ -49,9 +55,11 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
       {task.trackingNumbers.length>0&&<p>跟踪号：{task.trackingNumbers.join(" / ")}</p>}
       <div className="oc-actions">{options?.canCreate&&!['completed','cancelled'].includes(task.status)&&<button className="oc-button" disabled={busy} onClick={()=>void dispatch(task,["purchasing","created","label_requesting","reconciliation_required"].includes(task.status)?"reconcile":"purchase")}>{["purchasing","created","label_requesting","reconciliation_required"].includes(task.status)?"查询并核对结果":"按固定规则执行"}</button>}{task.labels.map(label=><a className="oc-button" key={label.id} href={`/api/logistics/tasks/${task.id}/labels/${label.id}`}>下载 {label.fileName}</a>)}</div>
       {!!task.quotes.length&&<details><summary>查看报价依据（{task.quotes.length}）</summary><div className="logistics-quote-list">{task.quotes.map((q,i)=><p key={i}>{q.channelName} · {money(q.totalMinor,q.currency,task.minorUnitDigits)} · {q.transitDaysMax===null?"时效未核验":`${q.transitDaysMin}–${q.transitDaysMax} 天`} · {q.currencySource??"币种未核验"} · {q.transitSource??"时效未核验"}{q.diagnostic&&` · ${q.diagnostic}`}</p>)}</div></details>}
-    </article>)}</div>
+    </article>)}</div></details>}
     {options?.truncated&&<p>当前显示最近 100 个生产任务，请从订单筛选。</p>}
-    <details className="logistics-section" inert={loading}><summary>发货连接与自动购单规则</summary>{configError&&<p role="alert">{configError}</p>}
+    <details className="logistics-section" open={manualOpen} onToggle={event=>setManualOpen(event.currentTarget.open)}><summary>手工导单与补单</summary><p className="oc-muted">用于线下导单或处理特殊订单 自动处理的订单无需在此重新选单</p>{manualOpen&&<DocumentWorkspace key={orderId ?? "all"} orderId={orderId}/>}<Link href="/shipments?view=logistics">已有物流订单同步</Link></details>
+    {options?.canCreate&&<details className="logistics-section"><summary>手工创建特殊物流任务</summary><LogisticsTaskForm options={options} connections={connections} onSaved={reload}/></details>}
+    <details className="logistics-section" id="connections" open={connectionsOpen} onToggle={event=>setConnectionsOpen(event.currentTarget.open)} inert={loading}><summary>发货连接与自动购单规则</summary>{configError&&<p role="alert">{configError}</p>}
       {options?.canConfigure&&<><LogisticsAccountForm accounts={accounts} onSaved={reload}/><LogisticsConnectionForm factories={options.factories} connections={connections} accounts={accounts} onSaved={reload}/></>}
       {connections.map(c=><p key={c.id}>{c.profile.name} V{c.version} · {c.profile.provider} · 实际发货地 {c.profile.originCountryCode} · {c.verifiedAt?"账户已核验":"当前版本待核验"} · {c.rule?.autoPurchase?"自动购单已启用":"自动购单未启用"}</p>)}
     </details>

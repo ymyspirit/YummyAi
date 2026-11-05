@@ -1518,6 +1518,13 @@ export class OrderWorkspaceService {
             updatedAt: new Date(),
           })
           .where(eq(items.id, id));
+        if (input.status === "ready_to_push") {
+          // Commit the continuation with the review. Closing the browser after
+          // this response must not leave a reviewed item waiting for a click.
+          const [line] = await tx.select({ orderId: orderLines.orderId }).from(orderLines).where(eq(orderLines.id, id));
+          if (!line) throw new NotFoundException("订单商品不存在");
+          await scheduleOrderFlow(tx, context, line.orderId);
+        }
         await this.event(
           tx,
           context,

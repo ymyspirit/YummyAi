@@ -164,6 +164,23 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect(s.carrier.creates).toBe(0);
   });
   it("keeps actual over-budget purchases for reconciliation and never buys again",async()=>{const carrier=new Carrier();carrier.actual=1100;const s=await setup(carrier),r=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,r.taskId,"purchase");expect(await s.service.get(context,r.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_COST_EXCEEDS_BUDGET",actualCostMinor:1100});await s.executor.run(context,r.taskId,"purchase");expect(carrier.creates).toBe(1);expect(carrier.lookups).toBe(2);});
+  it("buys a whole two-piece parcel at the per-item boundary, blocks one cent over, and preserves actual-cost exceptions",async()=>{
+    const carrier=new Carrier(),s=await setup(carrier);
+    await s.service.saveRule(context,{connectionId:s.connectionId,expectedVersion:1,rule:{name:"Synthetic per-item rule",currency:"USD",autoPurchase:true,maxTicketMinor:null,maxDailyMinor:null,maxPerItemMinor:1000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic explicit no total caps, $10 per physical item"},idempotencyKey:randomUUID()});
+    carrier.price=2000;carrier.actual=2000;
+    const first=await production(s.factory,undefined,2),second=await production(s.factory,first.order.id),input=taskInput(s,first);
+    input.productionOrderIds.push(second.id);input.packages[0]!.declarations[0]!.quantity=2;
+    const parcel=await s.service.createTask(context,input);await s.executor.run(context,parcel.taskId,"purchase");
+    expect(await s.service.get(context,parcel.taskId)).toMatchObject({status:"completed",quotedCostMinor:2000,actualCostMinor:2000});expect(carrier.creates).toBe(1);
+    carrier.price=1001;
+    const blocked=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,blocked.taskId,"purchase");
+    expect(await s.service.get(context,blocked.taskId)).toMatchObject({status:"attention",diagnostic:"PER_ITEM_COST_EXCEEDED"});expect(carrier.creates).toBe(1);
+    carrier.price=1000;carrier.actual=1001;
+    const billed=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,billed.taskId,"purchase");
+    expect(await s.service.get(context,billed.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_PER_ITEM_COST_EXCEEDED",actualCostMinor:1001});
+    await s.executor.run(context,billed.taskId,"purchase");expect(carrier.creates).toBe(2);
+    expect(await s.service.get(context,billed.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_PER_ITEM_COST_EXCEEDED"});
+  });
   it("saves credentials before a factory is ready with tenant isolation and immutable versions",async()=>{
     const carrier=new Carrier(),service=new LogisticsAccountsService(database,vault,carrier);
     const input={expectedVersion:0,profile:{name:"Synthetic pending Yun account",provider:"yunexpress",baseUrl:null},credentials:{provider:"yunexpress",customerCode:"synthetic-customer",apiSecret:"synthetic-account-secret",appId:"synthetic-app"},idempotencyKey:randomUUID()};

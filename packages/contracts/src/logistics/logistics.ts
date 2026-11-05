@@ -53,8 +53,11 @@ export const SaveLogisticsConnectionSchema = z.object({ connectionId: Id.optiona
   .refine(v=>!(v.credentials&&v.accountVersionId),"请选择已保存账户或输入新凭据")
   .refine(v=>!v.credentials||logisticsCredentialsMatchProfile(v.profile,v.credentials),"凭据须符合所选物流协议");
 export const LogisticsRuleSchema = z.object({ name: z.string().trim().min(1).max(160), autoPurchase: z.boolean().default(false), currency: z.string().regex(/^[A-Z]{3}$/),
-  maxTicketMinor: z.int().positive().safe(), maxDailyMinor: z.int().positive().safe(), quoteMaxAgeSeconds: z.int().min(30).max(900).default(120),
-  allowedChannelCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(200), evidence: Note }).strict().refine(v => v.maxTicketMinor <= v.maxDailyMinor, "单票上限不可超过每日上限");
+  maxTicketMinor: z.int().positive().safe().nullable(), maxDailyMinor: z.int().positive().safe().nullable(),
+  maxPerItemMinor: z.int().positive().safe().optional(), quoteMaxAgeSeconds: z.int().min(30).max(900).default(120),
+  allowedChannelCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(200), evidence: Note }).strict()
+  .refine(v => v.maxTicketMinor === null || v.maxDailyMinor === null || v.maxTicketMinor <= v.maxDailyMinor, "单票上限不可超过每日上限")
+  .refine(v => v.maxTicketMinor !== null && v.maxDailyMinor !== null || v.maxPerItemMinor !== undefined, "不设总额上限时须明确单件运费异常阈值");
 export const SaveLogisticsRuleSchema = z.object({ connectionId: Id, expectedVersion: z.int().nonnegative(), rule: LogisticsRuleSchema, idempotencyKey: Key }).strict();
 const CreateLogisticsTaskBaseSchema = z.object({ orderId: Id, productionOrderIds: z.array(Id).min(1).max(50),
   connectionId: Id, packages: z.array(LogisticsPackageSchema).min(1).max(20), channelCode:z.string().trim().min(1).max(100).optional(),

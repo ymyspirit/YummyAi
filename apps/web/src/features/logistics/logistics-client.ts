@@ -5,6 +5,9 @@ export async function logisticsRequest(path:string,input?:unknown,signal?:AbortS
 export const logisticsError=(e:unknown)=>e instanceof Error?e.message:"物流操作未完成";
 export const localDate=(s:string)=>{const d=new Date(s);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
 const diagnostics:Record<string,string>={
+  PER_ITEM_COST_EXCEEDED:"最低合规报价的平均每件运费超过设定阈值 已转异常且未购单",
+  PURCHASE_QUANTITY_UNAVAILABLE:"生产件数未确认 无法核对平均每件运费",
+  ACTUAL_PER_ITEM_COST_EXCEEDED:"面单已创建 但实际平均每件运费超出阈值 请核对账单 不会重复购买",
   PROVIDER_ORDER_NOT_CONFIRMED:"物流平台尚未确认原订单，请核对原请求结果",NO_PURCHASE_TO_RECONCILE:"尚无购单记录，请先询价并执行已核验规则",
   NO_ELIGIBLE_CHANNEL:"没有同时满足交期、预算和服务条件的渠道，请人工核对",PRICE_OR_SERVICE_CHANGED:"复核报价或服务条件已变化，请重新核对",
   DAILY_BUDGET_EXCEEDED:"本日费用额度不足",PROVIDER_RESULT_REQUIRES_RECONCILIATION:"购单结果不确定，请查单后处理",LOGISTICS_EXECUTION_UNAVAILABLE:"物流请求未完成，请核对账户及服务状态",

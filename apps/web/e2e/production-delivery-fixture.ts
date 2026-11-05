@@ -12,7 +12,7 @@ import { syntheticProductionPng } from "./production-editor-fixture";
 import { createFactoryFixture } from "./factory-directory-fixture";
 import { syntheticSupplierProfile, syntheticFactoryProfile } from "../../../tools/testing/factory-fixtures";
 import { createCapacityFixture } from "./factory-capacity-fixture";
-export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; materialResponsibility?: "merchant" | "factory"; originCountry?: "US" | "CN" } = {}) {
+export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; approveArtwork?: boolean; materialResponsibility?: "merchant" | "factory"; originCountry?: "US" | "CN" } = {}) {
   const suffix = createEntityId().slice(-8), externalId = `E2E-DELIVERY-${suffix}`, factoryName = `Synthetic delivery factory ${suffix}`;
   const supplier = await centerApi<{ id: string }>("sourcing/suppliers", { name: `Synthetic delivery supplier ${suffix}`, kind: "manual", regionCode: "CN", settlementCurrency: "CNY", profile: syntheticSupplierProfile });
   const factoryProfile = syntheticFactoryProfile(factoryName);
@@ -85,7 +85,8 @@ export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false
     document.layers = doc.layers.map(layer => layer.kind === "image" ? { ...layer, assetId: orderImage.id } : layer);
     document.confirmations = { physicalSize: true, whiteBorderRule: true, narrowParts: true, barcodeTab: true, backText: true, visualReview: true };
     const checked = await centerApi<ProductionEditorDetailView>(`production-editor/projects/${project.project.id}/versions`, { expectedVersionId: project.version.id, document });
-    for (const action of ["submit_artwork", "approve_artwork"] as const) detail = await centerApi(`order-centers/lines/${id}/actions`, { action, expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: checked.version.id, reason: "Synthetic operator reviewed fixture artwork", idempotencyKey: randomUUID() });
+    for (const action of options.approveArtwork===false ? ["submit_artwork"] as const : ["submit_artwork", "approve_artwork"] as const) detail = await centerApi(`order-centers/lines/${id}/actions`, { action, expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: checked.version.id, reason: "Synthetic operator reviewed fixture artwork", idempotencyKey: randomUUID() });
+    if(options.approveArtwork===false)continue;
     let renderId = "";
     await expect.poll(async () => { const result = await centerApi<ProductionEditorDetailView>(`production-editor/projects/${project.project.id}`); const render = result.renders.find(render => render.versionId === checked.version.id && render.purpose === "production" && render.status === "completed"); renderId = render?.id ?? ""; return !!render; }, { timeout: 60_000 }).toBe(true);
     const assigned = assignments[(lines.length - 1) % assignments.length]!;

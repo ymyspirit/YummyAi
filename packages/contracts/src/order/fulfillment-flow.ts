@@ -50,3 +50,19 @@ export type FulfillmentRouteView = z.infer<typeof FulfillmentRouteViewSchema>;
 export type FulfillmentFlowView = z.infer<typeof FulfillmentFlowViewSchema>;
 export type FulfillmentRouteWorkspace = z.infer<typeof FulfillmentRouteWorkspaceSchema>;
 export type FulfillmentFlowStage = z.infer<typeof FulfillmentFlowStageSchema>;
+
+/** An operational queue, not a second order ledger. Private files are still
+ * downloaded through the original owners' live authorization checks. */
+export const FulfillmentFlowQueueSchema = z.object({
+  routes: z.array(FulfillmentRouteViewSchema),
+  canConfigure: z.boolean(), canResume: z.boolean(), truncated: z.boolean(),
+  items: z.array(z.object({
+    id: Id, orderId: Id, orderNumber: z.string(), lineId: Id,
+    stage: FulfillmentFlowStageSchema, reasons: z.array(z.string()),
+    routeName: z.string().nullable(), documentProfileVersionId: Id.nullable(), productionExportId: Id.nullable(),
+    deliveryPackageIds: z.array(Id), logisticsTaskId: Id.nullable(), updatedAt: z.iso.datetime(),
+  }).strict()),
+}).strict();
+export type FulfillmentFlowQueue = z.infer<typeof FulfillmentFlowQueueSchema>;
+export const ResumeFulfillmentBatchSchema = z.object({orderIds:z.array(Id).min(1).max(50)}).strict()
+  .refine(input => new Set(input.orderIds).size === input.orderIds.length,"订单不能重复");

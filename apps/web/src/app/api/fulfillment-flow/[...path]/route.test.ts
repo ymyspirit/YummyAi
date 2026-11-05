@@ -20,4 +20,15 @@ describe("fulfillment flow authenticated proxy",()=>{
     expect(response.status).toBe(200);expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(upstream).toHaveBeenCalledWith("http://api.test/v1/fulfillment-flow/routes",expect.objectContaining({method:"POST",body:"{}",headers:{"content-type":"application/json"}}));
   });
+  it("forwards the operational queue and batch continuation through the same private authenticated boundary",async()=>{
+    upstream.mockResolvedValue(Response.json({items:[]}));
+    const queue=await GET(new Request("http://web.test/api/fulfillment-flow/orders"),context(["orders"]));
+    expect(queue.status).toBe(200);expect(queue.headers.get("cache-control")).toBe("private, no-store");
+    expect(upstream).toHaveBeenCalledWith("http://api.test/v1/fulfillment-flow/orders",expect.objectContaining({method:"GET"}));
+    const body=JSON.stringify({orderIds:[createEntityId()]}),path=["orders","resume"],url="http://web.test/api/fulfillment-flow/orders/resume";
+    expect((await POST(new Request(url,{method:"POST",headers:{origin:"http://evil.test","content-type":"application/json"},body}),context(path))).status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect((await POST(new Request(url,{method:"POST",headers:{origin:"http://web.test","content-type":"application/json"},body}),context(path))).status).toBe(200);
+    expect(upstream).toHaveBeenLastCalledWith("http://api.test/v1/fulfillment-flow/orders/resume",expect.objectContaining({method:"POST",body,headers:{"content-type":"application/json"}}));
+  });
 });

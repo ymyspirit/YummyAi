@@ -1,7 +1,8 @@
 "use client";
 import { useRef,useState,type FormEvent } from "react";
-import { SaveLogisticsConnectionSchema,SaveLogisticsRuleSchema,type LogisticsOptions,type LogisticsConnectionView,type LogisticsConnectionProfile,type LogisticsAccountView } from "@yummyai/contracts/logistics";
+import { SaveLogisticsConnectionSchema,type LogisticsOptions,type LogisticsConnectionView,type LogisticsConnectionProfile,type LogisticsAccountView } from "@yummyai/contracts/logistics";
 import { logisticsError,logisticsRequest } from "./logistics-client";
+import { LogisticsRuleForm } from "./logistics-rule-form";
 import { useLeaveGuard } from "../navigation/use-leave-guard";
 type Channel=LogisticsConnectionProfile["channels"][number];
 const blankChannel=():Channel=>({code:"",name:"",countryCodes:[],transitDaysMin:0,transitDaysMax:1,transitSource:"",conditionsVerified:false,conditionsEvidence:"",acceptsBattery:false,maxWeightGrams:1000,maxDimensionMm:500});
@@ -53,7 +54,7 @@ export function LogisticsConnectionForm({factories,connections,accounts,onSaved}
       </fieldset>)}
       <div className="oc-actions"><button className="oc-button" type="button" disabled={busy} onClick={()=>{setChannels(v=>[...v,blankChannel()]);setDirty(true);}}>添加已核验渠道</button><button className="oc-button" disabled={busy||!origin}>保存新版本</button>{current&&<button className="oc-button" type="button" disabled={busy||dirty} onClick={()=>void operation(async()=>{await logisticsRequest(`connections/${current.id}/verify`,{expectedVersion:current.version,idempotencyKey:key({verify:current.id,version:current.version})});setNotice("账户渠道已核验。自动购单仍由预算规则控制。");})}>核验当前账户渠道</button>}</div>
     </form>
-    {current&&<form className="logistics-form" onChange={()=>setDirty(true)} onSubmit={e=>{e.preventDefault();const data=new FormData(e.currentTarget);void operation(async()=>{const raw={connectionId:current.id,expectedVersion:current.ruleVersion,rule:{name:String(data.get("ruleName")),currency:current.profile.currency,autoPurchase:data.get("auto")==="on",maxTicketMinor:Number(data.get("ticket")),maxDailyMinor:Number(data.get("daily")),quoteMaxAgeSeconds:120,allowedChannelCodes:current.profile.channels.map(c=>c.code),evidence:String(data.get("evidence"))}};await logisticsRequest("rules",SaveLogisticsRuleSchema.parse({...raw,idempotencyKey:key(raw)}));setNotice("预算规则已固定，旧任务继续使用原版本。");});}}><fieldset className="logistics-fields" disabled={busy}><legend>自动购单预算 · {current.profile.currency}</legend><label>规则名称<input name="ruleName" required defaultValue={current.rule?.name}/></label><label>单票费用上限（最小货币单位）<input name="ticket" type="number" required min={1} step={1} defaultValue={current.rule?.maxTicketMinor}/></label><label>每日费用上限（最小货币单位）<input name="daily" type="number" required min={1} step={1} defaultValue={current.rule?.maxDailyMinor}/></label><label className="logistics-wide">预算授权依据<input name="evidence" required minLength={5} defaultValue={current.rule?.evidence}/></label><label className="logistics-check"><input name="auto" type="checkbox" defaultChecked={current.rule?.autoPurchase??false} disabled={!current.verifiedAt}/>启用已核验账户自动购单</label><p className="oc-muted">先满足发货、送达和渠道条件，再选择预算内总价最低服务。每日上限按 UTC 日期累计同币种已保留金额和实际费用。</p><button className="oc-button" disabled={busy||!current.profile.channels.length}>保存预算版本</button></fieldset></form>}
+    {current&&<LogisticsRuleForm key={`${current.id}:${current.ruleVersion}`} connection={current} busy={busy} onDirty={()=>setDirty(true)} onSave={input=>operation(async()=>{await logisticsRequest("rules",{...(input as object),idempotencyKey:key(input)});setNotice("费用规则已保存 全体运营共用 旧任务继续使用原版本");})}/>}
     {notice&&<p role="status">{notice}</p>}{error&&<p className="logistics-error" role="alert">{error}</p>}
   </div>;
 }

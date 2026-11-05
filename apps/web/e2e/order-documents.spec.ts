@@ -24,15 +24,15 @@ test.afterAll(async () => { worker?.kill(); });
 test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page, "operator", "/logistics"); });
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-test("order documents unifies one review click with design dispatch",async({page})=>{
+test("order documents records review once without relying on a browser design dispatch",async({page})=>{
   const state=await reviewFixture(page,1,{automaticFulfillment:true,currentReadContracts:true});
   await page.goto("/orders");
   await page.getByRole("button",{name:"开始处理订单",exact:true}).click();
   const drawer=page.getByRole("dialog",{name:"整单详情",exact:true});
   await drawer.getByRole("button",{name:"审单通过并开始设计",exact:true}).click();
-  await expect.poll(()=>state.records[0]!.line.preparation).toBe("pushed");
-  expect(state.saves).toHaveLength(1);expect(state.dispatches).toHaveLength(1);expect(state.unexpectedWrites).toEqual([]);
-  await expect(drawer.getByRole("status").filter({hasText:"设计已派发"})).toBeVisible();
+  await expect.poll(()=>state.records[0]!.line.preparation).toBe("ready_to_push");
+  expect(state.saves).toHaveLength(1);expect(state.dispatches).toHaveLength(0);expect(state.unexpectedWrites).toEqual([]);
+  await expect(drawer.getByRole("status").filter({hasText:"系统已登记后续处理"})).toBeVisible();
 });
 
 for(const mode of ["quote","purchase"] as const)test(`order documents unifies reviewed order to ${mode} and keeps templates separate`,async({page},testInfo)=>{
@@ -40,7 +40,7 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
   const previous=await centerApi<FulfillmentRouteWorkspace>("fulfillment-flow/routes");
   for(const route of previous.routes.filter(route=>route.profile.name.startsWith("Synthetic flow ")&&route.profile.mode!=="disabled"))
     await centerApi("fulfillment-flow/routes",{id:route.id,expectedVersion:route.version,profile:{...route.profile,mode:"disabled"},idempotencyKey:randomUUID()});
-  const order=await prepareDeliveryOrder(2,false,{release:false,originCountry:"US",materialResponsibility:"factory"});
+  const order=await prepareDeliveryOrder(2,false,{release:false,approveArtwork:false,originCountry:"US",materialResponsibility:"factory"});
   const detail=await centerApi<OrderWorkDetail>(`order-centers/lines/${order.lines[0]}`),orderId=detail.line.orderId;
   for(const lineId of order.lines){
     const line=await centerApi<OrderWorkDetail>(`order-centers/lines/${lineId}`);
@@ -57,12 +57,19 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
   if(mode==="quote"){connectionProfile.shiposSenderAddressId=123456;connectionProfile.sender.phone="";}
   const connection=await centerApi<{connectionId:string}>("logistics/connections",{expectedVersion:0,profile:connectionProfile,credentials:{provider:"shipos",appKey:"synthetic-appkey",appSecret:"synthetic-secret"},idempotencyKey:randomUUID()});
   await centerApi(`logistics/connections/${connection.connectionId}/verify`,{expectedVersion:1,idempotencyKey:randomUUID()});
-  await centerApi("logistics/rules",{connectionId:connection.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:true,maxTicketMinor:1000,maxDailyMinor:10000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic authorized purchase ceiling"},idempotencyKey:randomUUID()});
+  await centerApi("logistics/rules",{connectionId:connection.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:true,maxTicketMinor:null,maxDailyMinor:null,maxPerItemMinor:1000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic authorized per-item threshold without total caps"},idempotencyKey:randomUUID()});
   if(mode==="quote"){
     await page.goto("/logistics");
     await expect(page.locator("main.logistics-page")).toHaveAttribute("aria-busy","false");
     await page.getByText("发货连接与自动购单规则",{exact:true}).click();
     await page.getByLabel("连接版本",{exact:true}).selectOption(connection.connectionId);
+    await expect(page.getByLabel("费用控制",{exact:true})).toHaveValue("per_item");
+    await expect(page.getByLabel("平均每件运费异常阈值（USD）",{exact:true})).toHaveValue("10");
+    await page.getByLabel("平均每件运费异常阈值（USD）",{exact:true}).fill("10.01");
+    await page.getByRole("button",{name:"保存费用规则",exact:true}).click();
+    await expect(page.getByRole("status").filter({hasText:"费用规则已保存"})).toBeVisible();
+    const rules=await centerApi<{connections:Array<{id:string;rule:{maxTicketMinor:number|null;maxDailyMinor:number|null;maxPerItemMinor:number}}> }>("logistics/connections");
+    expect(rules.connections.find(row=>row.id===connection.connectionId)?.rule).toMatchObject({maxTicketMinor:null,maxDailyMinor:null,maxPerItemMinor:1001});
     const savedAddress=page.getByLabel("ShipOS 发件地址 ID（可选）",{exact:true}),phone=page.getByLabel("发货联系电话",{exact:true});
     await expect(savedAddress).toHaveValue("123456");await expect(phone).toHaveValue("");await expect(phone).not.toHaveAttribute("required");
     await savedAddress.fill("");await expect(phone).toHaveAttribute("required","");
@@ -88,9 +95,20 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.screenshot({path:testInfo.outputPath(`flow-rules-${mode}-narrow.png`),fullPage:true});
   await page.setViewportSize({width:1440,height:960});
-  // Existing approved orders require an explicit start; saving a rule never backfills them.
-  expect((await centerApi<FulfillmentFlowView>(`fulfillment-flow/orders/${orderId}`)).id).toBeNull();
-  await centerApi(`fulfillment-flow/orders/${orderId}/resume`,{});
+  // The server registered review intent before any browser shipping action.
+  // One human artwork approval per item is the only release trigger. No resume,
+  // production-release, logistics-create or quote/purchase click is sent here.
+  expect((await centerApi<FulfillmentFlowView>(`fulfillment-flow/orders/${orderId}`)).id).toBeTruthy();
+  expect((await centerApi<{tasks:LogisticsTaskView[]}>(`logistics/tasks?orderId=${orderId}`)).tasks).toHaveLength(0);
+  for(const lineId of order.lines){
+    const current=await centerApi<OrderWorkDetail>(`order-centers/lines/${lineId}`);
+    const editor=await centerApi<{version:{id:string}}>(`production-editor/projects/${current.line.editorProjectId}`);
+    await centerApi(`order-centers/lines/${lineId}/actions`,{action:"approve_artwork",expectedRevision:current.line.revision,
+      expectedProjectionVersion:current.line.projectionVersion,expectedEditorVersionId:editor.version.id,
+      reason:"Synthetic operator approves production artwork",idempotencyKey:randomUUID()});
+    if(lineId===order.lines[0])expect((await centerApi<{tasks:LogisticsTaskView[]}>(`logistics/tasks?orderId=${orderId}`)).tasks).toHaveLength(0);
+  }
+  await page.goto("about:blank");
   let flow:FulfillmentFlowView;
   await expect.poll(async()=>{
     flow=await centerApi<FulfillmentFlowView>(`fulfillment-flow/orders/${orderId}`);
@@ -127,6 +145,21 @@ for(const mode of ["quote","purchase"] as const)test(`order documents unifies re
     expect(packet.ok()).toBe(true);
     const files=await JSZip.loadAsync(await packet.body());
     expect(Object.keys(files.files).filter(name=>/\.jpg$/i.test(name))).toHaveLength(2);
+    await page.goto("/logistics");
+    const queue=page.getByRole("region",{name:"自动发货进度",exact:true});
+    await expect(queue.getByRole("link",{name:order.externalId,exact:true})).toBeVisible();
+    await expect(page.getByRole("region",{name:"工厂导单与物流表",exact:true})).toHaveCount(0);
+    const mergedDownload=page.waitForEvent("download");
+    await queue.getByRole("button",{name:/合并生产表/}).click();
+    const merged=await mergedDownload,mergedBook=new ExcelJS.Workbook();
+    await mergedBook.xlsx.load(Uint8Array.from(await readFile((await merged.path())!)).buffer);
+    expect(mergedBook.getWorksheet("orders")!.rowCount).toBe(3);
+    await page.screenshot({path:testInfo.outputPath("automatic-shipping-desktop.png"),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath("automatic-shipping-mobile.png"),fullPage:true});
+    await page.setViewportSize({width:1440,height:960});
+    await page.goto(`/orders?line=${current.line.id}`);
     await page.screenshot({path:testInfo.outputPath("flow-order-desktop.png"),fullPage:true});
     await page.goto(`/production-files?projectId=${current.line.editorProjectId}`);
     await expect(page.getByRole("heading",{name:"生产文件",exact:true})).toBeVisible();

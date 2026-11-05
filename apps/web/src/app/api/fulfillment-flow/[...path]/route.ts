@@ -7,7 +7,7 @@ export function GET(request:Request,context:Context) { return proxy(request,cont
 export function POST(request:Request,context:Context) { return proxy(request,context,"POST"); }
 async function proxy(request:Request,context:Context,method:"GET"|"POST") {
   const path=(await context.params).path.join("/");
-  if (!new RegExp(method==="GET" ? `^(routes|orders/${id})$` : `^(routes|orders/${id}/resume)$`,"i").test(path)) return failure(404);
+  if (!new RegExp(method==="GET" ? `^(routes|orders|orders/${id})$` : `^(routes|orders/resume|orders/${id}/resume)$`,"i").test(path)) return failure(404);
   if (new URL(request.url).search) return failure(400);
   if (method==="POST" && (!isSameOriginRequest(request) || !request.headers.get("content-type")?.startsWith("application/json"))) return failure(403);
   const base=process.env.API_BASE_URL?.replace(/\/$/,""); if(!base)return failure(503);

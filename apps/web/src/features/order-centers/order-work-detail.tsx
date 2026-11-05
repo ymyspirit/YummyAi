@@ -57,7 +57,6 @@ export type OrderReviewState = { dirty: boolean; busy: boolean; loading: boolean
 type OrderSaveAttempt = {
   orderLineId: string; orderId: string; authority: string; scope: string | null;
   input: string; lineState: string; advance: boolean; authorityChanged?: boolean;
-  dispatchKey?: string;
   body: z.infer<typeof SaveOrderWorkDraftInputSchema>;
 };
 
@@ -425,7 +424,6 @@ export function OrderWorkDetailPanel({
     const attempt: OrderSaveAttempt = {
       orderLineId: id, orderId: detail.line.orderId, authority: access.authority, scope: access.preferenceScope,
       input: JSON.stringify({ draft, reason }), lineState: orderReviewLineState(detail), advance,
-      ...(status === "ready_to_push" && automaticDesign ? { dispatchKey: crypto.randomUUID() } : {}),
       body: structuredClone({ ...payload, idempotencyKey: requestKey(payload) }),
     };
     await submitSaveAttempt(attempt, false);
@@ -448,27 +446,10 @@ export function OrderWorkDetailPanel({
         setNotice("原保存已有结果，当前填写已变化并保留；请核对订单状态后再继续。");
         return;
       }
-      if (attempt.body.status === "ready_to_push" && attempt.dispatchKey && next.line.preparation === "ready_to_push") {
-        try {
-          const dispatched=OrderWorkDetailViewSchema.parse(await centerRequest(`lines/${attempt.orderLineId}/actions`,{
-            action:"push",expectedRevision:next.line.revision,expectedProjectionVersion:next.line.projectionVersion,
-            reason:"运营审单通过并派发设计",idempotencyKey:attempt.dispatchKey,
-          }));
-          if (dispatched.line.id!==attempt.orderLineId || dispatched.line.orderId!==attempt.orderId || dispatched.line.preparation!=="pushed")
-            throw new Error("设计派发结果需要核对");
-          if (!saveScopeCurrent(attempt)) return;
-          update(dispatched);
-          setNotice("审单已通过 设计已派发 完成后会进入待审生产图");
-        } catch (cause) {
-          if (!saveScopeCurrent(attempt)) return;
-          update(next);
-          setError(`审单已保存 设计派发尚未确认：${cause instanceof Error?cause.message:"请刷新核对原任务"}`);
-          setReason("");onChanged();return;
-        }
-      } else {
-        update(next);
-        setNotice(recovering ? "上次保存结果已核对。" : "草稿已保存。");
-      }
+      update(next);
+      setNotice(attempt.body.status === "ready_to_push"
+        ? "审单已通过 系统已登记后续处理 可继续审核下一单"
+        : recovering ? "上次保存结果已核对。" : "草稿已保存。");
       setReason("");
       if (!recovering && attempt.advance) review?.onSavedNext();
     } catch (cause) {

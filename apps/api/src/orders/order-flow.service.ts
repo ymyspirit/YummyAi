@@ -2,15 +2,17 @@ import { randomUUID } from "node:crypto";
 import { ConflictException, HttpException, Inject, Injectable, type OnApplicationBootstrap, type OnApplicationShutdown } from "@nestjs/common";
 import { Permission, intersectPermissionContexts } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
+import { z } from "zod";
+import { OrderWorkActionInputSchema } from "@yummyai/contracts/order/workspace";
 import type { SecretVault } from "@yummyai/ai-core";
-import { FulfillmentFlowViewSchema, type FulfillmentFlowStage, type FulfillmentFlowView } from "@yummyai/contracts/order/fulfillment-flow";
+import { FulfillmentFlowViewSchema, FulfillmentFlowQueueSchema, ResumeFulfillmentBatchSchema, type FulfillmentFlowStage, type FulfillmentFlowView } from "@yummyai/contracts/order/fulfillment-flow";
 import { ReleaseWholeOrderInputSchema } from "@yummyai/contracts/order/whole-fulfillment";
 import { CreateLogisticsTaskSchema } from "@yummyai/contracts/logistics";
 import { CreateProductionDeliverySchema } from "@yummyai/contracts/order/production-delivery";
-import { orderFulfillmentFlows as flows, orderFlowDispatchTenants, orderWorkItems,
+import { orderFulfillmentFlows as flows, orderFlowDispatchTenants, orderWorkItems, orderLines, orders, orderPrivateSourceAvailable,
   loadCurrentMembershipContext, withTenant, type DatabaseConnection } from "@yummyai/database";
 import { currentOrderAuthority, OrderDocumentSourceReader } from "@yummyai/order-core";
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { DATABASE_CONNECTION, ORDER_PII_VAULT } from "../platform.tokens.js";
 import { FulfillmentRoutesService } from "./fulfillment-routes.service.js";
 import { OrderProductionService } from "./order-production.service.js";
@@ -24,10 +26,12 @@ import { workProjection } from "./order-workspace-query.js";
 import { OrderShipmentService } from "./order-shipment.service.js";
 import { pillowFactoryDeliveryProgress } from "@yummyai/contracts/order/production-delivery";
 import { OriginalOwnerError } from "@yummyai/contracts/common/original-owner-error";
+import { OrderWorkspaceService } from "./order-workspace.service.js";
 
 type Flow = typeof flows.$inferSelect;
 const permissions = [Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead, Permission.DesignRead, Permission.AssetRead];
 class FlowAttention extends Error {}
+const DesignCommandSchema = z.object({ lineId: z.uuidv7(), request: OrderWorkActionInputSchema.refine(input => input.action === "push") }).strict();
 
 /**
  * Durable continuation of approved order work. This API dispatcher coordinates
@@ -49,7 +53,8 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
     @Inject(LogisticsService) private readonly logistics: LogisticsService,
     @Inject(OrderProductionDeliveryService) private readonly delivery: OrderProductionDeliveryService,
     @Inject(LogisticsDocumentsService) private readonly documents: LogisticsDocumentsService,
-    @Inject(OrderShipmentService) private readonly shipments: OrderShipmentService) {
+    @Inject(OrderShipmentService) private readonly shipments: OrderShipmentService,
+    @Inject(OrderWorkspaceService) private readonly work: OrderWorkspaceService) {
     this.source = new OrderDocumentSourceReader(vault);
   }
   onApplicationBootstrap() {
@@ -65,6 +70,33 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       process.stderr.write("Order fulfillment continuation unavailable; original intents retained\n");
     }).finally(() => { this.running = undefined; });
     return this.running;
+  }
+  async queue(context: TenantContext) {
+    const [workspace, rows] = await Promise.all([this.routes.workspace(context),withTenant(this.database.db,context,async tx => {
+      await currentOrderAuthority(tx,context,[Permission.OrderRead,Permission.OrderPiiRead],{requireMembership:true});
+      return tx.select({flow:flows,orderNumber:orders.externalOrderId,
+        lineId:sql<string>`(select l.id from order_lines l join order_work_items w on w.id=l.id where l.order_id=${orders.id} and w.archived_at is null order by l.id limit 1)`})
+        .from(flows).innerJoin(orders,eq(orders.id,flows.orderId))
+        .where(and(orderPrivateSourceAvailable(sql`${orders.id}`),sql`exists(select 1 from order_lines l join order_work_items w on w.id=l.id where l.order_id=${orders.id} and w.archived_at is null)`))
+        .orderBy(desc(flows.updatedAt),desc(flows.id)).limit(101);
+    })]);
+    return FulfillmentFlowQueueSchema.parse({routes:workspace.view.routes,canConfigure:workspace.view.canConfigure,
+      canResume:context.permissions.includes(Permission.OrderWrite),truncated:rows.length>100,
+      items:rows.slice(0,100).map(({flow,orderNumber,lineId}) => ({id:flow.id,orderId:flow.orderId,orderNumber,lineId,
+        stage:flow.stage,reasons:flow.reasons,routeName:workspace.view.routes.find(route=>route.id===flow.routeId)?.profile.name??null,
+        documentProfileVersionId:flow.routeSnapshot?.documentProfileVersionId??null,
+        productionExportId:flow.productionExportId,deliveryPackageIds:flow.deliveryPackageIds,logisticsTaskId:flow.logisticsTaskId,updatedAt:flow.updatedAt.toISOString()}))});
+  }
+  async resumeBatch(context:TenantContext,raw:unknown) {
+    const input=ResumeFulfillmentBatchSchema.parse(raw),results=[];
+    for(const orderId of input.orderIds){
+      try { await this.resume(context,orderId);results.push({orderId,resumed:true,message:"已交回自动处理"}); }
+      catch(error){
+        results.push({orderId,resumed:false,message:error instanceof HttpException && error.getStatus()===409
+          ? error.message : "订单不可继续 请核对当前权限、状态和原操作结果"});
+      }
+    }
+    return {results};
   }
   async view(context: TenantContext, orderId: string): Promise<FulfillmentFlowView> {
     const [data, workspace] = await Promise.all([
@@ -173,13 +205,18 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
     }
   }
   private async step(context: TenantContext, flow: Flow, token: string) {
+    // Do not require every item's decrypted document before all items have been
+    // reviewed. A multi-item order is one continuation, never a partial parcel.
+    const review = await withTenant(this.database.db,context,tx => tx.select({work:orderWorkItems})
+      .from(orderLines).leftJoin(orderWorkItems,eq(orderWorkItems.id,orderLines.id)).where(eq(orderLines.orderId,flow.orderId)));
+    if (!review.length || review.some(row => !row.work || !["ready_to_push","pushed"].includes(row.work.preparation)))
+      return this.finish(context,flow,token,"waiting_artwork",["等待整单审单完成 全部商品确认后自动派发设计"]);
     const [data, workspace] = await Promise.all([this.read(context,flow.orderId),this.routes.workspace(context)]);
     if (data.source.blockers.length) throw new FlowAttention(data.source.blockers.join("；"));
     const matched = matchFulfillmentRoute(data.source.source,workspace.view.routes,workspace.documents.profiles);
     const route = flow.routeId ? workspace.view.routes.find(route => route.id === flow.routeId) : matched.route;
     if (!route) throw new FlowAttention(matched.reasons.join("；"));
     if (route.profile.mode === "disabled") return this.finish(context,flow,token,"paused",["此商品的自动履约规则已停用 已提交的物流任务请在原订单核对"]);
-    if (route.blockers.length) throw new FlowAttention(route.blockers.join("；"));
     if (flow.routeVersion && route.version !== flow.routeVersion) throw new FlowAttention("发货规则已有新版本 本单仍保留原依据 请核对后处理");
     const profile = workspace.documents.profiles.find(profile => profile.id === route.profile.documentProfileVersionId);
     const connection = workspace.connections.find(connection => connection.id === route.profile.connectionId);
@@ -191,9 +228,20 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
     }
     const works = await withTenant(this.database.db,context,tx => tx.select().from(orderWorkItems)
       .where(inArray(orderWorkItems.id,data.source.source.lines.map(line => line.id))));
+    if (flow.pendingCommand?.kind === "design") return this.executeCommand(context,flow,token,flow.pendingCommand);
+    const ready = works.find(work => work.preparation === "ready_to_push");
+    if (ready) {
+      const input = DesignCommandSchema.parse({lineId:ready.id,request:{action:"push",expectedRevision:ready.revision,
+        expectedProjectionVersion:ready.projectionVersion,reason:"运营审单通过后由系统自动派发设计",idempotencyKey:randomUUID()}});
+      await this.command(context,flow,token,"design",input);
+      return this.executeCommand(context,flow,token,{kind:"design",input});
+    }
     if (works.length !== data.source.source.lines.length || works.some(work => work.artwork !== "approved" || !work.approvedEditorVersionId
       || work.proof !== "not_required" && (work.proof !== "approved" || work.proofEditorVersionId !== work.approvedEditorVersionId)))
       return this.finish(context,flow,token,"waiting_artwork",["整单全部商品的当前生产图审核通过后自动继续"]);
+    // Shipping setup must not block a reviewed order's design work. It is checked
+    // at the shipping/production boundary, with the original owner checks intact.
+    if (route.blockers.length) throw new FlowAttention(route.blockers.join("；"));
     if (flow.pendingCommand) return this.executeCommand(context,flow,token,flow.pendingCommand);
     const fulfillment = await this.production.wholeOrderFulfillment(context,flow.orderId);
     if (fulfillment.items.some(item => item.operationBlockers.length)) throw new FlowAttention([...new Set(fulfillment.items.flatMap(item => item.operationBlockers))].join("；"));
@@ -248,6 +296,8 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       return this.executeCommand(context,flow,token,{kind:"logistics",input});
     }
     const logistics=await this.logistics.get(context,flow.logisticsTaskId);
+    if(logistics.diagnostic==="PER_ITEM_COST_EXCEEDED")throw new FlowAttention("最低合规报价的平均每件运费超过已设阈值 已转异常且未购单 请核对包裹与报价");
+    if(logistics.diagnostic==="ACTUAL_PER_ITEM_COST_EXCEEDED")throw new FlowAttention("面单已创建 但实际平均每件运费超过已设阈值 请核对账单 不会重复购买");
     if (["attention","reconciliation_required","cancelled"].includes(logistics.status))
       throw new FlowAttention(logistics.status==="reconciliation_required"?"物流返回结果不确定 已停止购单重试 请查单对账":"物流任务需要核对 请查看原订单中的具体原因");
     if (logistics.status!=="completed") {
@@ -313,6 +363,15 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
     await this.patch(context,flow,token,{pendingCommand:{kind,input}});
   }
   private async executeCommand(context:TenantContext,flow:Flow,token:string,command:{kind:string;input:unknown}) {
+    if (command.kind === "design") {
+      const input = DesignCommandSchema.parse(command.input);
+      const [line] = await withTenant(this.database.db,context,tx => tx.select({id:orderLines.id}).from(orderLines)
+        .where(and(eq(orderLines.id,input.lineId),eq(orderLines.orderId,flow.orderId))));
+      if (!line) throw new FlowAttention("设计派发与本单商品不一致 请核对原审单记录");
+      await this.work.action(context,input.lineId,input.request);
+      await this.patch(context,flow,token,{pendingCommand:null});
+      return this.finish(context,flow,token,"waiting_artwork",["审单已通过 设计已自动派发 完成后进入待审生产图"],0);
+    }
     if (command.kind==="production") {
       const result=await this.production.releaseWholeOrderReceipt(context,flow.orderId,ReleaseWholeOrderInputSchema.parse(command.input));
       await this.patch(context,flow,token,{productionOrderIds:result.productionOrderIds,pendingCommand:null});
