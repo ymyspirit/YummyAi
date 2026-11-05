@@ -18,6 +18,11 @@ export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false
   const factoryProfile = syntheticFactoryProfile(factoryName);
   factoryProfile.productionAddress!.postalCode = "000000";
   if (options.originCountry) factoryProfile.productionAddress!.countryCode = options.originCountry;
+  if (options.originCountry === "US") {
+    factoryProfile.productionAddress!.province = "CA";
+    factoryProfile.productionAddress!.postalCode = "00000";
+    factoryProfile.timeZone = "America/Los_Angeles";
+  }
   const factory = await createFactoryFixture(supplier.id, "shaped_pillow", factoryName, factoryProfile);
   const assignments = [factory];
   if (splitFactories && lineCount > 1) {
@@ -66,8 +71,8 @@ export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false
   await centerApi(`manufacturing-recipes/${manufacturing.recipeId}/reviews`, { expectedVersion: 1, versionId: manufacturing.versionId, decision: "approved", note: "Synthetic operator reviewed exact material and process", idempotencyKey: randomUUID() });
   const account = await centerApi<MarketplaceAccountView>("marketplace-accounts", { platform: "amazon", displayName: externalId, region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private", requestedScopes: [] });
   const purchaseDate = new Date().toISOString();
-  const rows = Array.from({ length: lineCount }, (_, index) => `${externalId}\tITEM-${suffix}-${index}\t${purchaseDate}\tDELIVERY-${suffix}\tSynthetic pillow\t2\tUSD\t20.00\tSynthetic recipient\t1 Test Street\tTest City\tCA\t00000\tUS\t1234567890`).join("\n");
-  const batch = await centerApi<AmazonReportBatchView>("orders/reports/import", { accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-delivery.txt", content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\trecipient-name\tship-address-1\tship-city\tship-state\tship-postal-code\tship-country\tbuyer-phone-number\n${rows}` });
+  const rows = Array.from({ length: lineCount }, (_, index) => `${externalId}\tITEM-${suffix}-${index}\t${purchaseDate}\tDELIVERY-${suffix}\tSynthetic pillow\t2\tUSD\t20.00\tSynthetic recipient\t1 Test Street\tTest City\tCA\t00000\tUS\t1234567890\tsynthetic-buyer@example.invalid`).join("\n");
+  const batch = await centerApi<AmazonReportBatchView>("orders/reports/import", { accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-delivery.txt", content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\trecipient-name\tship-address-1\tship-city\tship-state\tship-postal-code\tship-country\tbuyer-phone-number\tbuyer-email\n${rows}` });
   const workspace = await centerApi<AmazonReportWorkspaceView>(`orders/reports/workspace?batchId=${batch.id}`), lines: string[] = [];
   for (const row of workspace.lines) {
     const id = row.orderLineId; lines.push(id);

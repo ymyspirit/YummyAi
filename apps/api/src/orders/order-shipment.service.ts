@@ -311,20 +311,30 @@ export class OrderShipmentService {
       if (replayed) return replayed.id;
       const [shipment] = await tx.select().from(shipments).where(eq(shipments.id, shipmentId)).limit(1);
       if (!shipment) throw new NotFoundException("Shipment not found");
-      if (shipment.status !== "approved" || shipment.approvedVersionNumber !== shipment.currentVersionNumber) throw new ConflictException("Only the current approved shipment version can be written back");
+      if (!["approved","shipped","in_transit","delivered"].includes(shipment.status) || shipment.approvedVersionNumber !== shipment.currentVersionNumber) throw new ConflictException("Only the current approved shipment version can be written back");
       const [version] = await tx.select().from(shipmentVersions).where(and(eq(shipmentVersions.id, input.shipmentVersionId), eq(shipmentVersions.shipmentId, shipmentId), eq(shipmentVersions.versionNumber, shipment.currentVersionNumber))).limit(1);
       if (!version) throw new NotFoundException("Approved shipment version not found");
+      if (input.idempotencyKey.startsWith("auto-fulfillment:") || shipment.status !== "approved") {
+        const handover=await physicalHandover(tx,shipment);
+        if (!handover.allDispatched || handover.shipmentVersionId!==version.id) throw new ConflictException("自动回传须有当前包裹全部实际交运的依据");
+      }
       const [approval] = await tx.select({ decision: shipmentVersionReviews.decision }).from(shipmentVersionReviews).where(eq(shipmentVersionReviews.shipmentVersionId, version.id)).limit(1);
       if (approval?.decision !== "approved") throw new ConflictException("Shipment version approval evidence is missing");
       const [order] = await tx.select().from(orders).where(eq(orders.id, shipment.orderId)).limit(1);
-      if (!order || order.workflowState !== "awaiting_shipment" || order.sideState) throw new ConflictException("Order is not eligible for shipment writeback");
+      if (!order || !["awaiting_shipment","shipped","completed"].includes(order.workflowState) || order.sideState) throw new ConflictException("Order is not eligible for shipment writeback");
+      const [existing] = await tx.select().from(shipmentWritebackRequests).where(and(
+        eq(shipmentWritebackRequests.shipmentId,shipmentId),eq(shipmentWritebackRequests.shipmentVersionId,version.id),
+      )).orderBy(desc(shipmentWritebackRequests.createdAt),desc(shipmentWritebackRequests.id)).limit(1);
+      if (existing && ["queued","dispatched","accepted"].includes(existing.status)) return existing.id;
+      if (existing && ["reconciliation_required","reconciled"].includes(existing.status))
+        throw new ConflictException("原平台回传结果需要核对 不会重复提交当前包裹");
       const id = createEntityId();
       await tx.insert(shipmentWritebackRequests).values({
         id, tenantId: context.tenantId, shipmentId, shipmentVersionId: version.id, orderId: order.id,
         accountId: order.accountId, platform: order.platform, externalOrderId: order.externalOrderId,
         idempotencyKey: input.idempotencyKey, createdBy: context.userId,
       });
-      await tx.update(shipments).set({ status: "writeback_pending", updatedAt: new Date() }).where(eq(shipments.id, shipmentId));
+      await tx.update(shipments).set({ status: shipment.status === "approved" ? "writeback_pending" : shipment.status, updatedAt: new Date() }).where(eq(shipments.id, shipmentId));
       return id;
     });
     try {

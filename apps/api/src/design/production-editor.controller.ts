@@ -14,7 +14,7 @@ type ResponseHeaders = { setHeader(name: string, value: string): void };
 export class ProductionEditorController {
   constructor(@Inject(ProductionEditorService) private readonly editor: ProductionEditorService) {}
   @Get() @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignRead)
-  list(@Req() request: AuthenticatedRequest, @Query("scope") scope?: string) { return this.editor.list(context(request), z.literal("templates").optional().parse(scope)); }
+  list(@Req() request: AuthenticatedRequest, @Query("scope") scope?: string) { return this.editor.list(context(request), z.enum(["templates", "production"]).optional().parse(scope)); }
   @Post() @Header("Cache-Control", "private, no-store") @RequiresPermission(Permission.DesignWrite)
   create(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
     if (body && typeof body === "object" && "source" in body && body.source) throw new UnprocessableEntityException("请先在订单中心确认需求并推送，再从制图中心领取任务");

@@ -1373,6 +1373,13 @@
       "when": 1793750400001,
       "tag": "0196_logistics_api_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1793836800000,
+      "tag": "0197_order_fulfillment_flow",
+      "breakpoints": true
     }
   ]
 }

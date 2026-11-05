@@ -10,7 +10,7 @@ export const LogisticsAddressSchema = z.object({ name: z.string().trim().min(1).
 export const LogisticsPackageSchema = z.object({ weightGrams: z.number().positive().max(1_000_000), dimensionsMm: z.object({ length: z.number().positive().max(5000), width: z.number().positive().max(5000), height: z.number().positive().max(5000) }).strict(),
   evidence: Note, containsBattery: z.boolean(),
   declarations: z.array(z.object({ sku: z.string().trim().min(1).max(200), nameEn: z.string().trim().min(1).max(200), nameCn: z.string().trim().min(1).max(200),
-    quantity: z.int().positive().max(100000), unitPriceMinor: z.int().positive().safe(), currency: z.string().regex(/^[A-Z]{3}$/), minorUnitDigits:z.int().min(0).max(3).default(2), unitWeightGrams: z.number().positive().max(1_000_000), hsCode: z.string().regex(/^\d{6,12}$/), originCountryCode: z.string().regex(/^[A-Z]{2}$/) }).strict()).min(1).max(100) }).strict();
+    quantity: z.int().positive().max(100000), unitPriceMinor: z.int().positive().safe(), currency: z.string().regex(/^[A-Z]{3}$/), minorUnitDigits:z.int().min(0).max(3).default(2), unitWeightGrams: z.number().positive().max(1_000_000), hsCode: z.string().regex(/^(?:\d{6,12})?$/), originCountryCode: z.string().regex(/^[A-Z]{2}$/) }).strict()).min(1).max(100) }).strict();
 export const LogisticsChannelProfileSchema = z.object({ code: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(200),
   countryCodes: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1).max(250), transitDaysMin: z.int().nonnegative().max(365), transitDaysMax: z.int().positive().max(365),
   transitSource: Note, conditionsVerified: z.boolean(), conditionsEvidence: Note,

@@ -54,6 +54,7 @@ export const WholeOrderFulfillmentViewSchema = z.object({
     externalLineId: z.string(), title: z.string(), sku: z.string().nullable(), specification: z.string().nullable(),
     readyQuantity: z.int().nonnegative(), shippedQuantity: z.int().nonnegative(),
     renderId: Id.nullable(), fileName: z.string().nullable(), editorVersionNumber: z.int().positive().nullable(),
+    renderFailure: z.string().nullable().optional(),
     productionBlockers: z.array(z.string()), shipmentBlockers: z.array(z.string()), operationBlockers: z.array(z.string()),
     production: z.object({ id: Id, status: ProductionOrderStatusSchema, projectionVersion: z.int().positive(),
       wholeOrder: z.boolean(), qualityResult: z.enum(["passed", "failed"]).nullable() }).strict().nullable(),

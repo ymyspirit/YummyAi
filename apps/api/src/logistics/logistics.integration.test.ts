@@ -76,13 +76,29 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
   });
   async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull"){
     const factory=country==="US"?usFactory:cnFactory;
-    const queue={enqueue:async()=>undefined};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
+    const enqueued:unknown[]=[];const queue={enqueue:async(input:unknown)=>{enqueued.push(input);return undefined;}};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
     const profile=LogisticsConnectionProfileSchema.parse({name:`Synthetic route ${randomUUID()}`,provider:country==="US"?"shipos":"yunexpress",factoryId:factory.id,originCountryCode:country,sender:{name:"Synthetic sender",address1:"1 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:country,phone:"1234567890",email:"sender@example.invalid"},baseUrl:country==="US"?"https://api.shipos.cn":"https://oms.example.invalid",currency:"USD",currencySource:"Synthetic account billing proof",labelHosts:["shipease.oss-cn-hangzhou.aliyuncs.com"],channels:carrier.channelRows.map(channel=>({...channel,countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic calendar-day SLA",conditionsVerified:true,conditionsEvidence:"Synthetic route conditions",maxWeightGrams:10000,maxDimensionMm:1000})),apiCompatibilityEvidence:"Synthetic account compatibility",purchasePermissionEvidence:"Synthetic purchase permissions",labelMode:labelMode??(country==="US"?"factory_pull":"include")});
     const original=process.env.YUNEXPRESS_ALLOWED_ORIGINS;process.env.YUNEXPRESS_ALLOWED_ORIGINS="https://oms.example.invalid";
     let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
     await service.verify(context,saved.connectionId,{expectedVersion:1,idempotencyKey:randomUUID()});await service.saveRule(context,{connectionId:saved.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:auto,maxTicketMinor:ticket,maxDailyMinor:daily,quoteMaxAgeSeconds:120,allowedChannelCodes:carrier.channelRows.map(channel=>channel.code),evidence:"Synthetic budget authorization"},idempotencyKey:randomUUID()});
-    return {service,executor,carrier,factory,profile,connectionId:saved.connectionId};
+    return {service,executor,carrier,factory,profile,connectionId:saved.connectionId,enqueued};
   }
+  it("honors explicit quote-only mode even on an automatic purchase connection",async()=>{
+    const s=await setup(),input=taskInput(s,await production(s.factory));
+    input.packages[0]!.declarations[0]!.hsCode="";
+    const saved=await s.service.createTask(context,input,{mode:"quote"});
+    expect(s.enqueued[0]).toMatchObject({mode:"quote"});
+    expect(s.enqueued).not.toContainEqual(expect.objectContaining({mode:"purchase"}));
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");
+    expect(s.carrier.creates).toBe(0);
+    expect(await s.service.createTask(context,input,{mode:"quote"})).toMatchObject({taskId:saved.taskId,replayed:true});
+    await expect(s.service.createTask(context,input)).rejects.toThrow();
+    const yun=await setup(new Carrier(),"CN"),crossBorder=taskInput(yun,await production(yun.factory));
+    crossBorder.packages[0]!.declarations[0]!.hsCode="";
+    await expect(yun.service.createTask(context,crossBorder,{mode:"quote"})).rejects.toThrow();
+    expect(yun.enqueued).toHaveLength(0);
+  });
   async function production(factory:typeof usFactory,existingOrderId?:string,totalQuantity=1){
     if(!capacities.has(factory.id))capacities.set(factory.id,await createSyntheticFactoryCapacity(database,context,{factory,bindings:[{capabilityVersionId:capabilities.get(factory.id)!,unitsPerItem:1}],capacityUnits:10_000}));
     const capacity=capacities.get(factory.id)!;

@@ -30,6 +30,10 @@ export function wholeOrderNextStep(view: WholeOrderDetailView): WholeOrderNextSt
   }
   const plan = view.fulfillment.data;
   if (!plan) return step("先重新核对整单", view.fulfillment.error ?? "整单操作条件尚未读取，暂不能判断下一步。", "重新读取整单", "orders", "refresh");
+  if (["waiting_render","production","logistics","delivery","writeback"].includes(first.fulfillmentFlowStage??""))
+    return step("本单正在自动处理","系统按已核对的规则继续处理 无需重复选择工厂或生成文件","刷新进度","orders","refresh");
+  if (["exception","paused"].includes(first.fulfillmentFlowStage??""))
+    return step("本单履约需要核对","请在上方本单履约中查看原因与原任务结果 核对后继续","刷新履约状态","orders","refresh");
   if (plan.platformConfirmationPending) return { ...step("核对平台发货确认", "整单已实际交运，按平台真实确认结果登记依据。", "登记平台确认", "shipments"), target: "platform-confirmation" };
   if (plan.orderStatus === "shipped") return step("整单已出库", "运单已集中在下方，可查看实际物流和售后记录。", "查看发货记录", "shipments");
   if (plan.shipmentIds.length && !view.shipments.data) return step("先读取运单记录", view.shipments.error ?? "包裹记录尚未读取，暂不能判断审核和出库进度。", "重新读取整单", "shipments", "refresh");

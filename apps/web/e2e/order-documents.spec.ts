@@ -7,13 +7,15 @@ import type { AmazonReportBatchView, AmazonReportWorkspaceView, MarketplaceAccou
 import type ExcelJSType from "../../api/node_modules/exceljs";
 import type JSZipType from "../../api/node_modules/jszip";
 import type { DocumentExportView, FactoryDocumentProfile } from "@yummyai/contracts/logistics/documents";
-import type { LogisticsAccountView } from "@yummyai/contracts/logistics";
+import {LogisticsConnectionProfileSchema,type LogisticsAccountView,type LogisticsTaskView} from "@yummyai/contracts/logistics";
+import type {FulfillmentFlowView,FulfillmentRouteWorkspace} from "@yummyai/contracts/order/fulfillment-flow";
 import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
 import type { ProductionDeliveryWorkspace, ProductionDeliveryPackageView } from "@yummyai/contracts/order/production-delivery";
 import { centerApi } from "./order-centers-fixture";
 import { prepareDeliveryOrder } from "./production-delivery-fixture";
 import { startProductionEditorWorker } from "./production-editor-fixture";
 import { loginErp } from "./erp-identity-fixture";
+import {fixture as reviewFixture} from "./order-review-fixture";
 const require = createRequire(new URL("../../api/package.json", import.meta.url));
 const ExcelJS = require("exceljs") as typeof ExcelJSType, JSZip = require("jszip") as typeof JSZipType;
 let worker: ChildProcess | undefined;
@@ -21,6 +23,104 @@ test.beforeAll(async () => { worker = await startProductionEditorWorker(); });
 test.afterAll(async () => { worker?.kill(); });
 test.beforeEach(async ({ page }) => { if (process.env.WEB_AUTH_MODE === "personal") await loginErp(page, "operator", "/logistics"); });
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+test("order documents unifies one review click with design dispatch",async({page})=>{
+  const state=await reviewFixture(page,1,{automaticFulfillment:true,currentReadContracts:true});
+  await page.goto("/orders");
+  await page.getByRole("button",{name:"开始处理订单",exact:true}).click();
+  const drawer=page.getByRole("dialog",{name:"整单详情",exact:true});
+  await drawer.getByRole("button",{name:"审单通过并开始设计",exact:true}).click();
+  await expect.poll(()=>state.records[0]!.line.preparation).toBe("pushed");
+  expect(state.saves).toHaveLength(1);expect(state.dispatches).toHaveLength(1);expect(state.unexpectedWrites).toEqual([]);
+  await expect(drawer.getByRole("status").filter({hasText:"设计已派发"})).toBeVisible();
+});
+
+for(const mode of ["quote","purchase"] as const)test(`order documents unifies reviewed order to ${mode} and keeps templates separate`,async({page},testInfo)=>{
+  test.setTimeout(300_000);
+  const previous=await centerApi<FulfillmentRouteWorkspace>("fulfillment-flow/routes");
+  for(const route of previous.routes.filter(route=>route.profile.name.startsWith("Synthetic flow ")&&route.profile.mode!=="disabled"))
+    await centerApi("fulfillment-flow/routes",{id:route.id,expectedVersion:route.version,profile:{...route.profile,mode:"disabled"},idempotencyKey:randomUUID()});
+  const order=await prepareDeliveryOrder(2,false,{release:false,originCountry:"US",materialResponsibility:"factory"});
+  const detail=await centerApi<OrderWorkDetail>(`order-centers/lines/${order.lines[0]}`),orderId=detail.line.orderId;
+  for(const lineId of order.lines){
+    const line=await centerApi<OrderWorkDetail>(`order-centers/lines/${lineId}`);
+    await centerApi(`order-centers/lines/${lineId}/platform-deadline`,{expectedProjectionVersion:line.line.projectionVersion,shipByAt:new Date(Date.now()+7*86400000).toISOString(),evidenceReference:"Synthetic platform ship-by",idempotencyKey:randomUUID()});
+  }
+  const profile:FactoryDocumentProfile={name:`Synthetic flow packing ${mode}`,route:"printeque",productionAdapter:"printeque_factory",originCountryCode:"US",destinationCountries:["US"],originCompany:"Synthetic",factoryCode:"SYNTHETIC",carrierProvider:"ShipOS",carrierService:"",useAccountSender:false,evidence:"Synthetic measured packing",
+    specifications:[{specificationVersionId:detail.draft.specificationVersionId!,productKind:"shaped_pillow",sizeIn:10,supplierSku:"CP-10",weight:.26,weightUnit:"lb",length:8,width:5,height:5,dimensionUnit:"in",declaredUnitValueMinor:800,nameEn:"Pillow",nameCn:"抱枕",hsCode:""}]};
+  const saved=await centerApi<{id:string}>("logistics/documents/profiles",{factoryId:order.factoryId,expectedVersion:0,profile,idempotencyKey:randomUUID()});
+  const connectionProfile=LogisticsConnectionProfileSchema.parse({name:`Synthetic ShipOS ${mode}`,provider:"shipos",factoryId:order.factoryId,originCountryCode:"US",baseUrl:process.env.LOGISTICS_TEST_BASE_URL!,
+    sender:{name:"Synthetic sender",address1:"Synthetic factory address; not a real business",city:"Synthetic city",region:"CA",postalCode:"00000",countryCode:"US",phone:"1234567890",email:"sender@example.invalid"},
+    currency:"USD",currencySource:"Synthetic billing currency",labelHosts:["127.0.0.1"],labelMode:"factory_pull",
+    channels:[{code:"fixture",name:"Synthetic ShipOS channel",countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic transit calendar",conditionsVerified:true,conditionsEvidence:"Synthetic channel evidence",maxWeightGrams:10000,maxDimensionMm:1000}],
+    apiCompatibilityEvidence:"Synthetic local carrier",purchasePermissionEvidence:"Synthetic local purchase only"});
+  const connection=await centerApi<{connectionId:string}>("logistics/connections",{expectedVersion:0,profile:connectionProfile,credentials:{provider:"shipos",appKey:"synthetic-appkey",appSecret:"synthetic-secret"},idempotencyKey:randomUUID()});
+  await centerApi(`logistics/connections/${connection.connectionId}/verify`,{expectedVersion:1,idempotencyKey:randomUUID()});
+  await centerApi("logistics/rules",{connectionId:connection.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:true,maxTicketMinor:1000,maxDailyMinor:10000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic authorized purchase ceiling"},idempotencyKey:randomUUID()});
+  await page.goto("/fulfillment-routes");
+  await page.getByRole("button",{name:"新增规则",exact:true}).click();
+  await page.getByLabel("规则名称",{exact:true}).fill(`Synthetic flow ${mode}`);
+  await page.getByLabel("工厂包裹规则",{exact:true}).selectOption(saved.id);
+  await page.getByLabel("物流连接",{exact:true}).selectOption(connection.connectionId);
+  await page.getByLabel("制作计划天数",{exact:true}).fill("5");
+  await page.getByLabel("审图通过后",{exact:true}).selectOption(mode);
+  await page.getByRole("button",{name:"保存规则",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("规则已保存");
+  await expect(page.getByRole("cell",{name:`Synthetic flow ${mode}`,exact:false})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath(`flow-rules-${mode}-desktop.png`),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath(`flow-rules-${mode}-narrow.png`),fullPage:true});
+  await page.setViewportSize({width:1440,height:960});
+  // Existing approved orders require an explicit start; saving a rule never backfills them.
+  expect((await centerApi<FulfillmentFlowView>(`fulfillment-flow/orders/${orderId}`)).id).toBeNull();
+  await centerApi(`fulfillment-flow/orders/${orderId}/resume`,{});
+  let flow:FulfillmentFlowView;
+  await expect.poll(async()=>{
+    flow=await centerApi<FulfillmentFlowView>(`fulfillment-flow/orders/${orderId}`);
+    if(flow.stage==="exception"){
+      const tasks=await centerApi<{tasks:LogisticsTaskView[]}>(`logistics/tasks?orderId=${orderId}`);
+      throw new Error(JSON.stringify({reasons:flow.reasons,tasks:tasks.tasks.map(task=>({status:task.status,diagnostic:task.diagnostic,quotes:task.quotes}))}));
+    }
+    return mode==="quote"?flow.stage:!!flow.productionExportId;
+  },{timeout:150_000,intervals:[1000,3000,5000]}).toBe(mode==="quote"?"paused":true);
+  const tasks=await centerApi<{tasks:LogisticsTaskView[]}>(`logistics/tasks?orderId=${orderId}`);
+  expect(tasks.tasks).toHaveLength(1);expect(tasks.tasks[0]!.externalReference).toBe(order.externalId);
+  expect(tasks.tasks[0]!.status).toBe(mode==="quote"?"quoted":"completed");
+  expect(flow!.productionOrderIds).toHaveLength(2);
+  if(mode==="purchase"){
+    expect(flow!.deliveryPackageIds).toHaveLength(1);
+    const exported=await centerApi<{exports:DocumentExportView[]}>(`logistics/documents/exports?orderId=${orderId}`);
+    expect(exported.exports).toHaveLength(1);
+    const current=await centerApi<OrderWorkDetail>(`order-centers/lines/${order.lines[0]}`);
+    await page.goto(`/orders?line=${current.line.id}`);
+    const panel=page.getByRole("region",{name:"本单自动履约",exact:true});
+    await expect(panel.getByRole("link",{name:"下载工厂 ERP 表"})).toBeVisible();
+    await expect(panel).toContainText("待提交工厂");
+    const downloadPending=page.waitForEvent("download");
+    await panel.getByRole("link",{name:"下载工厂 ERP 表"}).click();
+    const downloaded=await downloadPending,workbook=new ExcelJS.Workbook();
+    await workbook.xlsx.load(Uint8Array.from(await readFile((await downloaded.path())!)).buffer);
+    const sheet=workbook.getWorksheet("orders")!,headers=new Map<string,number>();
+    sheet.getRow(1).eachCell((cell,index)=>headers.set(String(cell.value),index));
+    expect(sheet.rowCount).toBe(3);
+    expect([2,3].map(row=>sheet.getCell(row,headers.get("order_number")!).value)).toEqual([order.externalId,order.externalId]);
+    const packet=await page.request.get(`/api/order-centers/deliveries/${flow!.deliveryPackageIds[0]}/file`);
+    expect(packet.ok()).toBe(true);
+    const files=await JSZip.loadAsync(await packet.body());
+    expect(Object.keys(files.files).filter(name=>/\.jpg$/i.test(name))).toHaveLength(2);
+    await page.screenshot({path:testInfo.outputPath("flow-order-desktop.png"),fullPage:true});
+    await page.goto(`/production-files?projectId=${current.line.editorProjectId}`);
+    await expect(page.getByRole("heading",{name:"生产文件",exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"新建项目",exact:true})).toHaveCount(0);
+    await page.goto("/production-templates");
+    await expect(page.getByRole("heading",{name:"工艺底稿",exact:true})).toBeVisible();
+    const production=await centerApi<{projects:Array<{id:string}>}>("production-editor/projects?scope=production");
+    const templates=await centerApi<{projects:Array<{id:string}>}>("production-editor/projects?scope=templates");
+    expect(production.projects.some(project=>project.id===current.line.editorProjectId)).toBe(true);
+    expect(templates.projects.some(project=>project.id===current.line.editorProjectId)).toBe(false);
+  }
+});
 test("order documents configures carrier accounts before factory readiness without exposing credentials",async({page},testInfo)=>{
   await page.goto("/logistics");
   await expect(page.locator("main.logistics-page")).toHaveAttribute("aria-busy","false");

@@ -7,7 +7,7 @@ import { SaveLogisticsConnectionSchema, SaveLogisticsRuleSchema, CreateLogistics
 import { logisticsConnections as connections, logisticsConnectionVersions as versions, logisticsRuleVersions as rules, logisticsTasks as tasks, logisticsTaskProductions as pins, logisticsLabels as labels, logisticsEvents as events,
   fulfillmentFactories, fulfillmentFactoryVersions, productionOrders, productionOrderVersions, orderLines, orders, orderProtectedDetails,logisticsDocumentProfiles, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel } from "@yummyai/logistics";
-import { OrderDocumentSourceReader } from "@yummyai/order-core";
+import { OrderDocumentSourceReader, currentOrderAuthority } from "@yummyai/order-core";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { z } from "zod";
@@ -25,7 +25,16 @@ export class LogisticsService {
   async connections(context: TenantContext): Promise<{ connections: LogisticsConnectionView[] }> {
     this.tenantAccess(context);
     authorize(context,Permission.IntegrationRead);
+    return this.connectionViews(context);
+  }
+  /** Operational routing facts only. Secrets remain in the integration owner. */
+  async routingConnections(context: TenantContext): Promise<{ connections: LogisticsConnectionView[] }> {
+    this.read(context);
+    return this.connectionViews(context, true);
+  }
+  private async connectionViews(context: TenantContext, operational = false): Promise<{ connections: LogisticsConnectionView[] }> {
     return withTenant(this.database.db,context,async tx => {
+      await currentOrderAuthority(tx,context,operational ? [Permission.OrderRead,Permission.OrderPiiRead] : [Permission.IntegrationRead]);
       const rows=await tx.select().from(connections).orderBy(desc(connections.createdAt)).limit(200);
       return { connections: await Promise.all(rows.map(async row => { const v=await this.connection(tx,row.id); const rule=await this.rule(tx,row.id,row.ruleVersion); return { id:row.id,version:row.version,versionId:v.id,profile:v.profile,verifiedAt:row.verifiedVersionId===v.id ? row.verifiedAt?.toISOString() ?? null : null,rule:rule?.rule??null,ruleVersion:row.ruleVersion,ruleVersionId:rule?.id??null }; })) };
     });
@@ -94,8 +103,8 @@ export class LogisticsService {
       await tx.update(connections).set({ruleVersion:version}).where(eq(connections.id,current.id)); return {ruleVersion:version};
     });
   }
-  async createTask(context: TenantContext,raw: unknown) {
-    this.write(context); const input=CreateLogisticsTaskSchema.parse(raw),digest=logisticsHash(input);
+  async createTask(context: TenantContext,raw: unknown, execution: { mode: "quote" | "purchase" } = { mode: "purchase" }) {
+    this.write(context); const input=CreateLogisticsTaskSchema.parse(raw),digest=logisticsHash(execution.mode==="quote"?{...input,executionMode:"quote"}:input);
     const fulfillment=await this.orderService.fulfillmentDetails(context,input.orderId,"fulfillment");
     if(!fulfillment.protectedDetails) throw new ConflictException("订单缺少有效的收件地址和联系方式");
     const {shippingAddress:a,buyer}=fulfillment.protectedDetails;
@@ -114,6 +123,8 @@ export class LogisticsService {
       const first=rows[0];
       if(rows.length!==input.productionOrderIds.length || !first?.version.factoryId || !first.version.factoryVersionId || rows.some(r=>r.version.factoryId!==first.version.factoryId || r.version.factoryVersionId!==first.version.factoryVersionId || ["cancelled","cancel_requested","failed"].includes(r.production.status) || r.version.expectedCompletionAt>new Date(input.readyAt))) throw new ConflictException("请按已确认工厂拆分物流任务，并核对数量和预计完工时间");
       const connection=await this.connection(tx,input.connectionId); const [parent]=await tx.select().from(connections).where(eq(connections.id,input.connectionId));
+      if(connection.profile.provider==="yunexpress"&&input.packages.some(pack=>pack.declarations.some(item=>!/^\d{6,12}$/.test(item.hsCode))))
+        throw new ConflictException("云途跨境申报须填写有效的海关编码");
       const rule=await this.rule(tx,input.connectionId,parent!.ruleVersion); if(!rule || rule.connectionVersionId!==connection.id) throw new ConflictException("请为当前发货连接设置预算和时效规则");
       if(parent!.factoryId!==first.version.factoryId) throw new ConflictException("物流路线须属于生产任务的实际工厂");
       const [factory]=await tx.select().from(fulfillmentFactoryVersions).where(eq(fulfillmentFactoryVersions.id,first.version.factoryVersionId));
@@ -167,7 +178,7 @@ export class LogisticsService {
       await tx.insert(events).values({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,taskId:id,action:"task.created",data:{productionOrderIds:input.productionOrderIds,ruleVersionId:rule.id,connectionVersionId:connection.id}});
       return {taskId:id,replayed:false};
     });
-    await this.queue.enqueue({taskId:outcome.taskId,tenantId:context.tenantId,requestedBy:context.userId,mode:"purchase",requestKey:input.idempotencyKey});
+    await this.queue.enqueue({taskId:outcome.taskId,tenantId:context.tenantId,requestedBy:context.userId,mode:execution.mode,requestKey:input.idempotencyKey});
     const [task]=await withTenant(this.database.db,context,tx=>tx.select().from(tasks).where(eq(tasks.id,outcome.taskId)));
     if(task)await this.queue.enqueue({taskId:task.id,tenantId:context.tenantId,requestedBy:context.userId,mode:"retention",requestKey:task.id,delayMs:Math.max(0,task.expiresAt.getTime()-Date.now())});
     return outcome;

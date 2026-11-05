@@ -119,7 +119,7 @@ function detail(n: number): OrderWorkDetail {
     versions: [],
   });
 }
-export async function fixture(page: Page, count = 3, options: { trackVersions?: boolean; currentReadContracts?: boolean } = {}) {
+export async function fixture(page: Page, count = 3, options: { trackVersions?: boolean; currentReadContracts?: boolean; automaticFulfillment?:boolean } = {}) {
   const records = Array.from({ length: count }, (_, n) => detail(n + 1));
   function refreshLifecycle() {
     const orders = new Map<string, typeof records>();
@@ -132,6 +132,7 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
   const saves: Array<ReturnType<typeof SaveOrderWorkDraftInputSchema.parse> & { lineId: string }> =
     [];
   const unexpectedWrites: string[] = [];
+  const dispatches:string[]=[];
   const intakeChecks: Array<ReturnType<typeof CheckOrderIntakeInputSchema.parse> & { lineId: string }> = [];
   let workspaceReads = 0;
   let failNext = false;
@@ -139,6 +140,10 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
   let releaseSave: (() => void) | undefined;
   let pendingSave: Promise<void> | undefined;
   await page.route("**/api/ai-assists/**", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/fulfillment-flow/orders/*",route=>route.fulfill({json:{
+    orderId:new URL(route.request().url()).pathname.split("/").at(-1),id:null,stage:null,automaticDesign:options.automaticFulfillment??false,
+    route:null,reasons:[],productionOrderIds:[],logisticsTaskId:null,deliveryPackageIds:[],productionExportId:null,updatedAt:null,
+  }}));
   await page.route("**/api/order-centers/**", async (route) => {
     refreshLifecycle();
     const request = route.request();
@@ -347,6 +352,13 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
       });
       return route.fulfill({ json: record });
     }
+    if(options.automaticFulfillment&&request.method()==="POST"&&path.endsWith("/actions")){
+      const input=request.postDataJSON();
+      if(input.action!=="push"||input.expectedRevision!==record.line.revision||input.expectedProjectionVersion!==record.line.projectionVersion)
+        return route.fulfill({status:409,json:{message:"Synthetic dispatch pin mismatch"}});
+      dispatches.push(input.idempotencyKey);record.line.preparation="pushed";record.line.artwork="queued";record.line.projectionVersion+=1;
+      return route.fulfill({json:record});
+    }
     if (request.method() !== "GET") {
       unexpectedWrites.push(path);
       return route.fulfill({
@@ -356,8 +368,23 @@ export async function fixture(page: Page, count = 3, options: { trackVersions?: 
     }
     return route.fulfill({ json: record });
   });
+  if(options.automaticFulfillment){
+    const session=await page.request.get("/api/erp-auth/session");
+    const authority=erpSessionAuthority(ErpSessionViewSchema.parse(await session.json()));
+    await page.route("**/api/order-centers/fulfillment-commands?**",route=>{
+      if(route.request().method()!=="GET"||route.request().headers()["x-yummyai-context-authority"]!==authority)throw new Error("Synthetic recovery authority mismatch");
+      return route.fulfill({headers:{"x-yummyai-context-authority":authority,"cache-control":"private, no-store"},json:FulfillmentCommandListSchema.parse({items:[],truncated:false})});
+    });
+    await page.route("**/api/order-exceptions/**",route=>{
+      const url=new URL(route.request().url()),orderId=url.pathname.split("/")[3],record=records.find(record=>record.line.orderId===orderId);
+      if(!record||route.request().method()!=="GET")throw new Error("Synthetic exception read escaped fixture");
+      const query=OrderExceptionOperationsQuerySchema.parse(Object.fromEntries(url.searchParams));
+      return route.fulfill({json:OrderExceptionOperationsViewSchema.parse({orderId,lineId:null,label:record.line.externalOrderId,orderSequence:1,sourceChecksum:"b".repeat(64),asOf:now,canCreate:false,query,total:0,page:query.page,pageSize:query.pageSize,summary:{open:0,resolved:0,missingEvent:0},items:[]})});
+    });
+  }
   return {
     records,
+    dispatches,
     saves,
     unexpectedWrites,
     intakeChecks,

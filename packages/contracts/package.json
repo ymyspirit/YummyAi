@@ -103,6 +103,7 @@
     "./order/report-import-errors": "./src/order/report-import-errors.ts",
     "./order/workspace": "./src/order/workspace.ts",
     "./order/whole-fulfillment": "./src/order/whole-fulfillment.ts",
+    "./order/fulfillment-flow": "./src/order/fulfillment-flow.ts",
     "./order/shipment": "./src/order/shipment.ts",
     "./order/quality-groups": "./src/order/quality-groups.ts",
     "./order/quality-scrap": "./src/order/quality-scrap.ts",

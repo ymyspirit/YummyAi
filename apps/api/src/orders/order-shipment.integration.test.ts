@@ -12,6 +12,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { OrderShipmentService } from "./order-shipment.service.js";
 import { OrderService } from "./order.service.js";
 import { syntheticPassedProduction } from "./shipment-production-fixture.js";
+import { DrizzleShipmentWritebackExecutionRepository } from "../../../worker/src/processors/shipment-writeback.processor.js";
 
 describe("shipment, tracking, and marketplace writeback", () => {
   const database = connectDatabase();
@@ -31,6 +32,37 @@ describe("shipment, tracking, and marketplace writeback", () => {
   });
 
   afterAll(async () => { await database.client.end(); });
+
+  it("allows automatic writeback only after real handover and keeps physical state after rejection",async()=>{
+    const fixture=await shipmentReadyOrder("automatic-handover",[1]);
+    const created=await shipmentService.create(contextA,fixture.orderId,{
+      shipDate:"2026-07-24T10:00:00.000Z",promisedDeliveryAt:null,estimatedDeliveryAt:null,shipFromCountryCode:"US",
+      idempotencyKey:"automatic-handover-shipment",
+      packages:[packageInput("AUTO","TRACK-AUTO",[{orderLineId:fixture.lineIds[0]!,quantity:1}])],
+    });
+    const version=created.versions[0]!;
+    await shipmentService.reviewVersion(contextA,created.shipment.id,version.id,{
+      decision:"approved",reasonCode:"LABEL_AND_CONTENT_VERIFIED",reason:"Synthetic review",expectedCurrentVersion:1,idempotencyKey:"automatic-handover-review",
+    });
+    const request={shipmentVersionId:version.id,idempotencyKey:`auto-fulfillment:${createEntityId()}:${version.id}`};
+    await expect(shipmentService.requestWriteback(contextA,created.shipment.id,request)).rejects.toThrow();
+    await shipmentService.dispatch({...contextA,permissions:[...contextA.permissions,"order:pii:read"]},created.shipment.id,{
+      expectedVersion:1,occurredAt:"2026-07-24T10:10:00.000Z",reason:"Synthetic carrier handover",idempotencyKey:createEntityId(),
+    });
+    const queued=await shipmentService.requestWriteback(contextA,created.shipment.id,request);
+    expect((await shipmentService.get(contextA,created.shipment.id)).shipment.status).toBe("shipped");
+    expect((await shipmentService.requestWriteback(contextA,created.shipment.id,request)).request.id).toBe(queued.request.id);
+    expect((await shipmentService.requestWriteback(contextA,created.shipment.id,{...request,idempotencyKey:"automatic-duplicate-key"})).request.id).toBe(queued.request.id);
+    await shipmentService.recordWritebackEvent(contextA,queued.request.id,{action:"dispatched",expectedProjectionVersion:1,providerCode:null,externalReference:null,occurredAt:"2026-07-24T10:11:00.000Z"});
+    const worker=new DrizzleShipmentWritebackExecutionRepository(database,new SecretVault(Buffer.alloc(32,63)));
+    await worker.complete(contextA,{
+      requestId:queued.request.id,accountId:accountA,orderId:fixture.orderId,shipmentId:created.shipment.id,projectionVersion:2,
+      context:{tenantId:tenantA,accountId:accountA,platform:"etsy",region:"GLOBAL",externalAccountId:"synthetic",marketplaceIds:[]},
+      input:{externalOrderId:"synthetic",shipDate:version.shipDate.toISOString(),packages:[]},
+    },{status:"rejected",providerCode:"SYNTHETIC_REJECTED",externalReference:null});
+    expect((await shipmentService.getWriteback(contextA,queued.request.id)).request.status).toBe("rejected");
+    expect((await shipmentService.get(contextA,created.shipment.id)).shipment.status).toBe("shipped");
+  });
 
   it("requires immutable approval and acknowledgement before shipment, then completes only after every package is delivered", async () => {
     const fixture = await shipmentReadyOrder("lifecycle", [2, 1]);

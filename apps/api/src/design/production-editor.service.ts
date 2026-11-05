@@ -111,9 +111,14 @@ export class ProductionEditorService {
     });
   }
 
-  async list(context: TenantContext, scope?: "templates") {
+  async list(context: TenantContext, scope?: "templates" | "production") {
     authorize(context, Permission.DesignRead);
-    const rows = await this.inTenant(context, (tx) => tx.select().from(projects).where(and(eq(projects.status, "active"), sql`${projects.archivedAt} is null`, scope === "templates" ? sql`${projects.sourceReportLineId} is null and ${projects.sourceWorkItemId} is null and ${projects.sourceSalesRecipeId} is null` : undefined)).orderBy(desc(projects.updatedAt)).limit(100));
+    const templateSource = sql`${projects.sourceReportLineId} is null and ${projects.sourceWorkItemId} is null and ${projects.sourceSalesRecipeId} is null`;
+    const sourceScope = scope === "templates" ? templateSource
+      : scope === "production" ? sql`not (${templateSource})` : undefined;
+    const rows = await this.inTenant(context, (tx) => tx.select().from(projects)
+      .where(and(eq(projects.status, "active"), sql`${projects.archivedAt} is null`, sourceScope))
+      .orderBy(desc(projects.updatedAt)).limit(100));
     const result: ProductionEditorProjectView[] = [];
     for (const row of rows) {
       if ((row.sourceReportLineId || row.sourceWorkItemId) && (!context.permissions.includes(Permission.OrderRead) || !context.permissions.includes(Permission.OrderPiiRead))) continue;

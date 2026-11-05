@@ -57,6 +57,7 @@ export type OrderReviewState = { dirty: boolean; busy: boolean; loading: boolean
 type OrderSaveAttempt = {
   orderLineId: string; orderId: string; authority: string; scope: string | null;
   input: string; lineState: string; advance: boolean; authorityChanged?: boolean;
+  dispatchKey?: string;
   body: z.infer<typeof SaveOrderWorkDraftInputSchema>;
 };
 
@@ -73,6 +74,7 @@ export function OrderWorkDetailPanel({
   onStateChange,
   onModuleChange,
   unified = false,
+  automaticDesign = false,
   navigationReady = false,
   onSelectItem,
   refreshToken = 0,
@@ -86,6 +88,7 @@ export function OrderWorkDetailPanel({
   onChanged: () => void;
   inline?: boolean;
   unified?: boolean;
+  automaticDesign?: boolean;
   navigationReady?: boolean;
   onSelectItem?: (id: string, module: OrderWorkspaceModule) => void;
   refreshToken?: number;
@@ -422,6 +425,7 @@ export function OrderWorkDetailPanel({
     const attempt: OrderSaveAttempt = {
       orderLineId: id, orderId: detail.line.orderId, authority: access.authority, scope: access.preferenceScope,
       input: JSON.stringify({ draft, reason }), lineState: orderReviewLineState(detail), advance,
+      ...(status === "ready_to_push" && automaticDesign ? { dispatchKey: crypto.randomUUID() } : {}),
       body: structuredClone({ ...payload, idempotencyKey: requestKey(payload) }),
     };
     await submitSaveAttempt(attempt, false);
@@ -444,8 +448,27 @@ export function OrderWorkDetailPanel({
         setNotice("原保存已有结果，当前填写已变化并保留；请核对订单状态后再继续。");
         return;
       }
-      update(next);
-      setNotice(recovering ? "上次保存结果已核对。" : attempt.body.status === "ready_to_push" ? "审单已确认 下一步点击推送本件设计派发任务" : "草稿已保存。");
+      if (attempt.body.status === "ready_to_push" && attempt.dispatchKey && next.line.preparation === "ready_to_push") {
+        try {
+          const dispatched=OrderWorkDetailViewSchema.parse(await centerRequest(`lines/${attempt.orderLineId}/actions`,{
+            action:"push",expectedRevision:next.line.revision,expectedProjectionVersion:next.line.projectionVersion,
+            reason:"运营审单通过并派发设计",idempotencyKey:attempt.dispatchKey,
+          }));
+          if (dispatched.line.id!==attempt.orderLineId || dispatched.line.orderId!==attempt.orderId || dispatched.line.preparation!=="pushed")
+            throw new Error("设计派发结果需要核对");
+          if (!saveScopeCurrent(attempt)) return;
+          update(dispatched);
+          setNotice("审单已通过 设计已派发 完成后会进入待审生产图");
+        } catch (cause) {
+          if (!saveScopeCurrent(attempt)) return;
+          update(next);
+          setError(`审单已保存 设计派发尚未确认：${cause instanceof Error?cause.message:"请刷新核对原任务"}`);
+          setReason("");onChanged();return;
+        }
+      } else {
+        update(next);
+        setNotice(recovering ? "上次保存结果已核对。" : "草稿已保存。");
+      }
       setReason("");
       if (!recovering && attempt.advance) review?.onSavedNext();
     } catch (cause) {
@@ -1420,7 +1443,7 @@ export function OrderWorkDetailPanel({
                     disabled={busy || navigationLoading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push")}
                 >
-                  确认审单并保存
+                  {automaticDesign ? "审单通过并开始设计" : "确认审单并保存"}
                 </button>
                 <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>
@@ -1630,7 +1653,7 @@ export function OrderWorkDetailPanel({
                   disabled={busy || loading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push", true)}
                 >
-                  {busy ? "正在保存…" : unified ? "确认本件审单" : review.hasNext ? "确认审单并下一单" : "确认审单并返回列表"}
+                  {busy ? "正在保存…" : automaticDesign ? "审单通过并开始设计" : unified ? "确认本件审单" : review.hasNext ? "确认审单并处理下一单" : "确认审单并返回列表"}
                 </button>
                 <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>

@@ -36,7 +36,7 @@ export class LogisticsDocumentsService {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(OrderProductionDeliveryService) private readonly delivery: OrderProductionDeliveryService) {}
 
-  async options(context: TenantContext, raw: unknown): Promise<DocumentOptions> {
+  async options(context: TenantContext, raw: unknown, scope: "all" | "configuration" = "all"): Promise<DocumentOptions> {
     const query = querySchema.parse(raw);
     return this.transaction(context, read, async tx => {
       const factoryRows = await tx.select({ factory: factories, version: factoryVersions }).from(factories)
@@ -48,7 +48,7 @@ export class LogisticsDocumentsService {
         code: specifications.code, spuName: spus.name, version: specificationVersions.versionNumber }).from(specifications)
         .innerJoin(specificationVersions, and(eq(specificationVersions.specificationId, specifications.id), eq(specificationVersions.versionNumber, specifications.versionNumber)))
         .innerJoin(spus, eq(spus.id, specifications.spuId)).orderBy(asc(spus.name), asc(specifications.code)).limit(501);
-      const orderRows = await tx.select({ id: orders.id, number: orders.externalOrderId, state: orders.workflowState }).from(orders)
+      const orderRows = scope === "configuration" ? [] : await tx.select({ id: orders.id, number: orders.externalOrderId, state: orders.workflowState }).from(orders)
         .where(and(query.orderId ? eq(orders.id, query.orderId) : undefined,
           query.q ? ilike(orders.externalOrderId, `%${query.q.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`) : undefined,
           orderPrivateSourceAvailable(sql`${orders.id}`)))

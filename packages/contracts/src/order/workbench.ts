@@ -139,6 +139,7 @@ type OperatorRow = Parameters<typeof orderQueueStage>[0] & {
   designExecutor?: string | null; designRunStatus?: string | null;
   archivedAt?: string | null; operatorTaskKey?: OrderOperatorTaskKey;
   operatorException?: boolean;
+  fulfillmentFlowStage?: string | null;
   orderStatus?: OrderLifecycleStatus;
 };
 export function orderOperatorTaskKey(row: OperatorRow): OrderOperatorTaskKey {
@@ -200,6 +201,17 @@ export function orderOperatorTask(row: OperatorRow) {
     archived: ["已归档", "运营", "保留历史；如需恢复，先核对归档与暂停原因。", "查看详情", "orders"],
   } as const;
   const [title, owner, description, action, module] = tasks[key];
+  if (["waiting_production","waiting_shipping","confirm_shipment"].includes(key) && row.fulfillmentFlowStage) {
+    const stage=row.fulfillmentFlowStage;
+    if (["waiting_render","production","logistics","delivery","writeback"].includes(stage))
+      return {key,title:"本单正在自动处理",owner:"系统",description:"按已核对的工厂和发货规则继续处理 无需逐项点击",action:"查看本单进度",module:"orders" as const,actionable:false};
+    if (stage==="waiting_factory")
+      return {key,title:"工厂文件已备齐",owner:"运营",description:"正式文件与面单已准备好 请批量提交工厂并登记真实回执",action:"查看工厂文件",module:"orders" as const,actionable:true};
+    if (stage==="waiting_dispatch")
+      return {key,title:"跟进工厂制作与实际交运",owner:"生产",description:"依据工厂及承运商真实进度更新 已启用的回传会在实际交运后继续",action:"查看本单进度",module:"orders" as const,actionable:false};
+    if (stage==="exception"||stage==="paused")
+      return {key,title:stage==="exception"?"履约需要处理":"自动处理已暂停",owner:"运营",description:"在本单查看具体原因和已完成结果 核对后继续原任务",action:"核对本单履约",module:"orders" as const,actionable:true};
+  }
   if (key === "waiting_production" && row.orderStatus && ["processing", "awaiting_review"].includes(row.orderStatus)) {
     return { key, title: "等待整单图稿审核", owner: "运营", description: "本件已审核，等待这一单其他制作图稿准备齐并通过审核。",
       action: "查看订单要求", module: "orders" as const, actionable: false };

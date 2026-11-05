@@ -33,7 +33,7 @@ const emptyFonts = [{ id: "geist_regular", name: "Geist Regular", builtin: true,
 export type ProductionEditorNavigationState = { dirty: boolean; busy: boolean };
 export type ProductionEditorFocus = { inspector: "layer" | "process" | "confirm"; layerId?: string; versionId: string };
 export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProjectId, initialVersionId, initialFocus, reportLineId, scope, onNavigationStateChange }: {
-  kind?: ProductionKind; initialProjectId?: string; initialVersionId?: string; reportLineId?: string; scope?: "project" | "order" | "templates";
+  kind?: ProductionKind; initialProjectId?: string; initialVersionId?: string; reportLineId?: string; scope?: "project" | "order" | "templates" | "production";
   initialFocus?: ProductionEditorFocus;
   onNavigationStateChange?: (state: ProductionEditorNavigationState) => void;
 }) {
@@ -42,7 +42,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   const [history, setHistory] = useState(() => createEditorHistory(createProductionDocument(kind)));
   const document = history.present;
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(!initialProjectId);
+  const [showCreate, setShowCreate] = useState(!initialProjectId && scope !== "production");
   const [createKind, setCreateKind] = useState(kind);
   const [createName, setCreateName] = useState(getProductionProductDefinition(kind).draftName);
   const [source, setSource] = useState<Source | null>(null);
@@ -111,7 +111,8 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
           await openProject(initialProjectId, initialVersionId, false);
           return;
         }
-        const workspace = ProductionEditorWorkspaceViewSchema.parse(await editorRequest(scope === "templates" ? "projects?scope=templates" : "projects", undefined, "GET", controller.signal));
+        const listing = scope === "templates" || scope === "production" ? `projects?scope=${scope}` : "projects";
+        const workspace = ProductionEditorWorkspaceViewSchema.parse(await editorRequest(listing, undefined, "GET", controller.signal));
         let currentSource: Source | null = null;
         if (reportLineId) {
           const response = await fetch(`/api/orders/reports/lines/${encodeURIComponent(reportLineId)}`, { cache: "no-store", signal: controller.signal });
@@ -124,7 +125,8 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
         setSource(currentSource);
         const available = workspace.projects.filter((project) => scope === "project" ? project.id === initialProjectId
           : scope === "order" ? project.source?.reportLineId === reportLineId && project.source?.reportVersionId === currentSource?.reportVersionId
-          : scope === "templates" ? !project.source && !project.workSource : true);
+          : scope === "templates" ? !project.source && !project.workSource && !project.catalogSource
+          : scope === "production" ? !!(project.source || project.workSource || project.catalogSource) : true);
         setProjects(available);
         const resumeId = initialProjectId ?? (scope === "order" ? available[0]?.id : undefined);
         if (resumeId) await openProject(resumeId, initialVersionId, false);
@@ -135,7 +137,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   }, [initialProjectId, initialVersionId, reportLineId, scope]);
 
   useEffect(() => {
-    if (!scope && detail) syncProductionEditorLocation(detail.project.id, detail.version.id === detail.project.currentVersionId ? undefined : detail.version.id);
+    if ((!scope || scope === "templates" || scope === "production") && detail) syncProductionEditorLocation(detail.project.id, detail.version.id === detail.project.currentVersionId ? undefined : detail.version.id);
   }, [scope, detail?.project.id, detail?.version.id, detail?.project.currentVersionId]);
 
   useEffect(() => {
@@ -268,6 +270,9 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
     setLoading(true); setError(""); setNotice("");
     try {
       const value = ProductionEditorDetailViewSchema.parse(await editorRequest(`projects/${id}${versionId ? `?versionId=${encodeURIComponent(versionId)}` : ""}`));
+      const productionProject = !!(value.project.source || value.project.workSource || value.project.catalogSource);
+      if (scope === "templates" && productionProject || scope === "production" && !productionProject)
+        throw new Error(scope === "templates" ? "此项目属于生产文件 请从原订单进入" : "此项目属于工艺底稿 请从底稿库进入");
       let projectSource: Source | null = null;
       let pinnedRequirements: OrderProductionRequirements | null = null;
       if (value.project.workSource) {
@@ -460,7 +465,7 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
   return <div className="pe-workspace" ref={workspaceElement} tabIndex={-1}>
     {error && <p className="pe-alert" role="alert">{error}</p>}{notice && <p className="pe-notice" role="status">{notice}</p>}
     {(workRequirements || source) && <OrderRequirementsPanel requirements={workRequirements ?? source!.requirements} document={document} disabled={busy || !!cutoutTarget} originLabel={workRequirements ? "对照已推送的制作需求" : undefined} onApply={() => changeDocument(applyOrderProductionRequirements(document, workRequirements ?? source!.requirements))} />}
-    {detail?.project.workSource && <p className="pe-hint">此图稿使用推送时固定的需求与素材。<Link href={`/order-artwork?line=${detail.project.workSource.workItemId}`}>返回制图中心提交审核</Link></p>}
+    {detail?.project.workSource && <p className="pe-hint">此图稿使用推送时固定的需求与素材。<Link href={`/orders?line=${detail.project.workSource.workItemId}`}>返回原订单提交审核</Link></p>}
     {detail && cutoutTarget && <ProductionCutoutEditor projectId={detail.project.id} imageId={cutoutTarget.imageId} expectedVersionId={detail.project.currentVersionId} headOnly={source?.requirements.subject === "head"} onStateChange={updateCutoutState} onCancel={() => { setCutoutTarget(null); setCutoutState({ dirty: false, busy: false }); }} onApply={(image) => {
       setDetail((current) => current ? { ...current, images: [...current.images.filter((item) => item.id !== image.id), image] } : current);
       changeDocument({ ...document, layers: document.layers.map((layer) => layer.id === cutoutTarget.layerId && layer.kind === "image" ? { ...layer, assetId: image.id, assetVersion: image.version, name: image.name } : layer) });
@@ -468,10 +473,10 @@ export function ProductionEditorWorkspace({ kind = "shaped_pillow", initialProje
       setNotice("抠图已应用到所选图层，原件和修整记录已保留。请检查边缘，再生成抱枕轮廓并保存新版本。");
     }} />}
     <div className="pe-main-editor" hidden={!!cutoutTarget}>
-    <div className="pe-project-bar"><label><FolderOpen size={15} /><select aria-label="打开生产项目" value={detail?.project.id ?? ""} disabled={busy || loading} onChange={(event) => { if (event.target.value) void openProject(event.target.value); }}><option value="">选择已保存项目</option>{projects.map((project) => <option value={project.id} key={project.id}>{getProductionProductDefinition(project.productType).shortLabel} · {project.name} · V{project.versionNumber}</option>)}</select></label>{scope !== "project" && <button className="pe-button" disabled={busy || loading} onClick={() => setShowCreate((value) => !value)}><Plus size={15} />{scope === "order" ? "新建此订单生产稿" : "新建项目"}</button>}{detail && <><label className="pe-history-select"><History size={15} /><select aria-label="历史版本" value={detail.version.id} disabled={busy || loading} onChange={(event) => void openProject(detail.project.id, event.target.value)}>{detail.versions.map((version) => <option key={version.id} value={version.id}>V{version.versionNumber} · {version.reviewed ? "已确认" : "草稿"} · {formatDate(version.createdAt)}</option>)}</select></label><button className="pe-button" aria-label="刷新项目" disabled={busy || loading} onClick={() => void openProject(detail.project.id)}><RefreshCw size={15} /></button>{!scope && !detail.project.workSource && !detail.project.catalogSource && <button className="pe-button danger" disabled={busy || loading} onClick={() => void removeProject()}><Trash2 size={15} />删除项目</button>}</>}</div>
+    <div className="pe-project-bar"><label><FolderOpen size={15} /><select aria-label={scope === "templates" ? "打开工艺底稿" : "打开生产文件"} value={detail?.project.id ?? ""} disabled={busy || loading} onChange={(event) => { if (event.target.value) void openProject(event.target.value); }}><option value="">{scope === "templates" ? "选择工艺底稿" : "选择生产文件"}</option>{projects.map((project) => <option value={project.id} key={project.id}>{getProductionProductDefinition(project.productType).shortLabel} · {project.name} · V{project.versionNumber}</option>)}</select></label>{scope !== "project" && scope !== "production" && <button className="pe-button" disabled={busy || loading} onClick={() => setShowCreate((value) => !value)}><Plus size={15} />{scope === "templates" ? "新建底稿" : scope === "order" ? "新建此订单生产稿" : "新建项目"}</button>}{detail && <><label className="pe-history-select"><History size={15} /><select aria-label="历史版本" value={detail.version.id} disabled={busy || loading} onChange={(event) => void openProject(detail.project.id, event.target.value)}>{detail.versions.map((version) => <option key={version.id} value={version.id}>V{version.versionNumber} · {version.reviewed ? "已确认" : "草稿"} · {formatDate(version.createdAt)}</option>)}</select></label><button className="pe-button" aria-label="刷新项目" disabled={busy || loading} onClick={() => void openProject(detail.project.id)}><RefreshCw size={15} /></button>{(!scope || scope === "templates") && !detail.project.source && !detail.project.workSource && !detail.project.catalogSource && <button className="pe-button danger" disabled={busy || loading} onClick={() => void removeProject()}><Trash2 size={15} />删除项目</button>}</>}</div>
     {showCreate && <form className="pe-new-panel" onSubmit={(event) => { event.preventDefault(); void createProject(); }}><label>新项目名称<input value={createName} onChange={(event) => setCreateName(event.target.value)} maxLength={160} required /></label><label>产品类型<select value={createKind} onChange={(event) => setCreateKind(event.target.value as ProductionKind)}>{PRODUCTION_PRODUCT_DEFINITIONS.map((product) => <option key={product.productType} value={product.productType}>{product.label}</option>)}</select></label>{reportLineId && <label className="pe-check"><input type="checkbox" checked={useSource} disabled={sourceLoading || scope === "order"} onChange={(event) => setUseSource(event.target.checked)} />{sourceLoading ? "正在读取订单来源…" : source ? `使用当前订单买家原图：${source.title}` : "使用当前订单买家原图（待就绪）"}</label>}<button className="pe-button primary" type="submit" disabled={busy || loading || (useSource && !source)}><Plus size={15} />创建生产草稿</button></form>}
     {loading && <div className="pe-empty" role="status"><LoaderCircle size={24} className="pe-spin" /><p>正在读取生产项目…</p></div>}
-    {!detail && !loading && <div className="pe-empty"><FileImage size={30} /><h2>建立可继续编辑的生产稿</h2><p>选择产品并创建草稿，再加入订单原图或本地图片。原 PNG 会作为一个图片图层保留，文字和其他图层可以继续添加。</p></div>}
+    {!detail && !loading && <div className="pe-empty"><FileImage size={30} /><h2>{scope === "templates" ? "选择或新建工艺底稿" : scope === "production" ? "选择订单或商品的生产文件" : "建立可继续编辑的生产稿"}</h2><p>{scope === "templates" ? "底稿保存共用版型、尺寸与工艺参数 订单制作时使用固定版本" : scope === "production" ? "生产文件随订单或商品制作任务生成 在这里查看版本和导出文件" : "选择产品并创建草稿，再加入订单原图或本地图片。"}</p>{scope === "production" && <Link className="pe-button" href="/orders">进入订单工作台</Link>}</div>}
     {detail && !loading && <>
       <p className="pe-hint pe-catalog-status" hidden={!catalogInactive && !catalogLocked} role="status">{catalogInactive ? "当前制作来源已停止新操作 可查看历史版本和已有文件" : "此销售 SKU 制作版本已锁定 可查看和下载文件 修改请从产品开发创建新版本"}</p>
       <div className="pe-editor-toolbar" inert={busy || catalogLocked}><label className="pe-document-name">图稿名称<input value={document.name} maxLength={160} onChange={(event) => changeDocument({ ...document, name: event.target.value }, false)} /></label><span className={`pe-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "有未保存改动" : detail.version.reviewed ? `V${detail.version.versionNumber} 已确认` : `V${detail.version.versionNumber} 草稿`}</span><button className="pe-button" aria-label="撤销" disabled={busy || !history.past.length} onClick={() => setHistory(undoEditorHistory)}><Undo2 size={16} /></button><button className="pe-button" aria-label="重做" disabled={busy || !history.future.length} onClick={() => setHistory(redoEditorHistory)}><Redo2 size={16} /></button><button className="pe-button primary" disabled={busy || catalogLocked || contourMode === "draw"} onClick={saveCurrent}><Save size={15} />{detail.version.id !== detail.project.currentVersionId ? "历史副本另存新版本" : "保存新版本"}</button></div>
@@ -542,7 +547,7 @@ function renderFileUrl(projectId: string, renderId: string, key: string) { retur
 
 function syncProductionEditorLocation(projectId: string | null, versionId?: string) {
   const url = new URL(window.location.href);
-  if (url.pathname !== "/pod-workbench/production-editor") return;
+  if (!["/pod-workbench/production-editor", "/production-files", "/production-templates"].includes(url.pathname)) return;
   if (projectId) url.searchParams.set("projectId", projectId);
   else url.searchParams.delete("projectId");
   if (projectId && versionId) url.searchParams.set("versionId", versionId);

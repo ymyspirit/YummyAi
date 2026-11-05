@@ -21,6 +21,7 @@ import type { OrderQueueCounts } from "@yummyai/contracts/order/workbench";
 import { orderOperatorTask } from "@yummyai/contracts/order/workbench";
 import "./order-centers.css";
 import "./order-operator.css";
+import "./fulfillment-flow.css";
 import { returnHref } from "../navigation/workflow-href";
 import { orderMatchingSummary } from "./order-operations-summary";
 import { OrderDeadlineSummary } from "./order-deadline-summary";
@@ -70,6 +71,7 @@ const queryKeys = [
   "archived",
   "workView",
   "orderStatus",
+  "focus",
 ];
 type SavedView = { name: string; query: string };
 export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule }) {
@@ -95,7 +97,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
   const [reviewQueue, setReviewQueue] = useState<string[] | null>(null);
   const [reviewOrderIds, setReviewOrderIds] = useState<Record<string, string>>({});
   const reviewModes = useRef(new Map<string, OrderWorkspaceModule>());
-  const legacyFilters = legacyWorkflowFilters.filter(key => !!params.get(key) && params.get(key) !== "all");
+  const legacyFilters = legacyWorkflowFilters.filter(key => !!params.get(key) && params.get(key) !== "all" && !(params.get("focus") && key === "workView"));
   const listSearch = new URLSearchParams({
     module,
     ...(["orders", "production", "shipments", "after-sales"].includes(module) ? { grouping: "orders" } : {}),
@@ -252,7 +254,7 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
         <div>
           <h1>{center.title}</h1>
           {returnTo && !lineId && <Link className="oc-text-button" href={returnTo} onClick={event => { event.preventDefault(); go(returnTo); }}>返回来源页面</Link>}
-          <p>{module === "orders" ? "按整单跟进处理、审核、生产和出库。每个订单显示一个状态和下一步。" : center.description}</p>
+          <p>{module === "orders" ? "集中处理审单和生产图审核 物流与工厂交付按商品规则继续 异常留在原订单" : center.description}</p>
         </div>
         <div className="oc-actions">
           {module === "production" && <Link className="oc-button" href="/production?view=native">已审核设计直接生产</Link>}
@@ -314,6 +316,11 @@ export function OrderCenterWorkspace({ module }: { module: OrderWorkspaceModule 
         </div>
       </header>
       {module === "after-sales" && <div className="oc-case-scope"><p className="oc-hint">优先处理未结案问题。已结案记录保留在订单内。</p><button className="oc-text-button" disabled={loading || busy} onClick={() => navigate({ caseScope: params.get("caseScope") === "all" ? null : "all", afterSales: null, page: null, line: null })}>{params.get("caseScope") === "all" ? "只看未结案" : "查看全部售后订单"}</button></div>}
+      {module === "orders" && <nav className="oc-flow-queues" aria-label="订单处理队列">
+        {([["review","待审单"],["artwork","待审生产图"],["exceptions","异常处理"],["automatic","自动处理中"],["","全部订单"]] as const).map(([focus,label]) =>
+          <button key={focus} className="oc-button" aria-current={(params.get("focus")??"")===focus?"page":undefined} disabled={busy}
+            onClick={()=>navigate({focus:focus||null,workView:"all",stage:null,attention:null,page:null,line:null})}>{label}</button>)}
+      </nav>}
       <OrderLifecycleSummary counts={loading || error ? undefined : data.counts} />
       <OrderWorkbenchFilters key={listQuery} query={current} options={options}
         disabled={busy || (!options && !optionsError)} onSubmit={filter} onClear={() => go(pathname)}

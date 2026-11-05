@@ -1,4 +1,5 @@
 import { sealWork as sharedSealWork, openWork as sharedOpenWork } from "@yummyai/order-core";
+import { scheduleOrderFlow } from "./order-flow-intent.js";
 import { readOrderSalesSite, resolveOrderSalesBasis, validateOrderSalesBasis, orderSalesChoices } from "../catalog/order-sales-basis.js";
 import { orderSalesSiteIssue } from "../catalog/order-sales-site.js";
 import { resolvePillowOrderBasis } from "../catalog/order-pillow-matching.js";
@@ -1917,6 +1918,9 @@ export class OrderWorkspaceService {
       const key = this.key(work);
       try {
         await tx.update(items).set(changes).where(eq(items.id, id));
+        if (["approve_artwork", "approve_proof", "resume"].includes(input.action)) {
+          await scheduleOrderFlow(tx, context, detail.line.orderId);
+        }
         await this.event(
           tx,
           context,

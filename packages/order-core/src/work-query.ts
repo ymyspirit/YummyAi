@@ -49,6 +49,7 @@ const baseProjection = sql`
     o.account_id as "accountId", ma.display_name as "storeName", o.platform, ol.sku_code as "skuCode", ol.title, ol.quantity,
     o.provider_status as "providerStatus", o.side_state as "sideState", o.placed_at as "placedAt",
     o.created_at as "importedAt", w.archived_at as "archivedAt",
+    (select flow.stage from order_fulfillment_flows flow where flow.order_id=o.id) as "fulfillmentFlowStage",
     case when w.preparation='pushed' and exists(
       select 1 from order_design_agent_runs handoff
       where handoff.work_item_id=w.id and handoff.work_revision_id=w.pushed_revision_id
@@ -287,6 +288,10 @@ export function workFilter(q: OrderWorkQuery): SQL {
   if (q.designExecutor) filters.push(sql`"designExecutor"=${q.designExecutor}`);
   if (q.productType) filters.push(sql`"productType"=${q.productType}`);
   if (q.stage) filters.push(sql`"queueStage"=${q.stage}`);
+  if (q.focus === "review") filters.push(sql`"operatorTaskKey" in ('review_order','complete_information','dispatch_design','verify_source')`);
+  if (q.focus === "artwork") filters.push(sql`"operatorTaskKey" in ('review_artwork','customer_proof','customer_changes')`);
+  if (q.focus === "exceptions") filters.push(sql`("operatorException" or exists(select 1 from order_fulfillment_flows flow where flow.order_id="orderId" and flow.stage='exception'))`);
+  if (q.focus === "automatic") filters.push(sql`(${operatorWaiting}) and not exists(select 1 from order_fulfillment_flows flow where flow.order_id="orderId" and flow.stage in ('exception','paused'))`);
   if (q.module === "orders" && q.workView === "todo") filters.push(operatorTodo);
   if (q.module === "orders" && q.workView === "waiting") filters.push(operatorWaiting);
   if (q.module === "orders" && q.workView === "exceptions") filters.push(sql`"operatorException"`);

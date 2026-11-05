@@ -84,17 +84,19 @@ describe("navigation destinations", () => {
       { label: "财务利润", href: "/finance" }, { label: "定制订单履约与利润复盘" },
     ]);
     const pillow = resolveNavigationLocation("/pod-workbench/production-editor", "kind=shaped_pillow&projectId=private-record");
-    expect(pillow.primaryId).toBe("production-editor");
+    expect(pillow.primaryId).toBe("production-files");
     expect(pillow.breadcrumbs).toEqual([
       { label: "运营总览", href: "/" },
-      { label: "创作工具", href: "/navigation?group=creative" },
-      { label: "生产文件与底稿", href: "/pod-workbench/production-editor" }, { label: "异形抱枕生产图" },
+      { label: "订单与履约", href: "/navigation?group=commerce" },
+      { label: "生产文件", href: "/production-files" },
+      { label: "原任务文件", href: "/pod-workbench/production-editor" }, { label: "异形抱枕生产图" },
     ]);
     expect(resolveNavigationLocation("/shipments", "orderStatus=produced").current.label).toBe("待发货订单");
     const logistics = resolveNavigationLocation("/shipments", "view=logistics&supplierId=private-supplier");
-    expect(logistics.primaryId).toBe("shipments");
+    expect(logistics.primaryId).toBe("orders");
     expect(logistics.breadcrumbs).toEqual([
       { label: "运营总览", href: "/" }, { label: "订单与履约", href: "/navigation?group=commerce" },
+      { label: "订单工作台", href: "/orders" },
       { label: "发货中心", href: "/shipments" }, { label: "物流订单同步" },
     ]);
     expect(searchDestinations("ShipOS").some(item => item.id === "logistics-sync" && item.groupId === "commerce")).toBe(true);

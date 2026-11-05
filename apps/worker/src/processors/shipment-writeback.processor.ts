@@ -1,4 +1,6 @@
 import { withWorkerMarketplaceCredential } from "./marketplace-credential-failure.js";
+import { Permission, requireTenantOrderPermissions } from "@yummyai/authz";
+import { readShipmentPhysicalHandover } from "@yummyai/order-core";
 import type { SecretVault } from "@yummyai/ai-core";
 import {
   MarketplacePlatformSchema, MarketplaceRegionSchema, createEntityId,
@@ -7,7 +9,7 @@ import {
 import {
   marketplaceAccounts, marketplaceCredentials, orderEvents, orderExceptionEvents, orderExceptions, orderLines, orders,
   shipmentPackageLines, shipmentPackages, shipmentVersions, shipmentWritebackEvents, shipmentWritebackRequests, shipments,
-  type DatabaseConnection, type TenantTransaction, withTenant,
+  type DatabaseConnection, type TenantTransaction, withTenant, loadCurrentMembershipContext,
 } from "@yummyai/database";
 import { ShipmentWritebackJobPayloadSchema, type JobEnvelope } from "@yummyai/jobs";
 import type {
@@ -68,11 +70,30 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       if (attempt > 0 && request.status === "dispatched") {
         await appendWritebackEvent(tx, context, request, "uncertain", "reconciliation_required", "WORKER_INTERRUPTED_OUTCOME_UNKNOWN", null);
         await tx.update(shipmentWritebackRequests).set({ status: "reconciliation_required", projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-        await tx.update(shipments).set({ status: "exception", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+        await updateWritebackShipmentStatus(tx, request.shipmentId, "exception");
         await openLogisticsException(tx, context, request.orderId, `worker-uncertain:${request.id}`, "SHIPMENT_WRITEBACK_UNCERTAIN");
         return undefined;
       }
       if (request.status !== "queued") return undefined;
+      if (request.idempotencyKey.startsWith("auto-fulfillment:")) {
+        const [shipment]=await tx.select().from(shipments).where(eq(shipments.id,request.shipmentId)).for("share");
+        const [version]=await tx.select().from(shipmentVersions).where(eq(shipmentVersions.id,request.shipmentVersionId));
+        const [order]=await tx.select().from(orders).where(eq(orders.id,request.orderId)).for("share");
+        let authorized=false;
+        try {
+          const current=await loadCurrentMembershipContext(tx,{tenantId:context.tenantId,userId:request.createdBy!},{lock:true});
+          requireTenantOrderPermissions(current,[Permission.OrderRead,Permission.OrderWrite]);authorized=true;
+        } catch { /* Revoked membership must not submit a shipment. */ }
+        const handover=shipment?await readShipmentPhysicalHandover(tx,shipment):null;
+        if (!authorized || !shipment || !version || !order || order.sideState
+          || shipment.status==="cancelled" || shipment.currentVersionNumber!==version.versionNumber
+          || shipment.approvedVersionNumber!==version.versionNumber || !handover?.allDispatched || handover.shipmentVersionId!==version.id) {
+          await appendWritebackEvent(tx,context,request,"rejected","rejected","AUTOMATIC_HANDOVER_OR_AUTHORITY_CHANGED",null);
+          await tx.update(shipmentWritebackRequests).set({status:"rejected",projectionVersion:request.projectionVersion+1,updatedAt:new Date()}).where(eq(shipmentWritebackRequests.id,request.id));
+          await openLogisticsException(tx,context,request.orderId,`automatic-writeback-rejected:${request.id}`,"AUTOMATIC_HANDOVER_OR_AUTHORITY_CHANGED");
+          return undefined;
+        }
+      }
       const [[account], [version], [order]] = await Promise.all([
         tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, request.accountId)).limit(1),
         tx.select().from(shipmentVersions).where(eq(shipmentVersions.id, request.shipmentVersionId)).limit(1),
@@ -81,7 +102,7 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       if (!account || !version || !order || account.status !== "active" || account.healthStatus !== "healthy" || !account.externalAccountId) {
         await appendWritebackEvent(tx, context, request, "rejected", "rejected", "ACCOUNT_OR_SNAPSHOT_UNAVAILABLE", null);
         await tx.update(shipmentWritebackRequests).set({ status: "rejected", projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-        await tx.update(shipments).set({ status: "approved", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+        await updateWritebackShipmentStatus(tx, request.shipmentId, "approved");
         return undefined;
       }
       const packages = await tx.select().from(shipmentPackages).where(eq(shipmentPackages.shipmentVersionId, version.id));
@@ -127,11 +148,21 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       const toStatus = result.status === "accepted" ? "accepted" : result.status === "uncertain" ? "reconciliation_required" : "rejected";
       await appendWritebackEvent(tx, context, request, action, toStatus, result.providerCode, result.externalReference);
       await tx.update(shipmentWritebackRequests).set({ status: toStatus, projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-      await tx.update(shipments).set({ status: result.status === "accepted" ? "shipped" : result.status === "uncertain" ? "exception" : "approved", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+      await updateWritebackShipmentStatus(tx, request.shipmentId, result.status === "accepted" ? "shipped" : result.status === "uncertain" ? "exception" : "approved");
       if (result.status === "accepted") await advanceOrderIfFullyShipped(tx, context, request.orderId, request.id);
       else await openLogisticsException(tx, context, request.orderId, `worker-result:${request.id}:${result.status}`, result.status === "uncertain" ? "SHIPMENT_WRITEBACK_UNCERTAIN" : "SHIPMENT_WRITEBACK_REJECTED");
     });
   }
+}
+
+async function updateWritebackShipmentStatus(tx: TenantTransaction, shipmentId: string, fallback: string) {
+  const [shipment] = await tx.select().from(shipments).where(eq(shipments.id,shipmentId)).for("update");
+  if (!shipment) return;
+  const dispatched = (await readShipmentPhysicalHandover(tx,shipment)).dispatchedPackageCount > 0;
+  const status = dispatched
+    ? ["shipped","in_transit","delivered","exception"].includes(shipment.status) ? shipment.status : "shipped"
+    : fallback;
+  await tx.update(shipments).set({status,updatedAt:new Date()}).where(eq(shipments.id,shipmentId));
 }
 
 async function advanceOrderIfFullyShipped(tx: TenantTransaction, context: TenantContext, orderId: string, requestId: string) {

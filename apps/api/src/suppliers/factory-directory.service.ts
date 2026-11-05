@@ -14,6 +14,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 
 export interface FactoryRequirement {
+  spuId?: string | null;
   productType?: string; productPlanId: string | null; skuId: string | null; quantity: number;
   longestMm?: number | null; sideMode?: "single" | "double"; factoryStandardId?: string; templateVersionId?: string | null;
 }
@@ -45,6 +46,8 @@ export class FactoryDirectoryService {
         .where(inArray(capabilities.factoryId, ids)).orderBy(asc(capabilities.name), asc(capabilities.id)).limit(5001) : [];
       if (capRows.length > 5000) throw new ConflictException("工厂能力数量较多，请按供应商查看");
       const products = await tx.select({ id: productPlans.id, name: productPlans.name }).from(productPlans).where(sql`${productPlans.status}<>'archived'`).orderBy(asc(productPlans.name)).limit(500);
+      const spuRows = await tx.select({ id: spus.id, name: spus.name, productPlanId: spus.productPlanId }).from(spus)
+        .where(sql`${spus.status}<>'archived'`).orderBy(asc(spus.name)).limit(500);
       const skuRows = products.length ? await tx.select({ id: skus.id, code: skus.code, plan: spus.productPlanId }).from(skus).innerJoin(spus, eq(spus.id, skus.spuId)).where(and(inArray(spus.productPlanId, products.map(product => product.id)), sql`${skus.status}<>'archived'`)) : [];
       const templates = await tx.select({ id: printProfileVersions.id, name: printProfileVersions.name, versionNumber: printProfileVersions.versionNumber }).from(printProfileVersions).innerJoin(printProfiles, eq(printProfiles.id, printProfileVersions.profileId)).where(sql`${printProfiles.archivedAt} is null`).orderBy(asc(printProfileVersions.name), asc(printProfileVersions.versionNumber)).limit(1000);
       return FactoryDirectorySchema.parse({
@@ -52,7 +55,7 @@ export class FactoryDirectoryService {
         factories: rows.map(row => this.factoryView(row.factory, row.version, row.supplier)),
         capabilities: capRows.map(row => this.capabilityView(row.capability, row.version)),
         products: products.map(product => ({ ...product, skus: skuRows.filter(sku => sku.plan === product.id).map(({ id, code }) => ({ id, code })) })),
-        templates,
+        templates, spus: spuRows,
       });
   }
 
@@ -176,6 +179,7 @@ export class FactoryDirectoryService {
     if (capability.status !== "active" || capability.verificationStatus !== "confirmed" || capability.sampleStatus === "failed") blockers.push("工厂能力未核验启用");
     if (capability.fulfillmentScope !== "full_product") blockers.push("该能力仅承接部分工序，不能下达整件生产");
     if (requirement.productType && capability.productType !== requirement.productType) blockers.push("工厂不承接该产品类型");
+    if (capability.spuId && capability.spuId !== requirement.spuId) blockers.push("工厂能力不适用于本单 SPU");
     if (capability.productPlanId && capability.productPlanId !== requirement.productPlanId || capability.skuId && capability.skuId !== requirement.skuId) blockers.push("工厂能力不适用于本单产品或 SKU");
     if (factory.timeZone === null) blockers.push("工厂时区尚未确认");
     if (capability.minimumOrderQuantity === null) blockers.push("工厂最低接单量尚未确认");
@@ -199,6 +203,12 @@ export class FactoryDirectoryService {
     return new Date(row!.now);
   }
   private async validateCapability(tx: TenantTransaction, profile: FactoryCapabilityProfile) {
+    if (profile.spuId) {
+      const [spu] = await tx.select().from(spus).where(eq(spus.id,profile.spuId));
+      if (!spu || profile.productPlanId && spu.productPlanId !== profile.productPlanId) throw new ConflictException("SPU 不存在或不属于指定产品");
+      if (profile.skuId && !(await tx.select().from(skus).where(and(eq(skus.id,profile.skuId),eq(skus.spuId,profile.spuId)))).length)
+        throw new ConflictException("SKU 不属于指定 SPU");
+    }
     if (profile.productPlanId && !(await tx.select({ id: productPlans.id }).from(productPlans).where(eq(productPlans.id, profile.productPlanId))).length) throw new ConflictException("产品不存在或无权访问");
     if (profile.skuId) {
       const [sku] = await tx.select({ plan: spus.productPlanId }).from(skus).innerJoin(spus, eq(spus.id, skus.spuId)).where(eq(skus.id, profile.skuId));

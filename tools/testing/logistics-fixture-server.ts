@@ -12,6 +12,23 @@ export async function startLogisticsFixtureServer() {
     if (path === "/fixture/label.pdf" && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/pdf" }); res.end("%PDF-1.7\n% Synthetic logistics acceptance label\n%%EOF\n"); return;
     }
+    if (path.startsWith("/api/") && path.endsWith(".php")) {
+      const send=(data:unknown)=>{res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({code:200,data}));};
+      if(req.method!=="POST"||req.headers.appkey!=="synthetic-appkey"||req.headers.appsecret!=="synthetic-secret"){forbiddenRequests++;res.writeHead(401);res.end();return;}
+      let raw="";for await(const chunk of req){raw+=String(chunk);if(raw.length>65536){res.writeHead(413);res.end();return;}}
+      let body:Record<string,unknown>;try{body=JSON.parse(raw);}catch{res.writeHead(400);res.end();return;}
+      const reference=String(body.orderid??"");
+      const result={orderid:reference,trackingno:`TRACK-${reference}`,label_pdf:`${baseUrl}/fixture/label.pdf`,fee_data:{total_fee:"5.75",currency:"USD"}};
+      if(path==="/api/getChannel.php"){send([{id:"fixture",qudao:"Synthetic ShipOS channel"}]);return;}
+      if(path==="/api/getPrice.php"){send({total_fee:"5.00",currency:"USD"});return;}
+      if(path==="/api/queryOrder.php"){send({orders:orders.has(reference)?[result]:[]});return;}
+      if(path==="/api/createOrder.php"){
+        if(!reference.startsWith("E2E-DELIVERY-")||body.channel_id!=="fixture"){forbiddenRequests++;res.writeHead(400);res.end();return;}
+        if(orders.has(reference))duplicateCreates++;orders.add(reference);send(result);return;
+      }
+      if(["/api/orderDetail.php","/api/getLabels.php"].includes(path)&&orders.has(reference)){send(result);return;}
+      forbiddenRequests++;res.writeHead(405);res.end();return;
+    }
     if(path==="/openapi/oauth2/token"||path.startsWith("/v1/")){
       let raw="";for await(const chunk of req){raw+=String(chunk);if(raw.length>65536){res.writeHead(413);res.end();return;}}
       let body:Record<string,unknown>={};try{if(raw)body=JSON.parse(raw);}catch{res.writeHead(400);res.end();return;}
