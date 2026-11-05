@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { MarketplacePlatform } from "@yummyai/contracts";
+import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { z } from "zod";
 
 import type { MarketplaceConnectorContext, MarketplaceCredentialAccessor } from "./connector.js";
@@ -57,9 +59,10 @@ export class AmazonOrdersAdapter implements MarketplaceOrderIngestionAdapter {
       }, AmazonSearchResponseSchema, this.platform);
       const fetchedAt = this.now().toISOString();
       return {
-        records: response.orders.map((order, index) => normalizeAmazonOrder(
+        records: response.orders.map((order) => normalizeAmazonOrder(
           context.accountId,
-          `search:${input.updatedAfter}:${input.updatedBefore}:${input.checkpoint.cursor ?? "first"}:${index}`,
+          // Query windows and page positions change when overlapping polls replay an order.
+          `search:${createHash("sha256").update(canonicalJson(order)).digest("hex")}`,
           order,
         )),
         fetchedAt,

@@ -51,6 +51,26 @@ describe("authorized order HTTP adapters", () => {
     expect(url.searchParams.get("min_last_modified")).toBe("1784718000");
   });
 
+  it("deduplicates Amazon content across windows and page positions while keeping changed orders distinct", async () => {
+    const first = amazonOrder();
+    const other = { ...first, orderId: "112-2222222-3333333" };
+    const reordered = Object.fromEntries(Object.entries(first).reverse());
+    const changed = { ...first, recipient: { deliveryAddress: { ...first.recipient.deliveryAddress, phone: "0987654321" } } };
+    const pages = [[first, other], [other, reordered], [changed]];
+    const request = vi.fn(async (url: string | URL | Request) => String(url).includes("/auth/o2/token")
+      ? json({ access_token: "amazon-access" }) : json({ orders: pages.shift() }));
+    const adapter = new AmazonOrdersAdapter(request as typeof fetch, { AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test" }, now);
+    const context = amazonContext(), access = credential({ refreshToken: "refresh", clientId: "client", clientSecret: "secret" });
+    const a = await adapter.fetchPage(context, access, syncRequest(null), new AbortController().signal);
+    const b = await adapter.fetchPage(context, access, { ...syncRequest("page-2"), updatedBefore: "2026-07-22T12:05:00.000Z" }, new AbortController().signal);
+    const c = await adapter.fetchPage(context, access, syncRequest(null), new AbortController().signal);
+    expect(a.records[0]?.order.externalEventId).toBe(b.records[1]?.order.externalEventId);
+    expect(a.records[1]?.order.externalEventId).toBe(b.records[0]?.order.externalEventId);
+    expect(a.records[0]?.order.externalEventId).not.toBe(a.records[1]?.order.externalEventId);
+    expect(c.records[0]?.order.externalEventId).not.toBe(a.records[0]?.order.externalEventId);
+    expect(c.records[0]?.order.externalEventId).toMatch(/^search:[a-f0-9]{64}$/);
+  });
+
   it("returns rate-limit timing to the job retry boundary without retrying blindly", async () => {
     const request = vi.fn()
       .mockResolvedValueOnce(json({ access_token: "amazon-access" }))

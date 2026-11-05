@@ -111,6 +111,7 @@ The `order-ingestion` queue contract carries only `snapshotId` and `accountId`; 
 
 - Initial backfill is bounded to 1–30 days, pages to 1–100 records, and one run to at most 50 pages.
 - A completed checkpoint is overlapped by five minutes by default so late provider updates can be replayed safely; the configured backfill floor still caps the window.
+- Amazon search deliveries use a SHA-256 digest of canonical response content, scoped to the original account. Changing a query window, page position or object-key order does not create another delivery; different orders and changed protected facts remain distinct without exposing those facts in the event identifier.
 - A non-final page advances only the opaque cursor. The high-water timestamp advances only after the final page and can never move backwards.
 - Page results distinguish collected records from the provider's optional reported count and retain source version and fetch/high-water timestamps.
 - Diagnostics use static, PII-free messages for duplicate delivery, address gaps, missing customization, unsupported mapping, cancellation requests, and stale provider data.
