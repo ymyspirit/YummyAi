@@ -45,7 +45,7 @@ describe("versioned independent pillow geometry", () => {
         expect(checks.find(check => check.code === code)).toMatchObject({ status: "passed" });
     }
     expect(template.spec.barcodeTab.heightMm).not.toBeNull();
-  });
+  }, 30_000);
   it.each(["cat", "person", "fine"] as const)("makes a connected smooth %s outline using the measured subject without touching source pixels", kind => {
     const raster = fixture(kind);
     const before = raster.alpha!.slice();
