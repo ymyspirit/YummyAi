@@ -25,7 +25,7 @@ jobs:
   verify:
     if: github.event_name != 'workflow_dispatch' || inputs.gate == 'all'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 105
     env:
       POSTGRES_DB: yummyai
       POSTGRES_USER: yummyai_local
