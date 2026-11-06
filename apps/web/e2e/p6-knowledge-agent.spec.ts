@@ -1,10 +1,11 @@
 import { test, expect, type Page, type Request, type TestInfo } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { Permission } from "@yummyai/authz";
 import { AgentNativeV4ItemReceiptSchema } from "@yummyai/contracts/ai/agent-native-v4";
 import { AgentCommandViewSchema } from "@yummyai/contracts/ai/agent-command";
-import { AssistViewSchema } from "@yummyai/contracts/ai/assist";
+import { AssistViewSchema, CreateAssistSchema } from "@yummyai/contracts/ai/assist";
+import { AssistReceiptViewSchema, assistRequestRecoveryText } from "@yummyai/contracts/ai/assist-recovery";
 import { ErpSessionViewSchema } from "@yummyai/contracts/auth/session";
 import type { KnowledgeWorkspace } from "@yummyai/contracts/knowledge";
 import { centerApi } from "./order-centers-fixture";
@@ -190,8 +191,19 @@ test("P6 personal product knowledge keeps V1 immutable and clears disabled or re
     const startedResponse = page.waitForResponse(value => value.request().method() === "POST" && new URL(value.url()).pathname === "/api/ai-assists/runs");
     await chat.getByRole("button", { name: "发送并检索知识", exact: true }).click();
     const startedHttp = await startedResponse; expect(startedHttp.status()).toBe(201);
-    const run = AssistViewSchema.parse(await startedHttp.json());
-    if (run.request?.kind !== "knowledge_answer") throw new Error("p6_original_knowledge_request_missing");
+    // Chromium can discard a completed network body. Read the saved receipt for this exact browser request.
+    const sent = CreateAssistSchema.parse(startedHttp.request().postDataJSON());
+    const authority = await startedHttp.request().headerValue("x-yummyai-context-authority");
+    if (!authority) throw new Error("p6_personal_request_authority_missing");
+    const requestChecksum = createHash("sha256").update(assistRequestRecoveryText(sent)).digest("hex");
+    const receiptResponse = await page.request.get("/api/ai-assists/receipts", {
+      params: { requestId: sent.requestId, requestChecksum }, headers: { "x-yummyai-context-authority": authority },
+    });
+    expect(receiptResponse.status()).toBe(200);
+    const receipt = AssistReceiptViewSchema.parse(await receiptResponse.json());
+    expect(receipt).toMatchObject({ state: "found", requestId: sent.requestId, requestChecksum });
+    const run = receipt.run;
+    if (run?.request?.kind !== "knowledge_answer") throw new Error("p6_original_knowledge_request_missing");
     const scopeId = run.request.scopeId;
     expect(run.knowledge.some(ref => ref.entryId === card.id && ref.version === 1)).toBe(true);
     await f.model.answer(run.id);
