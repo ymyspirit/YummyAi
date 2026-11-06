@@ -5,6 +5,7 @@ import { normalizeDocumentRegion } from "./document-address.js";
 import type { LogisticsProviderResult } from "./gateway.js";
 import { decimalMinor } from "./policy.js";
 import { boundedBody, LogisticsTransportError } from "./transport.js";
+import { YunexpressHandoverSchema, YunexpressPackageStatusSchema, type YunexpressTrackingResult, type YunexpressHandover } from "@yummyai/contracts/logistics";
 
 type Account = Pick<LogisticsAccountProfile, "provider" | "baseUrl" | "yunexpressProtocol">;
 type Credentials = Extract<LogisticsCredentials, {provider:"yunexpress"}>;
@@ -115,6 +116,33 @@ export class YunexpressOpenApi {
   async lookup(p:LogisticsConnectionProfile,c:LogisticsCredentials,reference:string):Promise<LogisticsProviderResult|null> {
     try{return result(object((await this.request(p,c,"GET","/v1/order/info/get",undefined,{order_number:reference})).result),reference);}
     catch(error){if(error instanceof LogisticsTransportError&&error.providerCode==="02039006")return null;throw error;}
+  }
+  async handover(p:LogisticsConnectionProfile,c:LogisticsCredentials,reference:string,waybill:string,tracking:string|null,createdAt:Date):Promise<YunexpressTrackingResult> {
+    const data=await this.request(p,c,"GET","/v1/track-service/getAllForOPenApi",undefined,{order_number:identifier(waybill)});
+    if (!Array.isArray(data.result) || data.result.length!==1) throw new LogisticsTransportError("INVALID_RESPONSE");
+    const outer=object(data.result[0]), status=YunexpressPackageStatusSchema.parse(outer.package_status);
+    if (outer.order_number!==waybill) throw new LogisticsTransportError("INVALID_RESPONSE");
+    const physicalStatus=status==="T" || status==="D";
+    if (outer.track_Info==null) {
+      if (physicalStatus) throw new LogisticsTransportError("INVALID_RESPONSE");
+      return {status,proof:null};
+    }
+    const row=object(outer.track_Info);
+    if (row.waybill_number!==waybill ||
+      row.customer_order_number!==reference || (tracking!==null && row.tracking_number!==tracking))
+      throw new LogisticsTransportError("INVALID_RESPONSE");
+    if (!physicalStatus || row.track_events==null) return {status,proof:null};
+    if (!Array.isArray(row.track_events) || row.track_events.length>2000) throw new LogisticsTransportError("INVALID_RESPONSE");
+    const now=Date.now();
+    let first:YunexpressHandover|null=null;
+    for (const raw of row.track_events) {
+      const entry=object(raw), parsed=YunexpressHandoverSchema.safeParse({node:entry.track_node_code,occurredAt:entry.process_utc_time});
+      if (!parsed.success) continue;
+      const time=Date.parse(parsed.data.occurredAt);
+      if (time<createdAt.getTime() || time>now) continue;
+      if (!first || time<Date.parse(first.occurredAt)) first={node:parsed.data.node,occurredAt:new Date(time).toISOString()};
+    }
+    return {status,proof:first};
   }
   async labels(p:LogisticsConnectionProfile,c:LogisticsCredentials,reference:string) {
     const found=await this.lookup(p,c,reference);if(!found)throw new LogisticsTransportError("LABEL_UNAVAILABLE");

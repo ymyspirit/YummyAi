@@ -102,7 +102,17 @@ export type LogisticsAddress = z.infer<typeof LogisticsAddressSchema>;
 export type LogisticsPackage = z.infer<typeof LogisticsPackageSchema>;
 export type LogisticsTaskState = z.infer<typeof LogisticsTaskStateSchema>;
 export type LogisticsConnectionView = { id: string; version: number; versionId: string; profile: LogisticsConnectionProfile; verifiedAt: string | null; rule: LogisticsRule | null; ruleVersion: number; ruleVersionId: string | null };
-export type LogisticsTaskView = { id: string; orderId: string; factoryId: string; externalReference: string; status: LogisticsTaskState; diagnostic: string | null; createdAt: string; quotedCostMinor: number | null; actualCostMinor: number | null; currency: string | null; quotedCurrency: string | null; actualCurrency: string | null; minorUnitDigits: number; trackingNumbers: string[]; labelMode: "factory_pull" | "include"; labelCount: number; quotes: LogisticsQuote[]; latestShipAt: string; deliverBy: string; connectionName: string; factoryName: string; orderNumber: string; labels: Array<{id: string; fileName: string; checksum: string}> };
+export const YunexpressHandoverSchema = z.object({
+  node: z.enum(["FIRST_MILE_ARRIVE","FIRST_MILE_DEPART","DELIVERY_ATTEMPT","DELIVERED"]),
+  occurredAt: z.iso.datetime(),
+}).strict();
+export type YunexpressHandover = z.infer<typeof YunexpressHandoverSchema>;
+export const YunexpressPackageStatusSchema = z.enum(["N","F","T","D","E","R","C"]);
+export const yunexpressStatusNames = {N:"云途查无此单",F:"已建单，待云途收货",T:"云途运输中",D:"云途已投递",E:"云途报告包裹可能异常",R:"云途报告包裹已退回",C:"云途订单已取消"} as const;
+export const YunexpressTrackingResultSchema = z.object({status:YunexpressPackageStatusSchema,proof:YunexpressHandoverSchema.nullable()}).strict();
+export type YunexpressTrackingResult = z.infer<typeof YunexpressTrackingResultSchema>;
+export type LogisticsCarrierObservation = { checkedAt: string; verifiedAt: string | null; status:YunexpressTrackingResult["status"] | null; proof: YunexpressHandover | null; diagnostic: "unavailable" | null };
+export type LogisticsTaskView = { carrierWaybill?: string; carrierObservation?: LogisticsCarrierObservation | null; id: string; orderId: string; factoryId: string; externalReference: string; status: LogisticsTaskState; diagnostic: string | null; createdAt: string; quotedCostMinor: number | null; actualCostMinor: number | null; currency: string | null; quotedCurrency: string | null; actualCurrency: string | null; minorUnitDigits: number; trackingNumbers: string[]; labelMode: "factory_pull" | "include"; labelCount: number; quotes: LogisticsQuote[]; latestShipAt: string; deliverBy: string; connectionName: string; factoryName: string; orderNumber: string; labels: Array<{id: string; fileName: string; checksum: string}> };
 export const LogisticsOptionsSchema = z.object({
   canConfigure: z.boolean(), canCreate: z.boolean(), truncated: z.boolean(),
   factories: z.array(z.object({id:Id,name:z.string(),origin: z.object({countryCode:z.string(),province:z.string(),city:z.string(),street:z.string(),postalCode:z.string()}).nullable()})),

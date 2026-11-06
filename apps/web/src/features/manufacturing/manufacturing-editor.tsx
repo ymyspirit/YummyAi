@@ -6,7 +6,7 @@ import { z } from "zod";
 import { Permission } from "@yummyai/authz/permissions";
 import {
   CreateManufacturingRecipeSchema, ReviseManufacturingRecipeSchema, ReviewManufacturingRecipeSchema,
-  ManufacturingDemandResultSchema, ManufacturingRecipeVersionViewSchema,
+  ManufacturingDemandResultSchema, ManufacturingRecipeVersionViewSchema, outsourcedManufacturingFactory,
   type ManufacturingRecipeVersionView, type ManufacturingRecipeWorkspace, type ManufacturingReferences,
 } from "@yummyai/contracts/catalog/manufacturing";
 import { useErpAccess } from "../identity/erp-access";
@@ -135,13 +135,23 @@ export function ManufacturingEditor({ references, workspace, recipeId, initialSp
           {draft.specificationVersionId && !references.specifications.some(row => row.versionId === draft.specificationVersionId) && <option value={draft.specificationVersionId}>原固定规格 · 历史版本</option>}
           {references.specifications.filter(row => !recipeId || row.id === workspace?.specificationId).map(row => <option key={row.id} value={row.versionId}>{row.code} · {row.name} · V{row.versionNumber}{row.factsReady ? "" : " · 事实待核实"}</option>)}
         </select>{originalSpec && draft.specificationVersionId !== originalSpec.versionId && <small className="mf-error">原规格已更新 请明确选择当前版本后核对</small>}</ManufacturingField>
-        <ManufacturingField id="mf-output" label="下列用量对应产出数量"><input id="mf-output" inputMode="numeric" value={draft.outputQuantity} onChange={e => setDraft(value => ({ ...value, outputQuantity: e.target.value }))} /></ManufacturingField>
+        <ManufacturingField id="mf-supply" label="备料与排产"><select id="mf-supply" value={draft.outsourcedFactoryId ?? ""} onChange={e => {
+          const factoryId = e.target.value;
+          structural(() => setDraft(value => ({ ...value, outsourcedFactoryId: factoryId || undefined,
+            outputQuantity: value.outputQuantity || (factoryId ? "1" : ""), outputUnit: value.outputUnit || (factoryId ? "each" : "") })));
+        }}><option value="">本方备料与产能计划</option>
+          {draft.outsourcedFactoryId && !references.outsourcingFactories?.some(factory => factory.id === draft.outsourcedFactoryId) &&
+            <option value={draft.outsourcedFactoryId}>原外协工厂 · 待核对</option>}
+          {references.outsourcingFactories?.map(factory => <option key={factory.id} value={factory.id}>{factory.name} · 外协整件代工</option>)}
+        </select></ManufacturingField>
+        <ManufacturingField id="mf-output" label={draft.outsourcedFactoryId ? "每份成品数量" : "下列用量对应产出数量"}><input id="mf-output" inputMode="numeric" value={draft.outputQuantity} onChange={e => setDraft(value => ({ ...value, outputQuantity: e.target.value }))} /></ManufacturingField>
         <ManufacturingField id="mf-unit" label="产出单位"><select id="mf-unit" value={draft.outputUnit} onChange={e => setDraft(value => ({ ...value, outputUnit: e.target.value as ManufacturingDraft["outputUnit"] }))}>
           <option value="">待确认</option><option value="each">件</option><option value="pair">双</option><option value="set">套</option></select></ManufacturingField>
         <ManufacturingField id="mf-notes" label="制造说明"><textarea id="mf-notes" rows={2} maxLength={2000} value={draft.notes} onChange={e => setDraft(value => ({ ...value, notes: e.target.value }))} /></ManufacturingField>
       </div></fieldset>
-      <ManufacturingLines draft={draft} update={setDraft} structural={structural} disabled={disabled} spuId={references.spu.id} authority={authority} localDevelopment={localDevelopment}
-        canReadMaterials={references.canReadMaterials} onAccessChanged={accessChanged} onError={setError} />
+      {draft.outsourcedFactoryId ? <p className="mf-notice" role="status">工厂按审核规格自行备料和排产，完成情况以工厂回执为准。</p> :
+        <ManufacturingLines draft={draft} update={setDraft} structural={structural} disabled={disabled} spuId={references.spu.id} authority={authority} localDevelopment={localDevelopment}
+          canReadMaterials={references.canReadMaterials} onAccessChanged={accessChanged} onError={setError} />}
       <div className="mf-actions"><small>{dirty ? "有未保存填写 本标签页暂存2小时" : "与当前保存版本一致"}</small>
         {workspace && <button type="button" className="oc-button" disabled={!ready || saving || !!draft.pending} onClick={() => setDraft(draftFromVersion(workspace.currentVersion))}>放弃填写并载入当前版本</button>}
         <button type="submit" className="oc-button primary" disabled={disabled || stale}><Save size={14} />{saving ? "正在核对提交" : recipeId ? "保存为新版本" : "保存制造模板"}</button></div>
@@ -157,7 +167,7 @@ export function ManufacturingEditor({ references, workspace, recipeId, initialSp
             <button type="button" className="oc-button primary" disabled={reviewerBlocked || !!workspace.approvalProblems.length} onClick={() => review("approved")}><Check size={14} />批准当前版本</button></div>
         </>}
       </section>
-      <section className="mf-section" aria-label="备料建议"><h2>备料建议</h2><p>仅使用已批准版本 这是备料提案 不会扣减库存或登记实际耗用</p>
+      {!(workspace.releasedVersion && outsourcedManufacturingFactory(workspace.releasedVersion.content)) && <section className="mf-section" aria-label="备料建议"><h2>备料建议</h2><p>仅使用已批准版本 这是备料提案 不会扣减库存或登记实际耗用</p>
         {!!workspace.releaseProblems.length && <ul className="mf-problems">{workspace.releaseProblems.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
         <div className="mf-proposal-controls"><ManufacturingField id="mf-planned" label="计划产出数量"><input id="mf-planned" inputMode="numeric" value={planned} onChange={e => setPlanned(e.target.value)} disabled={!ready || !references.canReadMaterials} /></ManufacturingField>
           <button type="button" className="oc-button" disabled={!ready || calculating || !references.canReadMaterials || !workspace.releasedVersion || !!workspace.releaseProblems.length} onClick={() => void estimate()}>{calculating ? "正在核对建议" : "生成备料建议"}</button></div>
@@ -165,7 +175,7 @@ export function ManufacturingEditor({ references, workspace, recipeId, initialSp
           <ul>{proposal.totals.map(row => <li key={`${row.stockItemId}:${row.unit}:${row.responsibility}`}><strong>{proposal.lines.filter(line => line.stockItemId === row.stockItemId && line.responsibility === row.responsibility).map(line => line.name).join(" / ")}</strong>
             <span>精确需求 {quantityText(row.exactNumerator, row.exactDenominator)} {unitLabels[row.unit]} · {responsibilityLabels[row.responsibility]}供料</span><small>整基本单位参考 {row.wholeBaseUnitCeiling} {unitLabels[row.unit]} 不能作为实际耗用直接扣账</small></li>)}</ul>
         </div>}
-      </section>
+      </section>}
       <ManufacturingHistory recipeId={workspace.recipeId} authority={authority} localDevelopment={localDevelopment} refresh={refresh} onAccessChanged={accessChanged} />
     </>}
   </div>;

@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
 import type { SecretVault } from "@yummyai/ai-core";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { LogisticsCredentialsSchema, LogisticsTaskSnapshotSchema, LogisticsQuoteSchema, type LogisticsQuote, type LogisticsTaskState } from "@yummyai/contracts/logistics";
+import { LogisticsCredentialsSchema, LogisticsTaskSnapshotSchema, LogisticsQuoteSchema, YunexpressTrackingResultSchema, type YunexpressTrackingResult, type LogisticsQuote, type LogisticsTaskState } from "@yummyai/contracts/logistics";
 import { logisticsTasks as tasks, logisticsConnectionVersions as connections, logisticsConnections, logisticsRuleVersions as rules, logisticsQuotes as quotes, logisticsEvents as events, logisticsLabels as labels, memberships,membershipRoles,roles,
-  productionOrders, productionOrderVersions, orderProtectedDetails, orders, orderWorkItems, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
+  productionOrders, productionOrderVersions, orderProtectedDetails, orders, orderWorkItems, withTenant, loadCurrentMembershipContext, orderPrivateSourceAvailable, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { logisticsCostBlocker, selectLogisticsQuote } from "./policy.js";
 import type { LogisticsGateway, LogisticsProviderResult } from "./gateway.js";
 import { LogisticsTransportError } from "./gateway.js";
 import { purgeLogisticsTasks } from "./retention.js";
-import { Permission } from "@yummyai/authz";
+import { Permission, requireTenantOrderPermissions } from "@yummyai/authz";
+import { readCarrierObservation, trackingCheckDue, trackingIdentity } from "./carrier-observation.js";
 export const logisticsHash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 export const logisticsLock = (tx: TenantTransaction, context: TenantContext, key: string) => tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:logistics:${key}`},0))`);
 type Task = typeof tasks.$inferSelect;
@@ -56,6 +57,53 @@ export class LogisticsExecutor {
     }
   }
   purge(context:TenantContext,taskId:string){return purgeLogisticsTasks(this.database,context,this.storage,new Date(),taskId);}
+  async observeHandover(context:TenantContext,taskId:string) {
+    requireTenantOrderPermissions(context,[Permission.OrderRead,Permission.OrderPiiRead,Permission.OrderWrite]);
+    const source=async (tx:TenantTransaction) => {
+      const current=await loadCurrentMembershipContext(tx,context,{lock:true});
+      requireTenantOrderPermissions(current,[Permission.OrderRead,Permission.OrderPiiRead,Permission.OrderWrite]);
+      await logisticsLock(tx,context,`task:${taskId}`);
+      const [row]=await tx.select({task:tasks,connection:connections}).from(tasks)
+        .innerJoin(connections,eq(connections.id,tasks.connectionVersionId))
+        .innerJoin(logisticsConnections,and(eq(logisticsConnections.id,connections.connectionId),eq(logisticsConnections.verifiedVersionId,connections.id),eq(logisticsConnections.version,connections.version)))
+        .innerJoin(orders,eq(orders.id,tasks.orderId)).innerJoin(orderProtectedDetails,eq(orderProtectedDetails.orderId,orders.id))
+        .where(and(eq(tasks.id,taskId),eq(tasks.status,"completed"),eq(orders.addressStatus,"protected"),eq(orderProtectedDetails.status,"protected"),
+          orderPrivateSourceAvailable(sql`${orders.id}`),
+          sql`${tasks.encryptedSnapshot} is not null and ${tasks.expiresAt}>clock_timestamp() and ${orderProtectedDetails.retentionExpiresAt}>clock_timestamp()`));
+      if (!row || row.connection.profile.provider!=="yunexpress" || row.connection.profile.yunexpressProtocol!=="openapi" ||
+        !row.task.providerOrderId || row.task.trackingNumbers.length>1) return null;
+      return {...row,waybill:row.task.providerOrderId,tracking:row.task.trackingNumbers[0]??null,identity:trackingIdentity(row.task)};
+    };
+    const claim=await withTenant(this.database.db,context,async tx=>{
+      const current=await source(tx); if(!current) return null;
+      const observed=await readCarrierObservation(tx,taskId,current.identity);
+      if(!trackingCheckDue(observed)) return null;
+      await this.event(tx,context,taskId,"tracking.check",{identity:current.identity});
+      return current;
+    });
+    if(!claim) return {taskId,status:"ignored" as const};
+    let result:YunexpressTrackingResult|null=null;
+    try {
+      if(!this.gateway.handover) throw new Error("TRACKING_UNAVAILABLE");
+      const credentials=this.integrationVault.withSecret(claim.connection.encryptedCredentials,value=>LogisticsCredentialsSchema.parse(JSON.parse(value)));
+      const raw=await this.gateway.handover(claim.connection.profile,credentials,claim.task.externalReference,claim.waybill,claim.tracking,claim.task.createdAt);
+      const verified=YunexpressTrackingResultSchema.parse(raw);
+      if(verified.proof && (Date.parse(verified.proof.occurredAt)<claim.task.createdAt.getTime() || Date.parse(verified.proof.occurredAt)>Date.now())) throw new Error("TRACKING_TIME_INVALID");
+      result=verified;
+    } catch { /* Keep the last successful observation across a failed read. */ }
+    return withTenant(this.database.db,context,async tx=>{
+      const current=await source(tx);
+      if(!current || current.identity!==claim.identity) return {taskId,status:"ignored" as const};
+      if(!result) {
+        await this.event(tx,context,taskId,"tracking.unavailable",{identity:claim.identity});
+        return {taskId,status:"unavailable" as const};
+      }
+      await this.event(tx,context,taskId,"tracking.result",{identity:claim.identity,status:result.status});
+      if(result.proof && !(await readCarrierObservation(tx,taskId,claim.identity))?.proof)
+        await this.event(tx,context,taskId,"tracking.handover",{identity:claim.identity,proof:result.proof});
+      return {taskId,status:result.proof?"observed" as const:"waiting" as const};
+    });
+  }
   private rejectedCost(rejected:Array<{reason:string}>){
     return rejected.find(item=>["PER_ITEM_COST_EXCEEDED","PURCHASE_QUANTITY_UNAVAILABLE"].includes(item.reason))?.reason;
   }

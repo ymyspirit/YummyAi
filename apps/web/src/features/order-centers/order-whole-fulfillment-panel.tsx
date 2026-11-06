@@ -30,6 +30,7 @@ export function OrderWholeFulfillmentPanel({ orderId, module, refresh, busy, opt
   const [plan, setPlan] = useState<WholeOrderFulfillmentView | null>(null), [error, setError] = useState(""),
     [reading, setReading] = useState(true), [readFailed, setReadFailed] = useState(false), [reload, setReload] = useState(0), [factoryId, setFactoryId] = useState("");
   const [source, setSource] = useState<ShiposOrderShipmentEvidence | null>(null);
+  const [supplyFactories, setSupplyFactories] = useState<Record<string, string | undefined>>({});
   const [manufacturingReady, setManufacturingReady] = useState<Record<string, boolean>>({});
   const [dueLocal, setDueLocal] = useState(""), [capacityReady, setCapacityReady] = useState(false);
   const [shipment, setShipment] = useState({ tracking: "", carrierCode: "", carrierName: "", service: "", country: "", shipDate: "" });
@@ -117,16 +118,17 @@ export function OrderWholeFulfillmentPanel({ orderId, module, refresh, busy, opt
             void submit(event, `orders/${orderId}/release`, { supplierId: factory?.supplierId, factoryId: factory?.factoryId, factoryVersionId: factory?.factoryVersionId,
               items: plan.items.map((item, index) => ({ ...items[index]!, renderId: item.renderId, capabilityVersionId: factory?.items.find(pin => pin.lineId === item.lineId)?.capabilityVersionId,
                 capacityPlan: prepared[index]!.capacityPlan, manufacturing: readProductionManufacturingSelection(form, `manufacturing-${item.lineId}`) })),
-              expectedCompletionAt: prepared[0]!.expectedCompletionAt, instructions: value(form, "instructions") }, "整单生产已安排 全部商品的文件 工厂与共享产能已固定");
+              expectedCompletionAt: prepared[0]!.expectedCompletionAt, instructions: value(form, "instructions") }, "整单生产已安排，生产文件、工厂与交期已固定");
             } catch (cause) { setError(cause instanceof Error ? cause.message : "请核对每件商品的制造依据"); } }}>
             <fieldset className="oc-operation-form oc-whole-fields" disabled={disabled}>
               {plan.items.map(item => <div className="oc-full-field" key={item.lineId}><strong>{item.title}</strong><ProductionManufacturingFields lineId={item.lineId} prefix={`manufacturing-${item.lineId}`} disabled={disabled} refresh={`${reload}:${item.expectedRevision}:${item.expectedProjectionVersion}`}
+                onSupplyChange={id => setSupplyFactories(current => current[item.lineId] === id ? current : { ...current, [item.lineId]: id })}
                 onReadinessChange={ready => setManufacturingReady(current => current[item.lineId] === ready ? current : { ...current, [item.lineId]: ready })} /></div>)}
               <label>承接工厂<select name="factory" required value={factoryId} onChange={event => setFactoryId(event.target.value)}>
                 <option value="">选择能承接整单的工厂</option>{plan.factories.map(factory => <option key={factory.factoryId} value={factory.factoryId}>{factory.supplierName} · {factory.factoryName}</option>)}</select></label>
               <label>整单工厂当地计划完工<input name="due" type="datetime-local" required value={dueLocal} onChange={event => setDueLocal(event.target.value)} /></label>
               {factory && <div className="oc-full-field"><ProductionCapacityPicker factoryId={factory.factoryId} items={plan.items.map(item => ({ reference: item.lineId, factoryVersionId: factory.factoryVersionId,
-                capabilityVersionId: factory.items.find(pin => pin.lineId === item.lineId)?.capabilityVersionId ?? "", quantity: item.quantity, dueLocal }))}
+                capabilityVersionId: factory.items.find(pin => pin.lineId === item.lineId)?.capabilityVersionId ?? "", outsourcedFactoryId: supplyFactories[item.lineId], quantity: item.quantity, dueLocal }))}
                 basisKey={JSON.stringify([orderId, plan.items.map(item => [item.lineId, item.expectedRevision, item.expectedProjectionVersion, item.renderId]), manufacturingReady])} disabled={disabled || productionBlocked} onReady={setCapacityReady} /></div>}
               <label className="oc-full-field">整单补充说明（选填）<textarea name="instructions" maxLength={2000} placeholder="例如整单一起打包、特殊交付要求；具体工艺自动固定到各件审核文件" /></label>
               <button className="oc-button primary" disabled={productionBlocked || !capacityReady}>安排整单生产（{plan.quantity} 件）</button>

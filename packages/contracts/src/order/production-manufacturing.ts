@@ -44,6 +44,7 @@ export const ProductionManufacturingOptionsSchema = z.object({
   source: z.object({ specificationVersionId: Id, specificationId: Id, spuId: Id, name: z.string(), versionNumber: z.int().positive(),
     packageContents: z.string(), packageQuantity: z.int().positive(), processProfileVersionId: Id }).strict().nullable(),
   items: z.array(z.object({ versionId: Id, recipeId: Id, code: z.string(), name: z.string(), versionNumber: z.int().positive(),
+    outsourcedFactoryId: Id.optional(),
     outputQuantity: z.int().positive(), outputUnit: z.enum(["each", "pair", "set"]), approvedAt: z.iso.datetime() }).strict()),
   nextCursor: Id.nullable(), diagnostics: z.array(z.string()), contextAuthority: z.string().min(1),
 }).strict();

@@ -11,8 +11,8 @@ import { createSyntheticFactoryCapacity } from "../suppliers/factory-capacity.te
 import { reserveFactoryCapacityInTransaction } from "../suppliers/factory-capacity.service.js";
 import {HttpLogisticsGateway,LogisticsExecutor,LogisticsTransportError,purgeLogisticsTasks,type LogisticsProviderResult} from "@yummyai/logistics";
 import {assertAssetAccess,type Storage,type StoredAsset,type PutPrivateInput,type AssetDomain} from "@yummyai/storage";
-import {and,eq} from "drizzle-orm";
-import {afterAll,beforeAll,describe,expect,it} from "vitest";
+import {and,eq,sql} from "drizzle-orm";
+import {afterAll,beforeAll,describe,expect,it,onTestFinished,vi} from "vitest";
 import {AuditService} from "../audit/audit.service.js";
 import {OrderService} from "../orders/order.service.js";
 import {FactoryDirectoryService} from "../suppliers/factory-directory.service.js";
@@ -89,6 +89,49 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
       expect(pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret).recipient.phone)).toBe(phone??"1234567890");
     }
     expect(s.carrier.creates).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
+  });
+  it("polls a confirmed YunExpress waybill once and keeps parcel evidence separate from units and charges",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,true,"include",undefined,{baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi"});
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)));
+    onTestFinished(()=>purgeLogisticsTasks(database,context,storage,new Date(future(366)),saved.taskId).then(()=>undefined));
+    const poll=vi.spyOn(s.carrier,"handover").mockImplementation(async()=>({status:"T" as const,proof:{node:"FIRST_MILE_ARRIVE" as const,occurredAt:new Date().toISOString()}}));
+    await s.executor.observeHandover(context,saved.taskId);
+    expect(poll).not.toHaveBeenCalled();
+    await s.executor.run(context,saved.taskId,"purchase");
+    const before=await s.service.get(context,saved.taskId);
+    expect(before.status).toBe("completed");
+    await expect(s.executor.observeHandover({...context,permissions:[Permission.OrderRead,Permission.OrderPiiRead]},saved.taskId)).rejects.toThrow();
+    expect(poll).not.toHaveBeenCalled();
+    await Promise.all([s.executor.observeHandover(context,saved.taskId),s.executor.observeHandover(context,saved.taskId)]);
+    const after=await s.service.get(context,saved.taskId);
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(after.carrierObservation).toMatchObject({status:"T",proof:{node:"FIRST_MILE_ARRIVE"},diagnostic:null});
+    expect(after.actualCostMinor).toBe(before.actualCostMinor);expect(s.carrier.creates).toBe(1);
+    const packed=await withTenant(database.db,context,tx=>tx.execute(sql`select id from shipments where order_id=${after.orderId}`));
+    expect(packed).toHaveLength(0);
+    const clock=vi.spyOn(Date,"now").mockReturnValue(Date.now()+31*60_000);
+    try {
+      poll.mockRejectedValueOnce(new Error("synthetic timeout"));
+      await s.executor.observeHandover(context,saved.taskId);
+      expect((await s.service.get(context,saved.taskId)).carrierObservation).toMatchObject({status:"T",diagnostic:"unavailable",proof:{node:"FIRST_MILE_ARRIVE"}});
+      poll.mockResolvedValueOnce({status:"R",proof:null});
+      await s.executor.observeHandover(context,saved.taskId);
+      expect((await s.service.get(context,saved.taskId)).carrierObservation).toMatchObject({status:"R",diagnostic:null});
+      expect(await s.executor.observeHandover(context,saved.taskId)).toMatchObject({status:"ignored"});
+      expect(s.carrier.creates).toBe(1);
+    } finally { clock.mockRestore(); }
+  });
+  it("discards a carrier reply when private order retention expires during the read",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,true,"include",undefined,{baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi"});
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)));
+    await s.executor.run(context,saved.taskId,"purchase");
+    vi.spyOn(s.carrier,"handover").mockImplementation(async()=>{
+      await purgeLogisticsTasks(database,context,storage,new Date(future(366)),saved.taskId);
+      return {status:"T",proof:{node:"FIRST_MILE_DEPART",occurredAt:new Date().toISOString()}};
+    });
+    expect(await s.executor.observeHandover(context,saved.taskId)).toMatchObject({status:"ignored"});
+    const evidence=await withTenant(database.db,context,tx=>tx.execute(sql`select id from logistics_events where task_id=${saved.taskId} and action='tracking.handover'`));
+    expect(evidence).toHaveLength(0);
   });
   async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number,profilePatch?:Partial<LogisticsConnectionProfile>){
     const factory=country==="US"?usFactory:cnFactory;

@@ -69,7 +69,7 @@ export class OrderProductionService {
     return { productionOrderIds: [id] };
   }
 
-  manufacturingOptions(context: TenantContext, lineId: string, query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string }) {
+  manufacturingOptions(context: TenantContext, lineId: string, query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string; factoryId?: string }) {
     return withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead],
       tx => orderProductionManufacturingOptions(tx, context, this.vault, lineId, query));
   }

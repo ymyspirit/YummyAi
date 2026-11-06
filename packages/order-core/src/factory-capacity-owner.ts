@@ -161,6 +161,15 @@ async function readBalances(tx: TenantTransaction, requested: DayKey[]): Promise
   }]));
 }
 
+// Historical databases already have these immutable pins; absence is still a legacy unknown.
+function factoryManagedVersion(versionId: string | ReturnType<typeof sql>) {
+  return sql<boolean>`exists(select 1 from production_order_versions v join production_manufacturing_bindings b
+    on b.tenant_id=v.tenant_id and b.production_version_id=v.id
+    where v.id=${versionId} and b.content_canonical::jsonb->'materials'='[]'::jsonb
+      and jsonb_array_length(b.content_canonical::jsonb->'operations')=1
+      and b.content_canonical::jsonb->'operations'->0 @> '{"processCode":"FULL_PRODUCT","responsibility":"factory"}'::jsonb
+      and b.content_canonical::jsonb->'operations'->0->>'outsourcedFactoryId'=v.factory_id::text)`;
+}
 async function readLegacyBasis(tx: TenantTransaction, factoryId: string, timeZone: string, now: string, excluded: string[]) {
   const today = factoryCapacityLocalDate(timeZone, now);
   const exclude = excluded.length ? sql`and p.id not in (${sql.join(excluded.map(value => sql`${value}::uuid`), sql`,`)})` : sql``;
@@ -174,6 +183,7 @@ async function readLegacyBasis(tx: TenantTransaction, factoryId: string, timeZon
     from production_orders p where p.tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid
       and p.factory_id=${factoryId}::uuid
       and not exists(select 1 from factory_capacity_reservations r where r.tenant_id=p.tenant_id and r.production_order_id=p.id)
+      and not ${factoryManagedVersion(sql`(select pv.id from production_order_versions pv where pv.tenant_id=p.tenant_id and pv.production_order_id=p.id and pv.version_number=p.current_version_number)`)}
       ${exclude}`);
   return { active: row?.active === true, terminalToday: row?.terminal_today === true, today };
 }
@@ -394,10 +404,13 @@ export class FactoryCapacityOwner {
     requireTenantOrderPermissions(context, [Permission.OrderRead]); productionOrderId = id(productionOrderId);
     return withTenant(this.database.db, context, async tx => {
       const current = await currentOrderAuthority(tx, context, [Permission.OrderRead]);
-      if (!(await tx.select({ id: productionOrders.id }).from(productionOrders).where(eq(productionOrders.id, productionOrderId))).length)
+      const [production] = await tx.select({ factoryManaged: factoryManagedVersion(sql`${productionOrderVersions.id}`) }).from(productionOrders)
+        .leftJoin(productionOrderVersions, and(eq(productionOrderVersions.productionOrderId,productionOrders.id),eq(productionOrderVersions.versionNumber,productionOrders.currentVersionNumber)))
+        .where(eq(productionOrders.id,productionOrderId));
+      if (!production)
         throw new FactoryCapacityOwnerError(404, { code: "factory_capacity_production_not_found", message: "生产单不存在或无权访问" });
       const rows = await tx.select().from(reservations).where(eq(reservations.productionOrderId, productionOrderId)).orderBy(asc(reservations.poolId), asc(reservations.id));
-      return ProductionCapacityViewSchema.parse({ ...authority(current), productionOrderId, status: rows.length ? "reserved" : "legacy_unreserved", reservations: await reservationViews(tx, rows) });
+      return ProductionCapacityViewSchema.parse({ ...authority(current), productionOrderId, status: rows.length ? "reserved" : production.factoryManaged ? "factory_managed" : "legacy_unreserved", reservations: await reservationViews(tx, rows) });
     }, readOptions);
   }
 }
@@ -415,16 +428,20 @@ export async function reserveFactoryCapacityInTransaction(tx: TenantTransaction,
   productionOrderId: string; productionVersionId: string; capacityPlan: ProductionCapacityPlan | undefined;
 }) {
   const current = await currentOrderAuthority(tx, context, [Permission.OrderWrite]);
-  if (input.capacityPlan === undefined) invalid("capacity_plan_required");
-  const capacityPlan = normalizePlan(ProductionCapacityPlanSchema.parse(input.capacityPlan));
   const productionOrderId = id(input.productionOrderId), productionVersionId = id(input.productionVersionId);
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'production-order:' + productionOrderId},0))`);
-  const [source] = await tx.select({ production: productionOrders, version: productionOrderVersions }).from(productionOrders)
+  const [source] = await tx.select({ production: productionOrders, version: productionOrderVersions, factoryManaged: factoryManagedVersion(productionVersionId) }).from(productionOrders)
     .innerJoin(productionOrderVersions, and(eq(productionOrderVersions.productionOrderId, productionOrders.id), eq(productionOrderVersions.id, productionVersionId)))
     .where(eq(productionOrders.id, productionOrderId));
   if (!source?.production.factoryId || !source.version.factoryVersionId || !source.version.capabilityVersionId || source.version.factoryId !== source.production.factoryId || source.version.versionNumber !== source.production.currentVersionNumber || source.version.createdBy !== current.userId)
     conflict("factory_capacity_production_basis_invalid");
   const factoryId = source.production.factoryId;
+  if (source.factoryManaged) {
+    if (input.capacityPlan !== undefined) conflict("factory_capacity_request_mismatch");
+    return [];
+  }
+  if (input.capacityPlan === undefined) invalid("capacity_plan_required");
+  const capacityPlan = normalizePlan(ProductionCapacityPlanSchema.parse(input.capacityPlan));
   await factoryLock(tx, factoryId);
   const rows = await readPools(tx, factoryId);
   await poolLocks(tx, [...rows.map(row => row.pool.id), ...capacityPlan.allocations.map(selection => selection.poolId)]);
@@ -496,7 +513,11 @@ export async function applyProductionQuantityCapacityStop(tx: TenantTransaction,
   if (!review.stoppedDelta) return;
   const rows = await tx.select().from(reservations).where(and(eq(reservations.productionOrderId, review.productionOrderId),
     eq(reservations.productionVersionId, review.productionVersionId))).orderBy(asc(reservations.poolId), asc(reservations.id));
-  if (!rows.length) conflict("factory_capacity_actual_stop_required");
+  if (!rows.length) {
+    const [basis] = await tx.execute<{ managed: boolean }>(sql`select ${factoryManagedVersion(review.productionVersionId)} as managed`);
+    if (basis?.managed) return;
+    conflict("factory_capacity_actual_stop_required");
+  }
   for (const factoryId of unique(rows.map(row => row.factoryId)).sort()) await factoryLock(tx, factoryId);
   await poolLocks(tx, rows.map(row => row.poolId)); await dayLocks(tx, rows);
   for (const row of rows) {

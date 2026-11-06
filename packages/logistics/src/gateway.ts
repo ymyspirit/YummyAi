@@ -14,6 +14,7 @@ export interface LogisticsGateway {
   lookup(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, externalReference: string): Promise<LogisticsProviderResult | null>;
   labels(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, externalReference: string): Promise<LogisticsProviderResult>;
   downloadLabel(profile: LogisticsConnectionProfile, url: string): Promise<Uint8Array>;
+  handover?(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, reference:string, waybill:string, tracking:string|null, createdAt:Date): ReturnType<YunexpressOpenApi["handover"]>;
 }
 const record = (value: unknown) => z.record(z.string(), z.unknown()).parse(value);
 const text = (v: unknown) => typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
@@ -51,6 +52,11 @@ export class HttpLogisticsGateway implements LogisticsGateway {
     return this.environment.NODE_ENV !== "production" && this.environment.E2E_ISOLATED_DAILY === "1" && expected === origin
       && /^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(this.environment.DATABASE_URL ?? "http://invalid/").pathname)
       && /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+  }
+  async handover(p:LogisticsConnectionProfile,c:LogisticsCredentials,reference:string,waybill:string,tracking:string|null,createdAt:Date) {
+    this.assertProfile(p);this.assertCredentials(p,c);
+    if(p.provider!=="yunexpress" || p.yunexpressProtocol!=="openapi") throw new LogisticsTransportError("INVALID_RESPONSE");
+    return this.yun.handover(p,c,reference,waybill,tracking,createdAt);
   }
   async channels(p: LogisticsConnectionProfile, c: LogisticsCredentials) {
     this.assertProfile(p);

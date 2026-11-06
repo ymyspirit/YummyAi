@@ -6,7 +6,7 @@ import { SaveLogisticsConnectionSchema, SaveLogisticsRuleSchema, CreateLogistics
   LogisticsOptionsSchema, type LogisticsConnectionView, type LogisticsTaskView } from "@yummyai/contracts/logistics";
 import { logisticsConnections as connections, logisticsConnectionVersions as versions, logisticsRuleVersions as rules, logisticsTasks as tasks, logisticsTaskProductions as pins, logisticsLabels as labels, logisticsEvents as events,
   fulfillmentFactories, fulfillmentFactoryVersions, productionOrders, productionOrderVersions, orderLines, orders, orderProtectedDetails,logisticsDocumentProfiles, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
-import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel } from "@yummyai/logistics";
+import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel, HANDOVER_POLL_MS, trackingCheckDue } from "@yummyai/logistics";
 import { OrderDocumentSourceReader, currentOrderAuthority } from "@yummyai/order-core";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
@@ -15,7 +15,7 @@ import { DATABASE_CONNECTION, INTEGRATION_SECRET_VAULT, ORDER_PII_VAULT, PRIVATE
 import { OrderService } from "../orders/order.service.js";
 import { originalOwnerOperation } from "../shared/original-owner-error.js";
 import { LogisticsAccountsService } from "./logistics-accounts.service.js";
-export abstract class LogisticsEnqueuer { abstract enqueue(input: { taskId: string; tenantId: string; requestedBy: string; mode: "quote"|"purchase"|"reconcile"|"retention"; requestKey: string; delayMs?:number }): Promise<void>; }
+export abstract class LogisticsEnqueuer { abstract enqueue(input: { taskId: string; tenantId: string; requestedBy: string; mode: "quote"|"purchase"|"reconcile"|"retention"|"track"; requestKey: string; delayMs?:number }): Promise<void>; }
 @Injectable()
 export class LogisticsService {
   constructor(@Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection, @Inject(INTEGRATION_SECRET_VAULT) private readonly vault: SecretVault,
@@ -196,6 +196,12 @@ export class LogisticsService {
           blockers:[...(r.order.sideState?["订单已暂停或取消"]:[]),...(r.order.addressStatus!=="protected"?["有效收件资料缺失"]:[]),...(["cancel_requested","quality_hold"].includes(r.production.status)?["生产任务暂不可购单"]:[])]})),
       });
     });
+  }
+  async requestHandoverRead(context:TenantContext,id:string) {
+    this.write(context);
+    const task=await this.get(context,id);
+    if(task.status!=="completed" || !task.carrierWaybill || task.trackingNumbers.length>1 || !trackingCheckDue(task.carrierObservation??null)) return;
+    await this.queue.enqueue({tenantId:context.tenantId,requestedBy:context.userId,taskId:id,mode:"track",requestKey:`handover:${Math.floor(Date.now()/HANDOVER_POLL_MS)}`});
   }
   async dispatch(context: TenantContext,id: string,raw: unknown) {
     this.write(context);const input=z.object({mode:z.enum(["quote","purchase","reconcile"]),idempotencyKey:z.uuid()}).strict().parse(raw);

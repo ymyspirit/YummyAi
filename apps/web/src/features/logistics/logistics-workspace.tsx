@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useCallback,useEffect,useRef,useState } from "react";
 import { RefreshCw,Truck } from "lucide-react";
-import { LogisticsOptionsSchema,type LogisticsOptions,type LogisticsTaskView,type LogisticsConnectionView, type LogisticsTaskState,type LogisticsAccountView } from "@yummyai/contracts/logistics";
+import { LogisticsOptionsSchema,yunexpressStatusNames,type LogisticsOptions,type LogisticsTaskView,type LogisticsConnectionView, type LogisticsTaskState,type LogisticsAccountView } from "@yummyai/contracts/logistics";
 import { LogisticsTaskForm } from "./logistics-task-form";
 import { LogisticsConnectionForm } from "./logistics-connection-form";
 import { LogisticsAccountForm } from "./logistics-account-form";
@@ -11,6 +11,7 @@ import { FulfillmentQueue } from "./fulfillment-queue";
 import { logisticsError,logisticsRequest,logisticsDiagnostic } from "./logistics-client";
 import "../order-centers/order-centers.css";
 import "./logistics.css";
+const handoverNames={FIRST_MILE_ARRIVE:"首程入仓",FIRST_MILE_DEPART:"首程离仓",DELIVERY_ATTEMPT:"尝试派送",DELIVERED:"投递扫描"};
 export const logisticsStates:Record<LogisticsTaskState,string>={pending:"待询价",quoted:"已询价，等待规则启用",purchasing:"购单处理中",created:"物流订单已确认",label_requesting:"获取面单中",completed:"面单准备完成",attention:"需要人工核对",reconciliation_required:"结果不确定，须查单",cancelled:"已取消本地任务"};
 const money=(n:number|null,c:string|null,digits=2)=>n===null?"未返回":`${(n/10**digits).toFixed(digits)} ${c??"币种待核对"}`;
 export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:string}) {
@@ -53,6 +54,10 @@ export function LogisticsWorkspace({orderId,taskId}:{orderId?:string;taskId?:str
       {task.diagnostic&&<p role="status">待办原因：{logisticsDiagnostic(task.diagnostic)}</p>}
       {task.labelMode==="factory_pull"&&task.status==="completed"&&<p>ShipOS 面单由工厂按上方物流订单编号拉取。</p>}
       {task.trackingNumbers.length>0&&<p>跟踪号：{task.trackingNumbers.join(" / ")}</p>}
+      {task.carrierWaybill && !task.trackingNumbers.includes(task.carrierWaybill) && <p>云途运单号 {task.carrierWaybill}</p>}
+      {task.carrierObservation && <p>{task.carrierObservation.status ? yunexpressStatusNames[task.carrierObservation.status] : "等待云途查询结果"}
+        {task.carrierObservation.proof && <> · {handoverNames[task.carrierObservation.proof.node]} {new Date(task.carrierObservation.proof.occurredAt).toLocaleString("zh-CN")}</>}
+        {task.carrierObservation.diagnostic && " · 本次查询失败，系统将重试"}</p>}
       <div className="oc-actions">{options?.canCreate&&!['completed','cancelled'].includes(task.status)&&<button className="oc-button" disabled={busy} onClick={()=>void dispatch(task,["purchasing","created","label_requesting","reconciliation_required"].includes(task.status)?"reconcile":"purchase")}>{["purchasing","created","label_requesting","reconciliation_required"].includes(task.status)?"查询并核对结果":"按固定规则执行"}</button>}{task.labels.map(label=><a className="oc-button" key={label.id} href={`/api/logistics/tasks/${task.id}/labels/${label.id}`}>下载 {label.fileName}</a>)}</div>
       {!!task.quotes.length&&<details><summary>查看报价依据（{task.quotes.length}）</summary><div className="logistics-quote-list">{task.quotes.map((q,i)=><p key={i}>{q.channelName} · {money(q.totalMinor,q.currency,task.minorUnitDigits)} · {q.transitDaysMax===null?"时效未核验":`${q.transitDaysMin}–${q.transitDaysMax} 天`} · {q.currencySource??"币种未核验"} · {q.transitSource??"时效未核验"}{q.diagnostic&&` · ${q.diagnostic}`}</p>)}</div></details>}
     </article>)}</div></details>}

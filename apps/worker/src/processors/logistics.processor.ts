@@ -9,6 +9,7 @@ export class LogisticsProcessor {
     const payload=LogisticsJobPayloadSchema.parse(envelope.payload);
     const context={tenantId:envelope.tenantId,userId:envelope.requestedBy,dataScope:"tenant" as const,permissions:[Permission.OrderRead,Permission.OrderPiiRead,Permission.AssetRead]};
     if(payload.mode==="retention")return this.executor.purge(context,payload.taskId);
+    if(payload.mode==="track")return this.executor.observeHandover({...context,permissions:[...context.permissions,Permission.OrderWrite]},payload.taskId);
     const result=await this.executor.run(context,payload.taskId,payload.mode);
     if("retryAfterMs" in result&&result.retryAfterMs&&this.followup)await this.followup(logisticsFollowupEnvelope(envelope),result.retryAfterMs);
     return result;

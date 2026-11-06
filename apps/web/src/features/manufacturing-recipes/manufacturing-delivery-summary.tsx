@@ -12,12 +12,12 @@ export function ManufacturingDeliverySummary({ plan, instructions }: { plan: Fac
     {plan ? <>
       <p><strong>{plan.name}</strong> · {plan.code}</p>
       <p>本次 {plan.quantity} {manufacturingQuantityUnit(plan.unit)} · 以下配方每份产出 {plan.recipeOutputQuantity} {manufacturingQuantityUnit(plan.unit)}</p>
-      <details open><summary>材料与供料责任 {plan.materials.length} 项</summary><ul>
+      {plan.factorySuppliesFinishedGoods ? <p>工厂按本单已审核规格自行备料和排产</p> : <details open><summary>材料与供料责任 {plan.materials.length} 项</summary><ul>
         {plan.materials.map(line => <li key={line.code}>
           <div><strong>{line.name}</strong><small>{line.code}{line.operationCode ? ` · 工序 ${line.operationCode}` : ""}</small></div>
           <div><span>计划 {fraction(line.plannedNumerator, line.plannedDenominator)} {line.unit}</span><small>{supply[line.responsibility]} · 损耗 {line.lossBps / 100}% {line.lossBasis === "add_to_net" ? "按净耗加计" : "占投入量"}</small></div>
         </li>)}
-      </ul></details>
+      </ul></details>}
       <details open><summary>制造工序 {plan.operations.length} 项</summary><ol>
         {plan.operations.map(line => <li key={line.code}><div><strong>{line.name}</strong><small>{line.code} · {line.processCode}</small></div>
           <span>{line.responsibility === "factory" ? "工厂执行" : "商家执行"}</span></li>)}

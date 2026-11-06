@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   CreateManufacturingRecipeSchema, ReviseManufacturingRecipeSchema, ReviewManufacturingRecipeSchema,
-  ManufacturingRecipeContentSchema, type ManufacturingRecipeContent, type ManufacturingRecipeVersionView,
+  ManufacturingRecipeContentSchema, outsourcedManufacturingFactory, type ManufacturingRecipeContent, type ManufacturingRecipeVersionView,
 } from "@yummyai/contracts/catalog/manufacturing";
 import { InventoryUnitSchema } from "@yummyai/contracts/inventory";
 const Text = z.string().max(4000), Key = z.uuid();
@@ -16,6 +16,7 @@ export const ManufacturingIntentSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("review"), recipeId: z.uuidv7(), body: ReviewManufacturingRecipeSchema }).strict(),
 ]);
 export const ManufacturingDraftSchema = z.object({ code: Text, name: Text, specificationId: z.union([z.uuidv7(), z.literal("")]),
+  outsourcedFactoryId: z.uuidv7().optional(),
   specificationVersionId: z.union([z.uuidv7(), z.literal("")]), outputQuantity: Text, outputUnit: z.enum(["", "each", "pair", "set"]), notes: Text,
   basisVersion: z.int().positive().nullable(), materials: z.array(Material).max(200), operations: z.array(Operation).max(200),
   reviewNote: Text, pending: ManufacturingIntentSchema.nullable() }).strict();
@@ -54,8 +55,9 @@ export function blankManufacturingDraft(specificationId = "", specificationVersi
 export function draftFromVersion(version: ManufacturingRecipeVersionView): ManufacturingDraft {
   const operations: OperationDraft[] = version.content.operations.map(row => ({ ...row, key: crypto.randomUUID(), seconds: row.expectedSecondsPerOutput?.toString() ?? "" }));
   return { code: version.code, name: version.content.name, specificationId: version.specificationId, specificationVersionId: version.content.specificationVersionId,
+    outsourcedFactoryId: outsourcedManufacturingFactory(version.content),
     outputQuantity: version.content.outputQuantity.toString(), outputUnit: version.content.outputUnit, notes: version.content.notes, basisVersion: version.versionNumber,
-    operations: operations.map(({ key, code, name, processCode, responsibility, seconds, notes }) => ({ key, code, name, processCode, responsibility, seconds, notes })),
+    operations: outsourcedManufacturingFactory(version.content) ? [] : operations.map(({ key, code, name, processCode, responsibility, seconds, notes }) => ({ key, code, name, processCode, responsibility, seconds, notes })),
     materials: version.content.materials.map(row => ({ key: crypto.randomUUID(), code: row.code, name: row.name, stockItemId: row.stockItemId ?? "",
       quantity: quantityText(row.quantityNumerator, row.quantityDenominator), quantityUnit: row.unit ?? "", unit: row.unit ?? "", lossPercent: row.lossBps === null ? "" : quantityText(row.lossBps, 100),
       lossBasis: row.lossBasis ?? "", responsibility: row.responsibility, operationKey: operations.find(op => op.code === row.operationCode)?.key ?? "", notes: row.notes })),
@@ -69,6 +71,12 @@ const integer = (text: string, label: string, optional = false) => {
 export function contentFromDraft(draft: ManufacturingDraft): ManufacturingRecipeContent {
   if (!draft.name.trim()) throw new Error("请填写制造名称");
   if (!draft.specificationVersionId) throw new Error("请选择实际产品规格");
+  if (draft.outsourcedFactoryId) return ManufacturingRecipeContentSchema.parse({
+    specificationVersionId: draft.specificationVersionId, name: draft.name, outputQuantity: integer(draft.outputQuantity, "产出数量"),
+    outputUnit: draft.outputUnit, notes: draft.notes, materials: [],
+    operations: [{ code: "FULL_PRODUCT", name: "外协整件代工", processCode: "FULL_PRODUCT", responsibility: "factory",
+      outsourcedFactoryId: draft.outsourcedFactoryId, expectedSecondsPerOutput: null, notes: "" }],
+  });
   const content = {
     specificationVersionId: draft.specificationVersionId, name: draft.name, outputQuantity: integer(draft.outputQuantity, "产出数量"), outputUnit: draft.outputUnit, notes: draft.notes,
     operations: draft.operations.map((row, index) => {

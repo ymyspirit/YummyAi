@@ -65,6 +65,7 @@ function NativeProductionForm({ lineId, onChanged, onNavigationState }: { lineId
   const [requestedQuantity, setRequestedQuantity] = useState("");
   const [reading, setReading] = useState(true), [readFailed, setReadFailed] = useState(false), [working, setWorking] = useState(false);
   const [manufacturingReady, setManufacturingReady] = useState(false), [factoryReady, setFactoryReady] = useState(false);
+  const [outsourcedFactoryId, setOutsourcedFactoryId] = useState<string>();
   const [factoryChoice, setFactoryChoice] = useState<ProductionFactoryChoice | null>(null), [dueLocal, setDueLocal] = useState(""), [capacityReady, setCapacityReady] = useState(false);
   const [confirmed, setConfirmed] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [reload, setReload] = useState(0);
   const [recoveryBlocked, setRecoveryBlocked] = useState(true), [recoveryRefresh, setRecoveryRefresh] = useState(0);
@@ -164,10 +165,10 @@ function NativeProductionForm({ lineId, onChanged, onNavigationState }: { lineId
           {design && <ul className="np-files">{design.files.map(file => <li key={file.id}><FileCheck2 size={14} aria-hidden="true" /><span>{file.name}<small>SHA-256 {file.sha256}</small></span></li>)}</ul>}
           <label>已批准采购来源<select aria-label="已批准采购来源" required value={routeId} onChange={event => { setRouteId(event.target.value); setConfirmed(false); setFactoryReady(false); setFactoryChoice(null); setCapacityReady(false); }}><option value="">明确选择路由与当前采购版本</option>{view.routes.map(route => <option key={routeIdentity(route)} value={routeIdentity(route)}>{route.supplierName} · 采购 V{route.purchaseVersionNumber} · {route.routingDecisionId.slice(-8)}</option>)}</select></label>
           {view.routesTruncated && <p className="oc-hint">当前展示最近 25 个采购来源 请在采购模块核对目标路由</p>}
-          <ProductionManufacturingFields key={`${view.contextAuthority}:${specificationId}:${draftRevision}`} lineId={lineId} nativeSpecificationVersionId={specificationId} disabled={blocked} onReadinessChange={setManufacturingReady} />
+          <ProductionManufacturingFields key={`${view.contextAuthority}:${specificationId}:${draftRevision}`} lineId={lineId} nativeSpecificationVersionId={specificationId} disabled={blocked} onReadinessChange={setManufacturingReady} onSupplyChange={setOutsourcedFactoryId} />
           {route && quantity !== null && <ProductionFactorySelect lineId={lineId} quantity={quantity} nativeSource={{ specificationVersionId: specificationId, routingDecisionId: route.routingDecisionId, purchaseOrderVersionId: route.purchaseOrderVersionId }} disabled={blocked} onReady={setFactoryReady} onSelection={setFactoryChoice} />}
           <label>工厂当地预计完成时间<input name="due" type="datetime-local" required value={dueLocal} onChange={event => { setDueLocal(event.target.value); setCapacityReady(false); }} /></label>
-          {factoryChoice && quantity !== null && <ProductionCapacityPicker factoryId={factoryChoice.pin.factoryId} items={[{ reference: lineId, factoryVersionId: factoryChoice.pin.factoryVersionId, capabilityVersionId: factoryChoice.pin.capabilityVersionId, quantity, dueLocal }]}
+          {factoryChoice && quantity !== null && <ProductionCapacityPicker factoryId={factoryChoice.pin.factoryId} items={[{ reference: lineId, factoryVersionId: factoryChoice.pin.factoryVersionId, capabilityVersionId: factoryChoice.pin.capabilityVersionId, quantity, outsourcedFactoryId, dueLocal }]}
             basisKey={`${view.contextAuthority}:${specificationId}:${routeId}:${designId}:${quantity}:${view.line.allocatedQuantity}:${draftRevision}:${manufacturingReady}`} disabled={blocked || !factoryReady} onReady={setCapacityReady} onDenied={clearPrivate} />}
           <label>本次产品及设计确认依据<textarea aria-label="本次产品及设计确认依据" name="confirmationNote" required maxLength={2000} rows={2} /></label>
           <label>本次生产说明<textarea aria-label="本次生产说明" name="instructions" required maxLength={20000} rows={3} /></label>

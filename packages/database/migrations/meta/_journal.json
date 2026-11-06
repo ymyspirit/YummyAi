@@ -1401,6 +1401,13 @@
       "when": 1794096000000,
       "tag": "0200_order_provider_fulfillment_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0201_outsourced_finished_goods",
+      "breakpoints": true
     }
   ]
 }

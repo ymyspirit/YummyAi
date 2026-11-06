@@ -7,7 +7,8 @@ import { OrderWorkActionInputSchema } from "@yummyai/contracts/order/workspace";
 import type { SecretVault } from "@yummyai/ai-core";
 import { FulfillmentFlowViewSchema, FulfillmentFlowQueueSchema, ResumeFulfillmentBatchSchema, type FulfillmentFlowStage, type FulfillmentFlowView } from "@yummyai/contracts/order/fulfillment-flow";
 import { ReleaseWholeOrderInputSchema } from "@yummyai/contracts/order/whole-fulfillment";
-import { CreateLogisticsTaskSchema } from "@yummyai/contracts/logistics";
+import { CreateLogisticsTaskSchema, yunexpressStatusNames } from "@yummyai/contracts/logistics";
+import { HANDOVER_POLL_MS } from "@yummyai/logistics";
 import { CreateProductionDeliverySchema } from "@yummyai/contracts/order/production-delivery";
 import { orderFulfillmentFlows as flows, orderFlowDispatchTenants, orderWorkItems, orderLines, orders, orderPrivateSourceAvailable,
   loadCurrentMembershipContext, withTenant, type DatabaseConnection } from "@yummyai/database";
@@ -254,20 +255,28 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       if (!factory) throw new FlowAttention(fulfillment.factoryDiagnostics.find(factory => factory.factoryId === route.factoryId)?.blockers.join("；") || "该工厂尚未核验本单商品与工艺的承接能力");
       // Design revisions precede this production window; the persisted command freezes it for retries.
       const latest = new Date(Date.now()+route.profile.productionDays*86_400_000);
-      const capacity = planFlowCapacity(await this.capacity.workspace(context,route.factoryId,{days:31}),
-        factory.items.map(item => ({...item,quantity:fulfillment.items.find(line => line.lineId===item.lineId)!.quantity})),latest);
-      const items = [];
+      const selections = [];
       for (const line of fulfillment.items) {
-        const options = await this.production.manufacturingOptions(context,line.lineId,{});
-        if (options.items.length!==1 || options.nextCursor || options.diagnostics.length) throw new FlowAttention("本单规格需要唯一的已审核制造模板 请在商品档案中明确适用版本");
-        if (options.source?.packageQuantity!==1 || options.items[0]!.outputQuantity!==1 || options.items[0]!.outputUnit!=="each")
+        const options = await this.production.manufacturingOptions(context,line.lineId,{factoryId:route.factoryId});
+        const outsourced = options.items.filter(item => item.outsourcedFactoryId === route.factoryId);
+        const candidates = outsourced.length ? outsourced : options.items.filter(item => !item.outsourcedFactoryId);
+        if (candidates.length!==1 || options.nextCursor || options.diagnostics.length) throw new FlowAttention("本单规格需要唯一的已审核制造模板 请在商品档案中明确适用版本");
+        const recipe = candidates[0]!;
+        if (options.source?.packageQuantity!==1 || recipe.outputQuantity!==1 || recipe.outputUnit!=="each")
           throw new FlowAttention("此规格按套或多成品计量 请先核对订单单位与工厂制造单位的换算规则");
-        items.push({lineId:line.lineId,quantity:line.quantity,expectedRevision:line.expectedRevision,expectedProjectionVersion:line.expectedProjectionVersion,
-          renderId:line.renderId!,capabilityVersionId:factory.items.find(item=>item.lineId===line.lineId)!.capabilityVersionId,
-          manufacturing:{versionId:options.items[0]!.versionId,orderUnitConfirmed:true as const},capacityPlan:capacity.plans.get(line.lineId)!});
+        selections.push({line,recipe,capabilityVersionId:factory.items.find(item=>item.lineId===line.lineId)!.capabilityVersionId});
       }
+      const internal = selections.filter(item => !item.recipe.outsourcedFactoryId);
+      const capacity = internal.length ? planFlowCapacity(await this.capacity.workspace(context,route.factoryId,{days:31}),
+        internal.map(({line,capabilityVersionId}) => ({lineId:line.lineId,quantity:line.quantity,capabilityVersionId})),latest) : null;
+      const items = selections.map(({line,recipe,capabilityVersionId}) => ({
+        lineId:line.lineId,quantity:line.quantity,expectedRevision:line.expectedRevision,expectedProjectionVersion:line.expectedProjectionVersion,
+        renderId:line.renderId!,capabilityVersionId,manufacturing:{versionId:recipe.versionId,orderUnitConfirmed:true as const},
+        ...(!recipe.outsourcedFactoryId && capacity ? {capacityPlan:capacity.plans.get(line.lineId)!} : {}),
+      }));
+      const expectedCompletionAt = internal.length === selections.length ? capacity!.expectedCompletionAt : latest.toISOString();
       const input=ReleaseWholeOrderInputSchema.parse({supplierId:factory.supplierId,factoryId:factory.factoryId,factoryVersionId:factory.factoryVersionId,
-        items,expectedCompletionAt:capacity.expectedCompletionAt,instructions:"按已审核生产文件整单合包 同一订单共用面单",idempotencyKey:randomUUID()});
+        items,expectedCompletionAt,instructions:"按已审核生产文件整单合包 同一订单共用面单",idempotencyKey:randomUUID()});
       await this.command(context,flow,token,"production",input);
       return this.executeCommand(context,flow,token,{kind:"production",input});
     }
@@ -335,6 +344,49 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
     }
     const packets=await Promise.all(flow.deliveryPackageIds.map(id=>this.delivery.get(context,id)));
     if (packets.some(packet=>packet.items.some(item=>item.status==="rejected"))) throw new FlowAttention("工厂已拒收 当前订单需要处理");
+    const deliveryItems=packets.flatMap(packet=>packet.items);
+    const factoryRows=profile.profile.productionAdapter==="printeque_factory" ? deliveryItems.map(item=>item.factoryErp).filter(row=>!!row && !row.bindingReleased && !row.privateSourceExpired) : [];
+    if(factoryRows.some(row=>row?.exception || row?.voidSummary?.requiresOrderHandling || row?.voidSummary?.pending))
+      throw new FlowAttention("Printeque 出库表存在作废记录 请核对原工厂回执");
+    const factoryOutbound=factoryRows.length>0 && factoryRows.length===deliveryItems.length && new Set(factoryRows.map(row=>row!.bindingId)).size===1 &&
+      factoryRows.every(row=>row?.status==="shipped");
+    if(factoryOutbound && factoryRows.some(row=>row!.trackingReference && !logistics.trackingNumbers.includes(row!.trackingReference)))
+      throw new FlowAttention("Printeque 出库表的运单与本单面单不一致 请核对工厂整单记录");
+    const yun=connection.profile.provider==="yunexpress" && connection.profile.yunexpressProtocol==="openapi";
+    const observation=logistics.carrierObservation, carrierStatus=observation?.status;
+    if(yun) {
+      await this.logistics.requestHandoverRead(context,logistics.id);
+      if (carrierStatus==="R" || carrierStatus==="C" || carrierStatus==="E") throw new FlowAttention(yunexpressStatusNames[carrierStatus]+" 请核对原运单");
+      if (observation?.diagnostic==="unavailable") return this.finish(context,flow,token,"waiting_dispatch",["云途轨迹暂时无法核对 系统会再次查询原运单"],300);
+      if (carrierStatus==="F" || carrierStatus==="N") return this.finish(context,flow,token,"waiting_dispatch",[yunexpressStatusNames[carrierStatus]],300);
+    }
+    const currentTracking=carrierStatus==="D" || (carrierStatus==="T" && observation?.verifiedAt && Date.now()-Date.parse(observation.verifiedAt)<HANDOVER_POLL_MS);
+    const handover=currentTracking ? observation?.proof : null;
+    if (yun && !handover && fulfillment.shipmentIds.length) return this.finish(context,flow,token,"waiting_dispatch",["等待云途核对原运单的实物轨迹"],300);
+    if(yun && handover && fulfillment.shipmentIds.length) {
+      if(fulfillment.shipmentIds.length!==1 || !logistics.carrierWaybill || logistics.trackingNumbers.length>1)
+        throw new FlowAttention("云途已有实物轨迹 整单包裹或运单数量待核对");
+      const detail=await this.shipments.get(context,fulfillment.shipmentIds[0]!);
+      const version=detail.versions.find(row=>row.versionNumber===detail.shipment.currentVersionNumber);
+      if(!version || detail.shipment.status==="cancelled" || version.versionNumber!==detail.shipment.approvedVersionNumber)
+        throw new FlowAttention("云途已有实物轨迹 请核对本单当前包裹版本");
+      const packs=detail.packages.filter(row=>row.shipmentVersionId===version.id), pack=packs[0];
+      const lines=detail.packageLines.filter(row=>row.packageId===pack?.id), allocations=detail.productionAllocations.filter(row=>row.packageId===pack?.id);
+      if(packs.length!==1 || !pack || (pack.trackingNumber!==logistics.carrierWaybill && !logistics.trackingNumbers.includes(pack.trackingNumber)) || version.shipFromCountryCode!==connection.profile.originCountryCode ||
+        lines.length!==fulfillment.items.length || !fulfillment.items.every(item=>lines.some(line=>line.orderLineId===item.lineId && line.quantity===item.quantity)) ||
+        !allocations.length || allocations.some(row=>!deliveryItems.some(item=>item.productionOrderId===row.productionOrderId &&
+          item.snapshot?.productionVersionId===row.productionVersionId && item.snapshot.orderLineId===row.orderLineId)) ||
+        !flow.productionOrderIds.every(id=>allocations.some(row=>row.productionOrderId===id)))
+        throw new FlowAttention("云途轨迹与本单已审核的整单包裹不匹配 请核对原运单和生产来源");
+      const eventId=`task:${logistics.id}:${handover.node}:${handover.occurredAt}`;
+      const recorded=detail.tracking.find(event=>event.provider==="yunexpress_openapi" && event.externalEventId===eventId);
+      if(recorded && recorded.packageId!==pack.id) throw new FlowAttention("该云途实物轨迹已关联原包裹 请核对包裹修订");
+      if(!recorded) {
+        await this.shipments.recordTrackingEvent(context,detail.shipment.id,{packageId:pack.id,provider:"yunexpress_openapi",externalEventId:eventId,
+          status:handover.node==="DELIVERED"?"delivered":"in_transit",detailCode:handover.node,occurredAt:handover.occurredAt,estimatedDeliveryAt:null});
+        return this.finish(context,flow,token,"waiting_dispatch",["已登记云途实物轨迹 正在核对整单回传条件"],0);
+      }
+    }
     if (fulfillment.shipmentIds.length && fulfillment.items.every(item=>item.shippedQuantity>=item.quantity)) {
       let confirmed=0;
       for (const id of fulfillment.shipmentIds) {
@@ -356,9 +408,16 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       return this.finish(context,flow,token,confirmed===fulfillment.shipmentIds.length?"completed":"writeback",
         [confirmed===fulfillment.shipmentIds.length?"平台已确认本单物流跟踪号":"已提交平台回传 等待实际接口结果"],60);
     }
+    if(factoryOutbound)
+      return this.finish(context,flow,token,"waiting_dispatch",["Printeque 出库表已确认整单出库 逐件质检、实发数量和承运商交接分别等待原始凭据"],300);
+    if(yun && handover)
+      return this.finish(context,flow,token,"waiting_dispatch",[yunexpressStatusNames[carrierStatus!]+"，已核实包裹实物轨迹",
+        "订单应发 "+fulfillment.items.reduce((sum,item)=>sum+item.quantity,0)+" 件，逐件质检与实发数量未提供"],300);
+    if(yun && carrierStatus) return this.finish(context,flow,token,"waiting_dispatch",[yunexpressStatusNames[carrierStatus]+" 等待核实实物扫描时间"],300);
     const accepted=packets.every(packet=>packet.items.every(item=>pillowFactoryDeliveryProgress(item.status).status==="scheduled"));
     return this.finish(context,flow,token,accepted?"waiting_dispatch":"waiting_factory",
-      [accepted?"已提交工厂排产 等待真实生产和交运回执":"生产文件与面单已备齐 请批量提交工厂 ERP 或将交付包交给工厂"],300);
+      [profile.profile.productionAdapter==="yicai_folder" ? (accepted?"已登记向义彩交付 等待云途首程实物轨迹":"义彩文件夹、尺寸和面单已备齐 待交付工厂") :
+        accepted?"已提交工厂排产 等待真实生产和交运回执":"生产文件与面单已备齐 请批量提交工厂 ERP 或将交付包交给工厂"],300);
   }
   private async command(context:TenantContext,flow:Flow,token:string,kind:string,input:unknown) {
     await this.patch(context,flow,token,{pendingCommand:{kind,input}});

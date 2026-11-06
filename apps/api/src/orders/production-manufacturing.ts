@@ -12,6 +12,7 @@ import type { ProductionEditorDocument } from "@yummyai/contracts/pod/production
 import { orderLineCatalogLinks, orderWorkItems, orderWorkRevisions, productionManufacturingBindings as bindings, productionOrders, productionOrderVersions, productSpecificationVersions, orderLines, orders, orderProtectedDetails, type TenantTransaction } from "@yummyai/database";
 import { decryptProductionBytes } from "@yummyai/production-editor";
 import { currentOrderAuthority } from "@yummyai/order-core";
+import { outsourcedManufacturingFactory } from "@yummyai/contracts/catalog/manufacturing";
 import { and, eq } from "drizzle-orm";
 import { nativeProductionOrderSourceAvailable } from "./native-production-source.js";
 import { approvedManufacturingForProduction, manufacturingSourceFromOrderDraft, manufacturingSku, productionFactorySource, productionManufacturingOptions, type ManufacturingProductionSource } from "../catalog/manufacturing-production.js";
@@ -55,6 +56,9 @@ export async function sealProductionManufacturing(tx: TenantTransaction, context
     originalFactoryBasis = original.binding.factoryBasis;
   }
   const approved = await approvedManufacturingForProduction(tx, context, selection.versionId, source);
+  const outsourcedFactoryId = outsourcedManufacturingFactory(approved.view.content);
+  if (outsourcedFactoryId && outsourcedFactoryId !== record.version.factoryId)
+    throw new ConflictException("外协制造规格与本单实际工厂不一致");
   if (record.version.sourceWorkRevisionId === null) {
     const [link] = choice.kind === "original_production_binding" ? [] : await tx.select({ skuId: orderLineCatalogLinks.skuId }).from(orderLineCatalogLinks).where(eq(orderLineCatalogLinks.orderLineId, record.order.orderLineId));
     skuId = skuId ?? link?.skuId ?? null;
@@ -111,7 +115,7 @@ async function pinnedWorkManufacturingSource(tx: TenantTransaction, context: Ten
 }
 
 export async function orderProductionManufacturingOptions(tx: TenantTransaction, context: TenantContext, vault: SecretVault, lineId: string,
-  query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string }) {
+  query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string; factoryId?: string }) {
   await currentOrderAuthority(tx, context, [Permission.OrderRead, Permission.OrderPiiRead]);
   let specificationVersionId: string | null = null;
   if (query.nativeSpecificationVersionId) {
@@ -135,7 +139,7 @@ export async function orderProductionManufacturingOptions(tx: TenantTransaction,
     const [work] = await tx.select().from(orderWorkItems).where(eq(orderWorkItems.id, lineId));
     if (work?.pushedRevisionId) specificationVersionId = (await pinnedWorkManufacturingSource(tx, context, vault, lineId, work.pushedRevisionId)).specificationVersionId;
   }
-  return productionManufacturingOptions(tx, context, specificationVersionId, query.after);
+  return productionManufacturingOptions(tx, context, specificationVersionId, query.after, query.factoryId);
 }
 
 function originalWorkDraft(vault: SecretVault, wrappedKey: string, revision: typeof orderWorkRevisions.$inferSelect) {

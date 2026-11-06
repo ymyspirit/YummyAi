@@ -56,6 +56,7 @@ export function QualityGroupsPanel({ productionOrderId, lineId, standards, refre
   const basis = permitted && editing?.scope === scope ? editing.value : null;
   const writable = canWrite && !!current && (current.access?.canWrite === true || access.localDevelopment && !current.access);
   const [manufacturingReady, setManufacturingReady] = useState(false), [draftRevision, setDraftRevision] = useState(0);
+  const [outsourcedFactoryId, setOutsourcedFactoryId] = useState<string>();
   const [capacityReady, setCapacityReady] = useState(false);
   useEffect(() => { alive.current = true; setReady(true); return () => { alive.current = false; readSequence.current++; writeEpoch.current++; activeRead.current?.abort(); }; }, []);
   useLayoutEffect(() => { onEditsChanged(); }, [groups, confirmed, standardId, inspectedAt, remakeQuantity, defectId, reason, completionAt, onEditsChanged]);
@@ -259,7 +260,7 @@ export function QualityGroupsPanel({ productionOrderId, lineId, standards, refre
             <button className="oc-button primary" disabled={!!proposalHandoff || !confirmed || !evaluation || !!evaluation.problems.length}>保存实物分组检验</button>
             <FulfillmentCommandPrepareButton disabled={!confirmed || !evaluation || !!evaluation.problems.length} />
           </> : target && <>
-            <ProductionManufacturingFields key={`${mode.groupId}:${draftRevision}`} lineId={lineId} originalProductionOrderId={productionOrderId} disabled={blocked || !!pending} onReadinessChange={setManufacturingReady} />
+            <ProductionManufacturingFields key={`${mode.groupId}:${draftRevision}`} lineId={lineId} originalProductionOrderId={productionOrderId} disabled={blocked || !!pending} onReadinessChange={setManufacturingReady} onSupplyChange={setOutsourcedFactoryId} />
             <p className="oc-hint">原组 {target.quantity} 件 · 已安排 {target.remakeQuantity} 件 · 当前所选缺陷最多补做 {selectedDefect ? remakeMaximum : "待明确选择"} 件 多个缺陷共享原组额度</p>
             <p className="oc-hint">已归属报废 {target.scrappedQuantity ?? "尚未核对"} · 报废份额剩余可补做 {target.remainingScrapRemakeQuantity ?? "尚未核对"} · 仅报废处理缺陷取用此份额</p>
             <label>关联原缺陷<select aria-label="关联原缺陷" required value={defectId} onChange={event => { setDefectId(event.target.value); setConfirmed(false); setCapacityReady(false); }}><option value="">选择需要处理的缺陷</option>{target.defects.filter(defect => ["remake", "rework", "scrap"].includes(defect.disposition)).map(defect => <option key={defect.id} value={defect.id}
@@ -268,7 +269,7 @@ export function QualityGroupsPanel({ productionOrderId, lineId, standards, refre
             {remakeQuantity && !validRemakeQuantity && <p className="oc-error" role="alert">本次补做数量须为正整数 且不能超过原组剩余数量</p>}
             <label>补做原因<textarea required maxLength={2000} value={reason} onChange={event => setReason(event.target.value)} /></label>
             <label>补做工厂当地预计完成时间<input required type="datetime-local" value={completionAt} onChange={event => setCompletionAt(event.target.value)} /></label>
-            {factoryPin ? <ProductionCapacityPicker factoryId={factoryPin.factoryId} items={[{ reference: mode.groupId, factoryVersionId: factoryPin.factoryVersionId, capabilityVersionId: factoryPin.capabilityVersionId, quantity: Number(remakeQuantity), dueLocal: completionAt }]}
+            {factoryPin ? <ProductionCapacityPicker factoryId={factoryPin.factoryId} items={[{ reference: mode.groupId, factoryVersionId: factoryPin.factoryVersionId, capabilityVersionId: factoryPin.capabilityVersionId, quantity: Number(remakeQuantity), outsourcedFactoryId, dueLocal: completionAt }]}
               basisKey={`${pin(basis)}:${draftRevision}:${manufacturingReady}:${defectId}`} disabled={blocked || !!pending} onReady={setCapacityReady} onDenied={deny} />
               : <p className="oc-error" role="status">原生产未保留可读取的固定工厂与能力 当前不能安排补做 不以当前工厂猜补原来源</p>}
             <label className="oc-check"><input required type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />已核对本次取用的原组实物和补做数量</label>

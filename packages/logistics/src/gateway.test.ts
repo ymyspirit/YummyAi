@@ -121,6 +121,28 @@ describe("YunExpress official OpenAPI",()=>{
     expect(()=>t.gateway.assertAccount({...profile(),baseUrl:"https://evil.example.invalid"})).toThrow();
     await expect(t.gateway.accountChannels(profile(),{provider:"yunexpress",customerCode:"legacy",apiSecret:"legacy"})).rejects.toThrow("CREDENTIAL_PROTOCOL_MISMATCH");
   });
+  it("recognises physical tracking only for the exact waybill, order and tracking number with a real UTC node",async()=>{
+    const born=new Date("2024-06-01T00:00:00Z"), utc="2024-06-18T08:54:51Z";
+    let tracking=info.tracking_number, status="F", events:unknown[]=[
+      {track_node_code:"ORDER_CREATION",process_utc_time:utc},{track_node_code:"FIRST_MILE_ARRIVE",process_time:utc},
+      {track_node_code:"DELIVERED",process_utc_time:"0001-01-01T00:00:00Z"},
+      {track_node_code:"FIRST_MILE_DEPART",process_utc_time:"2099-01-01T00:00:00Z"}];
+    const t=transport((url,init)=>{
+      expect(init.method).toBe("GET");expect(url.pathname).toBe("/v1/track-service/getAllForOPenApi");
+      expect(url.searchParams.get("order_number")).toBe(info.waybill_number);
+      return ok([{order_number:info.waybill_number,package_status:status,track_Info:status==="N"?null:{...info,tracking_number:tracking,track_events:events}}]);
+    });
+    const read=()=>t.gateway.handover(profile(),c,info.customer_order_number,info.waybill_number,info.tracking_number,born);
+    expect(await read()).toEqual({status:"F",proof:null});
+    status="T";
+    expect(await read()).toEqual({status:"T",proof:null});
+    events=[{track_node_code:"DELIVERED",process_utc_time:"2024-06-20T10:00:00Z"},{track_node_code:"FIRST_MILE_ARRIVE",process_utc_time:utc,process_content:"Private free text"}];
+    expect(await read()).toEqual({status:"T",proof:{node:"FIRST_MILE_ARRIVE",occurredAt:"2024-06-18T08:54:51.000Z"}});
+    for(status of ["N","R","C","E"]) expect(await read()).toEqual({status,proof:null});
+    status="unknown";await expect(read()).rejects.toThrow();
+    status="D";
+    tracking="DIFFERENT";await expect(read()).rejects.toMatchObject({code:"INVALID_RESPONSE"});
+  });
   it("refreshes an expired token once for a read but never retries a create",async()=>{
     let count=0;
     const t=transport(()=>++count===1?Response.json({success:false,code:"0200401002",msg:"must not expose"},{status:401}):Response.json({success:true,detail:[]}));
