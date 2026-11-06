@@ -14,6 +14,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 
 export interface FactoryRequirement {
+  artworkFactoryId?: string;
   spuId?: string | null;
   productType?: string; productPlanId: string | null; skuId: string | null; quantity: number;
   longestMm?: number | null; sideMode?: "single" | "double"; factoryStandardId?: string; templateVersionId?: string | null;
@@ -175,6 +176,7 @@ export class FactoryDirectoryService {
   }
   requirementBlockers(pin: FactoryProductionPin, supplierStatus: string, requirement: FactoryRequirement, now: Date) {
     const factory = pin.factoryProfile, capability = pin.capabilityProfile, blockers: string[] = [];
+    if (requirement.artworkFactoryId && pin.factoryId !== requirement.artworkFactoryId) blockers.push("生产稿固定的制作工厂与所选工厂不一致");
     if (supplierStatus !== "active") blockers.push("供应商未启用"); if (factory.status !== "active") blockers.push("工厂未启用");
     if (capability.status !== "active" || capability.verificationStatus !== "confirmed" || capability.sampleStatus === "failed") blockers.push("工厂能力未核验启用");
     if (capability.fulfillmentScope !== "full_product") blockers.push("该能力仅承接部分工序，不能下达整件生产");

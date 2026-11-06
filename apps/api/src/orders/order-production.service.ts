@@ -402,6 +402,7 @@ export class OrderProductionService {
     const [revision] = revisionId ? await tx.select({ templateVersionId: workRevisions.profileVersionId }).from(workRevisions).where(eq(workRevisions.id, revisionId)) : [];
     if (manufacturing && document && manufacturing.productType !== document.productType) throw new ConflictException("制造规格与实际审核稿的产品类型不一致");
     return { spuId: manufacturing?.spuId ?? link?.spuId ?? null, skuId: manufacturing ? manufacturing.skuId : link?.skuId ?? null, productPlanId: manufacturing?.productPlanId ?? link?.productPlanId ?? null, quantity, productType: document?.productType ?? manufacturing?.productType,
+      artworkFactoryId: (document?.productType === "shaped_pillow" ? document.spec.productionFactory?.factoryId : undefined) ?? manufacturing?.artworkFactoryId,
       longestMm: document?.productType === "shaped_pillow" ? document.spec.declaredLongestMm : document?.productType === "tire_cover" ? document.spec.diameterMm : document ? Math.max(document.spec.widthMm, document.spec.heightMm) : manufacturing?.longestMm ?? null,
       sideMode: document?.productType === "shaped_pillow" ? document.spec.sideMode : manufacturing?.sideMode ?? undefined,
       factoryStandardId: document?.productType === "shaped_pillow" ? document.spec.factoryStandardId : manufacturing?.factoryStandardId ?? undefined, templateVersionId: manufacturing?.templateVersionId ?? revision?.templateVersionId ?? null };
@@ -1094,7 +1095,8 @@ function productionDocumentInstructions({ render, document }: PreparedArtwork) {
   return [header,
     `工艺版本：${spec.factoryStandardId}；${spec.dpi} DPI；白底 JPG；${spec.sideMode === "double" ? "双面印刷" : "单面印刷"}。`,
     ...(spec.declaredLongestMm ? [`${basis}最长边：${Number((spec.declaredLongestMm / 10).toFixed(2))} 厘米。`] : []),
-    `缝边 ${pixels(spec.whiteBorderMm)} px；黑裁线 ${pixels(spec.cutLineMm)} px；空白条码框 ${spec.barcodeTab.widthMm === null ? "待确认" : pixels(spec.barcodeTab.widthMm)} × ${spec.barcodeTab.heightMm === null ? "待确认" : pixels(spec.barcodeTab.heightMm)} px。`,
+    `缝边 ${pixels(spec.whiteBorderMm)} px，黑裁线 ${pixels(spec.cutLineMm)} px。`,
+    spec.productionFactory?.adapter === "yicai_folder" ? "按义彩工艺省略底部空白条码框。" : `空白条码框 ${spec.barcodeTab.widthMm === null ? "待确认" : pixels(spec.barcodeTab.widthMm)} × ${spec.barcodeTab.heightMm === null ? "待确认" : pixels(spec.barcodeTab.heightMm)} px。`,
     `两片净距 ${pixels(spec.panelGapMm)} px；整图四周留白 ${pixels(spec.sheetMarginMm ?? 0)} px。`,
     `细窄处不少于 ${spec.minimumNeckMm / 10} 厘米；${spec.minimumNeckBasis === "cut_contour" ? "按生产稿两侧裁线之间的最窄处核对" : "测量口径以本单核对记录为准"}。`,
   ].join("\n");

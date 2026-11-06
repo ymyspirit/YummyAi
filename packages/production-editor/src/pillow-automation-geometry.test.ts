@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
-import { createDefaultProductionDocument } from "./products.js";
+import { createDefaultProductionDocument, pinPillowProductionFactory } from "./products.js";
+import { auditPillowGeometry } from "./pillow-artwork-audit.js";
+import { createEntityId } from "@yummyai/contracts";
 import { buildPillowContour, getProductionLayout, sampleClosedContour } from "./geometry.js";
 import { createPillowAutomationGeometry, recomputePillowAutomationGeometry, verifyPillowAutomationGeometry } from "./pillow-automation-geometry.js";
 import { applyPillowOutline } from "./pillow-outline.js";
@@ -27,6 +29,23 @@ function fixture(kind: "cat" | "person" | "fine" | "circle", size = 1800): { wid
 }
 
 describe("versioned independent pillow geometry", () => {
+  it("keeps the Yicai bottom contour and 25 cm subject through automatic creation, geometry revision and audit", () => {
+    const template = document();
+    template.spec.declaredLongestMm = 254;
+    const input = pinPillowProductionFactory(template, { factoryId: createEntityId(), documentProfileVersionId: createEntityId(), adapter: "yicai_folder", sizeIn: 10 });
+    const raster = fixture("cat"), options = { artworkLayerId: "photo", longestSideInches: 10 };
+    const first = createPillowAutomationGeometry(input, raster, options);
+    const revision = recomputePillowAutomationGeometry(first.document, raster, { ...options, roundingPx: 15 });
+    for (const candidate of [first, revision]) {
+      expect(candidate.document.spec).toMatchObject({ declaredLongestMm: 250, barcodeTab: { widthMm: null, heightMm: null } });
+      expect(buildPillowContour(candidate.document).issues).toEqual([]);
+      expect(candidate.qa.technicalPassed).toBe(true);
+      const checks = auditPillowGeometry(candidate.document, { sizeInches: 10, sideMode: "single", subject: "body", warnings: [], fields: [] }, raster);
+      for (const code of ["physicalSize", "whiteBorderRule", "barcodeTab"])
+        expect(checks.find(check => check.code === code)).toMatchObject({ status: "passed" });
+    }
+    expect(template.spec.barcodeTab.heightMm).not.toBeNull();
+  });
   it.each(["cat", "person", "fine"] as const)("makes a connected smooth %s outline using the measured subject without touching source pixels", kind => {
     const raster = fixture(kind);
     const before = raster.alpha!.slice();

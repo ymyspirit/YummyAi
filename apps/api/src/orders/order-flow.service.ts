@@ -252,6 +252,8 @@ export class OrderFlowService implements OnApplicationBootstrap, OnApplicationSh
       if (fulfillment.items.some(item => !item.renderId)) return this.finish(context,flow,token,"waiting_render",["审核通过 正式生产文件生成成功后自动继续"]);
       if (fulfillment.items.some(item => item.productionBlockers.length)) throw new FlowAttention([...new Set(fulfillment.items.flatMap(item => item.productionBlockers))].join("；"));
       const factory = fulfillment.factories.find(factory => factory.factoryId === route.factoryId);
+      if (!factory && !flow.logisticsTaskId && route.factorySetupIssue)
+        return this.finish(context, flow, token, "production", [route.factorySetupIssue + "，核验后系统自动继续"], 900);
       if (!factory) throw new FlowAttention(fulfillment.factoryDiagnostics.find(factory => factory.factoryId === route.factoryId)?.blockers.join("；") || "该工厂尚未核验本单商品与工艺的承接能力");
       // Design revisions precede this production window; the persisted command freezes it for retries.
       const latest = new Date(Date.now()+route.profile.productionDays*86_400_000);

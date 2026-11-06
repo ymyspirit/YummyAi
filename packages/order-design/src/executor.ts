@@ -191,7 +191,7 @@ export class OrderDesignExecutor {
           const sourceId=await completedAsset(job.input.sourceStepId),bytes=await read(sourceId);
           if(!metadata.get(sourceId)?.actualAlpha)throw new OrderDesignError("agent_alpha_missing");
           const measurement=measurePillowSubject(await pillowRaster(bytes));
-          const placement=planPillowSubjectPlacement(measurement,{longestSideInches:document.spec.declaredLongestMm/25.4});
+          const placement=planPillowSubjectPlacement(measurement,{longestSideInches:document.spec.productionFactory?.sizeIn ?? document.spec.declaredLongestMm/25.4},document.spec.productionFactory);
           return {outputAssetId:sourceId,output:{sourceAssetId:sourceId,sourceChecksum:fingerprint(bytes),measurement,placement,nativeDetailVerified:false}};
         }
         case "ensure_resolution": {
@@ -200,14 +200,14 @@ export class OrderDesignExecutor {
           if(await completedAsset(job.input.measurementStepId)!==sourceId)throw new OrderDesignError("agent_step_dependency_invalid");
           const bytes=await read(sourceId),sourceInfo=metadata.get(sourceId)!;
           const measurement=measurePillowSubject(await pillowRaster(bytes));
-          const options={longestSideInches:document.spec.declaredLongestMm/25.4};
-          const placement=planPillowSubjectPlacement(measurement,options);
+          const options={longestSideInches:document.spec.productionFactory?.sizeIn ?? document.spec.declaredLongestMm/25.4};
+          const placement=planPillowSubjectPlacement(measurement,options,document.spec.productionFactory);
           if(!placement.requiresUpscale)return {outputAssetId:sourceId,output:{sourceAssetId:sourceId,sourceChecksum:fingerprint(bytes),action:"kept_sufficient_actual_pixels",measurement,placement,nativeDetailVerified:false}};
           if(placement.requiredUpscaleFactor>pipeline.upscale.scale)throw new OrderDesignError("agent_pillow_source_resolution_too_low");
           await job.assertActive();
           const result=await this.superResolution.upscale({bytes,policy:pipeline.upscale,signal:job.signal});
           await job.assertActive();
-          const raster=await pillowRaster(result.bytes),after=measurePillowSubject(raster),afterPlacement=planPillowSubjectPlacement(after,options);
+          const raster=await pillowRaster(result.bytes),after=measurePillowSubject(raster),afterPlacement=planPillowSubjectPlacement(after,options,document.spec.productionFactory);
           if(raster.width!==measurement.sourceWidthPx*4 || raster.height!==measurement.sourceHeightPx*4 || afterPlacement.requiresUpscale)throw new OrderDesignError("agent_pillow_upscale_dimensions_invalid");
           const outputId=createEntityId();
           const evidence={...result.evidence,sourceAssetId:sourceId,sourceChecksum:fingerprint(bytes),outputChecksum:fingerprint(result.bytes),policy:pipeline.upscale,measurementBefore:measurement,measurementAfter:after,ppiBefore:placement.effectivePpi,ppiAfter:afterPlacement.effectivePpi,nativeDetailVerified:false};
@@ -222,7 +222,7 @@ export class OrderDesignExecutor {
             const sourceId=await completedAsset(job.input.sourceStepId),bytes=await read(sourceId);
             const layer=document.layers.find(layer=>layer.kind==="image" && layer.assetId===sourceId);
             if(!layer || !metadata.get(sourceId)?.actualAlpha || !document.spec.declaredLongestMm)throw new OrderDesignError("agent_contour_source_invalid");
-            const raster=await pillowRaster(bytes),options={artworkLayerId:layer.id,longestSideInches:document.spec.declaredLongestMm/25.4};
+            const raster=await pillowRaster(bytes),options={artworkLayerId:layer.id,longestSideInches:document.spec.productionFactory?.sizeIn ?? document.spec.declaredLongestMm/25.4};
             if(job.snapshot.revisionRequest){
               const revision=job.snapshot.revisionRequest;
               // Run geometry on the existing subject, then merge only its own layer.

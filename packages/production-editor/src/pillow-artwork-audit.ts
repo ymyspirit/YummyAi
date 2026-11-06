@@ -1,5 +1,5 @@
 import type { ArtworkAuditCheck } from "@yummyai/contracts/ai/artwork-audit";
-import { SHAPED_PILLOW_FACTORY_STANDARD, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
+import { pillowOrderLengthMm, SHAPED_PILLOW_FACTORY_STANDARD, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
 import type { OrderProductionRequirements } from "@yummyai/contracts/order/production-requirements";
 import { buildPillowContour, getProductionLayout, sampleClosedContour } from "./geometry.js";
 import { measurePillowSubject, type PillowSubjectRaster } from "./pillow-subject.js";
@@ -67,9 +67,11 @@ export function auditPillowGeometry(document: ShapedPillowDocument, requirements
     const longest = Math.max(measurement.bounds.width * x, measurement.bounds.height * y);
     const proportional = Math.abs(x - y) / Math.max(x, y) < 1e-6;
     const hasTransparency = raster.rgba ? raster.rgba.some((v, i) => i % 4 === 3 && v < 32) : raster.alpha?.some(v => v < 32);
-    if (size && hasTransparency) set("physicalSize", { status: proportional && Math.round(longest / 25.4 * 150) === Math.round(size * 150) ? "passed" : "failed",
-      detail: `顾客下单 ${size} 英寸；图案实测 ${n(longest / 25.4)} 英寸（${n(longest / 10)} 厘米）。`,
-      action: !proportional ? "图案被拉伸，请恢复原比例。" : Math.round(longest / 25.4 * 150) === Math.round(size * 150) ? "" : "按顾客下单尺寸调整图案后重新核对。",
+    const targetMm = size ? pillowOrderLengthMm(size, spec.productionFactory) : null;
+    const sizeMatches = targetMm !== null && Math.round(longest / 25.4 * 150) === Math.round(targetMm / 25.4 * 150);
+    if (size && hasTransparency) set("physicalSize", { status: proportional && sizeMatches ? "passed" : "failed",
+      detail: `顾客下单 ${size} 英寸，工厂目标 ${n(targetMm! / 10)} 厘米，图案实测 ${n(longest / 10)} 厘米。`,
+      action: !proportional ? "图案被拉伸，请恢复原比例。" : sizeMatches ? "" : "按本单工厂尺寸调整图案后重新核对。",
       evidence: [`主体 ${measurement.bounds.width} × ${measurement.bounds.height} px；透明边界 Alpha ≥ 32；按实际放置尺寸换算，150 DPI 像素取整。`] });
     if (size && hasTransparency) {
       try {
@@ -84,8 +86,15 @@ export function auditPillowGeometry(document: ShapedPillowDocument, requirements
   if (!size) set("physicalSize", { status: "needs_review", detail: "本次制作的顾客尺寸缺失或存在冲突。", action: "先核对本单原始尺寸选项。" });
   if (standard) {
     const w = (spec.barcodeTab.widthMm ?? 0) * 150 / 25.4, h = (spec.barcodeTab.heightMm ?? 0) * 150 / 25.4;
-    const valid = Math.abs(w - 600) < .01 && Math.abs(h - 200) < .01 && !geometryIssues.length;
-    set("barcodeTab", { status: valid ? "passed" : "failed", detail: valid ? "条码框尺寸正确，已连接图案底部。" : "条码框的尺寸或底部连接需要修改。", action: valid ? "" : "将条码框设为 600 × 200 像素并连接主体最下方。", evidence: [`实测 ${n(w)} × ${n(h)} px（150 DPI）；已检查轮廓与矩形合并后的底部连接。`, ...geometryIssues] });
+    if (spec.productionFactory?.adapter === "yicai_folder") {
+      const absent = spec.barcodeTab.widthMm === null && spec.barcodeTab.heightMm === null;
+      set("barcodeTab", { status: absent ? "passed" : "failed", method: "measurement",
+        detail: absent ? "义彩工艺已省略底部空白条码框。" : "义彩稿仍带有条码框参数。",
+        action: absent ? "" : "移除底部空白条码框后重新核对。", evidence: ["已核对本稿固定的工厂规则和条码框宽高。"] });
+    } else {
+      const valid = Math.abs(w - 600) < .01 && Math.abs(h - 200) < .01 && !geometryIssues.length;
+      set("barcodeTab", { status: valid ? "passed" : "failed", detail: valid ? "条码框尺寸正确，已连接图案底部。" : "条码框的尺寸或底部连接需要修改。", action: valid ? "" : "将条码框设为 600 × 200 像素并连接主体最下方。", evidence: [`实测 ${n(w)} × ${n(h)} px（150 DPI）；已检查轮廓与矩形合并后的底部连接。`, ...geometryIssues] });
+    }
     const neck = !geometryIssues.length ? measureCutNeck(document) : null;
     if (neck) {
       const layout = getProductionLayout(document), minX = Math.min(neck.from[0], neck.to[0]), minY = Math.min(neck.from[1], neck.to[1]);

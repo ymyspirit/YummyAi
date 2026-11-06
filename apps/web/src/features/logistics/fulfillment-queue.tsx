@@ -191,10 +191,10 @@ export function FulfillmentQueue() {
             </>
           )}
           {data.routes
-            .filter((route) => route.profile.mode !== "disabled" && route.blockers.length)
+            .filter((route) => route.profile.mode !== "disabled" && (route.blockers.length || route.factorySetupIssue))
             .map((route) => (
               <p key={route.id}>
-                {route.profile.name}：{route.blockers.join("；")}
+                {route.profile.name}：{[...route.blockers, route.factorySetupIssue].filter(Boolean).join("；")}
               </p>
             ))}
           <Link href="/fulfillment-routes">

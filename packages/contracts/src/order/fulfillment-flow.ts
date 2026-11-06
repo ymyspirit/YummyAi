@@ -29,7 +29,7 @@ export const FulfillmentRouteViewSchema = z.object({
   id: Id, version: z.int().positive(), profile: FulfillmentRouteSchema,
   factoryId: Id, factoryName: z.string(), supplierName: z.string(),
   countries: z.array(z.string()), products: z.array(z.string()),
-  connectionName: z.string(), blockers: z.array(z.string()),
+  connectionName: z.string(), blockers: z.array(z.string()), factorySetupIssue: z.string().optional(),
 }).strict();
 export const FulfillmentFlowViewSchema = z.object({
   orderId: Id, id: Id.nullable(), stage: FulfillmentFlowStageSchema.nullable(),

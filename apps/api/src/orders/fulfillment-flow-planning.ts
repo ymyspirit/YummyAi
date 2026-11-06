@@ -4,12 +4,15 @@ import type { FulfillmentRouteView } from "@yummyai/contracts/order/fulfillment-
 import type { FactoryCapacityWorkspace } from "@yummyai/contracts/suppliers/factory-capacity";
 import { planOrderDocument } from "@yummyai/logistics";
 
+export function documentProfileCoversOrder(source: DocumentOrderSource, profile: DocumentProfileView["profile"]) {
+  return profile.destinationCountries.includes(source.address.countryCode) && source.lines.length > 0 &&
+    source.lines.every(line => line.specificationVersionId !== null && profile.specifications.some(spec => spec.specificationVersionId === line.specificationVersionId));
+}
+
 export function matchFulfillmentRoute(source: DocumentOrderSource, routes: FulfillmentRouteView[], profiles: DocumentProfileView[]) {
   const matches = routes.filter(route => route.profile.mode !== "disabled" && profiles.some(profile =>
     profile.id === route.profile.documentProfileVersionId
-    && profile.profile.destinationCountries.includes(source.address.countryCode)
-    && source.lines.length > 0 && source.lines.every(line => line.specificationVersionId !== null
-      && profile.profile.specifications.some(spec => spec.specificationVersionId === line.specificationVersionId))));
+    && documentProfileCoversOrder(source, profile.profile)));
   if (matches.length === 1) return { route: matches[0]!, reasons: matches[0]!.blockers };
   return { route: null, reasons: [matches.length ? "有多条发货规则同时适用 请在产品与发货规则中消除重叠" : "整单商品与收货国家没有匹配的发货规则 请配置商品规格和承接工厂"] };
 }

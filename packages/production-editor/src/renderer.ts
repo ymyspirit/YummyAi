@@ -69,7 +69,7 @@ async function prepare(rawDocument: ProductionEditorDocument, rawOptions: Produc
             const rgba = await sharp(bytes, { limitInputPixels: MAX_PRODUCTION_PIXELS }).rotate().toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
             const raster = { width: rgba.info.width, height: rgba.info.height, rgba: rgba.data };
             if (document.productType === "shaped_pillow" && document.spec.declaredLongestMm && document.spec.factoryStandardId === SHAPED_PILLOW_FACTORY_STANDARD.id) {
-              asset.pillowGeometry = verifyPillowAutomationGeometry(document, raster, { artworkLayerId: layer.id, longestSideInches: document.spec.declaredLongestMm / 25.4, roundingPx: document.automation!.pillowPipeline!.contour.maxExtraPx });
+              asset.pillowGeometry = verifyPillowAutomationGeometry(document, raster, { artworkLayerId: layer.id, longestSideInches: document.spec.productionFactory?.sizeIn ?? document.spec.declaredLongestMm / 25.4, roundingPx: document.automation!.pillowPipeline!.contour.maxExtraPx });
               asset.pillowSubject = asset.pillowGeometry.measurement;
             } else asset.pillowSubject = measurePillowSubject(raster);
           }

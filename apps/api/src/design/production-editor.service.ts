@@ -131,6 +131,8 @@ export class ProductionEditorService {
   async create(context: TenantContext, body: unknown): Promise<ProductionEditorDetailView> {
     authorize(context, Permission.DesignWrite);
     const input = CreateProductionEditorProjectInputSchema.parse(body);
+    if (input.document.productType === "shaped_pillow" && input.document.spec.productionFactory)
+      throw new ConflictException("订单工厂规格只能由已匹配的发货规则固定");
     const source = input.source ?? null;
     let expiresAt: Date | null = null;
     let sourceFiles: Array<{ key: string; name: string }> = [];
@@ -201,10 +203,14 @@ export class ProductionEditorService {
       await this.assertWorkEditable(context, project, tx);
       const [locked] = await tx.select().from(projects).where(eq(projects.id, id)).for("update");
       if (!locked?.encryptedDataKey || locked.status !== "active" || locked.currentVersionId !== input.expectedVersionId) throw new ConflictException("项目版本已更新，请刷新后保存");
+      const factory = input.document.productType === "shaped_pillow" ? input.document.spec.productionFactory : undefined;
+      if (!project.sourceWorkItemId && factory) throw new ConflictException("通用底稿不能绑定某笔订单的工厂规则");
       if (project.sourceWorkItemId) {
         const [previousVersion] = await tx.select().from(versions).where(eq(versions.id, locked.currentVersionId!));
         if (!previousVersion) throw new ConflictException("当前制作版本不可用");
         const previousDocument = ProductionEditorDocumentSchema.parse(openJson(this.key(locked), previousVersion.encryptedDocument));
+        const originalFactory = previousDocument.productType === "shaped_pillow" ? previousDocument.spec.productionFactory : undefined;
+        if (JSON.stringify(factory) !== JSON.stringify(originalFactory)) throw new ConflictException("订单已固定制作工厂，请重新审单后更换");
         if (JSON.stringify(input.document.automation ?? null) !== JSON.stringify(previousDocument.automation ?? null)) throw new ConflictException("订单已固定图片处理配方，请在产品制作版本中修改并重新审单");
         const jobs = await tx.select().from(renders).where(eq(renders.projectId, id));
         if (jobs.some(job => ["queued", "processing"].includes(job.status) && OrderImageEnhancementOptionsSchema.safeParse(openJson(this.key(locked), job.encryptedOptions)).success)) throw new ConflictException("顾客图片正在保真美化，完成后自动更新草稿，请稍后再保存");

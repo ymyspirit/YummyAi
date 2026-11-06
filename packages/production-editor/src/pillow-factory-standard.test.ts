@@ -3,7 +3,8 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { createEntityId } from "@yummyai/contracts";
 import { getProductionLayout } from "./geometry.js";
-import { applyPillowFactoryStandard, createDefaultProductionDocument, productionExportDefaults } from "./products.js";
+import { applyPillowFactoryStandard, createDefaultProductionDocument, pinPillowProductionFactory, productionExportDefaults } from "./products.js";
+import { auditPillowGeometry } from "./pillow-artwork-audit.js";
 import { preflightProductionDocument, renderProductionDocument } from "./renderer.js";
 
 const mm = (px: number) => px * 25.4 / 150;
@@ -21,6 +22,34 @@ function document(): ShapedPillowDocument {
 const resolvers = { resolveAsset: async () => ({ bytes: await sharp({ create: { width: 1500, height: 1500, channels: 3, background: "#406080" } }).png().toBuffer() }), resolveFont: async () => { throw new Error("No fonts in fixture"); } };
 
 describe("PS tutorial pillow factory standard", () => {
+  it("renders the fixed factory contour on both panels and audits the original production dimensions", async () => {
+    const template = document(), original = structuredClone(template);
+    const profile = { factoryId: createEntityId(), documentProfileVersionId: createEntityId(), sizeIn: 10 };
+    for (const adapter of ["printeque_factory", "yicai_folder"] as const) {
+      const draft = pinPillowProductionFactory(template, { ...profile, adapter });
+      const yicai = adapter === "yicai_folder";
+      expect(draft.spec.declaredLongestMm).toBe(yicai ? 250 : 254);
+      expect(draft.spec.barcodeTab.widthMm).toBe(yicai ? null : mm(600));
+      draft.confirmations = { ...original.confirmations, barcodeTab: !yicai };
+      const result = await renderProductionDocument(draft, options, resolvers);
+      const file = sharp(result.bytes);
+      expect(await file.metadata()).toMatchObject({ format: "jpeg", density: 150, width: 4012, height: yicai ? 2006 : 2206 });
+      const layout = getProductionLayout(draft), scale = 150 / 25.4;
+      const bottom = Math.round((layout.marginMm + draft.spec.heightMm) * scale);
+      for (const offset of [0, layout.backOffsetMm]) {
+        const x = Math.round((offset + layout.marginMm + draft.spec.widthMm / 2) * scale);
+        const [bodyPixel] = await file.clone().extract({ left: x, top: bottom, width: 1, height: 1 }).raw().toBuffer();
+        expect(yicai ? bodyPixel! < 30 : bodyPixel! > 220).toBe(true);
+      }
+      expect(auditPillowGeometry(draft, null, null).find(check => check.code === "barcodeTab")?.status).toBe("passed");
+      if (yicai) {
+        draft.spec.barcodeTab = { ...original.spec.barcodeTab };
+        expect((await preflightProductionDocument(draft, options, resolvers)).issues).toContainEqual(expect.objectContaining({ code: "factory_barcode_unexpected", severity: "error" }));
+        expect(auditPillowGeometry(draft, null, null).find(check => check.code === "barcodeTab")?.status).toBe("failed");
+      }
+    }
+    expect(template).toEqual(original);
+  });
   it("keeps independently bound front/back prints in a complete checked JPG",async()=>{
     const value=document();value.spec.sideMode="double";const front=value.layers[0]!;if(front.kind!=="image")throw new Error("Missing fixture image");
     value.layers=[{...front,surface:"front"},{...front,id:"back-photo",name:"Independent back",assetId:createEntityId(),surface:"back"}];

@@ -72,7 +72,7 @@ function PillowContourDialog({ document, image, projectId, onClose, onApply }: {
         <button className="pe-button primary pe-tool-wide" disabled={busy} onClick={() => void preview()}>{busy ? <LoaderCircle size={15} className="pe-spin" /> : <ScanLine size={15} />}{busy ? "正在计算轮廓…" : "预览优化效果"}</button>
         {busy && <button className="pe-button pe-tool-wide" onClick={stop}>取消计算</button>}
         <button className="pe-button pe-tool-wide" disabled={busy} onClick={() => updateSettings(DEFAULT_PILLOW_CONTOUR_SETTINGS)}>恢复默认参数</button>
-        {candidate && <dl className="pe-spec-note"><div><dt>轮廓节点</dt><dd>{document.contour.length} → {candidate.contour.length}</dd></div><div><dt>整张文件</dt><dd>{layout!.widthPx} × {layout!.heightPx}px</dd></div><div><dt>外边距 / 正反片间距</dt><dd>50px / 100px</dd></div><div><dt>条码框</dt><dd>{candidate.spec.barcodeTab.widthMm && candidate.spec.barcodeTab.heightMm ? "随主体移至最下方" : "宽高待填写"}</dd></div></dl>}
+        {candidate && <dl className="pe-spec-note"><div><dt>轮廓节点</dt><dd>{document.contour.length} → {candidate.contour.length}</dd></div><div><dt>整张文件</dt><dd>{layout!.widthPx} × {layout!.heightPx}px</dd></div><div><dt>外边距 / 正反片间距</dt><dd>50px / 100px</dd></div><div><dt>条码框</dt><dd>{candidate.spec.productionFactory?.adapter === "yicai_folder" ? "义彩工艺省略" : candidate.spec.barcodeTab.widthMm && candidate.spec.barcodeTab.heightMm ? "随主体移至最下方" : "宽高待填写"}</dd></div></dl>}
       </aside>
       <section className="pe-contour-preview" aria-label="轮廓比较结果">
         {error && <p className="pe-alert" role="alert">{error}</p>}

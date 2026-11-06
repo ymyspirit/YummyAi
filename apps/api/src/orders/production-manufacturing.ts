@@ -8,12 +8,12 @@ import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { ProductionManufacturingSelectionSchema, ProductionProductConfirmationSchema, ProductionManufacturingFactoryBasisSchema, type ProductionManufacturingFactoryBasis, type ProductionManufacturingSelection, type ProductionProductConfirmation } from "@yummyai/contracts/order/production-manufacturing";
 import { OrderWorkDraftSchema } from "@yummyai/contracts/order/workspace";
-import type { ProductionEditorDocument } from "@yummyai/contracts/pod/production-editor";
-import { orderLineCatalogLinks, orderWorkItems, orderWorkRevisions, productionManufacturingBindings as bindings, productionOrders, productionOrderVersions, productSpecificationVersions, orderLines, orders, orderProtectedDetails, type TenantTransaction } from "@yummyai/database";
+import { pillowOrderLengthMm, type ProductionEditorDocument } from "@yummyai/contracts/pod/production-editor";
+import { orderLineCatalogLinks, orderWorkItems, orderWorkRevisions, productionManufacturingBindings as bindings, productionOrders, productionOrderVersions, productSpecificationVersions, orderLines, orders, orderProtectedDetails, logisticsDocumentProfiles, type TenantTransaction } from "@yummyai/database";
 import { decryptProductionBytes } from "@yummyai/production-editor";
 import { currentOrderAuthority } from "@yummyai/order-core";
 import { outsourcedManufacturingFactory } from "@yummyai/contracts/catalog/manufacturing";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { nativeProductionOrderSourceAvailable } from "./native-production-source.js";
 import { approvedManufacturingForProduction, manufacturingSourceFromOrderDraft, manufacturingSku, productionFactorySource, productionManufacturingOptions, type ManufacturingProductionSource } from "../catalog/manufacturing-production.js";
 import { approvedDesignProductionSource } from "../design/production-design-source.js";
@@ -69,6 +69,15 @@ export async function sealProductionManufacturing(tx: TenantTransaction, context
   skuId = await manufacturingSku(tx, skuId, approved.view.spuId);
   const reviewedBasis = reviewedFactoryBasis(approved.factoryBasis, approved.dimensionBasis, skuId, document);
   const factoryBasis = ProductionManufacturingFactoryBasisSchema.parse(originalFactoryBasis ?? reviewedBasis);
+  if (factoryBasis.artworkFactoryId && factoryBasis.artworkFactoryId !== record.version.factoryId)
+    throw new ConflictException("实际生产工厂与原审核稿固定的工厂不一致");
+  if (!factoryBasis.artworkFactoryId && document?.productType === "shaped_pillow" && record.version.factoryId) {
+    const [packing] = await tx.select({ profile: logisticsDocumentProfiles.profile }).from(logisticsDocumentProfiles)
+      .where(eq(logisticsDocumentProfiles.factoryId, record.version.factoryId)).orderBy(desc(logisticsDocumentProfiles.versionNumber)).limit(1);
+    if (packing?.profile.productionAdapter === "yicai_folder" && packing.profile.specifications.some(spec =>
+      spec.specificationVersionId === source.specificationVersionId && spec.productKind === "shaped_pillow"))
+      throw new ConflictException("旧稿尚未固定义彩工艺，请以新版本重做并审核后再下达");
+  }
   const contentCanonical = canonicalJson(approved.view.content);
   await tx.insert(bindings).values({ id: createEntityId(), tenantId: context.tenantId, productionOrderId: record.order.id,
     productionVersionId, orderLineId: record.order.orderLineId, recipeId: approved.view.recipeId, manufacturingVersionId: selection.versionId,
@@ -93,10 +102,14 @@ function reviewedFactoryBasis(basis: Omit<ProductionManufacturingFactoryBasis, "
   if (document && document.productType !== basis.productType) throw new ConflictException("制造规格与实际审核稿的产品类型不一致");
   const actualLongest = document?.productType === "shaped_pillow" ? document.spec.declaredLongestMm : document?.productType === "tire_cover" ? document.spec.diameterMm : document ? Math.max(document.spec.widthMm, document.spec.heightMm) : null;
   const comparable = document?.productType === "shaped_pillow" && dimensionBasis === "artwork_longest" || document?.productType === "tire_cover" && dimensionBasis === "diameter" || document?.productType === "rectangular_print" && dimensionBasis === "finished_outer_2d";
-  if (comparable && actualLongest !== null && basis.longestMm !== null && Math.abs(actualLongest - basis.longestMm) > 0.000001)
+  const factory = document?.productType === "shaped_pillow" ? document.spec.productionFactory : undefined;
+  const nominalToFactory = factory?.adapter === "yicai_folder" && actualLongest !== null && basis.longestMm !== null
+    && Math.abs(basis.longestMm - pillowOrderLengthMm(factory.sizeIn)) < 0.000001
+    && Math.abs(actualLongest - pillowOrderLengthMm(factory.sizeIn, factory)) < 0.000001;
+  if (comparable && actualLongest !== null && basis.longestMm !== null && Math.abs(actualLongest - basis.longestMm) > 0.000001 && !nominalToFactory)
     throw new ConflictException("原规格的同口径尺寸与实际审核稿不一致 请先核对并审核新的制作依据");
   return ProductionManufacturingFactoryBasisSchema.parse({ ...basis, skuId,
-    longestMm: actualLongest ?? basis.longestMm,
+    longestMm: actualLongest ?? basis.longestMm, ...(factory ? { artworkFactoryId: factory.factoryId } : {}),
     sideMode: document?.productType === "shaped_pillow" ? document.spec.sideMode : null,
     factoryStandardId: document?.productType === "shaped_pillow" ? document.spec.factoryStandardId : null });
 }

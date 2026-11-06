@@ -94,7 +94,11 @@ blockers(source: Source, creating: boolean, pin?: ProductionDeliverySnapshot, pu
     if (!["not_required", "approved"].includes(work!.proof) || work!.proof === "approved" && work!.proofEditorVersionId !== editorVersion.id) result.push("客户确认未完成或未绑定当前版本");
     if (render.status !== "completed" || render.versionId !== editorVersion.id) result.push("正式文件尚未完成");
     const document = this.document(source);
-    if (document?.productType !== "shaped_pillow" || document.spec.factoryStandardId !== SHAPED_PILLOW_FACTORY_STANDARD.id || document.spec.minimumNeckBasis !== "cut_contour" || document.spec.minimumNeckMm < 50 || !document.spec.declaredLongestMm || document.spec.sizeBasis !== "artwork" || !Object.values(document.confirmations).every(Boolean)) result.push("异形抱枕的工艺、裁线最窄处或主体尺寸口径尚未确认");
+    const omitBarcode = document?.productType === "shaped_pillow" && document.spec.productionFactory?.adapter === "yicai_folder";
+    if (document?.productType === "shaped_pillow" && document.spec.productionFactory && document.spec.productionFactory.factoryId !== source.order.factoryId)
+      result.push("生产稿与实际交付工厂不一致");
+    if (omitBarcode && (document.spec.barcodeTab.widthMm !== null || document.spec.barcodeTab.heightMm !== null)) result.push("义彩生产稿仍带有底部空白条码框");
+    if (document?.productType !== "shaped_pillow" || document.spec.factoryStandardId !== SHAPED_PILLOW_FACTORY_STANDARD.id || document.spec.minimumNeckBasis !== "cut_contour" || document.spec.minimumNeckMm < 50 || !document.spec.declaredLongestMm || document.spec.sizeBasis !== "artwork" || !Object.entries(document.confirmations).every(([key, confirmed]) => confirmed || (key === "barcodeTab" && omitBarcode))) result.push("异形抱枕的工艺、裁线最窄处或主体尺寸口径尚未确认");
     if (pin && (pin.productionVersionId !== source.version.id || pin.workRevisionId !== revision.id || pin.editorVersionId !== editorVersion.id || pin.renderId !== render.id || pin.quantity !== source.version.quantity || pin.expectedCompletionAt !== source.version.expectedCompletionAt.toISOString())) result.push("生产版本与交付清单不同");
     return result;
   }

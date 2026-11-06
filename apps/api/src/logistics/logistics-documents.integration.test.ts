@@ -5,13 +5,13 @@ import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import type { FactoryDocumentProfile } from "@yummyai/contracts/logistics/documents";
 import { connectDatabase, withTenant, marketplaceAccounts, fulfillmentSuppliers, orderWorkItems, orderWorkRevisions,
-  logisticsDocumentExports, logisticsDocumentLabels, orderProtectedDetails, roles } from "@yummyai/database";
+  logisticsDocumentExports, logisticsDocumentLabels, orderProtectedDetails, roles, fulfillmentRoutes, orderFulfillmentFlows } from "@yummyai/database";
 import { sealWork, OrderDocumentSourceReader } from "@yummyai/order-core";
 import { normalizeAmazonOrder } from "@yummyai/marketplace-connectors";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { requireDisposableIntegrationEnvironment } from "../../../../tools/testing/require-disposable-integration.mjs";
-import { syntheticFactoryProfile, syntheticSupplierProfile } from "../../../../tools/testing/factory-fixtures.js";
+import { syntheticFactoryCapability, syntheticFactoryProfile, syntheticSupplierProfile } from "../../../../tools/testing/factory-fixtures.js";
 import { manufacturingBasis } from "../catalog/manufacturing.test-fixture.js";
 import { AuditService } from "../audit/audit.service.js";
 import { FactoryDirectoryService } from "../suppliers/factory-directory.service.js";
@@ -19,6 +19,10 @@ import { OrderService } from "../orders/order.service.js";
 import type { OrderProductionDeliveryService } from "../orders/order-production-delivery.service.js";
 import { LogisticsDocumentsService } from "./logistics-documents.service.js";
 import { LogisticsDocumentLabelsService } from "./logistics-document-labels.service.js";
+import { orderPillowFactoryDocument } from "../orders/order-pillow-factory.js";
+import { FulfillmentRoutesService } from "../orders/fulfillment-routes.service.js";
+import type { LogisticsService } from "./logistics.service.js";
+import { createDefaultProductionDocument } from "@yummyai/production-editor/products";
 
 requireDisposableIntegrationEnvironment();
 if (process.env.E2E_ISOLATED_DAILY !== "1" || !/^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(process.env.DATABASE_URL!).pathname)) throw new Error("Use disposable logistics acceptance");
@@ -77,6 +81,35 @@ describe.sequential("native daily order documents", () => {
     const file = await service.download(context, id), book = new ExcelJS.Workbook();
     try { await book.xlsx.load(Uint8Array.from(file.body).buffer); return book; } finally { file.body.fill(0); }
   }
+  it("pins the actual factory for both stores and keeps the dispatched profile when a newer packing version is saved", async () => {
+    const ca = await setup("CA"), us = await setup("US");
+    const template = createDefaultProductionDocument("shaped_pillow");
+    if (template.productType !== "shaped_pillow") throw new Error("Expected a pillow fixture");
+    template.spec.declaredLongestMm = 12 * 25.4;
+    for (const batch of [ca, us]) {
+      const profile = { name: "Synthetic routing", mode: "quote" as const, autoWriteback: false, productionDays: 2,
+        connectionId: createEntityId(), documentProfileVersionId: batch.saved.id };
+      const routeId = createEntityId();
+      await withTenant(database.db, context, tx => tx.insert(fulfillmentRoutes).values({ id: routeId, tenantId: context.tenantId,
+        version: 1, profile, requestKey: randomUUID(), requestHash: sha(routeId), createdBy: context.userId }));
+      const read = (specId = product.specificationVersionId) => withTenant(database.db, context, tx =>
+        orderPillowFactoryDocument(tx, context, vault, batch.order.id, specId, template));
+      const produced = await read();
+      expect(produced).toMatchObject({ spec: { productionFactory: { factoryId: batch.factory.id, documentProfileVersionId: batch.saved.id,
+        adapter: batch.profile.productionAdapter }, declaredLongestMm: batch === ca ? 300 : 12 * 25.4 } });
+      const routing = new FulfillmentRoutesService(database, service, { routingConnections: async () => ({ connections: [] }) } as unknown as LogisticsService, audit);
+      const view = async () => (await routing.workspace(context)).view.routes.find(item => item.id === routeId);
+      expect((await view())?.factorySetupIssue).toContain("整件制作能力");
+      await factoryService.createCapability(context, batch.factory.id, { profile: syntheticFactoryCapability("shaped_pillow"), idempotencyKey: randomUUID() });
+      expect((await view())?.factorySetupIssue).toBeUndefined();
+      await withTenant(database.db, context, tx => tx.insert(orderFulfillmentFlows).values({ id: createEntityId(), tenantId: context.tenantId,
+        orderId: batch.order.id, requestedBy: context.userId, authority: context, routeId, routeVersion: 1, routeSnapshot: profile }));
+      await service.saveProfile(context, { factoryId: batch.factory.id, expectedVersion: 1, profile: { ...batch.profile, name: "Synthetic replacement" }, idempotencyKey: randomUUID() });
+      expect(await read()).toEqual(produced);
+      await expect(read(createEntityId())).rejects.toThrow("本件规格与订单固定的工厂规则不一致");
+    }
+    expect(template.spec.productionFactory).toBeUndefined();
+  });
   it("carries official API private fields through encrypted ingestion into shipping documents", async () => {
     const f = await setup("CA"), at = new Date().toISOString();
     const normalized = normalizeAmazonOrder(accountId, randomUUID(), {

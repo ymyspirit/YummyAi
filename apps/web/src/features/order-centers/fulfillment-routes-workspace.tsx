@@ -48,7 +48,7 @@ export function FulfillmentRoutesWorkspace(){
     {loading&&!view?<p role="status">正在读取规则</p>:view&&!view.routes.length?<div className="oc-empty"><h2>建立第一条产品发货规则</h2><p>选择已保存的工厂包裹规则和物流连接 审核通过后由系统自动推进</p></div>:null}
     {!!view?.routes.length&&<div className="oc-route-table"><table><thead><tr><th>商品与收货国家</th><th>制作工厂</th><th>物流方式</th><th>审核后处理</th><th>配置状态</th><th>操作</th></tr></thead><tbody>{view.routes.map(route=><tr key={route.id}>
       <td><strong>{route.profile.name}</strong><small>{route.products.join("、")} · {route.countries.join(" / ")}</small></td><td>{route.factoryName}<small>{route.supplierName}</small></td><td>{route.connectionName}</td>
-      <td>{({disabled:"暂停",quote:"自动询价",purchase:"自动购单并准备交付"})[route.profile.mode]}</td><td>{route.blockers.length?<span className="oc-route-warning">{route.blockers.join("；")}</span>:"已配置"}</td>
+      <td>{({disabled:"暂停",quote:"自动询价",purchase:"自动购单并准备交付"})[route.profile.mode]}</td><td>{route.blockers.length || route.factorySetupIssue ? <span className="oc-route-warning">{[...route.blockers, route.factorySetupIssue].filter(Boolean).join("；")}</span> : "发货规则已配置"}</td>
       <td><button className="oc-text-button" disabled={busy||!view.canConfigure} onClick={()=>select(route)}><Settings2 size={14}/>编辑</button></td></tr>)}</tbody></table></div>}
     {edit!==undefined&&view?.canConfigure&&<form className="oc-route-form" key={edit?.id??"new"} onSubmit={save}>
       <h2>{edit?"编辑规则":"新增规则"}</h2><fieldset disabled={busy}>

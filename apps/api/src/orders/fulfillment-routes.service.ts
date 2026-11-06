@@ -4,7 +4,7 @@ import { Permission } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { FulfillmentRouteWorkspaceSchema, SaveFulfillmentRouteSchema, type FulfillmentRouteView } from "@yummyai/contracts/order/fulfillment-flow";
-import { fulfillmentRoutes, fulfillmentRouteVersions, fulfillmentFactories, fulfillmentSuppliers, type DatabaseConnection } from "@yummyai/database";
+import { factoryCapabilities, factoryCapabilityVersions, fulfillmentRoutes, fulfillmentRouteVersions, fulfillmentFactories, fulfillmentSuppliers, type DatabaseConnection } from "@yummyai/database";
 import { withOrderAuthority } from "@yummyai/order-core";
 import { asc, eq, sql } from "drizzle-orm";
 import { LogisticsDocumentsService } from "../logistics/logistics-documents.service.js";
@@ -26,7 +26,14 @@ export class FulfillmentRoutesService {
       withOrderAuthority(this.database.db, context, [Permission.OrderRead], async tx => ({
         routes: await tx.select().from(fulfillmentRoutes).orderBy(asc(fulfillmentRoutes.id)).limit(201),
         factories: await tx.select({ id: fulfillmentFactories.id, name: fulfillmentFactories.name, version: fulfillmentFactories.currentVersionNumber,
-          supplierName: fulfillmentSuppliers.name, supplierStatus: fulfillmentSuppliers.status, status: fulfillmentFactories.status })
+          supplierName: fulfillmentSuppliers.name, supplierStatus: fulfillmentSuppliers.status, status: fulfillmentFactories.status,
+          hasPillowCapability: sql<boolean>`exists(select 1 from ${factoryCapabilities} c join ${factoryCapabilityVersions} v
+            on v.capability_id=c.id and v.version_number=c.current_version_number
+            where c.factory_id=${fulfillmentFactories.id} and c.status='active'
+            and v.profile->>'productType'='shaped_pillow' and v.profile->>'fulfillmentScope'='full_product'
+            and v.profile->>'verificationStatus'='confirmed' and v.profile->>'sampleStatus'<>'failed'
+            and (v.profile->>'validFrom')::timestamptz <= transaction_timestamp()
+            and ((v.profile->>'validUntil') is null or (v.profile->>'validUntil')::timestamptz > transaction_timestamp()))` })
           .from(fulfillmentFactories).innerJoin(fulfillmentSuppliers,eq(fulfillmentSuppliers.id,fulfillmentFactories.supplierId)),
       })),
     ]);
@@ -48,11 +55,14 @@ export class FulfillmentRoutesService {
       if (!connection?.verifiedAt) blockers.push("物流接口尚未验证");
       if (!connection?.rule) blockers.push("物流渠道与费用规则尚未配置");
       if (row.profile.mode === "purchase" && !connection?.rule?.autoPurchase) blockers.push("物流连接尚未授权自动购单");
+      const needsPillowCapability = factory?.status === "active" && !factory.hasPillowCapability && profile?.profile.productionAdapter !== "none"
+        && profile?.profile.specifications.every(spec => spec.productKind === "shaped_pillow");
       return { id: row.id, version: row.version, profile: row.profile,
         factoryId: profile?.factoryId ?? connection?.profile.factoryId ?? row.id,
         factoryName: factory?.name ?? "工厂不可用", supplierName: factory?.supplierName ?? "",
         countries: profile?.profile.destinationCountries ?? [], products: profiles.find(profile => profile.id === row.profile.documentProfileVersionId)?.products ?? [],
-        connectionName: connection?.profile.name ?? "物流连接不可用", blockers };
+        connectionName: connection?.profile.name ?? "物流连接不可用", blockers,
+        ...(needsPillowCapability ? { factorySetupIssue: "工厂尚无已核验且生效的抱枕整件制作能力" } : {}) };
     });
     return { view: FulfillmentRouteWorkspaceSchema.parse({
       canConfigure: context.permissions.includes(Permission.IntegrationManage), routes, profiles,

@@ -1,4 +1,6 @@
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
+import { syntheticFactoryProfile, syntheticSupplierProfile } from "../../../../tools/testing/factory-fixtures.js";
+import { FactoryDirectoryService } from "../suppliers/factory-directory.service.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import JSZip from "jszip";
 import { SecretVault,harnessChecksum } from "@yummyai/ai-core";
@@ -14,6 +16,7 @@ import {
   aiBudgetLedger, aiBudgetPolicies, amazonOrderReportLines, connectDatabase, marketplaceAccounts, memberships, membershipRoles,
   migrateDatabase, modelProviderConfigs, modelRoutes, orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderDesignDispatchTenants,
   orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions, orderFulfillmentFlows,
+  fulfillmentSuppliers, logisticsDocumentProfiles, fulfillmentRoutes,
   productionEditorImages as images, productionEditorProjects as projects, productionEditorRenders as renders,
   productionEditorVersions as versions, productionOrders, roles, withTenant,knowledgeVersions,orderDesignModelCalls as modelCalls,purgeExpiredAmazonOrderReports,
 } from "@yummyai/database";
@@ -1587,6 +1590,46 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(await f.reports.requirementSources(f.context, f.reportLineId, f.sourceVersionId)).toEqual(f.originalSources);
     expect(await withTenant(database.db, f.context, tx => tx.select().from(productionOrders).where(eq(productionOrders.sourceWorkItemId, f.lineId)))).toEqual([]);
   }, 90_000);
+
+  it("carries the original Yicai profile from a reviewed order into its private AI artwork and fences manual edits", async () => {
+    const f = await requirementOrder();
+    const check = await f.workspace.intakeCheck(f.context, f.lineId, { expectedRevision: f.initial.line.revision,
+      expectedSourceVersionId: f.sourceVersionId, draft: f.initial.draft });
+    const saved = await f.workspace.save(f.context, f.lineId, { expectedRevision: f.initial.line.revision,
+      expectedProjectionVersion: f.initial.line.projectionVersion, expectedSourceVersionId: f.sourceVersionId, draft: check.normalizedDraft,
+      status: "ready_to_push", reason: "Synthetic operator checks order", idempotencyKey: randomUUID() });
+    const supplierId = createEntityId(), profileId = createEntityId(), routeId = createEntityId();
+    await withTenant(database.db, f.context, tx => tx.insert(fulfillmentSuppliers).values({ id: supplierId,
+      tenantId: f.context.tenantId, name: "Synthetic supplier", kind: "manual", status: "active", regionCode: "CN",
+      settlementCurrency: "CNY", profile: syntheticSupplierProfile, createdBy: f.context.userId }));
+    const directory = new FactoryDirectoryService(database, new AuditService(database));
+    const factory = await directory.create(f.context, { supplierId, code: "SYN-TEST", profile:syntheticFactoryProfile("Synthetic pillow factory"), idempotencyKey: randomUUID() });
+    await withTenant(database.db, f.context, async tx => {
+      await tx.insert(logisticsDocumentProfiles).values({ id: profileId, tenantId: f.context.tenantId, versionNumber: 1,
+        factoryId: factory.id, factoryVersionId: factory.versionId, createdBy: f.context.userId, requestKey: randomUUID(), requestHash: checksum(profileId),
+        profile: { name: "Synthetic Canada", route: "yunexpress", productionAdapter: "yicai_folder", originCountryCode: "CN", destinationCountries: ["CA"],
+          originCompany: "", factoryCode: "", carrierProvider: "", carrierService: "", useAccountSender: false, evidence: "Synthetic factory data",
+          specifications: [{ specificationVersionId: saved.draft.specificationVersionId!, productKind: "shaped_pillow", sizeIn: 10, supplierSku: "SYN10",
+            weight: 0.26, weightUnit: "lb", length: 8, width: 5, height: 5, dimensionUnit: "in", declaredUnitValueMinor: 800,
+            nameEn: "Pillow", nameCn: "抱枕", hsCode: "" }] } });
+      const route = { name: "Synthetic rule", documentProfileVersionId: profileId, connectionId: createEntityId(), mode: "quote" as const, productionDays: 2, autoWriteback: false };
+      await tx.insert(fulfillmentRoutes).values({ id: routeId, tenantId: f.context.tenantId, version: 1, profile: route, requestKey: randomUUID(), requestHash: checksum(routeId), createdBy: f.context.userId });
+      await tx.update(orderFulfillmentFlows).set({ routeId, routeVersion: 1, routeSnapshot: route }).where(eq(orderFulfillmentFlows.orderId, saved.line.orderId));
+    });
+    const { final, snapshot, fixture } = await f.pushAndProcess(saved);
+    const target = { spec: { productionFactory: { adapter: "yicai_folder", factoryId: factory.id, documentProfileVersionId: profileId }, declaredLongestMm: 250, barcodeTab: { widthMm: null, heightMm: null } } };
+    expect(snapshot.document).toMatchObject(target);
+    expect(final.document).toMatchObject(target);
+    expect(final.run.status, safeRequirementRunDiagnostic(final)).toBe("awaiting_review");
+    await command(fixture, "takeover");
+    const privateDraft = structuredClone(final.document!);
+    if (privateDraft.productType !== "shaped_pillow") throw new Error("Expected a pillow");
+    delete privateDraft.spec.productionFactory;
+    await expect(f.editor.save(f.context, final.project!.id, { expectedVersionId: final.project!.currentVersionId, document: privateDraft }))
+      .rejects.toThrow("订单已固定制作工厂");
+    const original = await f.editor.get(f.context, snapshot.templateProjectId, snapshot.templateVersionId);
+    expect(original.version.document).toMatchObject({ spec: { declaredLongestMm: 254, barcodeTab: { heightMm: 200 * 25.4 / 150 } } });
+  });
 
   async function requirementOrder() {
     const base = await seed({ pillow: true, paid: true,

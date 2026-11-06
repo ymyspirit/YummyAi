@@ -221,6 +221,24 @@ describe.sequential("durable automatic fulfillment coordination",()=>{
       expect((await s.read()).stage).toBe("exception");expect(s.production.wholeOrderFulfillment).not.toHaveBeenCalled();
     }finally{await withTenant(database.db,context,tx=>tx.update(memberships).set({status:"active"}).where(eq(memberships.id,member)));}
   });
+  it("rechecks shared factory setup without requiring another order action or repeating a purchase", async () => {
+    const s = await fixture(), productionId = createEntityId(), capabilityVersionId = createEntityId();
+    const line = { lineId: s.lineId, quantity: 1, expectedRevision: 0, expectedProjectionVersion: 1, operationBlockers: [], productionBlockers: [], renderId: createEntityId(), production: null };
+    Object.assign(s.route, { factorySetupIssue: "工厂尚无已核验且生效的抱枕整件制作能力" });
+    s.production.wholeOrderFulfillment.mockResolvedValue({ items: [line], factories: [], factoryDiagnostics: [] });
+    await s.service.advance(context, s.flow.id);
+    expect(await s.read()).toMatchObject({ stage: "production", reasons: [expect.stringContaining("核验后系统自动继续")], pendingCommand: null });
+    expect(s.production.releaseWholeOrderReceipt).not.toHaveBeenCalled();
+    Object.assign(s.route, { factorySetupIssue: undefined });
+    s.production.wholeOrderFulfillment.mockResolvedValue({ items: [line], factories: [{ factoryId: s.profile.factoryId, factoryVersionId: s.profile.factoryVersionId,
+      supplierId: createEntityId(), items: [{ lineId: s.lineId, capabilityVersionId }] }] });
+    s.production.manufacturingOptions.mockResolvedValue({ source: { packageQuantity: 1 }, items: [{ versionId: createEntityId(), outputQuantity: 1, outputUnit: "each", outsourcedFactoryId: s.profile.factoryId }], nextCursor: null, diagnostics: [] });
+    s.production.releaseWholeOrderReceipt.mockResolvedValue({ productionOrderIds: [productionId] });
+    await withTenant(database.db, context, tx => tx.update(flows).set({ nextRunAt: new Date(0) }).where(eq(flows.id, s.flow.id)));
+    await s.service.advance(context, s.flow.id);
+    expect(await s.read()).toMatchObject({ stage: "logistics", productionOrderIds: [productionId] });
+    expect(s.logistics.dispatch).not.toHaveBeenCalled();
+  });
   it("dispatches a saved review on the server even while shipping setup is incomplete",async()=>{
     const s=await fixture(false);
     s.route.blockers.push("物流渠道与费用上限尚未配置");
