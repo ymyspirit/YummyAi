@@ -1,11 +1,8 @@
 import { specificationProductionFactsReady } from "@yummyai/contracts/catalog/development";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import {
-  amazonOrderReportBatches,
-  amazonOrderReportBatchItems,
   orders,
   orderLines,
-  orderSourceSnapshots,
   salesChannelBindings,
   salesPackageVersions,
   salesRecipeVersions,
@@ -27,7 +24,8 @@ import { matchesCustomChoice } from "@yummyai/contracts/catalog/composition";
 import { OrderSalesDeliverySnapshotSchema } from "@yummyai/contracts/catalog/sales-plan-delivery";
 import type { OrderIntakeCheck } from "@yummyai/contracts/order/workspace";
 import type { OrderWorkDraft } from "@yummyai/contracts/order/workspace";
-import { orderSalesSiteIssue, resolveOrderSalesSite } from "./order-sales-site.js";
+import { orderSalesSiteIssue } from "./order-sales-site.js";
+import { readOrderSalesSite } from "@yummyai/order-core";
 import {
   readArtwork,
   readRecipe,
@@ -37,50 +35,7 @@ import {
   readArtworkMaterials,
 } from "./development-data.js";
 
-export async function readOrderSalesSite(
-  tx: TenantTransaction,
-  order: Pick<typeof orders.$inferSelect, "id" | "accountId" | "platform" | "externalOrderId">,
-) {
-  // Updates append immutable sources while orders.sourceSnapshotId retains the
-  // initial source. Read the exact order identity, including later deliveries,
-  // and project only the adapter-owned, non-private site fields.
-  const siteSources = order.platform === "amazon" ? await tx
-    .select({
-      marketplaceId: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'marketplaceId'`,
-      apiVersion: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'apiVersion'`,
-      source: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'source'`,
-      orderId: sql<unknown>`${orderSourceSnapshots.redactedPayload}->'orderId'`,
-    })
-    .from(orderSourceSnapshots)
-    .where(and(
-      eq(orderSourceSnapshots.normalizedOrderId, order.id),
-      eq(orderSourceSnapshots.accountId, order.accountId),
-      eq(orderSourceSnapshots.platform, order.platform),
-      eq(orderSourceSnapshots.externalOrderId, order.externalOrderId),
-    )) : [];
-  const reportSites = order.platform === "amazon" ? await tx
-    .select({ site: amazonOrderReportBatches.marketplaceId })
-    .from(amazonOrderReportBatchItems)
-    .innerJoin(
-      amazonOrderReportBatches,
-      eq(amazonOrderReportBatches.id, amazonOrderReportBatchItems.batchId),
-    )
-    .where(and(
-      eq(amazonOrderReportBatchItems.orderId, order.id),
-      eq(amazonOrderReportBatchItems.externalOrderId, order.externalOrderId),
-      eq(amazonOrderReportBatches.accountId, order.accountId),
-      or(
-        eq(amazonOrderReportBatchItems.status, "imported"),
-        eq(amazonOrderReportBatchItems.status, "duplicate"),
-      ),
-    )) : [];
-  return resolveOrderSalesSite(
-    order.platform,
-    order.externalOrderId,
-    siteSources,
-    reportSites.map((row) => row.site),
-  );
-}
+export { readOrderSalesSite };
 
 export async function resolveOrderSalesBasis(
   tx: TenantTransaction,

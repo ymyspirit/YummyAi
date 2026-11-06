@@ -81,12 +81,14 @@ export async function syntheticPassedProduction(database: DatabaseConnection, co
         else await sealProductionManufacturing(tx, seedContext, vault, versionId, basis!.manufacturing, { kind: "approved_product_confirmation", confirmation: basis!.productConfirmation });
         await reserveFactoryCapacityInTransaction(tx, seedContext, audit, { productionOrderId: id, productionVersionId: versionId, capacityPlan: capacity.capacityPlan });
       });
+      // This fixture imports finished stock. Its events precede setup even if the local database clock steps back briefly.
+      const occurredAt = new Date(Date.parse(capacity.now) - 60_000).toISOString();
       let record = await production.get(seedContext, id);
       for (const type of ["submitted", "acknowledged", "started", "completed"] as const) record = await production.recordMilestone(seedContext, id, {
-        type, expectedProjectionVersion: record.productionOrder.projectionVersion, externalEventId: `synthetic-stock-${id}-${type}`, occurredAt: capacity.now,
+        type, expectedProjectionVersion: record.productionOrder.projectionVersion, externalEventId: `synthetic-stock-${id}-${type}`, occurredAt,
         evidence: { code: "SYNTHETIC_STOCK_OWNER_EVENT", note: null, assetIds: [] } });
       const inspected = await production.inspect(seedContext, id, await syntheticQualityInspection(production, seedContext, id, RecordQualityInspectionInputSchema.parse({
-        qualityStandardVersionId: standardId, result: "passed", scoreBps: 10_000, inspectedAt: capacity.now, evidenceAssetIds: [], defects: [], idempotencyKey: `synthetic-stock-quality-${id}` })));
+        qualityStandardVersionId: standardId, result: "passed", scoreBps: 10_000, inspectedAt: occurredAt, evidenceAssetIds: [], defects: [], idempotencyKey: `synthetic-stock-quality-${id}` })));
       results.push({ productionOrderId: id, productionVersionId: versionId, qualityInspectionId: inspected.inspections[0]!.id,
         expectedProductionProjectionVersion: inspected.productionOrder.projectionVersion, quantity: line.quantity, orderLineId: line.id, standardId,
         manufacturing: workSource?.manufacturing ?? basis?.manufacturing, capacityPlan: capacity.capacityPlan, expectedCompletionAt: capacity.expectedCompletionAt });

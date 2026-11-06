@@ -3,7 +3,7 @@ import type { JobEnvelope } from "@yummyai/jobs";
 import type { MarketplaceShipmentWritebackConnector, MarketplaceShipmentWritebackResult } from "@yummyai/marketplace-connectors";
 import { describe, expect, it, vi } from "vitest";
 
-import { ShipmentWritebackProcessor, type ShipmentWritebackExecutionRepository, type ShipmentWritebackExecutionSnapshot } from "./shipment-writeback.processor.js";
+import { amazonPackageReferences, ShipmentWritebackProcessor, type ShipmentWritebackExecutionRepository, type ShipmentWritebackExecutionSnapshot } from "./shipment-writeback.processor.js";
 
 const requestId = createEntityId(); const tenantId = createEntityId(); const userId = createEntityId();
 const snapshot: ShipmentWritebackExecutionSnapshot = {
@@ -13,6 +13,16 @@ const snapshot: ShipmentWritebackExecutionSnapshot = {
 };
 
 describe("shipment writeback processor", () => {
+  it("keeps Amazon aliases stable across revisions and holds any cross-shipment collision before submission",()=>{
+    const original={shipmentId:"shipment-a",reference:"legacy-order-1"}, numeric={...original,reference:"27"};
+    const get=(rows:typeof original[])=>amazonPackageReferences(original.shipmentId,rows);
+    const mapped=get([original,numeric])!;
+    expect(mapped.get("27")).toBe("27");const alias=mapped.get(original.reference)!;
+    expect(alias).toMatch(/^[1-9]\d*$/);
+    expect(get([numeric,original,original])).toEqual(mapped);
+    expect(get([original,{shipmentId:"other",reference:alias}])).toBeNull();
+    expect(get([numeric,{shipmentId:"other",reference:"027"}])).toBeNull();
+  });
   it.each(["accepted", "rejected", "uncertain"] as const)("persists a %s connector outcome", async (status) => {
     const result: MarketplaceShipmentWritebackResult = { status, providerCode: status.toUpperCase(), externalReference: status === "accepted" ? "ack" : null };
     const repository: ShipmentWritebackExecutionRepository = {

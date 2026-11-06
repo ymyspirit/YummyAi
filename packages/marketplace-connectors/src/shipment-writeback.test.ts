@@ -6,7 +6,7 @@ import { AmazonShipmentWritebackConnector, EtsyShipmentWritebackConnector } from
 const credentials: MarketplaceCredentialAccessor = { withCredential: (work) => work({ accessToken: "secret-token" }) };
 const input = {
   externalOrderId: "123456789", shipDate: "2026-07-22T10:00:00.000Z",
-  packages: [{ packageReferenceId: "PKG-1", trackingNumber: "TRACK-1", carrierCode: "UPS", carrierName: "UPS", carrierService: "Ground", lines: [{ externalLineId: "LINE-1", quantity: 1 }] }],
+  packages: [{ packageReferenceId: "1", trackingNumber: "TRACK-1", carrierCode: "UPS", carrierName: "UPS", carrierService: "Ground", lines: [{ externalLineId: "LINE-1", quantity: 1 }] }],
 };
 
 describe("shipment writeback connectors", () => {
@@ -18,7 +18,21 @@ describe("shipment writeback connectors", () => {
     expect(result).toEqual({ status: "accepted", providerCode: "HTTP_204", externalReference: "amazon-ack-1" });
     expect(request).toHaveBeenCalledWith(expect.stringContaining("/orders/v0/orders/123456789/shipmentConfirmation"), expect.objectContaining({ method: "POST" }));
     const body = JSON.parse(String(request.mock.calls[0]![1]!.body));
-    expect(body).toMatchObject({ marketplaceId: "ATVPDKIKX0DER", packageDetail: { packageReferenceId: "PKG-1", trackingNumber: "TRACK-1", orderItems: [{ orderItemId: "LINE-1", quantity: 1 }] } });
+    expect(body).toMatchObject({ marketplaceId: "ATVPDKIKX0DER", packageDetail: { packageReferenceId: "1", trackingNumber: "TRACK-1", orderItems: [{ orderItemId: "LINE-1", quantity: 1 }] } });
+  });
+
+  it("validates the whole Amazon request before I/O and reconciles a partially accepted shipment",async()=>{
+    const request=vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null,{status:204})).mockResolvedValueOnce(new Response(null,{status:400}));
+    const connector=new AmazonShipmentWritebackConnector(request,{});
+    const context:MarketplaceConnectorContext={tenantId:"tenant",accountId:"account",platform:"amazon",region:"NA",externalAccountId:"test",marketplaceIds:["A2EUQ1WTGCTBG2"]};
+    const send=(packages:typeof input.packages)=>connector.confirm(context,credentials,{...input,packages},new AbortController().signal);
+    const pkg=input.packages[0]!;
+    expect(await send([pkg,{...pkg,packageReferenceId:"order-1"}])).toMatchObject({status:"rejected"});
+    expect(await send([pkg,pkg])).toMatchObject({status:"rejected"});
+    expect(await connector.confirm({...context,marketplaceIds:["US","CA"]},credentials,input,new AbortController().signal)).toMatchObject({status:"rejected"});
+    expect(request).not.toHaveBeenCalled();
+    expect(await send([pkg,{...pkg,packageReferenceId:"2"}])).toMatchObject({status:"uncertain",providerCode:"PARTIAL_AMAZON_SHIPMENT_CONFIRMATION"});
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it("posts Etsy tracking with transactions_w-compatible fields", async () => {

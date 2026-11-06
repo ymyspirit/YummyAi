@@ -2,7 +2,7 @@ import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
-  connectDatabase, orderEvents, orderLines, orderSourceSnapshots, orders as orderTable,
+  connectDatabase, marketplaceAccounts, orderEvents, orderLines, orderSourceSnapshots, orders as orderTable,
   shipmentVersionReviews, withTenant,
 } from "@yummyai/database";
 import { eq } from "drizzle-orm";
@@ -32,6 +32,24 @@ describe("shipment, tracking, and marketplace writeback", () => {
   });
 
   afterAll(async () => { await database.client.end(); });
+
+  it.each(["A2EUQ1WTGCTBG2","A1PA6795UKMFR9",null])("pins the order's original Amazon marketplace and numeric parcel before dispatch: %s",async site=>{
+    const fixture=await shipmentReadyOrder("amazon-site-"+(site??"missing"),[1],{site});
+    const created=await shipmentService.create(contextA,fixture.orderId,{shipDate:"2026-07-24T10:00:00.000Z",promisedDeliveryAt:null,
+      estimatedDeliveryAt:null,shipFromCountryCode:"CN",idempotencyKey:"fixture-amazon-shipment",
+      packages:[packageInput("synthetic-order-1","TRACK-CA",[{orderLineId:fixture.lineIds[0]!,quantity:1}])]});
+    const version=created.versions[0]!;
+    await shipmentService.reviewVersion(contextA,created.shipment.id,version.id,{decision:"approved",reasonCode:"VERIFIED",reason:"Synthetic package",expectedCurrentVersion:1,idempotencyKey:"fixture-amazon-review"});
+    const queued=await shipmentService.requestWriteback(contextA,created.shipment.id,{shipmentVersionId:version.id,idempotencyKey:createEntityId()});
+    const worker=new DrizzleShipmentWritebackExecutionRepository(database,new SecretVault(Buffer.alloc(32,63)));
+    const attempt=await worker.claim(contextA,queued.request.id,0);
+    if(site==="A2EUQ1WTGCTBG2") expect(attempt).toMatchObject({context:{marketplaceIds:[site]},input:{packages:[{
+      packageReferenceId:expect.stringMatching(/^[1-9]\d*$/),trackingNumber:"TRACK-CA",lines:[{quantity:1}]}]}});
+    else {
+      expect(attempt).toBeUndefined();
+      expect((await shipmentService.getWriteback(contextA,queued.request.id)).events.at(-1)).toMatchObject({providerCode:"AMAZON_ORDER_MARKETPLACE_UNVERIFIED"});
+    }
+  });
 
   it("allows automatic writeback only after real handover and keeps physical state after rejection",async()=>{
     const fixture=await shipmentReadyOrder("automatic-handover",[1]);
@@ -208,16 +226,19 @@ describe("shipment, tracking, and marketplace writeback", () => {
     expect((await orderService.get(contextA, fixture.orderId)).workflowState).toBe("shipped");
   });
 
-  async function shipmentReadyOrder(suffix: string, quantities: number[]) {
+  async function shipmentReadyOrder(suffix: string, quantities: number[], amazon?:{site:string|null}) {
     const orderId = createEntityId(); const snapshotId = createEntityId();
     const lineIds = quantities.map(() => createEntityId());
+    const accountId=amazon?createEntityId():accountA, platform=amazon?"amazon":"etsy";
     await withTenant(database.db, contextA, async (tx) => {
+      if(amazon) await tx.insert(marketplaceAccounts).values({id:accountId,tenantId:tenantA,platform:"amazon",displayName:"Synthetic Amazon NA "+suffix,
+        region:"NA",authorizationMode:"amazon_private",externalAccountId:"synthetic-"+accountId,status:"active",healthStatus:"healthy",marketplaceIds:["ATVPDKIKX0DER","A2EUQ1WTGCTBG2"],createdBy:userA});
       await tx.insert(orderSourceSnapshots).values({
-        id: snapshotId, tenantId: tenantA, accountId: accountA, platform: "etsy", externalEventId: `shipment-event-${suffix}`,
-        externalOrderId: `shipment-order-${suffix}`, normalizedOrderId: orderId, redactedPayload: { receiptId: suffix }, payloadChecksum: "a".repeat(64),
+        id: snapshotId, tenantId: tenantA, accountId, platform, externalEventId: `shipment-event-${suffix}`,
+        externalOrderId: `shipment-order-${suffix}`, normalizedOrderId: orderId, redactedPayload: amazon?{source:"amazon_manual_report",marketplaceId:amazon.site}:{receiptId:suffix}, payloadChecksum: "a".repeat(64),
       });
       await tx.insert(orderTable).values({
-        id: orderId, tenantId: tenantA, accountId: accountA, sourceSnapshotId: snapshotId, platform: "etsy",
+        id: orderId, tenantId: tenantA, accountId, sourceSnapshotId: snapshotId, platform,
         externalOrderId: `shipment-order-${suffix}`, providerStatus: "paid", workflowState: "awaiting_shipment",
         orderTotalMinor: 2500, orderCurrency: "USD", lineCount: quantities.length, addressStatus: "protected",
         addressCountryCode: "US", latestEventSequence: 1, placedAt: new Date("2026-07-22T10:00:00.000Z"),

@@ -22,7 +22,7 @@ export const FulfillmentFlowStageSchema = z.enum([
 export const FULFILLMENT_FLOW_LABELS: Record<z.infer<typeof FulfillmentFlowStageSchema>, string> = {
   waiting_artwork: "等待整单审图", waiting_render: "正在生成正式生产文件",
   production: "自动安排制作", logistics: "自动准备物流", delivery: "自动准备工厂文件",
-  waiting_factory: "待提交工厂", waiting_dispatch: "等待实际交运",
+  waiting_factory: "待提交工厂", waiting_dispatch: "核对交运与回传",
   writeback: "回传物流单号", completed: "履约完成", exception: "需要处理", paused: "自动履约已暂停",
 };
 export const FulfillmentRouteViewSchema = z.object({

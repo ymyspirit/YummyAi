@@ -46,7 +46,9 @@ export class AmazonShipmentWritebackConnector implements MarketplaceShipmentWrit
 
   confirm(context: MarketplaceConnectorContext, credentials: MarketplaceCredentialAccessor, rawInput: ShipmentWritebackInput, signal: AbortSignal) {
     const input = ShipmentWritebackInputSchema.parse(rawInput);
-    if (context.platform !== this.platform || context.marketplaceIds.length === 0) return Promise.resolve(rejected("INVALID_AMAZON_CONTEXT"));
+    if (context.platform !== this.platform || context.marketplaceIds.length !== 1) return Promise.resolve(rejected("INVALID_AMAZON_CONTEXT"));
+    const ids=input.packages.map(pkg=>pkg.packageReferenceId);
+    if (ids.some(id=>!/^[1-9]\d*$/.test(id)) || new Set(ids).size!==ids.length) return Promise.resolve(rejected("INVALID_AMAZON_PACKAGE_REFERENCE"));
     return credentials.withCredential(async (credential) => {
       const accessToken = await amazonAccessToken(this.request, this.environment, credential, signal);
       const endpoint = amazonEndpoint(context.region, this.environment);
@@ -65,7 +67,9 @@ export class AmazonShipmentWritebackConnector implements MarketplaceShipmentWrit
           }),
           signal,
         }, this.platform);
-        if (response.status !== "accepted") return response;
+        if (response.status !== "accepted") return references.length
+          ? {status:"uncertain" as const,providerCode:"PARTIAL_AMAZON_SHIPMENT_CONFIRMATION",externalReference:references.join(",")}
+          : response;
         references.push(response.externalReference ?? pkg.packageReferenceId);
       }
       return { status: "accepted" as const, providerCode: "HTTP_204", externalReference: references.join(",") };
