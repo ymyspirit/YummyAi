@@ -3,7 +3,7 @@ import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { ForbiddenError, Permission, summarizeRoleGrants } from "@yummyai/authz";
 import { CreateShipmentInputSchema, createEntityId, type TenantContext } from "@yummyai/contracts";
-import { connectDatabase, orderLines, shipmentPackageLines, shipmentPackages, shipmentProductionAllocations, shipmentVersions, shipments, withTenant } from "@yummyai/database";
+import { connectDatabase, orderLines, qualityInspections, shipmentPackageLines, shipmentPackages, shipmentProductionAllocations, shipmentVersions, shipments, withTenant } from "@yummyai/database";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service.js";
@@ -26,8 +26,9 @@ describe("shipment production source identity and concurrent quantity reservatio
     await database.client.unsafe("insert into marketplace_accounts(id,tenant_id,platform,display_name,region,authorization_mode,created_by) values($1,$2,'etsy','Synthetic source shop','GLOBAL','etsy_oauth',$3)", [accountId, tenantId, userId]);
   });
   afterAll(async () => { await database.client.end(); });
-  async function databaseTime() {
-    const [row] = await withTenant(database.db, context, tx => tx.execute<{ now: Date | string }>(sql`select clock_timestamp() as now`)); return new Date(row!.now).toISOString();
+  async function reinspectionTime(inspectionId:string) {
+    const [original]=await withTenant(database.db,context,tx=>tx.select({at:qualityInspections.inspectedAt}).from(qualityInspections).where(eq(qualityInspections.id,inspectionId)));
+    return new Date(original!.at.getTime()+1000).toISOString();
   }
 
   async function fixture(quantities: number[], lots = quantities.map((quantity, index) => ({ index, quantity }))) {
@@ -118,7 +119,7 @@ describe("shipment production source identity and concurrent quantity reservatio
     const source = f.sources[0]!;
     const changed = await production.inspect(context, source.productionOrderId, { qualityStandardVersionId: source.standardId, expectedProductionProjectionVersion: source.expectedProductionProjectionVersion,
       result: "passed", scoreBps: 10000, assessment: { formatVersion: 2, criterionResults: [{ code: "STOCK", scoreBps: 10000, passed: true, evidenceAssetIds: [] }] },
-      evidenceAssetIds: [], defects: [], inspectedAt: await databaseTime(), idempotencyKey: randomUUID() });
+      evidenceAssetIds: [], defects: [], inspectedAt: await reinspectionTime(source.qualityInspectionId), idempotencyKey: randomUUID() });
     expect(changed.productionOrder.projectionVersion).toBe(source.expectedProductionProjectionVersion + 1);
     await expect(shipping.dispatch(context, created.shipment.id, handover())).rejects.toBeInstanceOf(ConflictException);
     const preserved = await shipping.get(context, created.shipment.id);
@@ -142,7 +143,7 @@ describe("shipment production source identity and concurrent quantity reservatio
     await expect(shipping.reviewVersion(context, next.shipment.id, next.versions[0]!.id, review())).rejects.toBeInstanceOf(ConflictException);
     const inspect = async (index: number) => production.inspect(context, f.sources[index]!.productionOrderId, { qualityStandardVersionId: f.sources[index]!.standardId, expectedProductionProjectionVersion: f.sources[index]!.expectedProductionProjectionVersion,
       result: "passed", scoreBps: 10000, assessment: { formatVersion: 2, criterionResults: [{ code: "STOCK", scoreBps: 10000, passed: true, evidenceAssetIds: [] }] },
-      evidenceAssetIds: [], defects: [], inspectedAt: await databaseTime(), idempotencyKey: randomUUID() });
+      evidenceAssetIds: [], defects: [], inspectedAt: await reinspectionTime(f.sources[index]!.qualityInspectionId), idempotencyKey: randomUUID() });
     await expect(inspect(0)).rejects.toThrow("该生产批次已有实际交运");
     expect((await inspect(1)).productionOrder.projectionVersion).toBe(f.sources[1]!.expectedProductionProjectionVersion + 1);
   });
@@ -199,7 +200,7 @@ describe("shipment production source identity and concurrent quantity reservatio
     await production.inspect(context, source.productionOrderId, { qualityStandardVersionId: source.standardId, expectedProductionProjectionVersion: source.expectedProductionProjectionVersion,
       result: "failed", scoreBps: 5000, assessment: { formatVersion: 2, criterionResults: [{ code: "STOCK", scoreBps: 5000, passed: false, evidenceAssetIds: [] }] },
       evidenceAssetIds: [], defects: [{ code: "STOCK", severity: "major", responsibility: "supplier", disposition: "remake", note: "Synthetic actual defect", evidenceAssetIds: [] }],
-      inspectedAt: await databaseTime(), idempotencyKey: randomUUID() });
+      inspectedAt: await reinspectionTime(source.qualityInspectionId), idempotencyKey: randomUUID() });
     const tracking = { packageId: created.packages[0]!.id, status, provider: "synthetic-carrier", externalEventId: randomUUID(), detailCode: "SYNTHETIC_PHYSICAL_HANDOVER", occurredAt: new Date(Date.now() - 1000).toISOString(), estimatedDeliveryAt: null };
     const observed = await shipping.recordTrackingEvent(context, created.shipment.id, tracking);
     expect(observed.tracking).toHaveLength(1); expect(observed.shipment.status).toBe("exception");
