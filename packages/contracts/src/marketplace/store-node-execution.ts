@@ -6,6 +6,7 @@ import { StoreNodeExecutionPinsSchema, StoreNodeExecutionStateSchema, StoreNodeE
 import { PublicationPreviewNodeInputSchema, STORE_NODE_PUBLICATION_OPERATION, StoreNodePublicationResultSchema } from "@yummyai/contracts/marketplace/publication-preview";
 import {PublicationSubmitNodeInputSchema,PublicationStatusNodeInputSchema,StoreNodeAmazonSubmissionResultSchema,StoreNodeAmazonStatusResultSchema,
   STORE_NODE_PUBLICATION_SUBMIT_OPERATION,STORE_NODE_PUBLICATION_STATUS_OPERATION} from "@yummyai/contracts/marketplace/publication-submit";
+import { STORE_NODE_ORDER_SYNC_OPERATION, OrderSyncNodeInputSchema, OrderSyncPageSchema } from "@yummyai/contracts/order/sync";
 export { StoreNodeExecutionPinsSchema, StoreNodeExecutionStateSchema, StoreNodeExecutionPhaseSchema, StoreNodeExecutionErrorSchema } from "@yummyai/contracts/marketplace/store-node-execution-base";
 
 export const STORE_NODE_EXECUTION_PROTOCOL = "erp-store-node-execution-v1" as const;
@@ -13,7 +14,7 @@ export const STORE_NODE_EXECUTION_OPERATION = "marketplace.capabilities.sync.v1"
 export const STORE_NODE_EXECUTION_RESULT_BYTES = 16 * 1024 * 1024;
 export const STORE_NODE_EXECUTION_WIRE_BYTES = 24 * 1024 * 1024;
 const Protocol = z.literal(STORE_NODE_EXECUTION_PROTOCOL), Digest = z.string().regex(/^[a-f0-9]{64}$/), Instant = z.iso.datetime();
-export const StoreNodeExecutionOperationSchema = z.enum([STORE_NODE_EXECUTION_OPERATION, STORE_NODE_PUBLICATION_OPERATION, STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION]);
+export const StoreNodeExecutionOperationSchema = z.enum([STORE_NODE_EXECUTION_OPERATION, STORE_NODE_PUBLICATION_OPERATION, STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION, STORE_NODE_ORDER_SYNC_OPERATION]);
 export const CreateStoreNodeExecutionInputSchema = StoreNodeExecutionPinsSchema.extend({ requestId: EntityIdSchema, requestChecksum: Digest,
   operation: z.literal(STORE_NODE_EXECUTION_OPERATION), input: SyncMarketplaceCapabilitiesInputSchema }).strict();
 export type CreateStoreNodeExecutionInput = z.infer<typeof CreateStoreNodeExecutionInputSchema>;
@@ -59,7 +60,7 @@ export const StoreNodeCipherSchema = z.object({ nonce: z.string().regex(/^[A-Za-
 export const StoreNodeSealedCredentialSchema = StoreNodeCipherSchema.extend({ wrappedKey: z.string().regex(/^[A-Za-z0-9_-]{512,684}$/) }).strict();
 export const StoreNodeRuntimeIdentitySchema = z.object({ protocol: Protocol, nodeId: EntityIdSchema, certificateGeneration: z.int().positive(), sessionId: EntityIdSchema }).strict();
 export const StoreNodeExecutionClaimInputSchema = StoreNodeRuntimeIdentitySchema.extend({ supportedAuthorizationModes: z.array(z.enum(["amazon_private", "amazon_public", "etsy_oauth"])).max(3),
-  supportedOperations: z.array(StoreNodeExecutionOperationSchema).min(1).max(4).default([STORE_NODE_EXECUTION_OPERATION]) }).strict();
+  supportedOperations: z.array(StoreNodeExecutionOperationSchema).min(1).max(5).default([STORE_NODE_EXECUTION_OPERATION]) }).strict();
 const StoreNodeExecutionLeaseBaseSchema = StoreNodeExecutionPinsSchema.extend({ protocol: Protocol, id: EntityIdSchema, accountId: EntityIdSchema,
   requestId: EntityIdSchema, requestChecksum: Digest, claimId: EntityIdSchema,
   sessionId: EntityIdSchema, credentialUseId: EntityIdSchema, credentialId: EntityIdSchema, credentialVersion: z.int().positive(),
@@ -76,7 +77,8 @@ function originalTargetPins(value:{accountId:string;nodeId:string;certificateGen
 }
 export const StoreNodeAmazonSubmissionLeaseSchema=StoreNodeExecutionLeaseBaseSchema.extend({operation:z.literal(STORE_NODE_PUBLICATION_SUBMIT_OPERATION),input:PublicationSubmitNodeInputSchema}).strict().refine(originalTargetPins,"Submission lease and original target disagree");
 export const StoreNodeAmazonStatusLeaseSchema=StoreNodeExecutionLeaseBaseSchema.extend({operation:z.literal(STORE_NODE_PUBLICATION_STATUS_OPERATION),input:PublicationStatusNodeInputSchema}).strict().refine(originalTargetPins,"Status lease and original target disagree");
-export const StoreNodeExecutionLeaseSchema = z.discriminatedUnion("operation", [StoreNodeCapabilityLeaseSchema, StoreNodePublicationLeaseSchema,StoreNodeAmazonSubmissionLeaseSchema,StoreNodeAmazonStatusLeaseSchema]);
+export const StoreNodeOrderSyncLeaseSchema = StoreNodeExecutionLeaseBaseSchema.extend({ operation: z.literal(STORE_NODE_ORDER_SYNC_OPERATION), input: OrderSyncNodeInputSchema }).strict();
+export const StoreNodeExecutionLeaseSchema = z.discriminatedUnion("operation", [StoreNodeCapabilityLeaseSchema, StoreNodePublicationLeaseSchema,StoreNodeAmazonSubmissionLeaseSchema,StoreNodeAmazonStatusLeaseSchema, StoreNodeOrderSyncLeaseSchema]);
 export const StoreNodeExecutionClaimSchema = z.object({ protocol: Protocol, state: z.enum(["empty", "lease"]), lease: StoreNodeExecutionLeaseSchema.nullable(), observedAt: Instant }).strict()
   .refine(value => (value.state === "lease") === (value.lease !== null));
 export const StoreNodeExecutionCredentialSchema = z.object({ account: z.object({ authorizationMode: MarketplaceAuthorizationModeSchema,
@@ -88,7 +90,7 @@ export const StoreNodeExecutionCredentialSchema = z.object({ account: z.object({
   "Public Amazon credentials require their original application identity");
 export const StoreNodeExecutionCallSchema = StoreNodeRuntimeIdentitySchema.extend({ executionId: EntityIdSchema, claimId: EntityIdSchema, requestChecksum: Digest }).strict();
 export const StoreNodeExecutionRequestClassSchema = z.enum(["amazon_lwa", "amazon_participations", "amazon_product_definition", "amazon_schema", "amazon_meta_schema",
-  "amazon_listing_validation_preview", "amazon_listing_submit", "amazon_listing_status", "etsy_refresh", "etsy_shop", "etsy_sections", "etsy_return_policies", "etsy_taxonomy", "etsy_shipping_profiles", "etsy_readiness_profiles", "etsy_taxonomy_properties"]);
+  "amazon_listing_validation_preview", "amazon_listing_submit", "amazon_listing_status", "amazon_orders", "etsy_refresh", "etsy_shop", "etsy_sections", "etsy_return_policies", "etsy_taxonomy", "etsy_shipping_profiles", "etsy_readiness_profiles", "etsy_taxonomy_properties"]);
 export const StoreNodeExecutionPermitInputSchema = StoreNodeExecutionCallSchema.extend({ stepId: EntityIdSchema, ordinal: z.int().min(1).max(128),
   requestClass: StoreNodeExecutionRequestClassSchema, requestDigest: Digest }).strict();
 export const StoreNodeExecutionPermitSchema = z.object({ protocol: Protocol, executionId: EntityIdSchema, claimId: EntityIdSchema, stepId: EntityIdSchema,
@@ -107,6 +109,7 @@ export const StoreNodeExecutionCompletionPayloadSchema = z.discriminatedUnion("o
   z.object({ outcome: z.literal("publication_validation"), result: StoreNodePublicationResultSchema }).strict(),
   z.object({ outcome: z.literal("publication_submit"), result: StoreNodeAmazonSubmissionResultSchema }).strict(),
   z.object({ outcome: z.literal("publication_status"), result: StoreNodeAmazonStatusResultSchema }).strict(),
+  z.object({ outcome: z.literal("order_sync"), result: OrderSyncPageSchema }).strict(),
   z.object({ outcome: z.enum(["failure", "unknown"]), code: StoreNodeExecutionErrorSchema }).strict(),
 ]);
 export const StoreNodeExecutionCompleteInputSchema = StoreNodeExecutionCallSchema.extend({ payload: StoreNodeCipherSchema, payloadChecksum: Digest }).strict();
@@ -121,6 +124,7 @@ export type StoreNodeCapabilityLease = z.infer<typeof StoreNodeCapabilityLeaseSc
 export type StoreNodePublicationLease = z.infer<typeof StoreNodePublicationLeaseSchema>;
 export type StoreNodeAmazonSubmissionLease=z.infer<typeof StoreNodeAmazonSubmissionLeaseSchema>;
 export type StoreNodeAmazonStatusLease=z.infer<typeof StoreNodeAmazonStatusLeaseSchema>;
+export type StoreNodeOrderSyncLease = z.infer<typeof StoreNodeOrderSyncLeaseSchema>;
 export type StoreNodeExecutionCredential = z.infer<typeof StoreNodeExecutionCredentialSchema>;
 export type StoreNodeExecutionCall = z.infer<typeof StoreNodeExecutionCallSchema>;
 export type StoreNodeExecutionClaimInput = z.infer<typeof StoreNodeExecutionClaimInputSchema>;

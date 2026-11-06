@@ -5,7 +5,7 @@ import {
 } from "@yummyai/contracts";
 import {
   marketplaceAccounts, orderConnectorCheckpoints, orderIngestionRisks, orderIngestionRuns, orders,
-  type DatabaseConnection, withTenant,
+  type DatabaseConnection, type TenantTransaction, withTenant,
 } from "@yummyai/database";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
@@ -36,11 +36,14 @@ export class OrderIngestionService {
   ) {}
 
   async start(context: TenantContext, input: StartOrderIngestionRunInput): Promise<OrderIngestionRunView> {
+    const runId = await withTenant(this.database.db, context, tx => this.startInTransaction(tx, context, input));
+    return this.requireRun(context, runId);
+  }
+  async startInTransaction(tx: TenantTransaction, context: TenantContext, input: StartOrderIngestionRunInput): Promise<string> {
     const stream = input.stream.trim();
     const sourceVersion = input.sourceVersion.trim();
     if (!stream || stream.length > 160 || !sourceVersion || sourceVersion.length > 200) throw new UnprocessableEntityException("Order ingestion stream or source version is invalid");
     const runId = createEntityId();
-    await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${input.accountId}:${input.platform}:${stream}`}, 0))`);
       const [account] = await tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
       if (!account || account.deletedAt || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the ingestion stream");
@@ -59,16 +62,18 @@ export class OrderIngestionService {
         id: runId, tenantId: context.tenantId, accountId: input.accountId, platform: input.platform, stream,
         sourceVersion, checkpointVersionStart: checkpoint.version,
       });
-    });
-    await this.audit.record(context, { action: "order.ingestion.start", resourceType: "order_ingestion_run", resourceId: runId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, stream } });
-    return this.requireRun(context, runId);
+    await this.audit.recordInTransaction(tx, context, { action: "order.ingestion.start", resourceType: "order_ingestion_run", resourceId: runId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, stream } });
+    return runId;
   }
 
   async complete(context: TenantContext, runId: string, rawInput: CompleteOrderIngestionRunInput): Promise<OrderIngestionRunView> {
+    await withTenant(this.database.db, context, tx => this.completeInTransaction(tx, context, runId, rawInput));
+    return this.requireRun(context, runId);
+  }
+  async completeInTransaction(tx: TenantTransaction, context: TenantContext, runId: string, rawInput: CompleteOrderIngestionRunInput): Promise<void> {
     const input = CompleteOrderIngestionRunInputSchema.parse(rawInput);
     if (input.status === "completed" && input.nextCursor !== null) throw new UnprocessableEntityException("Completed ingestion cannot retain a page cursor");
     if (input.status === "partial" && input.nextCursor === null) throw new UnprocessableEntityException("Partial ingestion requires a continuation cursor");
-    await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${runId}`}, 0))`);
       const [run] = await tx.select().from(orderIngestionRuns).where(eq(orderIngestionRuns.id, runId)).limit(1);
       if (!run) throw new NotFoundException("Order ingestion run not found");
@@ -104,9 +109,7 @@ export class OrderIngestionService {
         checkpointVersionEnd, highWaterAt: input.status === "completed" ? highWaterAt : checkpoint.highWaterAt,
         completedAt: new Date(),
       }).where(eq(orderIngestionRuns.id, runId));
-    });
-    await this.audit.record(context, { action: "order.ingestion.complete", resourceType: "order_ingestion_run", resourceId: runId, result: "success", metadata: { collectedCount: input.collectedCount, reportedCount: input.reportedCount, duplicateCount: input.duplicateCount, riskCount: input.risks.length, status: input.status } });
-    return this.requireRun(context, runId);
+    await this.audit.recordInTransaction(tx, context, { action: "order.ingestion.complete", resourceType: "order_ingestion_run", resourceId: runId, result: "success", metadata: { collectedCount: input.collectedCount, reportedCount: input.reportedCount, duplicateCount: input.duplicateCount, riskCount: input.risks.length, status: input.status } });
   }
 
   async list(context: TenantContext, limit = 20): Promise<OrderIngestionRunView[]> {
@@ -118,17 +121,18 @@ export class OrderIngestionService {
   }
 
   async fail(context: TenantContext, runId: string, errorCode: string): Promise<OrderIngestionRunView> {
+    await withTenant(this.database.db, context, tx => this.failInTransaction(tx, context, runId, errorCode));
+    return this.requireRun(context, runId);
+  }
+  async failInTransaction(tx: TenantTransaction, context: TenantContext, runId: string, errorCode: string): Promise<void> {
     const safeCode = errorCode.trim().toUpperCase();
     if (!/^[A-Z0-9_]{3,80}$/.test(safeCode)) throw new UnprocessableEntityException("Order ingestion error code is invalid");
-    await withTenant(this.database.db, context, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${runId}`}, 0))`);
       const [run] = await tx.select().from(orderIngestionRuns).where(eq(orderIngestionRuns.id, runId)).limit(1);
       if (!run) throw new NotFoundException("Order ingestion run not found");
       if (run.status !== "running") throw new ConflictException("Order ingestion run is already finalized");
       await tx.update(orderIngestionRuns).set({ status: "failed", errorCode: safeCode, completedAt: new Date() }).where(eq(orderIngestionRuns.id, runId));
-    });
-    await this.audit.record(context, { action: "order.ingestion.fail", resourceType: "order_ingestion_run", resourceId: runId, result: "failure", metadata: { errorCode: safeCode } });
-    return this.requireRun(context, runId);
+    await this.audit.recordInTransaction(tx, context, { action: "order.ingestion.fail", resourceType: "order_ingestion_run", resourceId: runId, result: "failure", metadata: { errorCode: safeCode } });
   }
 
   private async requireRun(context: TenantContext, runId: string): Promise<OrderIngestionRunView> {

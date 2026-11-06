@@ -75,7 +75,7 @@ test("real tire-cover editor uploads, drags, saves, reviews and downloads produc
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("http://127.0.0.1:3100/pod-workbench/production-editor?kind=tire_cover");
-    await expect(page.getByRole("heading", { name: "生产文件与底稿", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "工艺底稿", exact: true })).toBeVisible();
     await page.getByLabel("新项目名称").fill(`E2E Synthetic Tire ${createEntityId().slice(-8)}`);
     const created = page.waitForResponse((response) => response.url().endsWith("/api/production-editor/projects") && response.request().method() === "POST");
     await page.getByRole("button", { name: "创建生产草稿", exact: true }).click();
@@ -257,7 +257,7 @@ test("pillow cutout uses eight sizes, bottom barcode, live paired view, measurem
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: "test-results/pillow-workbench-mobile.png", fullPage: true });
     await page.reload();
-    await page.getByLabel("打开生产项目", { exact: true }).selectOption(projectId);
+    await page.getByLabel("打开工艺底稿", { exact: true }).selectOption(projectId);
     await expect(sizes.getByRole("button", { name: /^10\s*in$/ })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("条码框宽（mm）", { exact: true })).toHaveValue("35");
     expect(errors).toEqual([]);

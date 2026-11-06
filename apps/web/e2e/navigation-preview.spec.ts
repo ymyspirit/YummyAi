@@ -15,11 +15,11 @@ test("module positions stay fixed while browsing and page selection follows brow
   }
   await modules.getByRole("button", { name: "创作工具", exact: true }).hover();
   await expect(supply).toHaveAttribute("aria-pressed", "true");
-  await modules.getByRole("button", { name: "创作工具", exact: true }).click();
-  await page.getByRole("navigation", { name: "创作工具页面" }).getByRole("link", { name: "生产文件与底稿", exact: true }).click();
-  await expect(page).toHaveURL(/page=production-editor$/);
-  await expect(page).toHaveTitle("生产文件与底稿 · 导航预览 · YummyAI");
-  await expect(main.getByRole("heading", { level: 1 })).toHaveText("生产文件与底稿");
+  await modules.getByRole("button", { name: "商品与上架", exact: true }).click();
+  await page.getByRole("navigation", { name: "商品与上架页面" }).getByRole("link", { name: "工艺底稿", exact: true }).click();
+  await expect(page).toHaveURL(/page=production-templates$/);
+  await expect(page).toHaveTitle("工艺底稿 · 导航预览 · YummyAI");
+  await expect(main.getByRole("heading", { level: 1 })).toHaveText("工艺底稿");
   await page.screenshot({ path: testInfo.outputPath("split-navigation-desktop.png"), fullPage: true });
   await supply.click();
   await page.getByRole("navigation", { name: "供应链页面" }).getByRole("link", { name: "供应商档案", exact: true }).click();
@@ -27,8 +27,8 @@ test("module positions stay fixed while browsing and page selection follows brow
   await expect(main.getByRole("link", { name: "打开实际页面" })).toHaveAttribute("href", "/suppliers");
   await expect(main.getByRole("link", { name: "打开实际页面" })).toHaveAttribute("target", "_blank");
   await page.goBack();
-  await expect(main.getByRole("heading", { level: 1 })).toHaveText("生产文件与底稿");
-  await expect(modules.getByRole("button", { name: "创作工具", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(main.getByRole("heading", { level: 1 })).toHaveText("工艺底稿");
+  await expect(modules.getByRole("button", { name: "商品与上架", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.goForward();
   await expect(main.getByRole("heading", { level: 1 })).toHaveText("供应商档案");
 });
@@ -74,9 +74,10 @@ test.describe("touch navigation", () => {
     await expect(menu.getByRole("navigation", { name: "创作工具页面" }).getByRole("link")).toHaveCount(8);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("split-navigation-mobile.png") });
-    await menu.getByRole("navigation", { name: "创作工具页面" }).getByRole("link", { name: "生产文件与底稿", exact: true }).tap();
+    await menu.getByRole("button", { name: "商品与上架", exact: true }).tap();
+    await menu.getByRole("navigation", { name: "商品与上架页面" }).getByRole("link", { name: "工艺底稿", exact: true }).tap();
     await expect(menu).toHaveCount(0);
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("生产文件与底稿");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("工艺底稿");
     await page.getByRole("button", { name: "打开导航", exact: true }).tap();
     await menu.getByRole("button", { name: "供应链", exact: true }).tap();
     await menu.getByRole("link", { name: "供应商档案", exact: true }).tap();

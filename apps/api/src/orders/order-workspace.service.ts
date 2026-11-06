@@ -1,4 +1,6 @@
 import { sealWork as sharedSealWork, openWork as sharedOpenWork } from "@yummyai/order-core";
+import { scheduleOrderFlow } from "./order-flow-intent.js";
+import { orderPillowFactoryDocument } from "./order-pillow-factory.js";
 import { readOrderSalesSite, resolveOrderSalesBasis, validateOrderSalesBasis, orderSalesChoices } from "../catalog/order-sales-basis.js";
 import { orderSalesSiteIssue } from "../catalog/order-sales-site.js";
 import { resolvePillowOrderBasis } from "../catalog/order-pillow-matching.js";
@@ -7,7 +9,8 @@ import { ArchiveRecordInputSchema } from "@yummyai/contracts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readArtwork, readSpecification } from "../catalog/development-data.js";
 import type { PrintBinding } from "@yummyai/contracts/catalog/composition";
-import { productionExportDefaults } from "@yummyai/production-editor/products";
+import { pinPillowProductionFactory, productionExportDefaults } from "@yummyai/production-editor/products";
+import type { ProductionEditorDocument } from "@yummyai/contracts/pod/production-editor";
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import type { SecretVault } from "@yummyai/ai-core";
 import { authorize, ForbiddenError, Permission } from "@yummyai/authz";
@@ -1517,6 +1520,13 @@ export class OrderWorkspaceService {
             updatedAt: new Date(),
           })
           .where(eq(items.id, id));
+        if (input.status === "ready_to_push") {
+          // Commit the continuation with the review. Closing the browser after
+          // this response must not leave a reviewed item waiting for a click.
+          const [line] = await tx.select({ orderId: orderLines.orderId }).from(orderLines).where(eq(orderLines.id, id));
+          if (!line) throw new NotFoundException("订单商品不存在");
+          await scheduleOrderFlow(tx, context, line.orderId);
+        }
         await this.event(
           tx,
           context,
@@ -1744,6 +1754,8 @@ export class OrderWorkspaceService {
               throw new ConflictException("审单版本已变化");
             const executionKey = this.key(work);
             try {
+              agentSnapshot.document = await orderPillowFactoryDocument(tx, context, this.vault, detail.line.orderId,
+                agentSnapshot.draft.specificationVersionId, agentSnapshot.document);
               await registerOrderDesignRun(tx, context, agentSnapshot, executionKey);
             } finally {
               executionKey.fill(0);
@@ -1917,6 +1929,9 @@ export class OrderWorkspaceService {
       const key = this.key(work);
       try {
         await tx.update(items).set(changes).where(eq(items.id, id));
+        if (["approve_artwork", "approve_proof", "resume"].includes(input.action)) {
+          await scheduleOrderFlow(tx, context, detail.line.orderId);
+        }
         await this.event(
           tx,
           context,
@@ -2104,6 +2119,20 @@ export class OrderWorkspaceService {
         automaticLayout = { photoOnlyPillow: isPhotoOnlyPillowArtwork(salesBasis.artwork), layout: salesBasis.artwork.layout,
           customization: salesBasis.artwork.customization, draft: pinnedDraft, requirements: requirements.interpretation };
       }
+      let workDocument = template.version.document;
+      if (workDocument.productType === "shaped_pillow") {
+        if (manualTakeover && designRun) {
+          const key = this.key(revision.work);
+          try {
+            const original = openWork<{ document: ProductionEditorDocument }>(key, designRun.encryptedSnapshot).document;
+            if (original.productType === "shaped_pillow" && original.spec.productionFactory)
+              workDocument = pinPillowProductionFactory(workDocument, original.spec.productionFactory);
+          } finally { key.fill(0); }
+        } else {
+          workDocument = await withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead, Permission.DesignWrite], tx =>
+            orderPillowFactoryDocument(tx, context, this.vault, detail.line.orderId, detail.draft.specificationVersionId, template.version.document));
+        }
+      }
       const result = await this.editor.createFromWork(context, {
         workItemId: id,
         revisionId: revision.revisionId,
@@ -2112,7 +2141,7 @@ export class OrderWorkspaceService {
           0,
           160,
         ),
-        template,
+        template: { ...template, version: { ...template.version, document: workDocument } },
         originals,
         artworkOverride,
         printArtworks,

@@ -1,4 +1,6 @@
 import { syntheticSpecificationFacts } from "../../../../tools/testing/specification-fixtures.js";
+import { syntheticFactoryProfile, syntheticSupplierProfile } from "../../../../tools/testing/factory-fixtures.js";
+import { FactoryDirectoryService } from "../suppliers/factory-directory.service.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import JSZip from "jszip";
 import { SecretVault,harnessChecksum } from "@yummyai/ai-core";
@@ -13,7 +15,8 @@ import { createPillowPipeline, PILLOW_CONTOUR_GRAPH_VERSION,DesignAutomationPlan
 import {
   aiBudgetLedger, aiBudgetPolicies, amazonOrderReportLines, connectDatabase, marketplaceAccounts, memberships, membershipRoles,
   migrateDatabase, modelProviderConfigs, modelRoutes, orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentOutbox as outbox, orderDesignDispatchTenants,
-  orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions,
+  orderDesignAgentCommands, orderLines, orders, orderSourceSnapshots, orderWorkAssets, orderWorkItems, orderWorkRevisions, orderFulfillmentFlows,
+  fulfillmentSuppliers, logisticsDocumentProfiles, fulfillmentRoutes,
   productionEditorImages as images, productionEditorProjects as projects, productionEditorRenders as renders,
   productionEditorVersions as versions, productionOrders, roles, withTenant,knowledgeVersions,orderDesignModelCalls as modelCalls,purgeExpiredAmazonOrderReports,
 } from "@yummyai/database";
@@ -22,6 +25,7 @@ import {
   registerOrderDesignRun, type OrderDesignImageGateway, type OrderDesignSnapshot,
   PILLOW_REALESRGAN_POLICY, OrderDesignError, orderPillowPhotoPlan, type OrderDesignSuperResolutionGateway,
   OrderDesignResponseRecovery,recordOrderModelResponse,type OrderDesignResponseReceipt,
+  OrderDesignProviderRejectedError,type OrderDesignStepCheckpoint,
 } from "@yummyai/order-design";
 import { decryptProductionBytes, encryptProductionBytes } from "@yummyai/production-editor";
 import { buildDesignAutomationPlan } from "@yummyai/production-editor/design-automation";
@@ -330,6 +334,177 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(generate).not.toHaveBeenCalled();
   }, 30_000);
 
+  it.each([
+    { status:400,kind:"moderation",code:"moderation_blocked",expected:"agent_provider_moderation_blocked" },
+    { status:401,kind:"authentication",code:"invalid_api_key",expected:"agent_provider_authentication_failed" },
+    { status:422,kind:"invalid_request",code:"invalid_value",expected:"agent_provider_invalid_request" },
+  ] as const)("retains a definite $kind rejection separately from unknown submission and never repeats or fabricates an image",async failure=>{
+    const fixture=await seed({paid:true,imageCount:2}),firstBytes=await image();
+    const generate=vi.fn<OrderDesignImageGateway["generate"]>().mockResolvedValueOnce({bytes:firstBytes,actualCostUsd:0.1})
+      .mockRejectedValue(new OrderDesignProviderRejectedError({version:1,status:failure.status,kind:failure.kind,code:failure.code,
+        providerRequestId:"synthetic-provider-rejection",receivedAt:new Date().toISOString(),retryAfterMs:null}));
+    const processor=worker(generate);await process(processor,fixture);
+    const result=await state(fixture),first=result.steps.find(step=>step.key==="enhance_image_1")!,rejected=result.steps.find(step=>step.key==="enhance_image_2")!;
+    expect(first).toMatchObject({status:"completed",attempt:1,outputAssetId:expect.any(String)});
+    expect(rejected).toMatchObject({status:"failed",attempt:1,errorCode:failure.expected,outputAssetId:null});
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:failure.expected,costStatus:"unknown",actualCostUsd:null});
+    expect(result.project!.reviewedVersionId).toBeNull();expect(result.work.approvedEditorVersionId).toBeNull();expect(result.renders).toHaveLength(0);
+    const repository=new OrderDesignRepository(database,vault),view=(await repository.view(fixture.context,fixture.lineId)).run!;
+    expect(view).toMatchObject({canResume:false,canTakeOver:true,responseRecoveryTarget:null});
+    expect(view.steps.find(step=>step.id===rejected.id)?.providerFailure).toMatchObject({status:failure.status,kind:failure.kind,code:failure.code});
+    const calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(calls).toHaveLength(2);expect(calls.find(call=>call.stepId===rejected.id)).toMatchObject({reportedCostUsd:null,tokenUsage:null});
+    await expect(command(fixture,"resume")).rejects.toMatchObject({code:"agent_resume_not_safe"});
+    await Promise.all([process(processor,fixture),process(processor,fixture)]);expect(generate).toHaveBeenCalledTimes(2);
+    expect((await state(fixture)).steps.find(step=>step.id===first.id)).toEqual(first);
+    await command(fixture,"takeover");await process(processor,fixture);
+    expect((await state(fixture)).run.status).toBe("cancelled");expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a received 5xx provider failure uncertain and never automatically repeats a possibly billed request",async()=>{
+    const fixture=await seed({paid:true});
+    const generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValue(new OrderDesignProviderRejectedError({version:1,status:503,kind:"unavailable",code:"service_unavailable",
+      providerRequestId:"synthetic-server-error",receivedAt:new Date().toISOString(),retryAfterMs:1000}));
+    const processor=worker(generate);await process(processor,fixture);await process(processor,fixture);
+    const result=await state(fixture),step=result.steps.find(row=>row.key==="enhance_image_1")!;
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_submission_unknown",costStatus:"unknown",actualCostUsd:null});
+    expect(step).toMatchObject({status:"uncertain",attempt:1,outputAssetId:null});expect(generate).toHaveBeenCalledOnce();
+    expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!.canResume).toBe(false);
+  });
+
+  it("durably delays an explicit rate-limit retry, rejects early delivery and preserves every attempt's unknown billing",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>();
+    generate.mockRejectedValueOnce(rateLimitFailure()).mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1}));
+    const processor=worker(generate);await process(processor,fixture);
+    const paused=await state(fixture),step=paused.steps.find(row=>row.key==="enhance_image_1")!;
+    expect(paused.run).toMatchObject({status:"queued",errorCode:"agent_provider_rate_limited",costStatus:"unknown",actualCostUsd:null});
+    expect(step).toMatchObject({status:"pending",attempt:1});
+    const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step.encryptedOutput!);
+    expect(Date.parse(checkpoint.nextRetryAt!)).toBeGreaterThan(Date.now());
+    const view=(await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!;
+    expect(view.nextRetryAt).toBe(checkpoint.nextRetryAt);expect(view.canResume).toBe(false);
+    await process(processor,fixture);expect(generate).toHaveBeenCalledOnce();
+    const enqueue=vi.fn<Parameters<typeof dispatchOrderDesignOutbox>[1]["enqueue"]>(async()=>{});await dispatchOrderDesignOutbox(database,{enqueue});
+    expect(enqueue.mock.calls.some(([event])=>event.runId===fixture.runId)).toBe(false);
+    await dueProviderRetry(fixture);await Promise.all([process(processor,fixture),process(processor,fixture)]);
+    const complete=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(complete.run).toMatchObject({status:"awaiting_review",errorCode:null,costStatus:"unknown",actualCostUsd:null});
+    expect(calls).toHaveLength(2);expect(new Set(calls.map(call=>call.claimToken)).size).toBe(2);expect(new Set(calls.map(call=>call.budgetLedgerId)).size).toBe(2);
+    expect(calls.map(call=>call.attempt).sort()).toEqual([1,2]);
+    expect(calls.find(call=>call.attempt===1)).toMatchObject({reportedCostUsd:null,tokenUsage:null});
+    expect(calls.find(call=>call.attempt===2)).toMatchObject({reportedCostUsd:"0.10000000"});
+    expect(complete.ledger).toHaveLength(2);expect(generate).toHaveBeenCalledTimes(2);
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===2)!.budgetLedgerId)).toMatchObject({state:"committed",amountUsd:"0.100000"});
+    expect(complete.project!.reviewedVersionId).toBeNull();expect(complete.work.approvedEditorVersionId).toBeNull();
+  });
+
+  it("exhausts an explicit rate-limit retry after three provider submissions without resetting unknown fee evidence",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);
+    for(let attempt=2;attempt<=3;attempt++){await dueProviderRetry(fixture);await process(processor,fixture);}
+    const result=await state(fixture),paid=result.steps.find(step=>step.key==="enhance_image_1")!;
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_provider_retry_exhausted",costStatus:"unknown",actualCostUsd:null});
+    expect(paid).toMatchObject({status:"failed",attempt:3,outputAssetId:null});
+    expect(result.ledger).toHaveLength(3);
+    const calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(calls).toHaveLength(3);expect(calls.every(call=>call.reportedCostUsd===null&&call.tokenUsage===null)).toBe(true);
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!).toMatchObject({canResume:false,responseRecoveryTarget:null,nextRetryAt:null});
+    await expect(command(fixture,"resume")).rejects.toMatchObject({code:"agent_resume_not_safe"});
+    await process(processor,fixture);expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it("defers an excessive provider retry hint without claiming that three attempts were exhausted",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValue(new OrderDesignProviderRejectedError({
+      version:1,status:429,kind:"rate_limit",code:"rate_limit_exceeded",providerRequestId:"synthetic-long-delay",receivedAt:new Date().toISOString(),retryAfterMs:600_000,
+    })),processor=worker(generate);
+    await process(processor,fixture);await process(processor,fixture);
+    const result=await state(fixture);
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_provider_retry_deferred",costStatus:"unknown",actualCostUsd:null});
+    expect(result.steps.find(step=>step.key==="enhance_image_1")).toMatchObject({status:"failed",attempt:1,errorCode:"agent_provider_retry_deferred"});
+    expect((await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!).toMatchObject({canResume:false,nextRetryAt:null});
+    expect(generate).toHaveBeenCalledOnce();expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+  });
+
+  it("blocks ambiguous manual response recovery after a rate-limit attempt followed by an unknown submission",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockRejectedValueOnce(new Error("Synthetic unknown transport outcome after rate-limit recovery")),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const before=await state(fixture),step=before.steps.find(row=>row.key==="enhance_image_1")!,objectsBefore=objects.size;
+    const view=(await new OrderDesignRepository(database,vault).view(fixture.context,fixture.lineId)).run!;
+    expect(view).toMatchObject({status:"needs_attention",canResume:false,responseRecoveryTarget:null,responseRecoveryBlockedCode:"agent_response_recovery_multiple_attempts",costStatus:"unknown",actualCostUsd:null});
+    const recovery=new OrderDesignResponseRecovery(database,vault,storage),bytes=await image();
+    await expect(recovery.restore(fixture.context,fixture.lineId,{runId:view.id,expectedRevision:view.revision,idempotencyKey:randomUUID(),
+      stepId:step.id,requestId:step.requestId,contentBase64:bytes.toString("base64"),providerReference:"synthetic-ambiguous-provider-record",
+      verificationNote:"Synthetic operator cannot bind this result to one of two provider attempts",verifiedOriginalResult:true,
+    })).rejects.toMatchObject({code:"agent_response_recovery_multiple_attempts"});
+    expect(objects.size).toBe(objectsBefore);expect((await state(fixture)).versions).toEqual(before.versions);
+    expect(before.ledger).toHaveLength(2);expect(before.ledger.every(row=>row.state==="reserved")).toBe(true);
+    await process(processor,fixture);expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes a proven unsubmitted preparation failure after rate limiting without releasing the prior unknown charge",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockRejectedValueOnce(new OrderDesignSubmissionNotSentError("agent_model_preparation_failed"))
+      .mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1})),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const paused=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(paused.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_preparation_failed",costStatus:"unknown",actualCostUsd:null});
+    expect(paused.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)?.state).toBe("reserved");
+    expect(paused.ledger.find(row=>row.id===calls.find(call=>call.attempt===2)!.budgetLedgerId)?.state).toBe("released");
+    await command(fixture,"resume");await process(processor,fixture);
+    const complete=await state(fixture);
+    expect(complete.run).toMatchObject({status:"awaiting_review",costStatus:"unknown",actualCostUsd:null});
+    expect(complete.ledger.map(row=>row.state).sort()).toEqual(["committed","released","reserved"]);expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it("automatically recovers a pre-submission crash after rate limiting without attributing a charge to the unsent attempt",async()=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>().mockRejectedValueOnce(rateLimitFailure())
+      .mockImplementation(async()=>({bytes:await image(),actualCostUsd:0.1})),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);
+    const paused=await state(fixture),step=paused.steps.find(row=>row.key==="enhance_image_1")!;
+    const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step.encryptedOutput!),unsubmittedLedgerId=createEntityId();
+    // Reproduce the atomic claim checkpoint, before markSubmitted can register
+    // a model call. This fixture never crosses the external provider boundary.
+    await withTenant(database.db,fixture.context,async tx=>{
+      await tx.update(runs).set({status:"running",errorCode:null,processingToken:createEntityId(),leaseUntil:new Date(0),updatedAt:new Date(0)}).where(eq(runs.id,fixture.runId));
+      await tx.update(steps).set({status:"running",attempt:2,errorCode:null,encryptedOutput:seal(fixture.workKey,{...checkpoint,submissionState:"not_submitted"})}).where(eq(steps.id,step.id));
+      await tx.insert(aiBudgetLedger).values({id:unsubmittedLedgerId,tenantId:fixture.context.tenantId,requestId:step.requestId,taskType:"order_design",
+        modelKey:fixture.snapshot.model!.model,provider:fixture.snapshot.model!.providerConfigId,amountUsd:"0.100000",state:"reserved"});
+    });
+    await process(processor,fixture);const complete=await state(fixture),calls=await withTenant(database.db,fixture.context,tx=>tx.select().from(modelCalls).where(eq(modelCalls.runId,fixture.runId)));
+    expect(complete.run).toMatchObject({status:"awaiting_review",costStatus:"unknown",actualCostUsd:null});
+    expect(calls.map(call=>call.attempt).sort()).toEqual([1,3]);expect(generate).toHaveBeenCalledTimes(2);
+    expect(complete.ledger.find(row=>row.id===unsubmittedLedgerId)?.state).toBe("released");
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===1)!.budgetLedgerId)?.state).toBe("reserved");
+    expect(complete.ledger.find(row=>row.id===calls.find(call=>call.attempt===3)!.budgetLedgerId)?.state).toBe("committed");
+  });
+
+  it.each(["held","cancelled","revoked","takeover"] as const)("rechecks %s before a delayed provider retry and preserves the original unapproved project",async condition=>{
+    const fixture=await seed({paid:true}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);const before=await state(fixture);await dueProviderRetry(fixture);
+    if(condition==="takeover")await command(fixture,"takeover");
+    else await withTenant(database.db,fixture.context,async tx=>{
+      if(condition==="held")await tx.update(orderWorkItems).set({held:true}).where(eq(orderWorkItems.id,fixture.lineId));
+      if(condition==="cancelled")await tx.update(orders).set({sideState:"cancelled"}).where(eq(orders.id,fixture.orderId));
+      if(condition==="revoked")await tx.update(memberships).set({status:"disabled"}).where(eq(memberships.id,fixture.membershipId));
+    });
+    await process(processor,fixture);const after=await state(fixture);
+    expect(generate).toHaveBeenCalledOnce();expect(after.ledger).toHaveLength(1);expect(after.versions).toEqual(before.versions);expect(after.assets).toEqual(before.assets);
+    expect(after.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});
+    expect(after.run).toMatchObject({status:condition==="takeover"?"cancelled":"needs_attention",costStatus:"unknown",actualCostUsd:null});
+    expect(after.work.approvedEditorVersionId).toBeNull();
+  });
+
+  it("retains organization budget constraints when an automatic rate-limit retry would require a second reservation",async()=>{
+    const fixture=await seed({paid:true,monthlyBudget:0.15}),generate=vi.fn<OrderDesignImageGateway["generate"]>(async()=>{throw rateLimitFailure();}),processor=worker(generate);
+    await process(processor,fixture);await dueProviderRetry(fixture);await process(processor,fixture);
+    const result=await state(fixture);
+    expect(result.run).toMatchObject({status:"needs_attention",errorCode:"agent_model_monthly_budget_exceeded",costStatus:"unknown",actualCostUsd:null});
+    expect(result.ledger).toHaveLength(1);expect(result.ledger[0]).toMatchObject({state:"reserved",amountUsd:"0.100000"});expect(generate).toHaveBeenCalledOnce();
+  });
+
   it("checkpoints the first paid image and cannot resend the second image after an unknown provider result", async () => {
     const fixture = await seed({ paid: true, imageCount: 2 });
     const generate = vi.fn<OrderDesignImageGateway["generate"]>();
@@ -442,12 +617,22 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(objects.size).toBe(count); expect((await state(fixture)).run.status).toBe("needs_attention");
   }, 30_000);
 
-  it.each(["held", "expired", "cancelled", "editor_changed"] as const)("refuses recovery for %s without rewriting a source or production version", async condition => {
+  it("stops a paused whole order before reserving money or calling the design provider", async () => {
+    const fixture = await seed({ paid: true }), generate = vi.fn<OrderDesignImageGateway["generate"]>();
+    await withTenant(database.db, fixture.context, tx => tx.update(orders).set({ sideState: "on_hold" }).where(eq(orders.id, fixture.orderId)));
+    await process(worker(generate), fixture);
+    const result = await state(fixture);
+    expect(result.run).toMatchObject({ status: "needs_attention", errorCode: "agent_order_unavailable" });
+    expect(generate).not.toHaveBeenCalled(); expect(result.ledger).toHaveLength(0); expect(result.project).toBeNull();
+  });
+
+  it.each(["held", "order_hold", "expired", "cancelled", "editor_changed"] as const)("refuses recovery for %s without rewriting a source or production version", async condition => {
     const fixture = await seed({ paid: true });
     await process(worker(async () => { throw new Error("Synthetic unknown provider result"); }), fixture);
     const input = await restoreInput(fixture, await image()), before = await state(fixture), count = objects.size;
     await withTenant(database.db, fixture.context, async tx => {
       if (condition === "held") await tx.update(orderWorkItems).set({ held: true }).where(eq(orderWorkItems.id, fixture.lineId));
+      if (condition === "order_hold") await tx.update(orders).set({ sideState: "on_hold" }).where(eq(orders.id, fixture.orderId));
       if (condition === "expired") await tx.update(orderWorkItems).set({ expiresAt: new Date(0) }).where(eq(orderWorkItems.id, fixture.lineId));
       if (condition === "cancelled") await tx.update(orders).set({ sideState: "cancelled" }).where(eq(orders.id, fixture.orderId));
       if (condition === "editor_changed") await tx.update(projects).set({ currentVersionId: null }).where(eq(projects.id, before.project!.id));
@@ -1290,6 +1475,9 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
       expectedSourceVersionId: initial.report!.versionId, expectedProjectionVersion: initial.line.projectionVersion,
       draft: checked.normalizedDraft, status: "ready_to_push", reason: "Synthetic operator confirms intake only", idempotencyKey: randomUUID() });
     expect(saved.line).toMatchObject({ preparation: "ready_to_push", artwork: "not_pushed", production: "not_released" });
+    const followups=await withTenant(database.db,f.context,tx=>tx.select().from(orderFulfillmentFlows).where(eq(orderFulfillmentFlows.orderId,saved.line.orderId)));
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({requestedBy:f.context.userId,stage:"waiting_artwork",pendingCommand:null});
     const confirmed = await reviewState();
     expect(confirmed.report).toEqual({ reviewedVersionId: f.sourceVersionId, reviewedBy: f.context.userId, reviewedAt: expect.any(Date) });
     expect(confirmed.revisions).toHaveLength(beforeConfirmation.revisions.length + 1);
@@ -1403,6 +1591,46 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     expect(await withTenant(database.db, f.context, tx => tx.select().from(productionOrders).where(eq(productionOrders.sourceWorkItemId, f.lineId)))).toEqual([]);
   }, 90_000);
 
+  it("carries the original Yicai profile from a reviewed order into its private AI artwork and fences manual edits", async () => {
+    const f = await requirementOrder();
+    const check = await f.workspace.intakeCheck(f.context, f.lineId, { expectedRevision: f.initial.line.revision,
+      expectedSourceVersionId: f.sourceVersionId, draft: f.initial.draft });
+    const saved = await f.workspace.save(f.context, f.lineId, { expectedRevision: f.initial.line.revision,
+      expectedProjectionVersion: f.initial.line.projectionVersion, expectedSourceVersionId: f.sourceVersionId, draft: check.normalizedDraft,
+      status: "ready_to_push", reason: "Synthetic operator checks order", idempotencyKey: randomUUID() });
+    const supplierId = createEntityId(), profileId = createEntityId(), routeId = createEntityId();
+    await withTenant(database.db, f.context, tx => tx.insert(fulfillmentSuppliers).values({ id: supplierId,
+      tenantId: f.context.tenantId, name: "Synthetic supplier", kind: "manual", status: "active", regionCode: "CN",
+      settlementCurrency: "CNY", profile: syntheticSupplierProfile, createdBy: f.context.userId }));
+    const directory = new FactoryDirectoryService(database, new AuditService(database));
+    const factory = await directory.create(f.context, { supplierId, code: "SYN-TEST", profile:syntheticFactoryProfile("Synthetic pillow factory"), idempotencyKey: randomUUID() });
+    await withTenant(database.db, f.context, async tx => {
+      await tx.insert(logisticsDocumentProfiles).values({ id: profileId, tenantId: f.context.tenantId, versionNumber: 1,
+        factoryId: factory.id, factoryVersionId: factory.versionId, createdBy: f.context.userId, requestKey: randomUUID(), requestHash: checksum(profileId),
+        profile: { name: "Synthetic Canada", route: "yunexpress", productionAdapter: "yicai_folder", originCountryCode: "CN", destinationCountries: ["CA"],
+          originCompany: "", factoryCode: "", carrierProvider: "", carrierService: "", useAccountSender: false, evidence: "Synthetic factory data",
+          specifications: [{ specificationVersionId: saved.draft.specificationVersionId!, productKind: "shaped_pillow", sizeIn: 10, supplierSku: "SYN10",
+            weight: 0.26, weightUnit: "lb", length: 8, width: 5, height: 5, dimensionUnit: "in", declaredUnitValueMinor: 800,
+            nameEn: "Pillow", nameCn: "抱枕", hsCode: "" }] } });
+      const route = { name: "Synthetic rule", documentProfileVersionId: profileId, connectionId: createEntityId(), mode: "quote" as const, productionDays: 2, autoWriteback: false };
+      await tx.insert(fulfillmentRoutes).values({ id: routeId, tenantId: f.context.tenantId, version: 1, profile: route, requestKey: randomUUID(), requestHash: checksum(routeId), createdBy: f.context.userId });
+      await tx.update(orderFulfillmentFlows).set({ routeId, routeVersion: 1, routeSnapshot: route }).where(eq(orderFulfillmentFlows.orderId, saved.line.orderId));
+    });
+    const { final, snapshot, fixture } = await f.pushAndProcess(saved);
+    const target = { spec: { productionFactory: { adapter: "yicai_folder", factoryId: factory.id, documentProfileVersionId: profileId }, declaredLongestMm: 250, barcodeTab: { widthMm: null, heightMm: null } } };
+    expect(snapshot.document).toMatchObject(target);
+    expect(final.document).toMatchObject(target);
+    expect(final.run.status, safeRequirementRunDiagnostic(final)).toBe("awaiting_review");
+    await command(fixture, "takeover");
+    const privateDraft = structuredClone(final.document!);
+    if (privateDraft.productType !== "shaped_pillow") throw new Error("Expected a pillow");
+    delete privateDraft.spec.productionFactory;
+    await expect(f.editor.save(f.context, final.project!.id, { expectedVersionId: final.project!.currentVersionId, document: privateDraft }))
+      .rejects.toThrow("订单已固定制作工厂");
+    const original = await f.editor.get(f.context, snapshot.templateProjectId, snapshot.templateVersionId);
+    expect(original.version.document).toMatchObject({ spec: { declaredLongestMm: 254, barcodeTab: { heightMm: 200 * 25.4 / 150 } } });
+  });
+
   async function requirementOrder() {
     const base = await seed({ pillow: true, paid: true,
       permissions: [Permission.ProductRead, Permission.ProductWrite, Permission.DesignReview] });
@@ -1486,6 +1714,19 @@ describe.skipIf(!disposable)("isolated order design agent execution and recovery
     });
   }
   function worker(generate: OrderDesignImageGateway["generate"],upscale?:OrderDesignSuperResolutionGateway) { return new OrderDesignProcessor(database, storage, vault, { generate }, scanner,upscale); }
+  function rateLimitFailure(){return new OrderDesignProviderRejectedError({version:1,status:429,kind:"rate_limit",code:"rate_limit_exceeded",
+    providerRequestId:"synthetic-rate-limit",receivedAt:new Date().toISOString(),retryAfterMs:60_000});}
+  /** Only synthetic scheduling evidence is adjusted. No production clock or queue is changed. */
+  async function dueProviderRetry(fixture:Fixture){
+    await withTenant(database.db,fixture.context,async tx=>{
+      const pending=await tx.select().from(steps).where(eq(steps.runId,fixture.runId));
+      const step=pending.find(row=>row.status==="pending"&&row.attempt>0);expect(step?.encryptedOutput).toBeTruthy();
+      const checkpoint=open<OrderDesignStepCheckpoint>(fixture.workKey,step!.encryptedOutput!);
+      expect(checkpoint.nextRetryAt).toBeTruthy();
+      await tx.update(steps).set({encryptedOutput:seal(fixture.workKey,{...checkpoint,nextRetryAt:new Date(0).toISOString()})}).where(eq(steps.id,step!.id));
+      await tx.update(outbox).set({nextAttemptAt:new Date(0)}).where(eq(outbox.runId,fixture.runId));
+    });
+  }
   function process(processor: OrderDesignProcessor, fixture: Fixture) { return processor.process({ tenantId: fixture.context.tenantId, requestedBy: fixture.context.userId, runId: fixture.runId }); }
   async function command(fixture: Fixture, action: "resume" | "takeover") {
     const repository = new OrderDesignRepository(database, vault);

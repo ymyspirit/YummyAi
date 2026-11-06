@@ -26,14 +26,14 @@ export function DocumentWorkspace({ orderId }: { orderId?: string }) {
   useLeaveGuard(overrides.length > 0 && !notice, busy);
   const clear = useCallback(() => { generation.current++; setOptions(null); setHistory([]); setPreview(null); setPackages([]); setSelected([]); setOverrides([]); setPackageIds([]); selectionRef.current = null; }, []);
   const handleError = useCallback((cause: unknown) => { if (cause && typeof cause === "object" && "status" in cause && [401, 403].includes(Number(cause.status))) clear(); setError(logisticsError(cause)); }, [clear]);
-  const reload = useCallback(async (search = "", signal?: AbortSignal) => {
+  const reload = useCallback(async (search = "", signal?: AbortSignal, savedProfileId?: string) => {
     const version = ++generation.current;
     const qs = new URLSearchParams(); if (orderId) qs.set("orderId", orderId); if (search) qs.set("q", search);
     const [next, past] = await Promise.all([documentRequest<DocumentOptions>(`options?${qs}`, undefined, signal), documentRequest<{ exports: DocumentExportView[] }>(`exports${orderId ? `?orderId=${orderId}` : ""}`, undefined, signal)]);
     if (!alive.current || signal?.aborted || version !== generation.current) return;
     setOptions(next); setHistory(past.exports);
     setSelected(previous => previous.filter(id => next.orders.some(order => order.id === id)));
-    setProfileId(previous => next.profiles.some(profile => profile.id === previous) ? previous : next.profiles[0]?.id ?? "");
+    setProfileId(previous => next.profiles.some(profile => profile.id === savedProfileId) ? savedProfileId! : next.profiles.some(profile => profile.id === previous) ? previous : next.profiles[0]?.id ?? "");
     setPreview(null); setPackages([]); setPackageIds([]); selectionRef.current = null;
   }, [orderId]);
   useEffect(() => {
@@ -101,7 +101,7 @@ export function DocumentWorkspace({ orderId }: { orderId?: string }) {
       {notice && <p role="status">{notice}</p>}
       {selected.length === 1 && profile?.profile.route === "yunexpress" && <div inert={busy || profileState.dirty || profileState.busy}><DocumentLabelPanel key={selected[0]} orderId={selected[0]!} refreshToken={history.map(row => row.id).join(",")} canWrite={options.canGenerate} canReadProduction={options.canReadProduction} onStateChange={setLabelState}/></div>}
       <details className="document-history" open={history.length > 0}><summary>导出记录 · {history.length}</summary>{history.map(row => <div className="document-history-row" key={row.id}><div><strong>{documentLabels[row.adapter]}</strong><p className="oc-muted">{row.factoryName} · {new Date(row.createdAt).toLocaleString()} · {row.rowCount} 行</p>{row.reason && <p>{row.reason}</p>}</div>{row.available && <a className="oc-button" download href={`/api/logistics/documents/exports/${row.id}/file`}><Download size={16}/>下载表格</a>}</div>)}{!history.length && <p>尚未生成导出文件</p>}</details>
-      {options.canConfigure && <details className="document-config" inert={busy || labelState.dirty || labelState.busy}><summary>工厂导单与包裹规格配置</summary><DocumentProfileForm options={options} onSaved={() => reload(query)} onStateChange={setProfileState}/></details>}
+      {options.canConfigure && <details className="document-config" inert={busy || labelState.dirty || labelState.busy}><summary>工厂导单与包裹规格配置</summary><DocumentProfileForm options={options} onSaved={id => reload(query,undefined,id)} onStateChange={setProfileState}/></details>}
     </>}
   </section>;
 }

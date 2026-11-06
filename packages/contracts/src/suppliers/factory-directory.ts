@@ -17,6 +17,7 @@ export const FactoryProfileSchema = z.object({
   }
 });
 export const FactoryCapabilityProfileSchema = z.object({
+  spuId: Id.nullable().optional(),
   name: z.string().trim().min(1).max(200), productType: z.enum(["shaped_pillow", "tire_cover", "rectangular_print", "engraving", "other"]), productPlanId: Id.nullable(), skuId: Id.nullable(), fulfillmentScope: z.enum(["full_product", "process_only"]),
   processCodes: z.array(z.enum(["PRINT", "CUT", "SEW", "FILL", "PACK", "ENGRAVE", "EMBROIDER", "OTHER"])).max(8),
   materials: z.array(z.string().trim().min(1).max(200)).max(30), specifications: z.string().trim().max(4000),
@@ -52,7 +53,7 @@ function validateFactoryAuthority(value: { contextAuthority: string; access: z.i
     context.addIssue({ code: "custom", path: ["access"], message: "Factory access must match the current operation scopes" });
   }
 }
-export const FactoryDirectorySchema = z.object({ ...factoryAuthority, factories: z.array(FactoryViewSchema), capabilities: z.array(FactoryCapabilityViewSchema), products: z.array(z.object({ id: Id, name: z.string(), skus: z.array(z.object({ id: Id, code: z.string() })) }).strict()), templates: z.array(z.object({ id: Id, name: z.string(), versionNumber: z.int().positive() }).strict()) }).strict().superRefine(validateFactoryAuthority);
+export const FactoryDirectorySchema = z.object({ ...factoryAuthority, factories: z.array(FactoryViewSchema), capabilities: z.array(FactoryCapabilityViewSchema), spus: z.array(z.object({ id: Id, name: z.string(), productPlanId: Id }).strict()).default([]), products: z.array(z.object({ id: Id, name: z.string(), skus: z.array(z.object({ id: Id, code: z.string() })) }).strict()), templates: z.array(z.object({ id: Id, name: z.string(), versionNumber: z.int().positive() }).strict()) }).strict().superRefine(validateFactoryAuthority);
 export const FactoryHistorySchema = z.object({ ...factoryAuthority, factoryId: Id, factories: z.array(FactoryViewSchema), capabilities: z.array(FactoryCapabilityViewSchema) }).strict().superRefine((value, context) => {
   validateFactoryAuthority(value, context);
   if (value.factories.some(factory => factory.id !== value.factoryId) || value.capabilities.some(capability => capability.factoryId !== value.factoryId)) {

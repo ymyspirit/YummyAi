@@ -2,7 +2,7 @@ import { SecretVault } from "@yummyai/ai-core";
 import { ConflictException } from "@nestjs/common";
 import { createEntityId, type NormalizeOrderInput, type TenantContext } from "@yummyai/contracts";
 import { connectDatabase, orderConnectorCheckpoints, orderIngestionRisks, orderIngestionRuns, withTenant } from "@yummyai/database";
-import type { MarketplaceOrderIngestionAdapter } from "@yummyai/marketplace-connectors";
+import { AmazonOrdersAdapter, type MarketplaceOrderIngestionAdapter } from "@yummyai/marketplace-connectors";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -10,6 +10,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { OrderIngestionService } from "./order-ingestion.service.js";
 import { OrderService } from "./order.service.js";
 import { OrderSyncCoordinator } from "./order-sync-coordinator.js";
+import { AmazonOrderReportService } from "./amazon-order-report.service.js";
 
 describe("order ingestion persistence", () => {
   const database = connectDatabase();
@@ -36,7 +37,11 @@ describe("order ingestion persistence", () => {
     );
     service = new OrderIngestionService(database, new AuditService(database));
     orderService = new OrderService(database, new SecretVault(Buffer.alloc(32, 23)), new AuditService(database));
-    coordinator = new OrderSyncCoordinator(service, orderService);
+    const reports = new AmazonOrderReportService(database, new SecretVault(Buffer.alloc(32, 23)), orderService, new AuditService(database), {
+      download: async () => { throw new Error("No remote attachments in ingestion fixtures"); },
+      scan: async () => { throw new Error("No remote attachments in ingestion fixtures"); },
+    }, { schedule: async () => undefined }, { schedule: async () => undefined });
+    coordinator = new OrderSyncCoordinator(service, orderService, reports);
   });
 
   afterAll(async () => { await database.client.end(); });
@@ -94,6 +99,33 @@ describe("order ingestion persistence", () => {
       collectedCount: 0, reportedCount: 0, duplicateCount: 0, sourceVersion: "amazon-orders-2026-01-01",
       nextCursor: null, highWaterAt: "2026-07-22T12:00:00.000Z", status: "completed", risks: [],
     });
+  });
+
+  it("does not lose reordered Amazon search results or duplicate unchanged orders in later polling windows", async () => {
+    const first = {
+      orderId: "poll-order-1", createdTime: "2026-07-22T11:00:00.000Z", lastUpdatedTime: "2026-07-22T11:30:00.000Z",
+      salesChannel: { marketplaceId: "ATVPDKIKX0DER" }, fulfillment: { fulfillmentStatus: "UNSHIPPED" },
+      proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
+      orderItems: [{ orderItemId: "poll-line-1", product: { title: "Synthetic pillow", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } } }, quantityOrdered: 1 }],
+    };
+    const second = { ...first, orderId: "poll-order-2" };
+    const responses = [[first], [second], [second, first]];
+    const adapter = new AmazonOrdersAdapter(async (url) => new Response(JSON.stringify(String(url).includes("/auth/o2/token")
+      ? { access_token: "synthetic-access" } : { orders: responses.shift() }), { status: 200, headers: { "content-type": "application/json" } }),
+    { AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test" }, () => new Date("2026-07-22T12:10:00.000Z"));
+    const run = (version: number, updatedBefore: string) => coordinator.run(contextA, {
+      connectorContext: { accountId: accountA, tenantId: tenantA, platform: "amazon", externalAccountId: "seller-a", region: "NA", marketplaceIds: ["ATVPDKIKX0DER"] },
+      stream: "amazon-poll-replay", adapter,
+      credentials: { withCredential: callback => callback({ refreshToken: "synthetic-refresh", clientId: "synthetic-client", clientSecret: "synthetic-secret" }) },
+      request: { checkpoint: { cursor: null, highWaterAt: null, version }, updatedAfter: "2026-07-22T11:00:00.000Z", updatedBefore, pageSize: 50, maxPages: 1 },
+    }, new AbortController().signal);
+    expect(await run(1, "2026-07-22T12:00:00.000Z")).toMatchObject({ collectedCount: 1, duplicateCount: 0 });
+    expect(await run(2, "2026-07-22T12:00:00.000Z")).toMatchObject({ collectedCount: 1, duplicateCount: 0 });
+    expect(await run(3, "2026-07-22T12:05:00.000Z")).toMatchObject({ collectedCount: 2, duplicateCount: 2 });
+    const imported = (await orderService.list(contextA, { platform: "amazon", limit: 50 }))
+      .filter(order => order.externalOrderId.startsWith("poll-order-"));
+    expect(imported.map(order => order.externalOrderId).sort()).toEqual(["poll-order-1", "poll-order-2"]);
+    expect(imported.every(order => order.latestEventSequence === 1)).toBe(true);
   });
 
   it("rejects a high-water regression", async () => {

@@ -1,4 +1,7 @@
 import { withWorkerMarketplaceCredential } from "./marketplace-credential-failure.js";
+import { createHash } from "node:crypto";
+import { Permission, requireTenantOrderPermissions } from "@yummyai/authz";
+import { readOrderSalesSite, readShipmentPhysicalHandover } from "@yummyai/order-core";
 import type { SecretVault } from "@yummyai/ai-core";
 import {
   MarketplacePlatformSchema, MarketplaceRegionSchema, createEntityId,
@@ -7,7 +10,7 @@ import {
 import {
   marketplaceAccounts, marketplaceCredentials, orderEvents, orderExceptionEvents, orderExceptions, orderLines, orders,
   shipmentPackageLines, shipmentPackages, shipmentVersions, shipmentWritebackEvents, shipmentWritebackRequests, shipments,
-  type DatabaseConnection, type TenantTransaction, withTenant,
+  type DatabaseConnection, type TenantTransaction, withTenant, loadCurrentMembershipContext,
 } from "@yummyai/database";
 import { ShipmentWritebackJobPayloadSchema, type JobEnvelope } from "@yummyai/jobs";
 import type {
@@ -68,20 +71,40 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       if (attempt > 0 && request.status === "dispatched") {
         await appendWritebackEvent(tx, context, request, "uncertain", "reconciliation_required", "WORKER_INTERRUPTED_OUTCOME_UNKNOWN", null);
         await tx.update(shipmentWritebackRequests).set({ status: "reconciliation_required", projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-        await tx.update(shipments).set({ status: "exception", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+        await updateWritebackShipmentStatus(tx, request.shipmentId, "exception");
         await openLogisticsException(tx, context, request.orderId, `worker-uncertain:${request.id}`, "SHIPMENT_WRITEBACK_UNCERTAIN");
         return undefined;
       }
       if (request.status !== "queued") return undefined;
+      if (request.idempotencyKey.startsWith("auto-fulfillment:")) {
+        const [shipment]=await tx.select().from(shipments).where(eq(shipments.id,request.shipmentId)).for("share");
+        const [version]=await tx.select().from(shipmentVersions).where(eq(shipmentVersions.id,request.shipmentVersionId));
+        const [order]=await tx.select().from(orders).where(eq(orders.id,request.orderId)).for("share");
+        let authorized=false;
+        try {
+          const current=await loadCurrentMembershipContext(tx,{tenantId:context.tenantId,userId:request.createdBy!},{lock:true});
+          requireTenantOrderPermissions(current,[Permission.OrderRead,Permission.OrderWrite]);authorized=true;
+        } catch { /* Revoked membership must not submit a shipment. */ }
+        const handover=shipment?await readShipmentPhysicalHandover(tx,shipment):null;
+        if (!authorized || !shipment || !version || !order || order.sideState
+          || shipment.status==="cancelled" || shipment.currentVersionNumber!==version.versionNumber
+          || shipment.approvedVersionNumber!==version.versionNumber || !handover?.allDispatched || handover.shipmentVersionId!==version.id) {
+          await appendWritebackEvent(tx,context,request,"rejected","rejected","AUTOMATIC_HANDOVER_OR_AUTHORITY_CHANGED",null);
+          await tx.update(shipmentWritebackRequests).set({status:"rejected",projectionVersion:request.projectionVersion+1,updatedAt:new Date()}).where(eq(shipmentWritebackRequests.id,request.id));
+          await openLogisticsException(tx,context,request.orderId,`automatic-writeback-rejected:${request.id}`,"AUTOMATIC_HANDOVER_OR_AUTHORITY_CHANGED");
+          return undefined;
+        }
+      }
       const [[account], [version], [order]] = await Promise.all([
         tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, request.accountId)).limit(1),
         tx.select().from(shipmentVersions).where(eq(shipmentVersions.id, request.shipmentVersionId)).limit(1),
-        tx.select().from(orders).where(eq(orders.id, request.orderId)).limit(1),
+        tx.select().from(orders).where(eq(orders.id, request.orderId)).for("share").limit(1),
       ]);
-      if (!account || !version || !order || account.status !== "active" || account.healthStatus !== "healthy" || !account.externalAccountId) {
+      if (!account || !version || !order || order.accountId!==account.id || order.platform!==account.platform ||
+        account.status !== "active" || account.healthStatus !== "healthy" || !account.externalAccountId) {
         await appendWritebackEvent(tx, context, request, "rejected", "rejected", "ACCOUNT_OR_SNAPSHOT_UNAVAILABLE", null);
         await tx.update(shipmentWritebackRequests).set({ status: "rejected", projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-        await tx.update(shipments).set({ status: "approved", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+        await updateWritebackShipmentStatus(tx, request.shipmentId, "approved");
         return undefined;
       }
       const packages = await tx.select().from(shipmentPackages).where(eq(shipmentPackages.shipmentVersionId, version.id));
@@ -89,6 +112,23 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       const lineRows = await tx.select({ id: orderLines.id, externalLineId: orderLines.externalLineId }).from(orderLines).where(eq(orderLines.orderId, order.id));
       const externalLines = new Map(lineRows.map((line) => [line.id, line.externalLineId]));
       if (!packages.length || allocations.some((entry) => !externalLines.has(entry.orderLineId))) return undefined;
+      let marketplaceIds=account.marketplaceIds;
+      let amazonRefs:Map<string,string>|null=null;
+      if (account.platform==="amazon") {
+        const site=await readOrderSalesSite(tx,order);
+        const history=await tx.selectDistinct({shipmentId:shipmentPackages.shipmentId,reference:shipmentPackages.packageReferenceId})
+          .from(shipmentPackages).innerJoin(shipments,eq(shipments.id,shipmentPackages.shipmentId)).where(eq(shipments.orderId,order.id));
+        amazonRefs=amazonPackageReferences(request.shipmentId,history);
+        if (site.status!=="resolved" || !marketplaceIds.includes(site.marketplaceId) || !amazonRefs) {
+          const reason=amazonRefs?"AMAZON_ORDER_MARKETPLACE_UNVERIFIED":"AMAZON_PACKAGE_REFERENCE_CONFLICT";
+          await appendWritebackEvent(tx,context,request,"rejected","rejected",reason,null);
+          await tx.update(shipmentWritebackRequests).set({status:"rejected",projectionVersion:request.projectionVersion+1,updatedAt:new Date()}).where(eq(shipmentWritebackRequests.id,request.id));
+          await updateWritebackShipmentStatus(tx,request.shipmentId,"approved");
+          await openLogisticsException(tx,context,request.orderId,"amazon-writeback-basis:"+request.id,reason);
+          return undefined;
+        }
+        marketplaceIds=[site.marketplaceId];
+      }
       await appendWritebackEvent(tx, context, request, "dispatched", "dispatched", null, null);
       await tx.update(shipmentWritebackRequests).set({ status: "dispatched", projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
       return {
@@ -97,12 +137,12 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
         context: {
           tenantId: context.tenantId, accountId: account.id, platform: MarketplacePlatformSchema.parse(account.platform),
           region: MarketplaceRegionSchema.parse(account.region), externalAccountId: account.externalAccountId,
-          marketplaceIds: account.marketplaceIds,
+          marketplaceIds,
         },
         input: {
           externalOrderId: order.externalOrderId, shipDate: version.shipDate.toISOString(),
           packages: packages.map((pkg) => ({
-            packageReferenceId: pkg.packageReferenceId, trackingNumber: pkg.trackingNumber,
+            packageReferenceId: amazonRefs?.get(pkg.packageReferenceId)??pkg.packageReferenceId, trackingNumber: pkg.trackingNumber,
             carrierCode: pkg.carrierCode, carrierName: pkg.carrierName, carrierService: pkg.carrierService,
             lines: allocations.filter((entry) => entry.packageId === pkg.id).map((entry) => ({ externalLineId: externalLines.get(entry.orderLineId)!, quantity: entry.quantity })),
           })),
@@ -127,11 +167,35 @@ export class DrizzleShipmentWritebackExecutionRepository implements ShipmentWrit
       const toStatus = result.status === "accepted" ? "accepted" : result.status === "uncertain" ? "reconciliation_required" : "rejected";
       await appendWritebackEvent(tx, context, request, action, toStatus, result.providerCode, result.externalReference);
       await tx.update(shipmentWritebackRequests).set({ status: toStatus, projectionVersion: request.projectionVersion + 1, updatedAt: new Date() }).where(eq(shipmentWritebackRequests.id, request.id));
-      await tx.update(shipments).set({ status: result.status === "accepted" ? "shipped" : result.status === "uncertain" ? "exception" : "approved", updatedAt: new Date() }).where(eq(shipments.id, request.shipmentId));
+      await updateWritebackShipmentStatus(tx, request.shipmentId, result.status === "accepted" ? "shipped" : result.status === "uncertain" ? "exception" : "approved");
       if (result.status === "accepted") await advanceOrderIfFullyShipped(tx, context, request.orderId, request.id);
       else await openLogisticsException(tx, context, request.orderId, `worker-result:${request.id}:${result.status}`, result.status === "uncertain" ? "SHIPMENT_WRITEBACK_UNCERTAIN" : "SHIPMENT_WRITEBACK_REJECTED");
     });
   }
+}
+
+// Keep the same positive number across package revisions; an order-wide collision must never overwrite another parcel.
+export function amazonPackageReferences(shipmentId:string, history:ReadonlyArray<{shipmentId:string;reference:string}>) {
+  const owners=new Map<string,string>(), conflicts=new Set<string>(), current=new Map<string,string>();
+  for(const row of history) {
+    const identity=JSON.stringify([row.shipmentId,row.reference]);
+    const numeric=/^0*([1-9]\d*)$/.exec(row.reference)?.[1];
+    const reference=numeric??String(1+(createHash("sha256").update(identity).digest().readUInt32BE(0)%2_147_483_646));
+    if(owners.has(reference) && owners.get(reference)!==identity) conflicts.add(reference);
+    owners.set(reference,identity);
+    if(row.shipmentId===shipmentId) current.set(row.reference,reference);
+  }
+  return current.size && [...current.values()].every(value=>!conflicts.has(value)) ? current : null;
+}
+
+async function updateWritebackShipmentStatus(tx: TenantTransaction, shipmentId: string, fallback: string) {
+  const [shipment] = await tx.select().from(shipments).where(eq(shipments.id,shipmentId)).for("update");
+  if (!shipment) return;
+  const dispatched = (await readShipmentPhysicalHandover(tx,shipment)).dispatchedPackageCount > 0;
+  const status = dispatched
+    ? ["shipped","in_transit","delivered","exception"].includes(shipment.status) ? shipment.status : "shipped"
+    : fallback;
+  await tx.update(shipments).set({status,updatedAt:new Date()}).where(eq(shipments.id,shipmentId));
 }
 
 async function advanceOrderIfFullyShipped(tx: TenantTransaction, context: TenantContext, orderId: string, requestId: string) {
@@ -158,9 +222,11 @@ async function openLogisticsException(tx: TenantTransaction, context: TenantCont
   const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!order) return;
   const exceptionId = createEntityId(); const sequence = order.latestEventSequence + 1;
-  await tx.insert(orderExceptions).values({ id: exceptionId, tenantId: context.tenantId, orderId, category: "logistics", code, message: "Shipment writeback requires operational reconciliation.", openedBy: context.userId });
+  const message=code==="AMAZON_ORDER_MARKETPLACE_UNVERIFIED" ? "请核对原订单的亚马逊站点及店铺授权" :
+    code==="AMAZON_PACKAGE_REFERENCE_CONFLICT" ? "本单两个包裹的亚马逊编号冲突，请核对原发货单" : "请核对原发货单和平台回传结果";
+  await tx.insert(orderExceptions).values({ id: exceptionId, tenantId: context.tenantId, orderId, category: "logistics", code, message, openedBy: context.userId });
   await tx.insert(orderExceptionEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, exceptionId, sequence: 1, status: "open", idempotencyKey, actorUserId: context.userId });
-  await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_opened", code, message: "Shipment writeback requires operational reconciliation.", metadata: { exceptionId, category: "logistics" }, idempotencyKey, actorUserId: context.userId });
+  await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "exception_opened", code, message, metadata: { exceptionId, category: "logistics" }, idempotencyKey, actorUserId: context.userId });
   await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(eq(orders.id, orderId));
 }
 

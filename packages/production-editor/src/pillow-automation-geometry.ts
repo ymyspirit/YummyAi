@@ -1,5 +1,6 @@
-import { SHAPED_PILLOW_FACTORY_STANDARD, type ProductionEditorImageLayer, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
+import { pillowOrderLengthMm, SHAPED_PILLOW_FACTORY_STANDARD, type ProductionEditorImageLayer, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
 import { buildPillowContour, getProductionLayout, sampleClosedContour } from "./geometry.js";
+import { factoryBarcodeDimensions } from "./products.js";
 import { optimizePillowContour } from "./pillow-contour-optimizer.js";
 import { applyPillowOutline, type PillowAlphaMask } from "./pillow-outline.js";
 import { measurePillowSubject, pillowRasterAlpha, planPillowSubjectPlacement, PILLOW_SUBJECT_ALPHA_THRESHOLD, type PillowSubjectMeasurement, type PillowSubjectPlacement, type PillowSubjectRaster } from "./pillow-subject.js";
@@ -41,7 +42,7 @@ export interface PillowAutomationGeometryVerification {
 export function verifyPillowAutomationGeometry(document: ShapedPillowDocument, raster: PillowSubjectRaster, options: PillowAutomationGeometryOptions): PillowAutomationGeometryVerification {
   requireFactoryDocument(document);
   const artwork = requireArtwork(document, options.artworkLayerId);
-  const measurement = measurePillowSubject(raster), placement = planPillowSubjectPlacement(measurement, options);
+  const measurement = measurePillowSubject(raster), placement = planPillowSubjectPlacement(measurement, options, document.spec.productionFactory);
   const roundingPx = options.roundingPx ?? PILLOW_AUTOMATION_CONTOUR_SETTINGS.maxExtraPx;
   if (!Number.isFinite(roundingPx) || roundingPx < 10 || roundingPx > 30) throw new Error("pillow_contour_allowance_out_of_range");
   const issues: string[] = [];
@@ -68,10 +69,10 @@ export function createPillowAutomationGeometry(document: ShapedPillowDocument, r
   requireFactoryDocument(document);
   const artwork = requireArtwork(document, options.artworkLayerId);
   const measurement = measurePillowSubject(raster);
-  const placement = planPillowSubjectPlacement(measurement, options);
+  const placement = planPillowSubjectPlacement(measurement, options, document.spec.productionFactory);
   const placed: ShapedPillowDocument = {
     ...document,
-    spec: { ...document.spec, declaredLongestMm: options.longestSideInches * 25.4 },
+    spec: { ...document.spec, declaredLongestMm: pillowOrderLengthMm(options.longestSideInches, document.spec.productionFactory) },
     layers: document.layers.map(layer => layer.id === artwork.id ? {
       ...artwork, widthMm: placement.artworkWidthMm, heightMm: placement.artworkHeightMm,
       xMm: placement.artworkOffsetXMm, yMm: placement.artworkOffsetYMm, locked: true,
@@ -86,8 +87,8 @@ export function recomputePillowAutomationGeometry(document: ShapedPillowDocument
   const artwork = requireArtwork(document, options.artworkLayerId);
   if (!artwork.locked) throw new Error("pillow_artwork_not_locked");
   const measurement = measurePillowSubject(raster);
-  const placement = planPillowSubjectPlacement(measurement, options);
-  if (Math.abs(artwork.widthMm - placement.artworkWidthMm) > 1e-7 || Math.abs(artwork.heightMm - placement.artworkHeightMm) > 1e-7 || Math.abs((document.spec.declaredLongestMm ?? 0) - options.longestSideInches * 25.4) > 1e-7) throw new Error("pillow_locked_artwork_size_mismatch");
+  const placement = planPillowSubjectPlacement(measurement, options, document.spec.productionFactory);
+  if (Math.abs(artwork.widthMm - placement.artworkWidthMm) > 1e-7 || Math.abs(artwork.heightMm - placement.artworkHeightMm) > 1e-7 || Math.abs((document.spec.declaredLongestMm ?? 0) - pillowOrderLengthMm(options.longestSideInches, document.spec.productionFactory)) > 1e-7) throw new Error("pillow_locked_artwork_size_mismatch");
   return buildGeometry(document, raster, options, measurement, placement);
 }
 
@@ -114,7 +115,7 @@ function buildGeometry(document: ShapedPillowDocument, raster: PillowSubjectRast
     return { ...point, xMm: artwork.xMm + x * Math.cos(radians) - y * Math.sin(radians), yMm: artwork.yMm + x * Math.sin(radians) + y * Math.cos(radians) };
   });
   const next = applyPillowOutline(document, points);
-  next.spec = { ...next.spec, sizeBasis: "artwork", artworkClipMode: "none", whiteBorderMm: pxToMm(200), cutLineMm: pxToMm(6), panelGapMm: pxToMm(100), sheetMarginMm: pxToMm(50), barcodeTab: { ...next.spec.barcodeTab, widthMm: pxToMm(600), heightMm: pxToMm(200) } };
+  next.spec = { ...next.spec, sizeBasis: "artwork", artworkClipMode: "none", whiteBorderMm: pxToMm(200), cutLineMm: pxToMm(6), panelGapMm: pxToMm(100), sheetMarginMm: pxToMm(50), barcodeTab: { ...next.spec.barcodeTab, ...factoryBarcodeDimensions(next.spec.productionFactory) } };
   next.exportBackground = "white";
   next.confirmations = { physicalSize: false, whiteBorderRule: false, narrowParts: false, barcodeTab: false, backText: false, visualReview: false };
   const issues = buildPillowContour(next).issues;

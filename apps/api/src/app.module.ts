@@ -275,6 +275,9 @@ import { OrderWorkspaceController } from "./orders/order-workspace.controller.js
 import { OrderWorkspaceService } from "./orders/order-workspace.service.js";
 import { OrderWholeDetailService } from "./orders/order-whole-detail.service.js";
 import { OrderTaskService } from "./orders/order-task.service.js";
+import { OrderFlowService } from "./orders/order-flow.service.js";
+import { FulfillmentRoutesService } from "./orders/fulfillment-routes.service.js";
+import { OrderFlowController } from "./orders/order-flow.controller.js";
 import { OrderResponsibilityService } from "./orders/order-responsibility.service.js";
 import { BusinessFollowupService } from "./business-followups/business-followup.service.js";
 import { BusinessFollowupController } from "./business-followups/business-followup.controller.js";
@@ -363,6 +366,8 @@ import {
   FactoryPortalController,
 } from "./orders/factory-portal.controller.js";
 import { OrderSyncCoordinator } from "./orders/order-sync-coordinator.js";
+import { OrderSyncScheduleService } from "./orders/order-sync-schedule.service.js";
+import { OrderSyncController } from "./orders/order-sync.controller.js";
 import { RedisCustomizationFileScanEnqueuer } from "./orders/redis-customization-file-scan-enqueuer.js";
 import {
   DrizzleNotificationRepository,
@@ -519,6 +524,8 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     AmazonOrderReportController,
     OrderDesignAgentController,
     OrderTaskController,
+    OrderFlowController,
+    OrderSyncController,
     OrderResponsibilityController,
     BusinessFollowupController,
     RuleCenterController,
@@ -821,6 +828,8 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     BusinessFollowupService,
     OrderWholeDetailService,
     OrderTaskService,
+    OrderFlowService,
+    FulfillmentRoutesService,
     OrderReviewService,
     { provide: AmazonReportArchiveGateway, useClass: HttpAmazonReportArchiveGateway },
     { provide: AmazonReportRetentionEnqueuer, useClass: RedisAmazonReportRetentionEnqueuer },
@@ -865,6 +874,7 @@ import { WorkflowOperatorService } from "./workflows/workflow-operator.service.j
     { provide: LogisticsEnqueuer, useClass: RedisLogisticsEnqueuer },
     { provide: ShiposReadGateway, useFactory: () => createShiposReadGateway() },
     OrderSyncCoordinator,
+    OrderSyncScheduleService,
     ProcurementService,
     InvoiceReconciliationService,
     IncomingInspectionService,

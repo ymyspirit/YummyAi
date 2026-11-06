@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { INestApplication } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { and, eq, sql } from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { z } from "zod";
 import { Permission } from "@yummyai/authz";
 import { createEntityId, CreateMarketplaceAccountInputSchema, TenantContextSchema, type TenantContext } from "@yummyai/contracts";
@@ -174,7 +175,8 @@ export function storeNodeExecutionFixture(database: DatabaseConnection, options:
   async function initialize() {
     try {
       const [count] = await database.client.unsafe("select count(*)::int as value from drizzle.__drizzle_migrations");
-      if (count?.value !== 180) throw new Error("store_node_fixture_requires_current180");
+      const migrations = readMigrationFiles({ migrationsFolder: resolve(root, "packages/database/migrations") });
+      if (count?.value !== migrations.length) throw new Error("store_node_fixture_requires_current_candidate_schema");
       await mkdir(lane, { recursive: true }); pkiFiles = await createExecutionPki(isolated.nonce); evidence.pkiDirectory = pkiFiles.directory;
       a = options.actor ? { ...options.actor, ceiling: { tenantId: options.actor.tenantId, userId: options.actor.userId, permissions: [...nodeExecutionPermissions], dataScope: "tenant" } } : await actor();
       peer = await actor(a.tenantId); foreign = await actor();

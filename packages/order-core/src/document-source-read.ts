@@ -27,7 +27,7 @@ export class OrderDocumentSourceReader {
     const source: DocumentOrderSource = { id:order.id, orderNumber:order.externalOrderId, lines:[], address:{
       recipient:address.recipient ?? "", countryCode:address.countryCode ?? "", address1:address.lines[0] ?? "",
       address2:address.lines.slice(1).join(" "), city:address.city ?? "", region:address.region ?? "",
-      postalCode:address.postalCode ?? "", phone:details.buyer.phone ?? "", email:details.buyer.email ?? "",
+      postalCode:address.postalCode ?? "", phone:(address.phone !== undefined ? address.phone : details.buyer.phone) ?? "", email:details.buyer.email ?? "",
     } };
     const rows = await tx.select().from(orderLines).where(eq(orderLines.orderId,orderId)).orderBy(asc(orderLines.id));
     if (!rows.length || rows.length > 100) throw new OriginalOwnerError(409,"单个订单支持 1 至 100 个商品 请先核对订单");

@@ -6,7 +6,7 @@ import { LogisticsEnqueuer } from "./logistics.service.js";
 @Injectable()
 export class RedisLogisticsEnqueuer extends LogisticsEnqueuer implements OnModuleDestroy {
   private readonly queue=createQueue(QueueName.Logistics);
-  async enqueue(input: {taskId:string;tenantId:string;requestedBy:string;mode:"quote"|"purchase"|"reconcile"|"retention";requestKey:string;delayMs?:number}) {
+  async enqueue(input: {taskId:string;tenantId:string;requestedBy:string;mode:"quote"|"purchase"|"reconcile"|"retention"|"track";requestKey:string;delayMs?:number}) {
     await enqueueJob(this.queue,"logistics.execute",{attempt:0,correlationId:input.taskId,idempotencyKey:logisticsJobKey(input),jobId:createEntityId(),maxAttempts:3,payload:{taskId:input.taskId,mode:input.mode},requestedAt:new Date().toISOString(),requestedBy:input.requestedBy,tenantId:input.tenantId,traceId:createTraceId()},{delay:input.delayMs});
   }
   async onModuleDestroy() {await this.queue.close();}

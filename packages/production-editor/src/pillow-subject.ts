@@ -1,3 +1,5 @@
+import { pillowOrderLengthMm, type PillowProductionFactory } from "@yummyai/contracts/pod/production-editor";
+
 /** Browser/server-safe measurement. This module never edits or resamples artwork. */
 export const PILLOW_SUBJECT_MEASUREMENT_VERSION = "pillow-subject-v1-2026-09-19" as const;
 export const PILLOW_SUBJECT_ALPHA_THRESHOLD = 32 as const;
@@ -74,22 +76,25 @@ export function measurePillowSubject(raster: PillowSubjectRaster): PillowSubject
   };
 }
 
-export function planPillowSubjectPlacement(measurement: PillowSubjectMeasurement, options: { longestSideInches: number }): PillowSubjectPlacement {
+export function planPillowSubjectPlacement(measurement: PillowSubjectMeasurement, options: { longestSideInches: number }, factory?: PillowProductionFactory): PillowSubjectPlacement {
   // A stored 609.5999999999999 mm order is still exactly the 24-inch size.
   // Normalize only floating-point conversion noise, never source pixel counts.
   const roundedInches = Math.round(options.longestSideInches);
   const longestSideInches = Math.abs(options.longestSideInches - roundedInches) < 1e-10 ? roundedInches : options.longestSideInches;
   if (!Number.isFinite(longestSideInches) || longestSideInches < 10 || longestSideInches > 24) throw new Error("pillow_subject_order_size_invalid");
+  if (factory && Math.abs(factory.sizeIn - longestSideInches) > 1e-8) throw new Error("pillow_subject_order_size_invalid");
   const { bounds } = measurement;
   if (measurement.version !== PILLOW_SUBJECT_MEASUREMENT_VERSION || measurement.alphaThreshold !== 32 || ![bounds.x, bounds.y, bounds.width, bounds.height, measurement.sourceWidthPx, measurement.sourceHeightPx].every(Number.isSafeInteger)
     || bounds.x < 0 || bounds.y < 0 || bounds.width <= 0 || bounds.height <= 0 || bounds.x + bounds.width > measurement.sourceWidthPx || bounds.y + bounds.height > measurement.sourceHeightPx) throw new Error("pillow_subject_measurement_invalid");
   // Do not round millimetres or round PPI up across the 150-PPI acceptance gate.
   const longestSourcePx = Math.max(bounds.width, bounds.height);
-  const mmPerSourcePixel = longestSideInches * 25.4 / longestSourcePx;
-  const effectivePpi = longestSourcePx / longestSideInches;
+  const lengthMm = pillowOrderLengthMm(longestSideInches, factory);
+  const physicalInches = factory?.adapter === "yicai_folder" ? lengthMm / 25.4 : longestSideInches;
+  const mmPerSourcePixel = lengthMm / longestSourcePx;
+  const effectivePpi = longestSourcePx / physicalInches;
   return {
     measurementVersion: PILLOW_SUBJECT_MEASUREMENT_VERSION, dpi: PILLOW_PRODUCTION_DPI,
-    longestSideInches, targetLongestPx: longestSideInches * PILLOW_PRODUCTION_DPI,
+    longestSideInches, targetLongestPx: physicalInches * PILLOW_PRODUCTION_DPI,
     subjectWidthMm: bounds.width * mmPerSourcePixel, subjectHeightMm: bounds.height * mmPerSourcePixel,
     artworkWidthMm: measurement.sourceWidthPx * mmPerSourcePixel,
     artworkHeightMm: measurement.sourceHeightPx * mmPerSourcePixel,

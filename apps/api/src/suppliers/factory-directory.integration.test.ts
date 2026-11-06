@@ -68,6 +68,7 @@ describe("tenant supplier has distinct factories and immutable manufacturing cap
     await expect(withTenant(database.db, context, tx => tx.update(fulfillmentFactoryVersions).set({ profile: { ...f.factory.profile, name: "Cannot overwrite" } }).where(eq(fulfillmentFactoryVersions.id, f.factory.versionId)))).rejects.toThrow();
     await expect(withTenant(database.db, context, tx => tx.delete(factoryCapabilityVersions).where(eq(factoryCapabilityVersions.id, f.capability.versionId)))).rejects.toThrow();
     await expect(service.createCapability(context, f.factory.id, { profile: { ...syntheticFactoryCapability(), productPlanId: createEntityId() }, idempotencyKey: randomUUID() })).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.createCapability(context, f.factory.id, { profile: { ...syntheticFactoryCapability(), spuId: createEntityId() }, idempotencyKey: randomUUID() })).rejects.toBeInstanceOf(ConflictException);
     await expect(service.directory(context, { tenantId: foreignTenant })).rejects.toThrow();
   });
   it("persists partial factory and capability drafts but rejects activation and production release", async () => {

@@ -11,6 +11,8 @@ export const amazonOrderReportBatches = pgTable("amazon_order_report_batches", {
   accountId: uuid("account_id").notNull(),
   marketplaceId: text("marketplace_id").notNull(),
   fileName: text("file_name").notNull(),
+  sourceType: text("source_type").default("report_file").notNull(),
+  dispatchedAt: timestamp("dispatched_at", { mode: "date", withTimezone: true }),
   reportChecksum: text("report_checksum").notNull(),
   encryptedReport: text("encrypted_report"),
   rowCount: integer("row_count").notNull(),
@@ -26,11 +28,13 @@ export const amazonOrderReportBatches = pgTable("amazon_order_report_batches", {
   check("amazon_order_report_batches_id_uuidv7_check", sql`substring(${table.id}::text from 15 for 1) = '7'`),
   check("amazon_order_report_batches_checksum_check", sql`${table.reportChecksum} ~ '^[0-9a-f]{64}$'`),
   check("amazon_order_report_batches_status_check", sql`${table.status} in ('importing','completed','partial','failed')`),
+  check("amazon_order_report_batches_source_type_check", sql`${table.sourceType} in ('report_file','orders_api')`),
   check("amazon_order_report_batches_counts_check", sql`${table.rowCount} >= 0 and ${table.orderCount} >= 0 and ${table.orderCount} <= ${table.rowCount} and ${table.newOrderCount} >= 0 and ${table.duplicateOrderCount} >= 0 and ${table.failedOrderCount} >= 0 and ${table.newOrderCount} + ${table.duplicateOrderCount} + ${table.failedOrderCount} <= ${table.orderCount}`),
   foreignKey({ columns: [table.tenantId, table.accountId], foreignColumns: [marketplaceAccounts.tenantId, marketplaceAccounts.id], name: "amazon_order_report_batches_account_fk" }).onDelete("restrict"),
   uniqueIndex("amazon_order_report_batches_tenant_id_unique").on(table.tenantId, table.id),
   index("amazon_order_report_batches_account_idx").on(table.tenantId, table.accountId, table.createdAt),
   index("amazon_order_report_batches_retention_idx").on(table.tenantId, table.expiresAt),
+  index("amazon_order_report_batches_dispatch_idx").on(table.tenantId, table.createdAt, table.id).where(sql`${table.sourceType} = 'orders_api' and ${table.dispatchedAt} is null`),
 ]);
 
 export const amazonOrderReportBatchItems = pgTable("amazon_order_report_batch_items", {

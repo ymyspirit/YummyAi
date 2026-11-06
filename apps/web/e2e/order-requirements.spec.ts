@@ -250,7 +250,7 @@ test.describe("order requirements personal source interpretation and Agent-first
       expect(opened.project.id).toBe(editor.project.id); expect(opened.version.id).toBe(candidate.currentEditorVersionId);
       const session = page.getByRole("region", { name: "当前任务生产作图", exact: true });
       await expect(session.getByRole("heading", { name: `${f.externalId} · 制作需求 V${handoff.line.revision}`, exact: true })).toBeVisible();
-      await expect(session.getByRole("combobox", { name: "打开生产项目", exact: true })).toHaveValue(editor.project.id);
+      await expect(session.getByRole("combobox", { name: "打开生产文件", exact: true })).toHaveValue(editor.project.id);
       await expect(session.getByRole("combobox", { name: "历史版本", exact: true })).toHaveValue(candidate.currentEditorVersionId!);
       await expect(session.getByRole("textbox", { name: "图稿名称", exact: true })).toHaveValue(unapproved.version.document.name);
       const openedRoute = new URL(page.url());

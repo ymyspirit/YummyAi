@@ -4,8 +4,8 @@ export const centers: Record<
   { title: string; description: string; path: string }
 > = {
   orders: {
-    title: "订单中心",
-    description: "核对商品与定制要求，确认后推送制图。",
+    title: "订单工作台",
+    description: "集中审单与审核生产图 按产品规则自动推进履约",
     path: "/orders",
   },
   artwork: {

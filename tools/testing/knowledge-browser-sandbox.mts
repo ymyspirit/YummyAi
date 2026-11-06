@@ -70,7 +70,7 @@ export async function createKnowledgeBrowserSandbox(
     const nextCli = join(repo, "apps", "web", "node_modules", "next", "dist", "bin", "next");
     return {
       cwd: web,
-      command: '"' + process.execPath + '" "' + nextCli + '" dev --hostname 127.0.0.1 --port ' + port,
+      command: '"' + process.execPath + '" "' + nextCli + '" dev ' + (process.platform === "win32" ? "--webpack " : "") + '--hostname 127.0.0.1 --port ' + port,
       cleanup,
     };
   } catch (error) {

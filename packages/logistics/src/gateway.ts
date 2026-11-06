@@ -14,6 +14,7 @@ export interface LogisticsGateway {
   lookup(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, externalReference: string): Promise<LogisticsProviderResult | null>;
   labels(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, externalReference: string): Promise<LogisticsProviderResult>;
   downloadLabel(profile: LogisticsConnectionProfile, url: string): Promise<Uint8Array>;
+  handover?(profile: LogisticsConnectionProfile, credentials: LogisticsCredentials, reference:string, waybill:string, tracking:string|null, createdAt:Date): ReturnType<YunexpressOpenApi["handover"]>;
 }
 const record = (value: unknown) => z.record(z.string(), z.unknown()).parse(value);
 const text = (v: unknown) => typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
@@ -51,6 +52,11 @@ export class HttpLogisticsGateway implements LogisticsGateway {
     return this.environment.NODE_ENV !== "production" && this.environment.E2E_ISOLATED_DAILY === "1" && expected === origin
       && /^\/order_daily_e2e_[a-f0-9]{32}$/.test(new URL(this.environment.DATABASE_URL ?? "http://invalid/").pathname)
       && /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+  }
+  async handover(p:LogisticsConnectionProfile,c:LogisticsCredentials,reference:string,waybill:string,tracking:string|null,createdAt:Date) {
+    this.assertProfile(p);this.assertCredentials(p,c);
+    if(p.provider!=="yunexpress" || p.yunexpressProtocol!=="openapi") throw new LogisticsTransportError("INVALID_RESPONSE");
+    return this.yun.handover(p,c,reference,waybill,tracking,createdAt);
   }
   async channels(p: LogisticsConnectionProfile, c: LogisticsCredentials) {
     this.assertProfile(p);
@@ -170,7 +176,8 @@ export class HttpLogisticsGateway implements LogisticsGateway {
     return bytes;
   }
   private assertPackages(p: LogisticsConnectionProfile, t: LogisticsTaskSnapshot) {
-    normalizedRegion(p.sender);normalizedRegion(t.recipient);
+    if (!(p.provider === "yunexpress" && p.yunexpressProtocol === "openapi" && p.yunexpressSenderMode === "platform_default")) normalizedRegion(p.sender);
+    normalizedRegion(t.recipient);
     for(const pack of t.packages){kg(pack.weightGrams);for(const d of pack.declarations)kg(d.unitWeightGrams);}
     if(p.provider==="shipos"){if(!t.recipient.email)throw new Error("SHIPOS_RECIPIENT_EMAIL_REQUIRED");return;}
     if(t.packages.length!==1)throw new Error("YUN_MULTI_PACKAGE_REQUIRES_REVIEW");
@@ -204,19 +211,30 @@ export class HttpLogisticsGateway implements LogisticsGateway {
 // Round upward at the carrier's precision; never understate converted lb/in measurements.
 function kg(grams: number) { if(!Number.isFinite(grams)||grams<=0)throw new Error("INVALID_PACKAGE_WEIGHT");return (Math.ceil(grams)/1000).toFixed(3); }
 function cm(mm: number, integer = false) { const value=integer?mm/10:mm*10,rounded=Math.round(value*1e9)/1e9;return integer ? String(Math.ceil(rounded)) : (Math.ceil(rounded)/100).toFixed(2); }
-function channelFits(p:LogisticsConnectionProfile,channel:LogisticsConnectionProfile["channels"][number],t:LogisticsTaskSnapshot,liveName=channel.name){
+export function channelFits(p:LogisticsConnectionProfile,channel:LogisticsConnectionProfile["channels"][number],t:LogisticsTaskSnapshot,liveName=channel.name){
   const name=p.provider==="shipos"?liveName:"",gofo=/gofo/i.test(name),usps=/usps/i.test(name);
   const maxSide=Math.min(channel.maxDimensionMm,gofo?609.6:usps?558.8:Infinity),maxSum=Math.min(channel.maxSumDimensionsMm??Infinity,gofo?1524:Infinity);
   return channel.countryCodes.includes(t.recipient.countryCode)&&t.packages.every(pack=>{
     const dimensions=Object.values(pack.dimensionsMm).map(value=>p.provider==="yunexpress"&&p.yunexpressProtocol==="openapi" ? Math.ceil(Math.round(value*100*1e9)/1e9)/100 : Number((Number(cm(value,p.provider==="yunexpress"))*10).toFixed(3)));
-    return Math.ceil(pack.weightGrams)<=channel.maxWeightGrams&&Math.max(...dimensions)<=maxSide&&Number(dimensions.reduce((sum,value)=>sum+value,0).toFixed(3))<=maxSum&&(!pack.containsBattery||channel.acceptsBattery);
+    const [longest,second,shortest]=dimensions.sort((a,b)=>b-a) as [number,number,number];
+    const billing=channel.volumetricBilling,actual=Math.ceil(pack.weightGrams);
+    // mm³ / (cm³/kg) is grams. This is eligibility only; the API supplies the
+    // complete price and must not receive a second, locally added volume charge.
+    const volumeGrams=billing ? longest*second*shortest/billing.divisorCm3PerKg : 0;
+    const chargeable=billing ? Math.ceil(Math.max(billing.minimumGrams,volumeGrams>=actual*billing.actualWeightThresholdMultiple ? volumeGrams : actual)/billing.stepGrams)*billing.stepGrams : actual;
+    return actual<=channel.maxWeightGrams&&chargeable<=channel.maxWeightGrams&&longest<=maxSide
+      &&second<=(channel.maxSecondDimensionMm??Infinity)
+      &&Number((longest+2*(second+shortest)).toFixed(3))<=(channel.maxLengthPlusGirthMm??Infinity)
+      &&longest>=(channel.minLongestDimensionMm??0)&&second>=(channel.minSecondDimensionMm??0)
+      &&Number(dimensions.reduce((sum,value)=>sum+value,0).toFixed(3))<=maxSum&&(!pack.containsBattery||channel.acceptsBattery);
   });
 }
 function normalizedRegion(a:LogisticsAddress) { const region=normalizeDocumentRegion(a.region,a.countryCode);if(!region.valid)throw new Error("RECIPIENT_REGION_REQUIRES_REVIEW");return region.value; }
 function shiposAddress(a: LogisticsAddress) { return { name: a.name, company: a.company, addr1: a.address1, addr2: a.address2, city: a.city, state: normalizedRegion(a), country: a.countryCode, postcode: a.postalCode, tel: a.phone, ...(a.email ? { email: a.email } : {}) }; }
 function yunAddress(a: LogisticsAddress) { const parts=a.name.trim().split(/\s+/u),first=parts.shift()!;return { FirstName: first, LastName: parts.join(" "), Company: a.company, Street: a.address1, StreetAddress1: a.address1, StreetAddress2: a.address2, City: a.city, State: normalizedRegion(a), CountryCode: a.countryCode, Zip: a.postalCode, Phone: a.phone }; }
 function shiposBody(p: LogisticsConnectionProfile,t: LogisticsTaskSnapshot,reference: string) {
-  return { orderid: reference, module: 2, from_address: shiposAddress(p.sender), to_address: shiposAddress(t.recipient),
+  return { orderid: reference, module: 2,
+    from_address: p.shiposSenderAddressId ? { faddid: p.shiposSenderAddressId } : shiposAddress(p.sender), to_address: shiposAddress(t.recipient),
     packages: t.packages.map((pack,i) => ({ xh: i+1, weight: kg(pack.weightGrams), length: cm(pack.dimensionsMm.length), width: cm(pack.dimensionsMm.width), height: cm(pack.dimensionsMm.height) })),
     shenbao: t.packages.flatMap((pack,i) => pack.declarations.map(d => ({ xh: i+1, sku: d.sku, itemcn: d.nameCn, itemen: d.nameEn, price: d.unitPriceMinor/10**d.minorUnitDigits, num: d.quantity, cweight: kg(d.unitWeightGrams), hscode: d.hsCode, origin: d.originCountryCode, currency: d.currency }))) };
 }

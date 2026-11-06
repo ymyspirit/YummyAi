@@ -24,6 +24,8 @@ import { FulfillmentCommandScope, FulfillmentCommandRecovery } from "./fulfillme
 import { AgentFulfillmentProposalHandoff } from "../ai-tasks/agent-fulfillment-proposal-handoff";
 import { orderFieldLabel, orderFieldPriority, orderFieldValue, orderProductLabel } from "./order-operations-summary";
 import { orderItemWorkflow } from "./order-item-workflow";
+import { OrderFlowPanel } from "./order-flow-panel";
+import "./fulfillment-flow.css";
 
 const idle: OrderReviewState = { dirty: false, busy: false, loading: false };
 const originalFieldText = (value: string) => value.trim() ? value : "未填写";
@@ -53,6 +55,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   const [deliveryOpen, setDeliveryOpen] = useState(false), [deliveryLoaded, setDeliveryLoaded] = useState(false);
   const [pendingAction, setPendingAction] = useState<WholeOrderNextStep | null>(null);
   const [reviewLoaded, setReviewLoaded] = useState(false);
+  const [automaticDesign,setAutomaticDesign]=useState(false);
   const [taskBusy, setTaskBusy] = useState(false), [exceptionState, setExceptionState] = useState(idle);
   const [fulfillmentState, setFulfillmentState] = useState({ busy: false, loading: false });
   const operation = useRef<HTMLDivElement>(null), delivery = useRef<HTMLDetailsElement>(null);
@@ -67,6 +70,11 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
   }, [id, module, editorOpen]);
   useEffect(() => {
     if (!pendingAction || pendingAction.lineId !== id || pendingAction.module !== module || !focusReady || loading || itemState.loading || !view?.items.some(item => item.line.id === id)) return;
+    const selected = view.items.find(item => item.line.id === id)!.line;
+    // Opening an automatically handled order should keep its progress and
+    // factory files in view. Explicit item operations still focus their form.
+    if (!pendingAction.action && module === "orders" && selected.fulfillmentFlowStage && selected.artwork === "approved"
+      && !selected.held && !selected.sourceChanged) { setPendingAction(null); return; }
     if (module !== "production" && deliveryOpen && !deliveryState.dirty) { setDeliveryOpen(false); return; }
     const element = pendingAction.target
       ? operation.current?.querySelector<HTMLElement>(`[data-order-action="${pendingAction.target}"]`)
@@ -128,6 +136,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
       <header className="oc-header oc-whole-header"><div><h1>{first.externalOrderId}</h1><p>{first.storeName} · {view.items.length} 商品行 · 共 {quantity} 件 · 整单制作、统一打包</p><Link href={`/logistics?orderId=${view.orderId}#documents`}>按工厂生成物流表与生产导单</Link>{back && <Link className="oc-button" href={back} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>{back.startsWith("/business-tasks?") ? "返回业务任务" : "返回来源页面"}</Link>}</div>
         <button className="oc-button" disabled={disabled || dirty} onClick={() => { setDetailRefresh(value => value + 1); setRefresh(value => value + 1); }}><RefreshCw size={14} />刷新整单</button></header>
       <OrderLifecycleProgress status={first.orderStatus} />
+      <OrderFlowPanel orderId={view.orderId} refreshToken={refresh} disabled={disabled||dirty} onChanged={changed} onAutomaticDesign={setAutomaticDesign}/>
       {error && <p role="alert" className="oc-error">{error} 下方为上次读取的记录。</p>}
       <div className="oc-whole-next" aria-label="整单下一步"><div><small>当前该做</small><strong>{task.title}</strong><p>{task.description}</p></div>
         <button className="oc-button primary" disabled={disabled || dirty || !!error} onClick={nextAction}>{task.action}<ArrowRight size={14} /></button></div>
@@ -153,7 +162,7 @@ function ReadableOrderWholeDetailPanel({ id, module, options, editorOpen, onEdit
     {deliveryState.dirty && <p className="oc-hint">请先登记或清空工厂回执，再操作本件商品与发货表单。</p>}
     <div ref={operation} className="oc-whole-operation" tabIndex={-1} inert={deliveryState.dirty || deliveryState.busy || taskBusy || exceptionState.dirty || exceptionState.busy}>
       <OrderWorkDetailPanel key={`${id}:${module}`} id={id} module={module} options={options} editorOpen={editorOpen} onEditor={onEditor} onBack={onClose} onChanged={changed} refreshToken={detailRefresh} unified onSelectItem={selectOperation} navigationReady={navigationReady}
-        onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
+        automaticDesign={automaticDesign} onModuleChange={target => selectOperation(id, target)} review={{ hasNext: review.hasNext, autoAdvance: false, onStateChange: setItemState, onNext: review.onNext, onSavedNext: () => undefined }} />
     </div>
     {!editorOpen && <>
       <section className="oc-whole-items" aria-label="本单全部商品与审核稿"><h2>本单全部商品与审核稿</h2>

@@ -4,7 +4,7 @@ import { authorize, Permission, type PermissionValue } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import {
   CreateManufacturingRecipeSchema, ReviseManufacturingRecipeSchema, ReviewManufacturingRecipeSchema, ManufacturingDemandSchema,
-  manufacturingApprovalProblems, calculateManufacturingDemand,
+  manufacturingApprovalProblems, calculateManufacturingDemand, outsourcedManufacturingFactory,
   type ManufacturingRecipeContent, type ManufacturingRecipeVersionView, type ManufacturingRecipeWorkspace, type ManufacturingTransport,
   type ManufacturingReferences, type ManufacturingMaterialOptions,
 } from "@yummyai/contracts/catalog/manufacturing";
@@ -14,6 +14,7 @@ import {
   manufacturingRecipes as recipes, manufacturingRecipeVersions as versions, manufacturingBomLines as materials,
   manufacturingOperations as operations, manufacturingRecipeReviews as reviews, manufacturingRecipeCommands as commands,
   productSpecifications, productSpecificationVersions, inventoryStockItems, spus, productPlans,
+  fulfillmentFactories, fulfillmentFactoryVersions, fulfillmentSuppliers,
   type DatabaseConnection, type TenantTransaction,
 } from "@yummyai/database";
 import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from "drizzle-orm";
@@ -22,6 +23,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION } from "../platform.tokens.js";
 import { withCatalogTenant } from "./catalog-access.js";
 import { readManufacturingVersion } from "./manufacturing-read.js";
+import { hasTenantOrderPermissions } from "@yummyai/order-core";
 
 type Recipe = typeof recipes.$inferSelect;
 const Query = z.object({ spuId: z.uuidv7(), after: z.uuidv7().optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).strict();
@@ -78,7 +80,18 @@ export class ManufacturingService {
     if (version.versionNumber !== identity.number) throw new ConflictException("产品规格已更新 请明确选择当前规格后建立新制造版本");
     return version;
   }
+  private outsourcingFactories(tx: TenantTransaction, factoryId?: string) {
+    return tx.select({ id: fulfillmentFactories.id, name: fulfillmentFactories.name }).from(fulfillmentFactories)
+      .innerJoin(fulfillmentFactoryVersions, and(eq(fulfillmentFactoryVersions.factoryId, fulfillmentFactories.id),
+        eq(fulfillmentFactoryVersions.versionNumber, fulfillmentFactories.currentVersionNumber)))
+      .innerJoin(fulfillmentSuppliers, eq(fulfillmentSuppliers.id, fulfillmentFactories.supplierId))
+      .where(and(eq(fulfillmentFactories.status, "active"), eq(fulfillmentSuppliers.status, "active"),
+        sql`${fulfillmentFactoryVersions.profile}->>'ownership'='partner'`, factoryId ? eq(fulfillmentFactories.id, factoryId) : undefined))
+      .orderBy(asc(fulfillmentFactories.name), asc(fulfillmentFactories.id));
+  }
   private async stockProblems(tx: TenantTransaction, content: ManufacturingRecipeContent, strictUnit: boolean) {
+    const factoryId = outsourcedManufacturingFactory(content);
+    if (factoryId && !(await this.outsourcingFactories(tx, factoryId)).length) throw new ConflictException("所选外协工厂当前不可用");
     const ids = [...new Set(content.materials.flatMap(row => row.stockItemId ? [row.stockItemId] : []))].sort();
     const stocks = ids.length ? await tx.select({ id: inventoryStockItems.id, unit: inventoryStockItems.baseUnit, status: inventoryStockItems.status })
       .from(inventoryStockItems).where(inArray(inventoryStockItems.id, ids)).orderBy(asc(inventoryStockItems.id)).for("share") : [];
@@ -97,6 +110,8 @@ export class ManufacturingService {
   private async addVersion(tx: TenantTransaction, context: TenantContext, root: Recipe, content: ManufacturingRecipeContent, versionNumber: number) {
     await assertCatalogSourceActive(tx, root.spuId);
     await this.currentSpecification(tx, root, content.specificationVersionId);
+    if (outsourcedManufacturingFactory(content) && !hasTenantOrderPermissions(context, [Permission.OrderRead]))
+      throw new ConflictException("选择外协工厂需要本组织的工厂读取权限");
     authorize(context, Permission.InventoryRead);
     await this.stockProblems(tx, content, true);
     const versionId = createEntityId();
@@ -248,6 +263,7 @@ export class ManufacturingService {
         .from(productSpecifications).innerJoin(productSpecificationVersions, and(eq(productSpecificationVersions.specificationId, productSpecifications.id), eq(productSpecificationVersions.versionNumber, productSpecifications.versionNumber)))
         .where(eq(productSpecifications.spuId, spuId)).orderBy(asc(productSpecifications.code), asc(productSpecifications.id));
       return { spu: { ...spu!, ...plan!, active: !sourceProblems.length }, sourceProblems, canReadMaterials: current.permissions.includes(Permission.InventoryRead),
+        outsourcingFactories: hasTenantOrderPermissions(current, [Permission.OrderRead]) ? await this.outsourcingFactories(tx) : [],
         specifications: specs.map(({ facts, ...spec }) => ({ ...spec, factsReady: specificationProductionFactsReady(facts) })) };
     }, wrapped);
   }

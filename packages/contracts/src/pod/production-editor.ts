@@ -14,6 +14,17 @@ export const SHAPED_PILLOW_FACTORY_STANDARD = {
   barcodeWidthPx: 600, barcodeHeightPx: 200, minimumNeckMm: 50,
 } as const;
 
+export const PillowProductionFactorySchema = z.object({
+  adapter: z.enum(["printeque_factory", "yicai_folder"]),
+  factoryId: z.uuidv7(), documentProfileVersionId: z.uuidv7(),
+  sizeIn: z.number().positive().max(1000),
+}).strict();
+export type PillowProductionFactory = z.infer<typeof PillowProductionFactorySchema>;
+
+export function pillowOrderLengthMm(inches: number, factory?: PillowProductionFactory) {
+  return inches * (factory?.adapter === "yicai_folder" ? 25 : 25.4);
+}
+
 export const ProductionProductTypeSchema = z.enum(["shaped_pillow", "tire_cover", "rectangular_print"]);
 export type ProductionProductType = z.infer<typeof ProductionProductTypeSchema>;
 
@@ -46,6 +57,7 @@ export const ShapedPillowDocumentSchema = BaseDocument.extend({
   productType: z.literal("shaped_pillow"),
   spec: z.object({
     factoryStandardId: z.literal(SHAPED_PILLOW_FACTORY_STANDARD.id).optional(),
+    productionFactory: PillowProductionFactorySchema.optional(),
     /** Physical bounding box of ONE cut-contour body, excluding barcode tab. */
     widthMm: SizeMm, heightMm: SizeMm, dpi: z.literal(150), sideMode: z.enum(["single", "double"]),
     declaredLongestMm: SizeMm.nullable(), sizeBasis: z.enum(["unconfirmed", "artwork", "cut_contour", "finished"]),

@@ -19,6 +19,9 @@ describe("authorized order HTTP adapters", () => {
 
     expect(result).toMatchObject({ nextCursor: "page-3", reportedCount: 9, sourceVersion: "amazon-orders-2026-01-01" });
     expect(result.records[0]?.order.externalOrderId).toBe("111-2222222-3333333");
+    expect(result.records[0]?.order.protectedDetails).toMatchObject({ buyer: { name: "Buyer", email: "buyer@example.test" },
+      shippingAddress: { recipient: "Recipient", lines: ["Secret street"], phone: "0123456789" },
+      customizations: [{ values: [{ type: "file_reference", externalReference: "https://custom.example.test/private.zip" }] }] });
     const url = new URL(String(request.mock.calls[1]![0]));
     expect(url.pathname).toBe("/orders/2026-01-01/orders");
     expect(url.searchParams.get("paginationToken")).toBe("page-2");
@@ -46,6 +49,26 @@ describe("authorized order HTTP adapters", () => {
     expect(url.searchParams.get("offset")).toBe("1");
     expect(url.searchParams.get("sort_on")).toBe("updated");
     expect(url.searchParams.get("min_last_modified")).toBe("1784718000");
+  });
+
+  it("deduplicates Amazon content across windows and page positions while keeping changed orders distinct", async () => {
+    const first = amazonOrder();
+    const other = { ...first, orderId: "112-2222222-3333333" };
+    const reordered = Object.fromEntries(Object.entries(first).reverse());
+    const changed = { ...first, recipient: { deliveryAddress: { ...first.recipient.deliveryAddress, phone: "0987654321" } } };
+    const pages = [[first, other], [other, reordered], [changed]];
+    const request = vi.fn(async (url: string | URL | Request) => String(url).includes("/auth/o2/token")
+      ? json({ access_token: "amazon-access" }) : json({ orders: pages.shift() }));
+    const adapter = new AmazonOrdersAdapter(request as typeof fetch, { AMAZON_SPAPI_ENDPOINT_NA: "https://spapi.example.test" }, now);
+    const context = amazonContext(), access = credential({ refreshToken: "refresh", clientId: "client", clientSecret: "secret" });
+    const a = await adapter.fetchPage(context, access, syncRequest(null), new AbortController().signal);
+    const b = await adapter.fetchPage(context, access, { ...syncRequest("page-2"), updatedBefore: "2026-07-22T12:05:00.000Z" }, new AbortController().signal);
+    const c = await adapter.fetchPage(context, access, syncRequest(null), new AbortController().signal);
+    expect(a.records[0]?.order.externalEventId).toBe(b.records[1]?.order.externalEventId);
+    expect(a.records[1]?.order.externalEventId).toBe(b.records[0]?.order.externalEventId);
+    expect(a.records[0]?.order.externalEventId).not.toBe(a.records[1]?.order.externalEventId);
+    expect(c.records[0]?.order.externalEventId).not.toBe(a.records[0]?.order.externalEventId);
+    expect(c.records[0]?.order.externalEventId).toMatch(/^search:[a-f0-9]{64}$/);
   });
 
   it("returns rate-limit timing to the job retry boundary without retrying blindly", async () => {
@@ -91,9 +114,10 @@ function amazonOrder() {
     fulfillment: { fulfillmentStatus: "UNSHIPPED", shipByWindow: { latestDateTime: "2026-07-24T23:59:59Z" } },
     salesChannel: { marketplaceId: "ATVPDKIKX0DER" },
     proceeds: { grandTotal: { amount: "25.00", currencyCode: "USD" } },
-    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } } }, quantityOrdered: 1 }],
-    buyer: { name: "Buyer", email: "buyer@example.test" },
-    recipient: { name: "Buyer", addressLines: ["Secret street"], city: "Seattle", stateOrRegion: "WA", postalCode: "98101", countryCode: "US" },
+    orderItems: [{ orderItemId: "item-1", product: { asin: "B000TEST", sellerSku: "SKU-1", title: "Custom mug", price: { unitPrice: { amount: "25.00", currencyCode: "USD" } },
+      customization: { customizedUrl: "https://custom.example.test/private.zip" } }, quantityOrdered: 1 }],
+    buyer: { buyerName: "Buyer", buyerEmail: "buyer@example.test" },
+    recipient: { deliveryAddress: { name: "Recipient", addressLine1: "Secret street", city: "Seattle", stateOrRegion: "WA", postalCode: "98101", countryCode: "US", phone: "0123456789" } },
   };
 }
 

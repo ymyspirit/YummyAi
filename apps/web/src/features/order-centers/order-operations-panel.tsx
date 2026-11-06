@@ -80,6 +80,7 @@ export function OrderOperationsPanel({
   const onMaterialBusy = useCallback((productionId: string, value: boolean) => setMaterialReading(previous => previous[productionId] === value ? previous : { ...previous, [productionId]: value }), []);
   const [pendingIntent, setPendingIntent] = useState<OperationIntent | null>(null);
   const [recoveryBlocked, setRecoveryBlocked] = useState(true), [recoveryRefresh, setRecoveryRefresh] = useState(0);
+  const [supplyFactories, setSupplyFactories] = useState<Record<string, string | undefined>>({});
   const [remakeReady, setRemakeReady] = useState<Record<string, boolean>>({});
   const [capacityReady, setCapacityReady] = useState<Record<string, boolean>>({}), [remakeDue, setRemakeDue] = useState<Record<string, string>>({});
   const sending = useRef(false);
@@ -432,6 +433,7 @@ export function OrderOperationsPanel({
                       }
                     >
                       <ProductionManufacturingFields lineId={id} originalProductionOrderId={production.id} disabled={busy}
+                        onSupplyChange={id => setSupplyFactories(current => current[production.id] === id ? current : { ...current, [production.id]: id })}
                         onReadinessChange={ready => setRemakeReady(current => current[production.id] === ready ? current : { ...current, [production.id]: ready })} />
                       <label>
                         补做原因
@@ -441,7 +443,7 @@ export function OrderOperationsPanel({
                         补做工厂当地预计完成
                         <input required name="time" type="datetime-local" value={remakeDue[production.id] ?? ""} onChange={event => setRemakeDue(current => ({ ...current, [production.id]: event.target.value }))} />
                       </label>
-                      {record.factoryPin && version ? <ProductionCapacityPicker factoryId={record.factoryPin.factoryId} items={[{ reference: production.id, factoryVersionId: record.factoryPin.factoryVersionId, capabilityVersionId: record.factoryPin.capabilityVersionId, quantity: version.quantity, dueLocal: remakeDue[production.id] ?? "" }]}
+                      {record.factoryPin && version ? <ProductionCapacityPicker factoryId={record.factoryPin.factoryId} items={[{ reference: production.id, factoryVersionId: record.factoryPin.factoryVersionId, capabilityVersionId: record.factoryPin.capabilityVersionId, outsourcedFactoryId: supplyFactories[production.id], quantity: version.quantity, dueLocal: remakeDue[production.id] ?? "" }]}
                         basisKey={`${production.id}:${version.id}:${production.projectionVersion}:${remakeReady[production.id]}`} disabled={busy}
                         onReady={ready => setCapacityReady(current => current[production.id] === ready ? current : { ...current, [production.id]: ready })} />
                         : <p className="oc-error">原生产没有可读取的固定工厂与能力 当前不能安排新补做</p>}

@@ -11,6 +11,12 @@ const row = (patch: Partial<OrderWorkListItem> = {}) => ({
 }) as OrderWorkListItem;
 
 describe("per-item next steps follow the existing order workflow", () => {
+  it("shows automatic progress instead of asking for factory and document clicks",()=>{
+    const line=row({preparation:"pushed",artwork:"approved",production:"planned",fulfillmentFlowStage:"logistics"});
+    expect(orderItemWorkflow(line)).toMatchObject({module:"orders",action:"查看本单进度"});
+    expect(orderItemWorkflow({...line,fulfillmentFlowStage:"waiting_factory"})).toMatchObject({action:"查看工厂文件"});
+    expect(orderItemWorkflow({...line,held:true})).toMatchObject({action:"处理暂停"});
+  });
   it.each([
     [{}, "开始审单"],
     [{ preparation: "needs_information" }, "补齐资料"],

@@ -26,6 +26,7 @@ export const OrderProtectedDetailsSchema = z.object({
     recipient: z.string().trim().min(1).max(300).nullable(), lines: z.array(z.string().trim().min(1).max(500)).max(5),
     city: z.string().trim().min(1).max(200).nullable(), region: z.string().trim().min(1).max(200).nullable(),
     postalCode: z.string().trim().min(1).max(80).nullable(), countryCode: z.string().regex(/^[A-Z]{2}$/).nullable(),
+    phone: z.string().trim().min(1).max(80).nullable().optional(),
   }).strict(),
   customizations: z.array(z.object({ externalLineId: z.string().trim().min(1).max(300), values: z.array(OrderCustomizationValueSchema).max(100) }).strict()).max(1_000),
 }).strict();

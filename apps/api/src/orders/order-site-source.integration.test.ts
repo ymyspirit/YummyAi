@@ -40,11 +40,11 @@ type Intake = { orderId: string; lineId: string; input: NormalizeOrderInput };
 describe.sequential("order site provenance and exact channel resolution", () => {
   const db = connectDatabase(), audit = new AuditService(db), vault = new SecretVault(Buffer.alloc(32, 89));
   const service = new OrderService(db, vault, audit);
-  const coordinator = new OrderSyncCoordinator(new OrderIngestionService(db, audit), service);
   const reports = new AmazonOrderReportService(db, vault, service, audit, {
     download: async () => { throw Error("No remote attachments in site fixtures"); },
     scan: async () => ({ result: "clean" as const, engine: "synthetic", signatureVersion: "synthetic", scannedAt: new Date().toISOString() }),
   }, { schedule: async () => undefined }, { schedule: async () => undefined });
+  const coordinator = new OrderSyncCoordinator(new OrderIngestionService(db, audit), service, reports);
   let a: Actor, b: Actor;
   let usPackage: string, caPackage: string, newerUsPackage: string, controlledPackage: string, etsyPackage: string, foreignPackage: string;
 
@@ -129,7 +129,7 @@ describe.sequential("order site provenance and exact channel resolution", () => 
   function input(owner: Actor, code: string, options: { site?: string; accountId?: string; placedAt?: string; externalOrderId?: string; source?: Record<string, unknown> } = {}) {
     const id = options.externalOrderId ?? `SYNTHETIC-${randomUUID()}`;
     const record = normalizeAmazonOrder(options.accountId ?? owner.amazon, randomUUID(), {
-      orderId: id, createdTime: options.placedAt ?? at, lastUpdatedTime: options.placedAt ?? at, fulfillmentStatus: "UNSHIPPED",
+      orderId: id, createdTime: options.placedAt ?? at, lastUpdatedTime: options.placedAt ?? at, fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" },
       salesChannel: { marketplaceId: options.site ?? us }, orderTotal: { amount: "20.00", currencyCode: "USD" },
       orderItems: [{ orderItemId: "LINE-1", product: { asin, sellerSku: code, title: "Synthetic site item" }, quantityOrdered: 1, unitPrice: { amount: "20.00", currencyCode: "USD" } }],
     });

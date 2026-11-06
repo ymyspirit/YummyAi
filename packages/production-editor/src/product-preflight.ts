@@ -1,4 +1,4 @@
-import { SHAPED_PILLOW_FACTORY_STANDARD, type ProductionEditorDocument, type ProductionEditorPreflightIssue } from "@yummyai/contracts/pod/production-editor";
+import { pillowOrderLengthMm, SHAPED_PILLOW_FACTORY_STANDARD, type ProductionEditorDocument, type ProductionEditorPreflightIssue } from "@yummyai/contracts/pod/production-editor";
 import { buildPillowContour, sampleClosedContour } from "./geometry.js";
 
 /** Product V1 rules; preserve issue order and legacy omitted-field semantics. */
@@ -7,10 +7,18 @@ export function preflightProductionProduct(document: ProductionEditorDocument): 
   const issue = (code: string, message: string, severity: ProductionEditorPreflightIssue["severity"] = "error") => issues.push({ code, message, severity });
   if (document.productType === "shaped_pillow") {
     const spec = document.spec;
+    const noBarcode = spec.productionFactory?.adapter === "yicai_folder";
+    if (spec.productionFactory) {
+      if (spec.factoryStandardId !== SHAPED_PILLOW_FACTORY_STANDARD.id ||
+          spec.declaredLongestMm === null || Math.abs(spec.declaredLongestMm - pillowOrderLengthMm(spec.productionFactory.sizeIn, spec.productionFactory)) > 0.01)
+        issue("factory_order_basis_mismatch", "工艺版本或主体尺寸与本件固定的工厂规格不一致。");
+      if (noBarcode && (spec.barcodeTab.widthMm !== null || spec.barcodeTab.heightMm !== null))
+        issue("factory_barcode_unexpected", "义彩生产稿须移除底部空白条码框。");
+    }
     if (spec.factoryStandardId === SHAPED_PILLOW_FACTORY_STANDARD.id) {
       const rule = SHAPED_PILLOW_FACTORY_STANDARD;
       const matches = (value: number | null | undefined, px: number) => value !== null && value !== undefined && Math.abs(value * spec.dpi / 25.4 - px) < 0.01;
-      if (!matches(spec.barcodeTab.widthMm, rule.barcodeWidthPx) || !matches(spec.barcodeTab.heightMm, rule.barcodeHeightPx)) issue("factory_barcode_dimensions", "工厂要求底部空白条码框为 600 × 200 px（150 DPI）。");
+      if (!noBarcode && (!matches(spec.barcodeTab.widthMm, rule.barcodeWidthPx) || !matches(spec.barcodeTab.heightMm, rule.barcodeHeightPx))) issue("factory_barcode_dimensions", "工厂要求底部空白条码框为 600 × 200 px（150 DPI）。");
       if (!matches(spec.panelGapMm, rule.panelGapPx) || !matches(spec.sheetMarginMm, rule.sheetMarginPx)) issue("factory_sheet_spacing", "工厂要求正反片净距 100 px、整图四周各留 50 px，均从裁线外缘计算。");
       if (!matches(spec.whiteBorderMm, rule.whiteBorderPx)) issue("factory_white_border", "工厂基础缝边为 200 px；局部圆滑余量由独立轮廓处理。");
       if (spec.artworkClipMode !== "none") issue("factory_artwork_clipping", "工厂稿需保留独立图案，不可使用缝边遮罩裁掉图案。");
@@ -27,8 +35,8 @@ export function preflightProductionProduct(document: ProductionEditorDocument): 
     if (Math.abs(spec.cutLineMm - 6 * 25.4 / 150) > 0.001) issue("cut_line_mismatch", "当前抱枕工艺要求 150 PPI 下 6 px 黑线，即 1.016 mm。");
     if (spec.minimumNeckBasis === "unconfirmed" || !document.confirmations.narrowParts) issue("narrow_parts_unconfirmed", `细窄部位需核对不少于 ${spec.minimumNeckMm / 10} 厘米；可在订单审核页运行自动核对，或按本单固定口径人工核验。`, "manual");
     if (!document.confirmations.whiteBorderRule) issue("white_border_unconfirmed", "需确认当前尺寸适用的缝边白边规则。", "manual");
-    if (!spec.barcodeTab.widthMm || !spec.barcodeTab.heightMm) issue("barcode_dimensions_missing", "请填写工厂要求的底部条码矩形宽高。");
-    if (!document.confirmations.barcodeTab) issue("barcode_rule_unconfirmed", "请人工确认条码矩形的尺寸与底部位置。", "manual");
+    if (!noBarcode && (!spec.barcodeTab.widthMm || !spec.barcodeTab.heightMm)) issue("barcode_dimensions_missing", "请填写工厂要求的底部条码矩形宽高。");
+    if (!noBarcode && !document.confirmations.barcodeTab) issue("barcode_rule_unconfirmed", "请人工确认条码矩形的尺寸与底部位置。", "manual");
     if (spec.sideMode === "double" && !document.confirmations.backText) issue("back_text_unconfirmed", "请确认背片文字正读；照片内已压平的文字不能自动识别或纠正。", "manual");
     if (spec.whiteBorderMm * 2 >= Math.min(spec.widthMm, spec.heightMm)) issue("white_border_too_large", "白边宽度覆盖了整个主体可印区域。");
     issue("manual_factory_preflight", "白边适用规则、成品尺寸、细窄部位和缝制结果依据人工确认；自动检查不能代替工厂工艺确认。", "warning");

@@ -1973,7 +1973,7 @@ describe("order centers explicit handoff and independent fulfillment", () => {
     expect(shipped.writebacks).toHaveLength(0);
     for (const item of plan.items)
       expect((await work.detail(context, item.lineId)).line.shippedQuantity).toBe(1);
-  });
+  }, 120_000); // Three real renders, production, QC and a combined dispatch share this test's budget.
 
   async function qualityFixtureTime() {
     const clock = await withTenant(database.db, context, tx => tx.execute<{ checkedAt: Date }>(sql.raw("select clock_timestamp() as \"checkedAt\"")));

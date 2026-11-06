@@ -27,6 +27,7 @@ orderPrivateSourceAvailable,
 orderProtectedAccessEvents,orderProtectedDetails,
 orderRoutingDecisions,
 orderSourceSnapshots,orders,
+orderWorkItems,
 productionOrders,
 purchaseOrderVersions,
 purchaseOrders,
@@ -45,6 +46,7 @@ import { rethrowAgentReadError } from "../ai/agent-read-errors.js";
 import { AuditService } from "../audit/audit.service.js";
 import { DATABASE_CONNECTION,ORDER_PII_VAULT } from "../platform.tokens.js";
 import { assertOrderTransition,nextOrderSideState } from "./order-state-machine.js";
+import { amazonProviderState, providerBlockMessages, type ProviderBlockReason } from "./order-provider-state.js";
 
 @Injectable()
 export class OrderService {
@@ -63,22 +65,30 @@ export class OrderService {
   }
 
   async materializeNormalized(context: TenantContext, rawInput: NormalizeOrderInput, options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ order: OrderView; replayed: boolean; unlinkedLineIds: string[] }> {
+    const outcome = await withTenant(this.database.db, context, tx => this.materializeNormalizedInTransaction(tx, context, rawInput, options));
+    return { order: await this.get(context, outcome.orderId), replayed: outcome.replayed, unlinkedLineIds: outcome.unlinkedLineIds };
+  }
+
+  /** Node receipt adoption commits the original order facts and its checkpoint together. */
+  async materializeNormalizedInTransaction(tx: TenantTransaction, context: TenantContext, rawInput: NormalizeOrderInput,
+    options: { manualReport?: boolean; protectedExpiresAt?: Date } = {}): Promise<{ orderId: string; replayed: boolean; sourceAccepted: boolean; unlinkedLineIds: string[] }> {
     const input = NormalizeOrderInputSchema.parse(rawInput);
     assertRedactedSource(input.redactedSource);
+    const provider = options.manualReport ? null : amazonProviderState(input);
     const orderId = createEntityId();
     const snapshotId = createEntityId();
     const encryptedEnvelope = input.protectedDetails ? this.piiVault.encrypt(JSON.stringify(input.protectedDetails)) : undefined;
-    const outcome = await withTenant(this.database.db, context, async (tx) => {
+    const outcome = await (async () => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.tenantId}:${input.accountId}:${input.platform}:${input.externalOrderId}`}, 0))`);
       const [existingDelivery] = await tx.select().from(orderSourceSnapshots).where(and(
         eq(orderSourceSnapshots.accountId, input.accountId), eq(orderSourceSnapshots.platform, input.platform), eq(orderSourceSnapshots.externalEventId, input.externalEventId),
       )).limit(1);
-      if (existingDelivery) return { orderId: existingDelivery.normalizedOrderId, replayed: true };
+      if (existingDelivery) return { orderId: existingDelivery.normalizedOrderId, replayed: true, sourceAccepted: false };
       const [account] = await tx.select().from(marketplaceAccounts).where(eq(marketplaceAccounts.id, input.accountId)).limit(1);
       if (!account || account.deletedAt || account.platform !== input.platform) throw new UnprocessableEntityException("Marketplace account does not match the normalized order");
       const [existingOrder] = await tx.select().from(orders).where(and(
         eq(orders.accountId, input.accountId), eq(orders.platform, input.platform), eq(orders.externalOrderId, input.externalOrderId),
-      )).limit(1);
+      )).for("update").limit(1);
       const targetOrderId = existingOrder?.id ?? orderId;
       await tx.insert(orderSourceSnapshots).values({
         id: snapshotId, tenantId: context.tenantId, accountId: input.accountId, platform: input.platform,
@@ -87,6 +97,27 @@ export class OrderService {
       });
       if (existingOrder) {
         const sequence = existingOrder.latestEventSequence + 1;
+        if (provider && existingOrder.providerUpdatedAt && (!provider.updatedAt || provider.updatedAt < existingOrder.providerUpdatedAt
+          || provider.updatedAt.getTime() === existingOrder.providerUpdatedAt.getTime()
+            && (input.providerStatus.toUpperCase().replaceAll("_", "") !== existingOrder.providerStatus.toUpperCase().replaceAll("_", "")
+              || existingOrder.providerBlockReason && existingOrder.providerBlockReason !== "fulfillment_unknown" && existingOrder.providerBlockReason !== provider.blockReason))) {
+          await tx.insert(orderEvents).values({ id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, sequence,
+            type: "provider_update_received", code: "provider_update_not_applied", message: "较旧或同一时间相互矛盾的平台状态已保留 未替换当前订单",
+            idempotencyKey: `provider:${input.platform}:${input.externalEventId}`, actorUserId: context.userId, metadata: { sourceSnapshotId: snapshotId } });
+          await tx.update(orders).set({ latestEventSequence: sequence, updatedAt: new Date() }).where(eq(orders.id, existingOrder.id));
+          return { orderId: existingOrder.id, replayed: false, sourceAccepted: false };
+        }
+        let sideState = existingOrder.sideState, providerHold = existingOrder.providerHold;
+        if (provider?.blockReason && !sideState && !["shipped", "completed"].includes(existingOrder.workflowState)) {
+          sideState = "on_hold"; providerHold = true;
+        } else if (provider && !provider.blockReason && providerHold) {
+          const started = await tx.select({ id: orderWorkItems.id }).from(orderWorkItems).innerJoin(orderLines, eq(orderLines.id, orderWorkItems.id))
+            .where(and(eq(orderLines.orderId, existingOrder.id), isNotNull(orderWorkItems.pushedRevisionId))).limit(1);
+          // Only a system hold before design may clear itself; an interrupted production needs an operator's reconciliation.
+          if (sideState === "on_hold" && ["pending", "awaiting_customization"].includes(existingOrder.workflowState) && !started.length) sideState = null;
+          providerHold = false;
+        }
+        const sideChanged = sideState !== existingOrder.sideState;
         const knownLines = await tx.select().from(orderLines).where(eq(orderLines.orderId, existingOrder.id));
         const sourceCurrencies = new Set([
           existingOrder.orderCurrency, input.orderTotal?.currency,
@@ -133,7 +164,8 @@ export class OrderService {
             }).where(eq(orders.id, existingOrder.id));
           }
         }
-        if (input.protectedDetails && encryptedEnvelope && !options.manualReport) {
+        let protectedDetailsUpdated = false;
+        if (input.protectedDetails && encryptedEnvelope && !options.manualReport && existingOrder.addressStatus !== "anonymized") {
           const [currentProtected] = await tx.select().from(orderProtectedDetails)
             .where(eq(orderProtectedDetails.orderId, existingOrder.id)).limit(1);
           if (!currentProtected) {
@@ -141,37 +173,45 @@ export class OrderService {
               id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, encryptedEnvelope,
               countryCode: input.protectedDetails.shippingAddress.countryCode, retentionExpiresAt: retentionExpiry(),
             });
-          } else if (currentProtected.status === "protected") {
+            protectedDetailsUpdated = true;
+          } else if (currentProtected.status === "protected" && currentProtected.retentionExpiresAt > new Date()) {
             await tx.update(orderProtectedDetails).set({
               encryptedEnvelope, envelopeVersion: currentProtected.envelopeVersion + 1,
               countryCode: input.protectedDetails.shippingAddress.countryCode,
-              retentionExpiresAt: retentionExpiry(), updatedAt: new Date(),
+              updatedAt: new Date(),
             }).where(and(
               eq(orderProtectedDetails.id, currentProtected.id),
               eq(orderProtectedDetails.envelopeVersion, currentProtected.envelopeVersion),
             ));
+            protectedDetailsUpdated = true;
           }
         }
         await tx.insert(orderEvents).values({
           id: createEntityId(), tenantId: context.tenantId, orderId: existingOrder.id, sequence,
-          type: "provider_update_received", code: options.manualReport ? "manual_report_received" : input.providerStatus,
+          type: "provider_update_received", code: sideChanged ? sideState ? "provider_fulfillment_hold" : "provider_fulfillment_resumed"
+            : options.manualReport ? "manual_report_received" : input.providerStatus,
+          ...(sideChanged ? { fromSideState: existingOrder.sideState, toSideState: sideState } : {}),
+          message: provider?.message ?? (sideChanged ? "平台确认可履约 已解除系统暂停" : null),
           idempotencyKey: `provider:${input.platform}:${input.externalEventId}`, actorUserId: context.userId,
           metadata: { sourceSnapshotId: snapshotId, previousProviderStatus: existingOrder.providerStatus, providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus },
         });
         await tx.update(orders).set({
           providerStatus: options.manualReport ? existingOrder.providerStatus : input.providerStatus, latestEventSequence: sequence, updatedAt: new Date(),
-          ...(input.protectedDetails && !options.manualReport && existingOrder.addressStatus !== "anonymized" ? {
+          ...(provider ? { providerUpdatedAt: provider.updatedAt, providerBlockReason: provider.blockReason, providerHold, sideState } : {}),
+          ...(input.protectedDetails && protectedDetailsUpdated ? {
             addressStatus: "protected" as const,
             addressCountryCode: input.protectedDetails.shippingAddress.countryCode,
           } : {}),
         }).where(and(eq(orders.id, existingOrder.id), eq(orders.latestEventSequence, existingOrder.latestEventSequence)));
-        return { orderId: existingOrder.id, replayed: false };
+        return { orderId: existingOrder.id, replayed: false, sourceAccepted: true };
       }
 
       const countryCode = input.protectedDetails?.shippingAddress.countryCode ?? null;
       await tx.insert(orders).values({
         id: orderId, tenantId: context.tenantId, accountId: input.accountId, sourceSnapshotId: snapshotId,
         platform: input.platform, externalOrderId: input.externalOrderId, providerStatus: input.providerStatus,
+        providerUpdatedAt: provider?.updatedAt ?? null, providerBlockReason: provider?.blockReason ?? null,
+        providerHold: !!provider?.blockReason, sideState: provider?.blockReason ? "on_hold" : null,
         orderTotalMinor: input.orderTotal?.amountMinor ?? null, orderCurrency: input.orderTotal?.currency ?? null, lineCount: input.lines.length,
         addressStatus: input.protectedDetails ? "protected" : "missing", addressCountryCode: countryCode,
         placedAt: new Date(input.placedAt), latestEventSequence: 1,
@@ -194,17 +234,16 @@ export class OrderService {
       await tx.insert(orderEvents).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, sequence: 1, type: "order_ingested",
         toWorkflowState: "pending", idempotencyKey: `ingest:${input.platform}:${input.externalEventId}`, actorUserId: context.userId,
+        toSideState: provider?.blockReason ? "on_hold" : null, code: provider?.blockReason ? "provider_fulfillment_hold" : null, message: provider?.message ?? null,
         metadata: { sourceSnapshotId: snapshotId, lineCount: input.lines.length },
       });
-      return { orderId, replayed: false };
-    });
-    await this.audit.record(context, { action: "order.ingest", resourceType: "order", resourceId: outcome.orderId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, replayed: outcome.replayed } });
-    const order = await this.get(context, outcome.orderId);
-    const links = await withTenant(this.database.db, context, (tx) => tx.select({
-      orderLineId: orderLineCatalogLinks.orderLineId,
-    }).from(orderLineCatalogLinks).where(inArray(orderLineCatalogLinks.orderLineId, order.lines.map((line) => line.id))));
-    const linked = new Set(links.map((entry) => entry.orderLineId));
-    return { order, replayed: outcome.replayed, unlinkedLineIds: order.lines.filter((line) => !linked.has(line.id)).map((line) => line.externalLineId) };
+      return { orderId, replayed: false, sourceAccepted: true };
+    })();
+    await this.audit.recordInTransaction(tx, context, { action: "order.ingest", resourceType: "order", resourceId: outcome.orderId, result: "success", metadata: { accountId: input.accountId, platform: input.platform, replayed: outcome.replayed } });
+    const unlinked = await tx.select({ externalLineId: orderLines.externalLineId }).from(orderLines)
+      .leftJoin(orderLineCatalogLinks, eq(orderLineCatalogLinks.orderLineId, orderLines.id))
+      .where(and(eq(orderLines.orderId, outcome.orderId), isNull(orderLineCatalogLinks.orderLineId)));
+    return { ...outcome, unlinkedLineIds: unlinked.map(line => line.externalLineId) };
   }
 
   async list(context:TenantContext,rawInput:ListOrdersInput):Promise<OrderView[]>{return originalOwnerOperation(()=>new OrderReadOwner(this.database).list(context,rawInput));}
@@ -259,10 +298,12 @@ export class OrderService {
       assertSequence(row.latestEventSequence, command.expectedSequence);
       const workflowState = OrderWorkflowStateSchema.parse(row.workflowState);
       const fromSideState = OrderSideStateSchema.nullable().parse(row.sideState);
+      if (command.action === "release" && row.providerBlockReason)
+        throw new ConflictException(providerBlockMessages[row.providerBlockReason as ProviderBlockReason] ?? "平台尚未允许此订单履约");
       let toSideState;
       try { toSideState = nextOrderSideState(command.action, workflowState, fromSideState); } catch (error) { throw new ConflictException(error instanceof Error ? error.message : "Invalid order side-state action"); }
       const sequence = row.latestEventSequence + 1;
-      await tx.update(orders).set({ sideState: toSideState, latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, command.expectedSequence)));
+      await tx.update(orders).set({ sideState: toSideState, providerHold: false, latestEventSequence: sequence, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.latestEventSequence, command.expectedSequence)));
       await tx.insert(orderEvents).values({
         id: createEntityId(), tenantId: context.tenantId, orderId, sequence, type: "side_state_changed",
         fromSideState, toSideState, code: command.action, message: command.reason,

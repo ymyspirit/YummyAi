@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./ai/provider-failure": "./src/ai/provider-failure.ts",
     "./ai/agent-chat": "./src/ai/agent-chat.ts",
     "./ai/official-model-pricing": "./src/ai/official-model-pricing.ts",
     "./ai/model-usage": "./src/ai/model-usage.ts",
@@ -103,6 +104,7 @@
     "./order/report-import-errors": "./src/order/report-import-errors.ts",
     "./order/workspace": "./src/order/workspace.ts",
     "./order/whole-fulfillment": "./src/order/whole-fulfillment.ts",
+    "./order/fulfillment-flow": "./src/order/fulfillment-flow.ts",
     "./order/shipment": "./src/order/shipment.ts",
     "./order/quality-groups": "./src/order/quality-groups.ts",
     "./order/quality-scrap": "./src/order/quality-scrap.ts",
@@ -208,6 +210,7 @@
     "./marketplace/publication-preview": "./src/marketplace/publication-preview.ts",
     "./marketplace/publication-submit": "./src/marketplace/publication-submit.ts",
     "./order/fulfillment-command": "./src/order/fulfillment-command.ts",
+    "./order/sync": "./src/order/sync.ts",
     "./catalog/product-visual-generation": "./src/catalog/product-visual-generation.ts"
   },
   "scripts": {

@@ -12,7 +12,7 @@ import { connectDatabase, migrateDatabase, withTenant, assetFiles, designTasks, 
   fulfillmentSuppliers, productionOrders, productionOrderVersions, productionManufacturingBindings, orderWorkItems, orderWorkRevisions,
   productSpecifications, productSpecificationVersions, inventoryStockItems, routingPolicyVersions, orderRoutingDecisions, purchaseOrders, purchaseOrderVersions,
   memberships, membershipRoles, roles, loadCurrentMembershipContext, orders as orderTable, orderProtectedDetails } from "@yummyai/database";
-import { withOrderAuthority } from "@yummyai/order-core";
+import { readManufacturingDelivery, readProductionQuantityBasis, withOrderAuthority } from "@yummyai/order-core";
 import { encryptProductionBytes } from "@yummyai/production-editor";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -172,6 +172,31 @@ describe.sequential("production manufacturing atomic evidence prototype", () => 
     expect(await withTenant(db.db, b, tx => tx.select().from(productionManufacturingBindings))).toEqual([]);
     await expect(db.client.unsafe("update production_manufacturing_bindings set output_unit='set' where id=$1", [stored!.id])).rejects.toThrow("immutable");
     await expect(db.client.unsafe("delete from production_manufacturing_bindings where id=$1", [stored!.id])).rejects.toThrow("immutable");
+  });
+  it("seals factory-managed finished goods without a BOM or calendar and waits for physical receipts", async () => {
+    const f = await fixture("native");
+    const outsourced = await catalog.create(a, { spuId: f.spuId, specificationId: f.specificationId, code: randomUUID(), idempotencyKey: randomUUID(),
+      content: ManufacturingRecipeContentSchema.parse({ specificationVersionId: f.specificationVersionId, name: "Synthetic full-product contract",
+        outputQuantity: 1, outputUnit: "each", materials: [], operations: [{ code: "FULL_PRODUCT", name: "Factory supplies finished goods",
+          responsibility: "factory", processCode: "FULL_PRODUCT", expectedSecondsPerOutput: null, outsourcedFactoryId: factory.factory.id }] }) });
+    await catalog.review(a, outsourced.recipeId, { expectedVersion: 1, versionId: outsourced.versionId, decision: "approved", note: "Synthetic outsourcing agreement", idempotencyKey: randomUUID() });
+    const selection = { versionId: outsourced.versionId, orderUnitConfirmed: true as const };
+    const release = (plan?: typeof capacity.capacityPlan) => withOrderAuthority(db.db, a, [Permission.OrderRead, Permission.OrderWrite], async tx => {
+      const v = await createVersion(tx,f);
+      await sealProductionManufacturing(tx,a,vault,v.versionId,selection,{kind:"approved_product_confirmation",confirmation:f.confirmation});
+      await reserveFactoryCapacityInTransaction(tx,a,audit,{productionOrderId:v.id,productionVersionId:v.versionId,capacityPlan:plan});
+      return v;
+    });
+    await expect(release(capacity.capacityPlan)).rejects.toThrow();
+    const v = await release();
+    const facts = await withTenant(db.db,a,async tx => ({
+      plan: await readManufacturingDelivery(tx,v.versionId), counts: await readProductionQuantityBasis(tx,a,v.id),
+      events: await tx.execute(sql`select id from production_milestone_events where production_order_id=${v.id}`),
+    }));
+    expect(facts.plan?.plan).toMatchObject({factorySuppliesFinishedGoods:true,materials:[],quantity:1});
+    expect(facts.counts).toMatchObject({status:"planned",capacityStatus:"factory_managed",reservations:[],shippedQuantity:0,currentQuantities:null});
+    expect(facts.events).toHaveLength(0);
+    expect(await withTenant(db.db,b,tx=>readManufacturingDelivery(tx,v.versionId))).toBeNull();
   });
   it("rolls back a new production version when its atomic binding is missing or the final audit fails", async () => {
     const f = await fixture(); let missing: string | undefined, failed: string | undefined, missingCapacityReserved = false, failedCapacityReserved = false;

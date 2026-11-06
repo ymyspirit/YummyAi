@@ -7,8 +7,8 @@ import { centerRequest, OrderCenterRequestError } from "./order-center-model";
 import "./production-manufacturing-fields.css";
 
 const unit = { each: "件", pair: "双", set: "套" };
-export function ProductionManufacturingFields({ lineId, originalProductionOrderId, nativeSpecificationVersionId, prefix = "manufacturing", disabled = false, refresh = "", onReadinessChange }: {
-  lineId: string; originalProductionOrderId?: string; nativeSpecificationVersionId?: string; prefix?: string; disabled?: boolean; refresh?: string; onReadinessChange?(ready: boolean): void;
+export function ProductionManufacturingFields({ lineId, originalProductionOrderId, nativeSpecificationVersionId, prefix = "manufacturing", disabled = false, refresh = "", onReadinessChange, onSupplyChange }: {
+  lineId: string; originalProductionOrderId?: string; nativeSpecificationVersionId?: string; prefix?: string; disabled?: boolean; refresh?: string; onReadinessChange?(ready: boolean): void; onSupplyChange?(factoryId: string | undefined): void;
 }) {
   const [view, setView] = useState<ProductionManufacturingOptions | null>(null), [selected, setSelected] = useState(""), [confirmed, setConfirmed] = useState(false);
   const [reading, setReading] = useState(true), [readFailed, setReadFailed] = useState(false), [error, setError] = useState(""), [reload, setReload] = useState(0);
@@ -17,6 +17,7 @@ export function ProductionManufacturingFields({ lineId, originalProductionOrderI
   const selection = useRef("");
   const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null);
   const readinessCallback = useRef(onReadinessChange); readinessCallback.current = onReadinessChange;
+  const supplyCallback = useRef(onSupplyChange); supplyCallback.current = onSupplyChange;
   const clear = () => { previous.current = null; selection.current = ""; setView(null); setSelected(""); setConfirmed(false); };
   useEffect(() => {
     const check = () => { if (document.visibilityState !== "hidden") setReload(value => value + 1); };
@@ -68,6 +69,9 @@ export function ProductionManufacturingFields({ lineId, originalProductionOrderI
   const current = loadedIdentity === identity ? view : null;
   const choice = current?.items.find(item => item.versionId === selected), unavailable = reading || readFailed || !current;
   const ready = !disabled && !unavailable && !!choice && confirmed;
+  const externalFactory = unavailable || disabled ? undefined : choice?.outsourcedFactoryId;
+  useEffect(() => { supplyCallback.current?.(externalFactory); }, [externalFactory, identity]);
+  useEffect(() => () => { supplyCallback.current?.(undefined); }, [identity]);
   useEffect(() => { readinessCallback.current?.(ready); }, [ready, identity]);
   useEffect(() => () => { readinessCallback.current?.(false); }, [identity]);
   return <fieldset className="oc-manufacturing-fields" disabled={disabled} aria-label="本次制造依据" aria-busy={reading}>
@@ -79,7 +83,7 @@ export function ProductionManufacturingFields({ lineId, originalProductionOrderI
     {current?.diagnostics.map(message => <p className="oc-hint" key={message}>{message}</p>)}
     <label>制造版本<select name={`${prefix}.version`} aria-label="制造版本" required disabled={unavailable} value={current ? selected : ""} onChange={event => { selection.current = event.target.value; setSelected(event.target.value); setConfirmed(false); }}>
       <option value="">明确选择已批准版本</option>{current?.items.map(item => <option key={item.versionId} value={item.versionId}>{item.code} · V{item.versionNumber} · {item.name} · 每批 {item.outputQuantity} {unit[item.outputUnit]}</option>)}</select></label>
-    {choice && <p className="oc-hint">本次数量按销售 SKU 的{unit[choice.outputUnit]}数记录 部件和耗材另按已批准 BOM 计算</p>}
+    {choice && <p className="oc-hint">本次数量按销售 SKU 的{unit[choice.outputUnit]}数记录 {choice.outsourcedFactoryId ? "外协工厂自行备料和排产" : "部件和耗材另按已批准 BOM 计算"}</p>}
     <label className="oc-check"><input name={`${prefix}.confirmed`} type="checkbox" required disabled={unavailable} checked={!!current && confirmed} onChange={event => setConfirmed(event.target.checked)} />已核对原规格 每份内容与件数 制造产出单位和本次订购数量一致</label>
     <div className="oc-action-row"><button className="oc-text-button" type="button" disabled={disabled || reading} onClick={() => setReload(value => value + 1)}><RefreshCw size={13} aria-hidden="true" />重新核对制造依据</button>
       {current?.nextCursor && <button className="oc-text-button" type="button" disabled={reading || readFailed} onClick={() => void more()}>读取更多已批准版本</button>}

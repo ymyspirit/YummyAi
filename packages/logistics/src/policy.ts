@@ -1,5 +1,18 @@
 import type { LogisticsQuote, LogisticsRule, LogisticsTaskSnapshot } from "@yummyai/contracts/logistics";
-export function selectLogisticsQuote(quotes: LogisticsQuote[], rule: LogisticsRule, task: Pick<LogisticsTaskSnapshot, "readyAt" | "latestShipAt" | "deliverBy">, now = new Date()) {
+type CostBasis = { productionPins?: Array<{ quantity: number }> };
+/** Count pinned physical production quantities, never declaration rows or parcels.
+ * Compare integer totals so $20.01 / 2 cannot round down to the $10 boundary. */
+export function logisticsCostBlocker(totalMinor:number,rule:LogisticsRule,task:CostBasis) {
+  if(rule.maxTicketMinor!==null && totalMinor>rule.maxTicketMinor)return "TICKET_BUDGET_EXCEEDED";
+  if(rule.maxPerItemMinor!==undefined){
+    const quantities=task.productionPins?.map(pin=>pin.quantity)??[];
+    if(!quantities.length||quantities.some(quantity=>!Number.isSafeInteger(quantity)||quantity<1))return "PURCHASE_QUANTITY_UNAVAILABLE";
+    const count=quantities.reduce((sum,quantity)=>sum+BigInt(quantity),0n);
+    if(BigInt(totalMinor)>BigInt(rule.maxPerItemMinor)*count)return "PER_ITEM_COST_EXCEEDED";
+  }
+  return null;
+}
+export function selectLogisticsQuote(quotes: LogisticsQuote[], rule: LogisticsRule, task: Pick<LogisticsTaskSnapshot, "readyAt" | "latestShipAt" | "deliverBy"> & CostBasis, now = new Date()) {
   const rejected: Array<{ channelCode: string; reason: string }> = [];
   const candidates = quotes.filter(q => {
     let reason: string | undefined;
@@ -10,7 +23,7 @@ export function selectLogisticsQuote(quotes: LogisticsQuote[], rule: LogisticsRu
     else if (Date.parse(task.latestShipAt) < now.getTime() || Date.parse(task.readyAt) > Date.parse(task.latestShipAt)) reason = "SHIP_DEADLINE_MISSED";
     else if (Date.parse(task.latestShipAt) + q.transitDaysMax * 86_400_000 > Date.parse(task.deliverBy)) reason = "DELIVERY_DEADLINE_MISSED";
     else if (now.getTime() - Date.parse(q.quotedAt) > rule.quoteMaxAgeSeconds * 1000 || Date.parse(q.quotedAt) > now.getTime() + 5000) reason = "QUOTE_EXPIRED";
-    else if (q.totalMinor > rule.maxTicketMinor) reason = "TICKET_BUDGET_EXCEEDED";
+    else reason = logisticsCostBlocker(q.totalMinor,rule,task)??undefined;
     if (reason) rejected.push({ channelCode: q.channelCode, reason });
     return !reason;
   }).sort((a,b) => a.totalMinor - b.totalMinor || a.transitDaysMax! - b.transitDaysMax! || a.channelCode.localeCompare(b.channelCode));

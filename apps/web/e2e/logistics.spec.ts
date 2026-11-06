@@ -16,6 +16,42 @@ test.beforeAll(async () => { worker = await startProductionEditorWorker(); });
 test.afterAll(async () => { worker?.kill(); });
 test.beforeEach(async ({page}) => { await loginErp(page,"operator","/logistics"); });
 const localTime = (days: number) => { const d = new Date(Date.now() + days * 86400000); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+test("logistics Canada preset saves a shared version and keeps purchase opt-in",async({page},testInfo)=>{
+  test.setTimeout(180000);
+  const order=await prepareDeliveryOrder();
+  await page.goto("/logistics#connections");
+  // A hash-only navigation preserves the page's original factory options.
+  // Reload after creating the isolated fixture, as the compiled app has no HMR.
+  await page.reload();
+  const section=page.locator("#connections"),form=section.locator("form").filter({has:page.getByRole("combobox",{name:"连接版本",exact:true})});
+  await form.getByRole("combobox",{name:"实际发货工厂",exact:true}).selectOption(order.factoryId);
+  await form.getByRole("button",{name:"应用加拿大抱枕渠道规则",exact:true}).click();
+  await expect(form.getByRole("combobox",{name:"自动选渠道",exact:true})).toHaveValue("compare_eligible");
+  await expect(form.getByRole("combobox",{name:"云途发件人",exact:true})).toHaveValue("platform_default");
+  await expect(form.getByLabel("发货联系电话",{exact:true})).toHaveCount(0);
+  await form.getByText("包裹尺寸与体积重条件",{exact:true}).first().click();
+  await expect(form.getByLabel("体积重除数（cm³/kg）",{exact:true}).first()).toHaveValue("8000");
+  await expect(form.getByLabel("体积重除数（cm³/kg）",{exact:true}).nth(1)).toHaveValue("12000");
+  const name=`Synthetic Canada ${randomUUID()}`;
+  for(const [label,value] of [["路线名称",name],["API 地址",process.env.LOGISTICS_TEST_BASE_URL!],["账户计费币种","CNY"],["币种及金额单位核验依据","Synthetic tariff in CNY"],["API Secret","synthetic-secret"],["AppId","synthetic-app"],["来源标识 sourceKey","synthetic-source"],["面单文件域名","127.0.0.1"],["当前账户 API 兼容核验","Synthetic isolated OpenAPI"],["账户购单权限依据","Synthetic quote-only authorization"]])await form.getByLabel(label!,{exact:true}).fill(value!);
+  await form.getByRole("button",{name:"保存新版本",exact:true}).click();
+  await expect(section.getByRole("status").filter({hasText:"连接版本已保存"})).toBeVisible();
+  const result=await centerApi<{connections:Array<{id:string;profile:{name:string;channelSelection:string;yunexpressSenderMode:string;channels:Array<{code:string;maxLengthPlusGirthMm:number}>}}>}>('logistics/connections');
+  const connection=result.connections.find(row=>row.profile.name===name)!;
+  expect(connection.profile.channelSelection).toBe("compare_eligible");expect(connection.profile.yunexpressSenderMode).toBe("platform_default");
+  expect(connection.profile.channels.map(row=>[row.code,row.maxLengthPlusGirthMm])).toEqual([["THPHR",2500],["ZBZXRPH",2500]]);
+  await page.reload();await form.getByRole("combobox",{name:"连接版本",exact:true}).selectOption(connection.id);
+  await expect(form.getByRole("combobox",{name:"自动选渠道",exact:true})).toHaveValue("compare_eligible");
+  await section.getByRole("combobox",{name:"费用控制",exact:true}).selectOption("lowest_eligible");
+  await expect(section.getByLabel("启用已核验账户自动购单",{exact:true})).not.toBeChecked();
+  await expect(section.getByLabel("单票费用上限（CNY）",{exact:true})).toHaveCount(0);
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath("canada-rule-narrow.png"),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:testInfo.outputPath("canada-rule-desktop.png"),fullPage:true});
+});
+
 test("logistics prepares a private Yun label before QC and includes it in the factory ZIP", async ({ page }, testInfo) => {
   test.setTimeout(240000);
   const order = await prepareDeliveryOrder(), options = await centerApi<LogisticsOptions>("logistics/options"), candidate = options.candidates.find(c => c.orderNumber === order.externalId)!;
@@ -29,7 +65,7 @@ test("logistics prepares a private Yun label before QC and includes it in the fa
   await centerApi(`logistics/connections/${connection.connectionId}/verify`, { expectedVersion: 1, idempotencyKey: randomUUID() });
   await centerApi("logistics/rules", { connectionId: connection.connectionId, expectedVersion: 0, rule: { name: "Synthetic fixed budget", currency: "USD", autoPurchase: true, maxTicketMinor: 1000, maxDailyMinor: 10000, quoteMaxAgeSeconds: 120, allowedChannelCodes: ["fixture"], evidence: "Synthetic isolated budget approval" }, idempotencyKey: randomUUID() });
   await page.goto(`/logistics?orderId=${candidate.orderId}`);
-  const section = page.locator("details.logistics-section").filter({ has: page.locator("summary", { hasText: "为已排期商品创建物流任务" }) });
+  const section = page.locator("details.logistics-section").filter({ has: page.locator("summary", { hasText: "手工创建特殊物流任务" }) });
   await section.locator("summary").click(); const form = section.locator("form");
   await form.getByLabel("订单与工厂", { exact: true }).selectOption(candidate.productionOrderId);
   await form.getByLabel("实际发货连接", { exact: true }).selectOption(connection.connectionId);

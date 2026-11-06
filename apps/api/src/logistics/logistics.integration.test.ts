@@ -11,8 +11,8 @@ import { createSyntheticFactoryCapacity } from "../suppliers/factory-capacity.te
 import { reserveFactoryCapacityInTransaction } from "../suppliers/factory-capacity.service.js";
 import {HttpLogisticsGateway,LogisticsExecutor,LogisticsTransportError,purgeLogisticsTasks,type LogisticsProviderResult} from "@yummyai/logistics";
 import {assertAssetAccess,type Storage,type StoredAsset,type PutPrivateInput,type AssetDomain} from "@yummyai/storage";
-import {and,eq} from "drizzle-orm";
-import {afterAll,beforeAll,describe,expect,it} from "vitest";
+import {and,eq,sql} from "drizzle-orm";
+import {afterAll,beforeAll,describe,expect,it,onTestFinished,vi} from "vitest";
 import {AuditService} from "../audit/audit.service.js";
 import {OrderService} from "../orders/order.service.js";
 import {FactoryDirectoryService} from "../suppliers/factory-directory.service.js";
@@ -74,15 +74,126 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect((await attention.workspace(context,{source:"production"},new Date(future(4)))).items.some(item=>item.priority==="overdue")).toBe(true);
     expect(s.carrier.creates).toBe(0);expect(s.carrier.lookups).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
   });
-  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull"){
+  it.each([undefined,"0222222222",null])("uses the delivery phone and preserves legacy contact fallback only when absent: %s",async phone=>{
+    const s=await setup(),p=await production(s.factory),input=taskInput(s,p);
+    if(phone!==undefined)await withTenant(database.db,context,async tx=>{
+      const [stored]=await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId,input.orderId));
+      const details=pii.withSecret(stored!.encryptedEnvelope!,secret=>JSON.parse(secret));
+      details.shippingAddress.phone=phone;
+      await tx.update(orderProtectedDetails).set({encryptedEnvelope:pii.encrypt(JSON.stringify(details))}).where(eq(orderProtectedDetails.orderId,input.orderId));
+    });
+    if(phone===null)await expect(s.service.createTask(context,input,{mode:"quote"})).rejects.toThrow();
+    else {
+      const saved=await s.service.createTask(context,input,{mode:"quote"});
+      const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+      expect(pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret).recipient.phone)).toBe(phone??"1234567890");
+    }
+    expect(s.carrier.creates).toBe(0);expect(s.carrier.quoteRequests).toBe(0);
+  });
+  it("polls a confirmed YunExpress waybill once and keeps parcel evidence separate from units and charges",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,true,"include",undefined,{baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi"});
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)));
+    onTestFinished(()=>purgeLogisticsTasks(database,context,storage,new Date(future(366)),saved.taskId).then(()=>undefined));
+    const poll=vi.spyOn(s.carrier,"handover").mockImplementation(async()=>({status:"T" as const,proof:{node:"FIRST_MILE_ARRIVE" as const,occurredAt:new Date().toISOString()}}));
+    await s.executor.observeHandover(context,saved.taskId);
+    expect(poll).not.toHaveBeenCalled();
+    await s.executor.run(context,saved.taskId,"purchase");
+    const before=await s.service.get(context,saved.taskId);
+    expect(before.status).toBe("completed");
+    await expect(s.executor.observeHandover({...context,permissions:[Permission.OrderRead,Permission.OrderPiiRead]},saved.taskId)).rejects.toThrow();
+    expect(poll).not.toHaveBeenCalled();
+    await Promise.all([s.executor.observeHandover(context,saved.taskId),s.executor.observeHandover(context,saved.taskId)]);
+    const after=await s.service.get(context,saved.taskId);
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(after.carrierObservation).toMatchObject({status:"T",proof:{node:"FIRST_MILE_ARRIVE"},diagnostic:null});
+    expect(after.actualCostMinor).toBe(before.actualCostMinor);expect(s.carrier.creates).toBe(1);
+    const packed=await withTenant(database.db,context,tx=>tx.execute(sql`select id from shipments where order_id=${after.orderId}`));
+    expect(packed).toHaveLength(0);
+    const clock=vi.spyOn(Date,"now").mockReturnValue(Date.now()+31*60_000);
+    try {
+      poll.mockRejectedValueOnce(new Error("synthetic timeout"));
+      await s.executor.observeHandover(context,saved.taskId);
+      expect((await s.service.get(context,saved.taskId)).carrierObservation).toMatchObject({status:"T",diagnostic:"unavailable",proof:{node:"FIRST_MILE_ARRIVE"}});
+      poll.mockResolvedValueOnce({status:"R",proof:null});
+      await s.executor.observeHandover(context,saved.taskId);
+      expect((await s.service.get(context,saved.taskId)).carrierObservation).toMatchObject({status:"R",diagnostic:null});
+      expect(await s.executor.observeHandover(context,saved.taskId)).toMatchObject({status:"ignored"});
+      expect(s.carrier.creates).toBe(1);
+    } finally { clock.mockRestore(); }
+  });
+  it("discards a carrier reply when private order retention expires during the read",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,true,"include",undefined,{baseUrl:"https://openapi.yunexpress.cn",yunexpressProtocol:"openapi"});
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)));
+    await s.executor.run(context,saved.taskId,"purchase");
+    vi.spyOn(s.carrier,"handover").mockImplementation(async()=>{
+      await purgeLogisticsTasks(database,context,storage,new Date(future(366)),saved.taskId);
+      return {status:"T",proof:{node:"FIRST_MILE_DEPART",occurredAt:new Date().toISOString()}};
+    });
+    expect(await s.executor.observeHandover(context,saved.taskId)).toMatchObject({status:"ignored"});
+    const evidence=await withTenant(database.db,context,tx=>tx.execute(sql`select id from logistics_events where task_id=${saved.taskId} and action='tracking.handover'`));
+    expect(evidence).toHaveLength(0);
+  });
+  async function setup(carrier=new Carrier(),country:"US"|"CN"="US",daily=1000000,ticket=1000,auto=true,labelMode?:"include"|"factory_pull",senderAddressId?:number,profilePatch?:Partial<LogisticsConnectionProfile>){
     const factory=country==="US"?usFactory:cnFactory;
-    const queue={enqueue:async()=>undefined};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
+    const enqueued:unknown[]=[];const queue={enqueue:async(input:unknown)=>{enqueued.push(input);return undefined;}};const service=new LogisticsService(database,vault,pii,storage,carrier,orderService,queue,new LogisticsAccountsService(database,vault,carrier)),executor=new LogisticsExecutor(database,vault,pii,storage,carrier);
     const profile=LogisticsConnectionProfileSchema.parse({name:`Synthetic route ${randomUUID()}`,provider:country==="US"?"shipos":"yunexpress",factoryId:factory.id,originCountryCode:country,sender:{name:"Synthetic sender",address1:"1 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:country,phone:"1234567890",email:"sender@example.invalid"},baseUrl:country==="US"?"https://api.shipos.cn":"https://oms.example.invalid",currency:"USD",currencySource:"Synthetic account billing proof",labelHosts:["shipease.oss-cn-hangzhou.aliyuncs.com"],channels:carrier.channelRows.map(channel=>({...channel,countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic calendar-day SLA",conditionsVerified:true,conditionsEvidence:"Synthetic route conditions",maxWeightGrams:10000,maxDimensionMm:1000})),apiCompatibilityEvidence:"Synthetic account compatibility",purchasePermissionEvidence:"Synthetic purchase permissions",labelMode:labelMode??(country==="US"?"factory_pull":"include")});
+    if(senderAddressId){profile.shiposSenderAddressId=senderAddressId;profile.sender.phone="";}
+    Object.assign(profile,profilePatch);
     const original=process.env.YUNEXPRESS_ALLOWED_ORIGINS;process.env.YUNEXPRESS_ALLOWED_ORIGINS="https://oms.example.invalid";
-    let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
+    let saved:Awaited<ReturnType<LogisticsService["saveConnection"]>>;try{saved=await service.saveConnection(context,{expectedVersion:0,profile,credentials:country==="US"?{provider:"shipos",appKey:"fixture",appSecret:"fixture"}:profile.yunexpressProtocol==="openapi"?{provider:"yunexpress",appId:"fixture-app",sourceKey:"fixture-source",apiSecret:"fixture"}:{provider:"yunexpress",customerCode:"fixture",apiSecret:"fixture"},idempotencyKey:randomUUID()});}finally{if(original===undefined)delete process.env.YUNEXPRESS_ALLOWED_ORIGINS;else process.env.YUNEXPRESS_ALLOWED_ORIGINS=original;}
     await service.verify(context,saved.connectionId,{expectedVersion:1,idempotencyKey:randomUUID()});await service.saveRule(context,{connectionId:saved.connectionId,expectedVersion:0,rule:{name:"Synthetic budget",currency:"USD",autoPurchase:auto,maxTicketMinor:ticket,maxDailyMinor:daily,quoteMaxAgeSeconds:120,allowedChannelCodes:carrier.channelRows.map(channel=>channel.code),evidence:"Synthetic budget authorization"},idempotencyKey:randomUUID()});
-    return {service,executor,carrier,factory,profile,connectionId:saved.connectionId};
+    return {service,executor,carrier,factory,profile,connectionId:saved.connectionId,enqueued};
   }
+  it("pins compared Yun channels and default sender without inventing a size recommendation or buying in quote mode",async()=>{
+    const carrier=new Carrier();carrier.channelRows=[{code:"THPHR",name:"Synthetic special"},{code:"ZBZXRPH",name:"Synthetic medium"}];
+    const s=await setup(carrier,"CN",1000000,1000,false,undefined,undefined,{yunexpressProtocol:"openapi",baseUrl:"https://openapi.yunexpress.cn",yunexpressSenderMode:"platform_default",channelSelection:"compare_eligible"});
+    await s.service.saveRule(context,{connectionId:s.connectionId,expectedVersion:1,rule:{name:"Synthetic comparison only",currency:"USD",costControl:"lowest_eligible",autoPurchase:false,maxTicketMinor:null,maxDailyMinor:null,quoteMaxAgeSeconds:120,allowedChannelCodes:["THPHR","ZBZXRPH"],evidence:"Synthetic no fixed limit quote-only configuration"},idempotencyKey:randomUUID()});
+    const input=taskInput(s,await production(s.factory)),saved=await s.service.createTask(context,input,{mode:"quote"});
+    const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+    const snapshot=pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret));
+    expect(snapshot.channelCode).toBeUndefined();expect(snapshot.routingDocumentProfileVersionId).toBeUndefined();
+    expect(snapshot.connectionVersionId).toBeDefined();expect(snapshot.packages).toMatchObject(input.packages);
+    const next=await production(s.factory),manual=await s.service.createTask(context,{...taskInput(s,next),channelCode:"THPHR"},{mode:"quote"});
+    const [manualStored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,manual.taskId)));
+    expect(pii.withSecret(manualStored!.encryptedSnapshot!,secret=>JSON.parse(secret).channelCode)).toBe("THPHR");
+    await expect(s.service.saveConnection(context,{connectionId:s.connectionId,expectedVersion:1,profile:{...s.profile,sender:{...s.profile.sender,address1:"Different factory"}},idempotencyKey:randomUUID()})).rejects.toThrow("实际发货地址");
+    expect((await s.service.connections(other)).connections).toEqual([]);expect(carrier.creates).toBe(0);
+  });
+  it("pins a ShipOS saved sender address without requiring invented contact details or weakening factory and tenant checks",async()=>{
+    const s=await setup(new Carrier(),"US",1000000,1000,false,undefined,123456);
+    expect((await s.service.connections(context)).connections.find(row=>row.id===s.connectionId)?.profile).toMatchObject({shiposSenderAddressId:123456,sender:{phone:""}});
+    expect((await s.service.connections(other)).connections).toHaveLength(0);
+    await expect(s.service.saveConnection(context,{connectionId:s.connectionId,expectedVersion:1,profile:{...s.profile,sender:{...s.profile.sender,address1:"Different factory"}},idempotencyKey:randomUUID()})).rejects.toThrow("实际发货地址");
+    const saved=await s.service.createTask(context,taskInput(s,await production(s.factory)),{mode:"quote"});
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");
+    expect(s.carrier.creates).toBe(0);
+  });
+  it("honors explicit quote-only mode even on an automatic purchase connection",async()=>{
+    const s=await setup(),input=taskInput(s,await production(s.factory));
+    input.packages[0]!.declarations[0]!.hsCode="";
+    const saved=await s.service.createTask(context,input,{mode:"quote"});
+    expect(s.enqueued[0]).toMatchObject({mode:"quote"});
+    expect(s.enqueued).not.toContainEqual(expect.objectContaining({mode:"purchase"}));
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");
+    expect(s.carrier.creates).toBe(0);
+    expect(await s.service.createTask(context,input,{mode:"quote"})).toMatchObject({taskId:saved.taskId,replayed:true});
+    await expect(s.service.createTask(context,input)).rejects.toThrow();
+    const yun=await setup(new Carrier(),"CN"),crossBorder=taskInput(yun,await production(yun.factory));
+    crossBorder.packages[0]!.declarations[0]!.hsCode="";
+    await expect(yun.service.createTask(context,crossBorder,{mode:"quote"})).rejects.toThrow();
+    expect(yun.enqueued).toHaveLength(0);
+  });
+  it("allows an omitted OpenAPI customs code through task creation and quoting without inventing one",async()=>{
+    const s=await setup(new Carrier(),"CN",1000000,1000,false,undefined,undefined,{yunexpressProtocol:"openapi",baseUrl:"https://openapi.yunexpress.cn"});
+    const input=taskInput(s,await production(s.factory));input.packages[0]!.declarations[0]!.hsCode="";
+    const saved=await s.service.createTask(context,input,{mode:"quote"});
+    const [stored]=await withTenant(database.db,context,tx=>tx.select().from(logisticsTasks).where(eq(logisticsTasks.id,saved.taskId)));
+    expect(pii.withSecret(stored!.encryptedSnapshot!,secret=>JSON.parse(secret).packages[0].declarations[0].hsCode)).toBe("");
+    await s.executor.run(context,saved.taskId,"quote");
+    expect((await s.service.get(context,saved.taskId)).status).toBe("quoted");expect(s.carrier.creates).toBe(0);
+  });
   async function production(factory:typeof usFactory,existingOrderId?:string,totalQuantity=1){
     if(!capacities.has(factory.id))capacities.set(factory.id,await createSyntheticFactoryCapacity(database,context,{factory,bindings:[{capabilityVersionId:capabilities.get(factory.id)!,unitsPerItem:1}],capacityUnits:10_000}));
     const capacity=capacities.get(factory.id)!;
@@ -137,6 +248,23 @@ describe.sequential("tenant-isolated logistics procurement and reconciliation",(
     expect(s.carrier.creates).toBe(0);
   });
   it("keeps actual over-budget purchases for reconciliation and never buys again",async()=>{const carrier=new Carrier();carrier.actual=1100;const s=await setup(carrier),r=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,r.taskId,"purchase");expect(await s.service.get(context,r.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_COST_EXCEEDS_BUDGET",actualCostMinor:1100});await s.executor.run(context,r.taskId,"purchase");expect(carrier.creates).toBe(1);expect(carrier.lookups).toBe(2);});
+  it("buys a whole two-piece parcel at the per-item boundary, blocks one cent over, and preserves actual-cost exceptions",async()=>{
+    const carrier=new Carrier(),s=await setup(carrier);
+    await s.service.saveRule(context,{connectionId:s.connectionId,expectedVersion:1,rule:{name:"Synthetic per-item rule",currency:"USD",autoPurchase:true,maxTicketMinor:null,maxDailyMinor:null,maxPerItemMinor:1000,quoteMaxAgeSeconds:120,allowedChannelCodes:["fixture"],evidence:"Synthetic explicit no total caps, $10 per physical item"},idempotencyKey:randomUUID()});
+    carrier.price=2000;carrier.actual=2000;
+    const first=await production(s.factory,undefined,2),second=await production(s.factory,first.order.id),input=taskInput(s,first);
+    input.productionOrderIds.push(second.id);input.packages[0]!.declarations[0]!.quantity=2;
+    const parcel=await s.service.createTask(context,input);await s.executor.run(context,parcel.taskId,"purchase");
+    expect(await s.service.get(context,parcel.taskId)).toMatchObject({status:"completed",quotedCostMinor:2000,actualCostMinor:2000});expect(carrier.creates).toBe(1);
+    carrier.price=1001;
+    const blocked=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,blocked.taskId,"purchase");
+    expect(await s.service.get(context,blocked.taskId)).toMatchObject({status:"attention",diagnostic:"PER_ITEM_COST_EXCEEDED"});expect(carrier.creates).toBe(1);
+    carrier.price=1000;carrier.actual=1001;
+    const billed=await s.service.createTask(context,taskInput(s,await production(s.factory)));await s.executor.run(context,billed.taskId,"purchase");
+    expect(await s.service.get(context,billed.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_PER_ITEM_COST_EXCEEDED",actualCostMinor:1001});
+    await s.executor.run(context,billed.taskId,"purchase");expect(carrier.creates).toBe(2);
+    expect(await s.service.get(context,billed.taskId)).toMatchObject({status:"attention",diagnostic:"ACTUAL_PER_ITEM_COST_EXCEEDED"});
+  });
   it("saves credentials before a factory is ready with tenant isolation and immutable versions",async()=>{
     const carrier=new Carrier(),service=new LogisticsAccountsService(database,vault,carrier);
     const input={expectedVersion:0,profile:{name:"Synthetic pending Yun account",provider:"yunexpress",baseUrl:null},credentials:{provider:"yunexpress",customerCode:"synthetic-customer",apiSecret:"synthetic-account-secret",appId:"synthetic-app"},idempotencyKey:randomUUID()};

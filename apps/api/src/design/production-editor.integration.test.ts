@@ -372,6 +372,12 @@ describe("production editor persistence and private rendering", () => {
     const workspace = await service.list(designer);
     expect(workspace.projects.map((project) => project.id)).toContain(standalone.project.id);
     expect(workspace.projects.map((project) => project.id)).not.toContain(linked.project.id);
+    const templates=await service.list(contextA,"templates"),production=await service.list(contextA,"production");
+    expect(templates.projects.map(project=>project.id)).toContain(standalone.project.id);
+    expect(templates.projects.map(project=>project.id)).not.toContain(linked.project.id);
+    expect(production.projects.map(project=>project.id)).toContain(linked.project.id);
+    expect(production.projects.map(project=>project.id)).not.toContain(standalone.project.id);
+    expect((await service.list(designer,"production")).projects.map(project=>project.id)).not.toContain(linked.project.id);
     await expect(service.get(designer, linked.project.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.image(designer, linked.project.id, linked.images[0].id)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });

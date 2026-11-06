@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState,useId,type MouseEvent } from "react";
-import { Pencil, RefreshCw } from "lucide-react";
+import { AlertTriangle, Clock3, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { DesignAgentViewSchema, type DesignAgentRunView, type OrderDesignRestoreResponse } from "@yummyai/contracts/order/design-agent";
 import { centerRequest, dateTime } from "./order-center-model";
@@ -9,7 +9,7 @@ import { ContourExecutionEvidence } from "./contour-execution-evidence";
 import { OrderDesignResponseRecoveryForm } from "./order-design-response-recovery";
 import { MethodEvidence } from "../ai-assist/method-evidence";
 import {observeViewTransition} from "../navigation/view-transition";
-import { designAgentRecoveryGuidance } from "./order-design-recovery-model";
+import { designAgentInterruption, designAgentRecoveryGuidance } from "./order-design-recovery-model";
 import type { ModelUsageSummary } from "@yummyai/contracts/ai/model-usage";
 import type { OrderWorkDetail } from "@yummyai/contracts/order/workspace";
 import { ModelTokenUsageLine, ModelUsageSummaryLine } from "../ai-assist/model-usage-summary";
@@ -62,6 +62,12 @@ const errorLabels: Record<string, string> = {
   agent_model_configuration_changed: "已固定的模型或提供方配置发生变化，尚未提交本次模型请求。请核对配置后处理任务。",
   agent_model_cancelled_before_submission: "模型请求提交前任务已停止或失效，本次请求未发送给提供方。",
   agent_model_preparation_failed: "模型请求准备失败，本次请求尚未提交。请核对模型配置与输入素材。",
+  agent_provider_moderation_blocked: "提供方安全审核拒绝了本次图像请求，当前步骤未生成可用稿件。系统不会自动重试，请交美工处理或由管理员核对审核记录。",
+  agent_provider_authentication_failed: "提供方拒绝了渠道授权。请管理员核对密钥、权限和账户状态；不会自动重复提交。",
+  agent_provider_invalid_request: "提供方未接受本次请求。请核对固定素材、制作要求或模型参数，不会自动重复提交。",
+  agent_provider_rate_limited: "提供方明确返回限流，系统已安排延后重试。已完成步骤保留，无需重新派发。",
+  agent_provider_retry_exhausted: "模型限流的自动重试已达到上限。后续请求已停止，已完成的素材和版本保留，请核对渠道或交美工处理。",
+  agent_provider_retry_deferred: "本轮自动恢复已停止，当前不会继续重试。已完成的素材和版本保留，请管理员核对渠道与原调用记录，或交美工处理。",
   agent_model_invalid_output: "模型返回的结果不符合图片处理要求。请核对提供方结果与费用后接管，勿直接重复提交。",
   agent_model_submission_unknown: "模型请求结果或费用待核实，不会自动再次付费提交。核实后可导入原结果继续；没有可信原结果时接管。",
   agent_model_response_uncheckpointed: "模型已返回，但原始结果未能完整保存。不会再次提交模型请求，核实后可导入相同原结果继续；无法核实时接管。",
@@ -146,6 +152,37 @@ export function designAgentBillingNotice(costStatus: DesignAgentRunView["costSta
   return steps.some(step => step.status === "uncertain")
     ? "模型请求结果待核实，实际费用也未知，保留已占用额度。"
     : "提供方实际账单尚未确认，保留已占用额度。";
+}
+
+/** The failure and its next action stay together, before historical evidence.
+ * Raw provider messages and unvalidated metadata never enter this notice. */
+export function DesignAgentInterruptionNotice({ run, disabled = false, onTakeOver, onResume }: {
+  run: DesignAgentRunView; disabled?: boolean; onTakeOver: () => void; onResume: () => void;
+}) {
+  const interruption = run.privateEvidenceOmitted || run.privateEvidenceState === "expired" ? null : designAgentInterruption(run);
+  const failed = run.steps.find(step => step.status === "failed" || step.status === "uncertain")
+    ?? (run.status === "queued" ? run.steps.find(step => step.status === "pending" && step.providerFailure) : undefined);
+  const failure = failed?.providerFailure;
+  const providerRequestId = failure?.providerRequestId && /^[a-zA-Z0-9_-]{1,160}$/.test(failure.providerRequestId) ? failure.providerRequestId : null;
+  const status = failure && Number.isInteger(failure.status) && failure.status >= 400 && failure.status <= 599 ? failure.status : null;
+  const canResume = run.canResume && interruption?.kind === "other";
+  const code = run.errorCode ?? failed?.errorCode;
+  return <div className={`oc-agent-interruption${interruption?.kind === "retry" ? " is-retry" : ""}`}
+    role="status" aria-live="polite" aria-atomic="true" hidden={!interruption}>
+    {interruption && <>
+      <strong className="oc-agent-interruption-heading">{interruption.kind === "retry" ? <Clock3 size={16} aria-hidden="true" /> : <AlertTriangle size={16} aria-hidden="true" />}{interruption.title}</strong>
+      {interruption.kind !== "retry" && code && <p>处理原因：{designAgentErrorMessage(code)}</p>}
+      <p>{interruption.nextAction}</p>
+      {interruption.retryAt && <p className="oc-hint">计划重试时间：{dateTime(interruption.retryAt)} · 实际开始以后台状态为准</p>}
+      {(status !== null || providerRequestId) && <p className="oc-hint oc-agent-provider-reference" aria-label="提供方诊断依据">
+        {status !== null && <>提供方返回 HTTP {status}</>}{providerRequestId && <span>{status !== null ? " · " : ""}请求记录：{providerRequestId}</span>}
+      </p>}
+      {run.status === "needs_attention" && <div className="oc-actions">
+        {canResume && <button type="button" className="oc-button" disabled={disabled} onClick={onResume}>恢复可重试步骤</button>}
+        {run.canTakeOver && <button type="button" className={`oc-button${interruption.primaryTakeover ? " primary" : ""}`} disabled={disabled} onClick={onTakeOver}><Pencil size={14} aria-hidden="true" />交美工接管本单</button>}
+      </div>}
+    </>}
+  </div>;
 }
 
 /** Only transient GET failures retry. A POST is never replayed here. */
@@ -279,6 +316,8 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
     {loading && !run ? <p className="oc-hint">正在读取制图任务…</p> : !run ? <p className="oc-hint">{designAgentNoRunMessage({ preparation, designExecutor, financialOnly, readFailed: !!error })}</p> : <>
       <p><strong>{manualTakeover ? "已交美工修改" : approvedCurrent ? "本版本已审核" : statusLabels[run.status] ?? "状态待核对"}</strong><span className="oc-hint"> · 更新于 {dateTime(run.updatedAt)}</span></p>
       {manualTakeover && <p className="oc-hint">自动制作已停止 原素材 版本与费用记录完整保留 美工在本单原项目继续修改后重新送审</p>}
+      {!financialOnly && !run.privateEvidenceOmitted && run.privateEvidenceState !== "expired" && <DesignAgentInterruptionNotice run={run}
+        disabled={disabled || busy || checking} onTakeOver={() => void act("takeover")} onResume={() => void act("resume")} />}
       {run.privateEvidenceState==="expired"?<p className="oc-hint">订单私有资料已到期 历史方法和产物交接不再展示</p>:financialOnly||run.privateEvidenceOmitted?<p className="oc-hint">当前仅显示制作状态与费用依据。</p>:<>
         <MethodEvidence selection={run.methodSnapshot?.methodSelection} />
         {!checking && run.revisionFeedback && <OrderArtworkAiRevisionFeedback key={run.id} workItemId={workItemId} runId={run.id} />}
@@ -305,7 +344,7 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
         </li>)}</ul>
       </details>}
       {!financialOnly&&!run.privateEvidenceOmitted&&<>
-      {run.status === "queued" && <p className="oc-hint">原制作任务已保存 正在等待执行 尚未代表后台已开始处理 关闭页面不会取消原任务</p>}
+      {run.status === "queued" && run.errorCode !== "agent_provider_rate_limited" && <p className="oc-hint">原制作任务已保存 正在等待执行 尚未代表后台已开始处理 关闭页面不会取消原任务</p>}
       {run.status === "running" && <p className="oc-hint">后台正在处理，关闭页面不会停止任务。需要修改稿件时，请先接管。</p>}
       <details className="oc-section"><summary>本任务使用的规则 · {run.ruleSnapshot ? `${run.ruleSnapshot.rules.length} 条` : "历史任务未记录"}</summary>
         {run.ruleSnapshot ? <><p className="oc-hint">固定于 {dateTime(run.ruleSnapshot.capturedAt)}。以下内容来自派发时的版本，后续规则变更不会覆盖。</p>
@@ -315,8 +354,7 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
           : <p className="oc-hint">此历史任务没有规则中心快照，不能用当前规则补记；原工艺与文件版本记录仍保留。</p>}
       </details>
       {run.status === "awaiting_review" && <p className="oc-notice">{approvedCurrent ? "本单同一制作版本已通过运营审核 下方保留自动制作时的原始移交记录 不代表再次待审核" : "制作步骤已完成，请核对原图、稿件和预检结果，再进行正式审核。"}</p>}
-      {run.status === "needs_attention" && <p className="oc-notice">自动制作已暂停。请核对下面未完成的步骤；需要人工修改或审核时，请先接管。接管会保留已完成的素材和版本。</p>}
-      {run.errorCode && run.status !== "cancelled" && <p className="oc-error" role="status">处理原因：{designAgentErrorMessage(run.errorCode)}</p>}
+      {run.errorCode && run.status !== "cancelled" && run.status !== "needs_attention" && !(run.status === "queued" && run.errorCode === "agent_provider_rate_limited") && <p className="oc-error" role="status">处理原因：{designAgentErrorMessage(run.errorCode)}</p>}
       <ol className="oc-agent-steps">{run.steps.map(step => <li key={step.id}>
         <div><strong>{step.key === "review_required" ? "交付待核对稿件" : step.label}</strong><span>{step.key === "review_required" && step.status === "completed" ? approvedCurrent ? "原始移交记录" : "待人工核对" : statusLabels[step.status] ?? "状态待核对"}</span></div>
         {step.status === "uncertain" && <p className="oc-hint">模型请求可能已执行或计费，不能直接重新提交。可核实原结果时从原检查点继续；无法核实时接管处理。</p>}
@@ -338,10 +376,10 @@ export function OrderDesignAgentPanel({ workItemId, refreshKey, disabled, onChan
       {run.responseRecoveryBlockedCode && <p className="oc-hint">原结果恢复暂不可用：{designAgentErrorMessage(run.responseRecoveryBlockedCode)}</p>}
       {run.responseRecoveryTarget && <OrderDesignResponseRecoveryForm key={`${run.id}:${run.revision}`} run={run}
         disabled={disabled || busy || checking} onRestore={input => act("restore-response", input)} />}
-      <div className="oc-actions">
+      {run.status !== "needs_attention" && <div className="oc-actions">
         {run.canResume && <button type="button" className="oc-button" disabled={disabled || busy || checking} onClick={() => void act("resume")}>恢复可重试步骤</button>}
         {run.canTakeOver && <button type="button" className="oc-button" disabled={disabled || busy || checking} onClick={() => void act("takeover")}>停止自动制作并接管</button>}
-      </div>
+      </div>}
       {disabled && <p className="oc-hint">先保存当前修改或等待正在提交的操作完成，再处理制图任务。</p>}
       </>}
     </>}

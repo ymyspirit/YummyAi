@@ -11,12 +11,14 @@ import {
   logisticsTaskProductions as pins,
   logisticsTasks as tasks,
   orders,
+  orderPrivateSourceAvailable,
   withTenant,
   type DatabaseConnection,
   type TenantTransaction,
 } from "@yummyai/database";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { readCarrierObservation, trackingIdentity } from "./carrier-observation.js";
 
 export const LogisticsReadQuerySchema = z.object({
   orderId: z.uuidv7().optional(),
@@ -105,12 +107,13 @@ export class LogisticsReadOwner {
   }
 
   private async view(tx: TenantTransaction, row: Task): Promise<LogisticsTaskView> {
-    const [order] = await tx.select().from(orders).where(eq(orders.id, row.orderId));
+    const [order] = await tx.select({addressStatus:orders.addressStatus,externalOrderId:orders.externalOrderId,
+      retained:orderPrivateSourceAvailable(sql`${orders.id}`)}).from(orders).where(eq(orders.id, row.orderId));
     const [factory] = await tx.select().from(fulfillmentFactories).where(eq(fulfillmentFactories.id, row.factoryId));
     const [connection] = await tx.select().from(versions).where(eq(versions.id, row.connectionVersionId));
     const history = await tx.select().from(quotes).where(eq(quotes.taskId, row.id)).orderBy(desc(quotes.createdAt)).limit(400);
     const files = await tx.select().from(labels).where(eq(labels.taskId, row.id));
-    const retained = privateAvailable(row, order?.addressStatus);
+    const retained = !!order?.retained && privateAvailable(row, order.addressStatus);
     const snapshot = retained && row.encryptedSnapshot
       ? this.pii.withSecret(row.encryptedSnapshot, value => LogisticsTaskSnapshotSchema.parse(JSON.parse(value))) : null;
     return {
@@ -121,6 +124,8 @@ export class LogisticsReadOwner {
       quotedCurrency: row.selectedQuote?.currency ?? null, actualCurrency: row.actualCurrency,
       minorUnitDigits: connection?.profile.minorUnitDigits ?? 2,
       trackingNumbers: retained ? row.trackingNumbers : [], labelMode: connection?.profile.labelMode ?? "include",
+      ...(retained && row.status==="completed" && connection?.profile.provider==="yunexpress" && connection.profile.yunexpressProtocol==="openapi"
+        ? {carrierWaybill:row.providerOrderId??undefined,carrierObservation:await readCarrierObservation(tx,row.id,trackingIdentity(row))} : {}),
       labelCount: retained ? files.length : 0, quotes: history.map(entry => entry.quote),
       latestShipAt: snapshot?.latestShipAt ?? "", deliverBy: snapshot?.deliverBy ?? "",
       connectionName: connection?.profile.name ?? "连接不可用", factoryName: factory?.name ?? "工厂不可用",
@@ -139,5 +144,5 @@ function privateAvailable(row: Task, addressStatus: string | undefined) {
 }
 
 function hidePrivateFields(view: LogisticsTaskView): LogisticsTaskView {
-  return { ...view, trackingNumbers: [], labelCount: 0, labels: [], latestShipAt: "", deliverBy: "" };
+  return { ...view, trackingNumbers: [], labelCount: 0, labels: [], carrierWaybill:undefined, carrierObservation:null, latestShipAt: "", deliverBy: "" };
 }

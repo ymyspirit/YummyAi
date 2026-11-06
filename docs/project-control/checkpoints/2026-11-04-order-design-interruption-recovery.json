@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "date": "2026-11-04",
+  "timezone": "Asia/Shanghai",
+  "scope": "Order-design provider failure classification and bounded recovery",
+  "status": "locally_verified_not_deployed",
+  "baselineCommit": "ce3963654601c085c014f854b80bc8811a1d4630",
+  "databaseMigrationsChanged": false,
+  "verification": {
+    "orderDesignUnit": { "files": 12, "passed": 69, "failed": 0 },
+    "aiCoreUnit": { "files": 26, "passed": 296, "failed": 0 },
+    "workerTargetedUnit": { "files": 4, "passed": 52, "failed": 0 },
+    "webTargetedUnitAndServerRendering": { "passed": 58, "failed": 0 },
+    "projectRules": { "passed": 3, "failed": 0 },
+    "initialIntegration": {
+      "passed": 152,
+      "failed": 1,
+      "failure": "A proven unsubmitted attempt retained its reservation; fixed by releasing only the exact proven-unsent claim"
+    },
+    "finalAffectedIntegration": {
+      "passed": 27,
+      "failed": 0,
+      "skipped": 129,
+      "selection": "provider|rate.limit|proven unsubmitted|pre-submission crash|definite|received 5xx|delayed|organization budget|known budget|durably quarantines|durable response|received response",
+      "coversOriginalFailureAndNewCombinationCases": true,
+      "unrelatedPassingSuitesWereNotRepeatedInFull": true
+    },
+    "typecheck": {
+      "contracts": "passed",
+      "aiCore": "passed",
+      "orderDesign": "passed",
+      "worker": "passed",
+      "api": "passed with an 8192 MiB process-local Node heap after the default heap exhausted memory",
+      "web": "passed, including the final production build"
+    },
+    "webProductionBuild": "passed; final compiled output includes the guard against displaying a completed step's historical provider failure",
+    "changedSourceEslint": "passed",
+    "sourceSecretScan": { "scanned": 4639, "findings": 0 },
+    "documentation": { "markdownFilesChecked": 2, "relativeLinksChecked": 12, "jsonRecordsParsed": 1, "errors": 0 },
+    "browser": {
+      "boundary": "isolated fixture importing the real React component and existing CSS, synthetic data only",
+      "desktopWidth": 1280,
+      "narrowWidth": 390,
+      "narrowDocumentScrollWidth": 390,
+      "narrowTakeoverButtonHeight": 44,
+      "checks": ["specific moderation reason and takeover callback", "scheduled retry without duplicate-submit control", "legacy unknown result without invented moderation evidence", "notice hidden after completion"],
+      "originalAccountBusinessAcceptance": "not performed",
+      "temporaryTabClosedAndViewportReset": true
+    }
+  },
+  "isolationAndCleanup": {
+    "entrypoint": "tools/scripts/run-order-daily-acceptance.mts --suite=design-agent-integration",
+    "identity": "existing Keycloak service-token endpoint through a temporary loopback TCP forwarder; no identity configuration or service restart",
+    "s3EndpointOverride": "test process only, existing local MinIO API port 19000",
+    "fixtureIds": ["4f2ccd423d714750a01a724367da6a6d", "724e9cbd3d574c0b9ea48fd562f91f67", "442b0914226b424ea8238e0a7a832ebd"],
+    "firstFixture": "identity prerequisite failed before test startup; database and Redis deleted; bucket independently absent with HTTP 404",
+    "executedFixtureDatabasesBucketsAndRedisDeleted": true,
+    "executedFixtureOutputDirectoriesRemoved": 2,
+    "ownedFilesRemoved": 10,
+    "ownedDirectoriesRemoved": 6,
+    "temporaryHelpersRemoved": 4,
+    "removalMethod": "native PowerShell LiteralPath, verified owned absolute paths and no reparse points; no recursive or forced deletion",
+    "paidModelCalls": 0,
+    "realOrderWrites": 0,
+    "folderBackupsCreated": 0
+  },
+  "deliveryBoundary": {
+    "gitPush": false,
+    "githubCiForThisChange": "not run; user prohibited push",
+    "deployed": false,
+    "workerStartedOrRestarted": false,
+    "historicalRealRunReclassifiedOrResubmitted": false,
+    "limitations": ["A provider safety rejection cannot be overridden by ERP retry logic", "Historical uncertain runs lack the new persisted rejection receipt", "The current manual original-result form cannot safely identify one of multiple submitted attempts"]
+  }
+}

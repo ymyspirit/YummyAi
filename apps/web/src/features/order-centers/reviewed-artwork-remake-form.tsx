@@ -20,6 +20,7 @@ export function ReviewedArtworkRemakeForm({ pin, busy, create, commit, prepareAg
   const proposalHandoff = useAgentFulfillmentProposalHandoff(), suggestion = useAgentFulfillmentProposalInput("production_recovery", pin.productionOrderId);
   const [basis, setBasis] = useState<Basis | null>(null), [verified, setVerified] = useState(false), [reading, setReading] = useState(false);
   const [error, setError] = useState(""), [note, setNote] = useState(""), [confirmed, setConfirmed] = useState(false), [manufacturingReady, setManufacturingReady] = useState(false);
+  const [outsourcedFactoryId, setOutsourcedFactoryId] = useState<string>();
   const [quantity, setQuantity] = useState(String(pin.quantity)), [dueLocal, setDueLocal] = useState(""), [capacityReady, setCapacityReady] = useState(false);
   useEffect(() => {
     if (!proposalHandoff?.formKey) return;
@@ -87,9 +88,9 @@ export function ReviewedArtworkRemakeForm({ pin, busy, create, commit, prepareAg
     {basis && !verified && <p className="oc-muted">已保留本次填写 重新核对当前审核稿成功前不能创建返工单</p>}
     {basis && <form key={proposalHandoff?.formKey} className="oc-delivery-form" aria-label={`创建返工生产单 ${pin.orderNumber}`} onSubmit={event => void submit(event)}>
       <p>当前核对稿 V{basis.version} · 原交付稿 V{pin.editorVersionNumber}</p><fieldset disabled={unavailable}>
-        <ProductionManufacturingFields key={`${basis.renderId}:${basis.expectedRevision}`} lineId={pin.orderLineId} disabled={unavailable} onReadinessChange={setManufacturingReady} />
+        <ProductionManufacturingFields key={`${basis.renderId}:${basis.expectedRevision}`} lineId={pin.orderLineId} disabled={unavailable} onReadinessChange={setManufacturingReady} onSupplyChange={setOutsourcedFactoryId} />
         <label>返工数量<input name="quantity" type="number" min={1} max={pin.quantity} required value={quantity} onChange={event => setQuantity(event.target.value)} /></label><label>返工工厂当地预计完成<input name="due" type="datetime-local" required value={dueLocal} onChange={event => setDueLocal(event.target.value)} /></label>
-        {pin.factory ? <ProductionCapacityPicker factoryId={pin.factory.factoryId} items={[{ reference: pin.productionOrderId, factoryVersionId: pin.factory.factoryVersionId, capabilityVersionId: pin.factory.capabilityVersionId, quantity: Number(quantity), dueLocal }]}
+        {pin.factory ? <ProductionCapacityPicker factoryId={pin.factory.factoryId} items={[{ reference: pin.productionOrderId, factoryVersionId: pin.factory.factoryVersionId, capabilityVersionId: pin.factory.capabilityVersionId, quantity: Number(quantity), outsourcedFactoryId, dueLocal }]}
           basisKey={`${identity}:${manufacturingReady}`} disabled={unavailable} onReady={setCapacityReady} onDenied={() => { setBasis(null); setNote(""); setQuantity(""); setDueLocal(""); setVerified(false); }} />
           : <p className="oc-delivery-error" role="status">原生产未保留可读取的固定工厂与能力 新返工受阻 不用当前工厂资料猜补历史</p>}
         <label className="oc-delivery-wide">返工原因与依据<input name="reason" required minLength={5} maxLength={2000} defaultValue={suggestion?.reason} /></label>

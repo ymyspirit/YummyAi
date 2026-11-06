@@ -6,6 +6,12 @@
 
 已有本机日用先运行pnpm daily:status。健康时保留进程；缺少已固定服务时用pnpm daily:start恢复。日用指针、环境和业务备份属于本机私有配置，不随GitHub检出自动产生。发布切换使用新的固定源码和构建、备份恢复与原子绑定；不能覆盖正在运行的旧快照。
 
+订单自动履约可采用 manifest v3 的 `workerRuntime: { "profile": "order-fulfillment-v2" }`。
+v2 在原六个订单队列上增加 `amazon-order-report-retention`，执行原有报表内容到期清理；
+v1 仍固定六个队列，恢复旧清单时不扩大消费者范围。采用前核对原队列和付费意图，实际就绪
+检查使用 `127.0.0.1:8001/health`，并校验当前 PID 和完整队列集合。后台断开时状态检查
+会明确报缺失或故障；再次启动只恢复缺少的固定进程。旧 manifest v1/v2 不自动扩展后台范围。
+
 在新机器开发时，将.env.example复制为.env，明确填写本机数据库、Redis、对象存储、OIDC及加密域配置。密码及每个加密域使用独立随机值，外部模型密钥留空。配置本机基础设施后，先在专用开发库执行数据库迁移和本机身份初始化，再按package.json的个人API/Web入口启动；不要对已有日用库重复初始化。完整身份与基础设施约定见[身份契约](../integration/erp-identity.md)和[部署威胁模型](../security/threat-model.md)。
 
 CI使用一次性账户、数据库和密钥；不会连接本机业务库或付费渠道。Windows专用节点锁测试在Windows job执行；Linux保留纯测试及可移植流程。普通Web smoke使用明确的默认文件列表；每个个人/历史/互斥验收仍使用自己的配置及disposable runner，不能绕开隔离旗标运行。P1的本人配置页另在Windows实际编译候选上验证。

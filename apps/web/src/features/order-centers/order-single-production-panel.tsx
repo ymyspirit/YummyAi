@@ -22,6 +22,7 @@ export function OrderSingleProductionPanel({ detail, editor, refresh, disabled, 
   const [openedOnce, setOpenedOnce] = useState(false);
   const panel = useRef<HTMLDetailsElement | null>(null);
   const [quantity, setQuantity] = useState(""), [reload, setReload] = useState(0), [factoryReady, setFactoryReady] = useState(false), [manufacturingReady, setManufacturingReady] = useState(false);
+  const [outsourcedFactoryId, setOutsourcedFactoryId] = useState<string>();
   const [factoryChoice, setFactoryChoice] = useState<ProductionFactoryChoice | null>(null), [dueLocal, setDueLocal] = useState(""), [capacityReady, setCapacityReady] = useState(false);
   const previous = useRef(""), quantityRef = useRef(""); quantityRef.current = quantity;
   useLayoutEffect(() => { if (panel.current?.open) setOpenedOnce(true); }, []);
@@ -74,14 +75,14 @@ export function OrderSingleProductionPanel({ detail, editor, refresh, disabled, 
         if (!["supplierId", "factoryId", "factoryVersionId", "capabilityVersionId"].every(name => text(name))) throw new Error("请重新核对本次数量和工厂能力");
         void onSubmit(event, `lines/${detail.line.id}/release`, { expectedRevision: current.revision, expectedProjectionVersion: current.projectionVersion, renderId: render.id,
           supplierId: text("supplierId"), factoryId: text("factoryId"), factoryVersionId: text("factoryVersionId"), capabilityVersionId: text("capabilityVersionId"),
-          quantity: amount, ...readProductionCapacitySelection(form, detail.line.id, { quantity: amount, factoryVersionId: text("factoryVersionId"), capabilityVersionId: text("capabilityVersionId") }), instructions: text("instructions"), manufacturing: readProductionManufacturingSelection(form) }, "本商品生产已安排 原审核稿 制造版本 工厂与产能已固定");
+          quantity: amount, ...readProductionCapacitySelection(form, detail.line.id, { quantity: amount, factoryVersionId: text("factoryVersionId"), capabilityVersionId: text("capabilityVersionId") }), instructions: text("instructions"), manufacturing: readProductionManufacturingSelection(form) }, "本商品生产已安排，审核稿、制造版本与工厂已固定");
       } catch (cause) { setError(cause instanceof Error ? cause.message : "请核对本次生产填写"); }
     }}><fieldset className="oc-operation-form oc-single-production-fields" disabled={unavailable}>
       <label>本次商品数量<input name="quantity" required type="number" min={1} max={current.availableQuantity} step={1} value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
       <label>工厂当地预计完成<input name="due" required type="datetime-local" value={dueLocal} onChange={event => setDueLocal(event.target.value)} /></label>
-      <div className="oc-full-field"><ProductionManufacturingFields lineId={detail.line.id} disabled={unavailable} onReadinessChange={setManufacturingReady} /></div>
+      <div className="oc-full-field"><ProductionManufacturingFields lineId={detail.line.id} disabled={unavailable} onReadinessChange={setManufacturingReady} onSupplyChange={setOutsourcedFactoryId} /></div>
       {validQuantity && <div className="oc-full-field"><ProductionFactorySelect lineId={detail.line.id} renderId={render.id} quantity={amount} disabled={unavailable} onReady={setFactoryReady} onSelection={setFactoryChoice} /></div>}
-      {validQuantity && factoryChoice && <div className="oc-full-field"><ProductionCapacityPicker factoryId={factoryChoice.pin.factoryId} items={[{ reference: detail.line.id, factoryVersionId: factoryChoice.pin.factoryVersionId, capabilityVersionId: factoryChoice.pin.capabilityVersionId, quantity: amount, dueLocal }]}
+      {validQuantity && factoryChoice && <div className="oc-full-field"><ProductionCapacityPicker factoryId={factoryChoice.pin.factoryId} items={[{ reference: detail.line.id, factoryVersionId: factoryChoice.pin.factoryVersionId, capabilityVersionId: factoryChoice.pin.capabilityVersionId, quantity: amount, outsourcedFactoryId, dueLocal }]}
         basisKey={`${identity}:${current.projectionVersion}:${render.id}:${manufacturingReady}`} disabled={unavailable || !factoryReady} onReady={setCapacityReady} /></div>}
       <label className="oc-full-field">本次生产说明<textarea aria-label="本次生产说明" name="instructions" required maxLength={10000} defaultValue="按本商品已审核稿及本次制造版本生产" rows={2} /></label>
       <div className="oc-actions oc-full-field"><button className="oc-button primary" disabled={!ready}>安排本商品生产</button></div>

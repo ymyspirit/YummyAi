@@ -6,8 +6,8 @@ import { SaveLogisticsConnectionSchema, SaveLogisticsRuleSchema, CreateLogistics
   LogisticsOptionsSchema, type LogisticsConnectionView, type LogisticsTaskView } from "@yummyai/contracts/logistics";
 import { logisticsConnections as connections, logisticsConnectionVersions as versions, logisticsRuleVersions as rules, logisticsTasks as tasks, logisticsTaskProductions as pins, logisticsLabels as labels, logisticsEvents as events,
   fulfillmentFactories, fulfillmentFactoryVersions, productionOrders, productionOrderVersions, orderLines, orders, orderProtectedDetails,logisticsDocumentProfiles, withTenant, type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
-import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel } from "@yummyai/logistics";
-import { OrderDocumentSourceReader } from "@yummyai/order-core";
+import { logisticsHash, logisticsLock, HttpLogisticsGateway,purgeLogisticsTasks, LogisticsReadOwner, LogisticsReadQuerySchema,recommendYunexpressChannel, HANDOVER_POLL_MS, trackingCheckDue } from "@yummyai/logistics";
+import { OrderDocumentSourceReader, currentOrderAuthority } from "@yummyai/order-core";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Storage } from "@yummyai/storage";
 import { z } from "zod";
@@ -15,7 +15,7 @@ import { DATABASE_CONNECTION, INTEGRATION_SECRET_VAULT, ORDER_PII_VAULT, PRIVATE
 import { OrderService } from "../orders/order.service.js";
 import { originalOwnerOperation } from "../shared/original-owner-error.js";
 import { LogisticsAccountsService } from "./logistics-accounts.service.js";
-export abstract class LogisticsEnqueuer { abstract enqueue(input: { taskId: string; tenantId: string; requestedBy: string; mode: "quote"|"purchase"|"reconcile"|"retention"; requestKey: string; delayMs?:number }): Promise<void>; }
+export abstract class LogisticsEnqueuer { abstract enqueue(input: { taskId: string; tenantId: string; requestedBy: string; mode: "quote"|"purchase"|"reconcile"|"retention"|"track"; requestKey: string; delayMs?:number }): Promise<void>; }
 @Injectable()
 export class LogisticsService {
   constructor(@Inject(DATABASE_CONNECTION) private readonly database: DatabaseConnection, @Inject(INTEGRATION_SECRET_VAULT) private readonly vault: SecretVault,
@@ -25,7 +25,16 @@ export class LogisticsService {
   async connections(context: TenantContext): Promise<{ connections: LogisticsConnectionView[] }> {
     this.tenantAccess(context);
     authorize(context,Permission.IntegrationRead);
+    return this.connectionViews(context);
+  }
+  /** Operational routing facts only. Secrets remain in the integration owner. */
+  async routingConnections(context: TenantContext): Promise<{ connections: LogisticsConnectionView[] }> {
+    this.read(context);
+    return this.connectionViews(context, true);
+  }
+  private async connectionViews(context: TenantContext, operational = false): Promise<{ connections: LogisticsConnectionView[] }> {
     return withTenant(this.database.db,context,async tx => {
+      await currentOrderAuthority(tx,context,operational ? [Permission.OrderRead,Permission.OrderPiiRead] : [Permission.IntegrationRead]);
       const rows=await tx.select().from(connections).orderBy(desc(connections.createdAt)).limit(200);
       return { connections: await Promise.all(rows.map(async row => { const v=await this.connection(tx,row.id); const rule=await this.rule(tx,row.id,row.ruleVersion); return { id:row.id,version:row.version,versionId:v.id,profile:v.profile,verifiedAt:row.verifiedVersionId===v.id ? row.verifiedAt?.toISOString() ?? null : null,rule:rule?.rule??null,ruleVersion:row.ruleVersion,ruleVersionId:rule?.id??null }; })) };
     });
@@ -94,12 +103,12 @@ export class LogisticsService {
       await tx.update(connections).set({ruleVersion:version}).where(eq(connections.id,current.id)); return {ruleVersion:version};
     });
   }
-  async createTask(context: TenantContext,raw: unknown) {
-    this.write(context); const input=CreateLogisticsTaskSchema.parse(raw),digest=logisticsHash(input);
+  async createTask(context: TenantContext,raw: unknown, execution: { mode: "quote" | "purchase" } = { mode: "purchase" }) {
+    this.write(context); const input=CreateLogisticsTaskSchema.parse(raw),digest=logisticsHash(execution.mode==="quote"?{...input,executionMode:"quote"}:input);
     const fulfillment=await this.orderService.fulfillmentDetails(context,input.orderId,"fulfillment");
     if(!fulfillment.protectedDetails) throw new ConflictException("订单缺少有效的收件地址和联系方式");
     const {shippingAddress:a,buyer}=fulfillment.protectedDetails;
-    const recipientResult=LogisticsAddressSchema.safeParse({name:a.recipient,address1:a.lines[0],address2:a.lines.slice(1).join(" "),city:a.city,region:a.region,postalCode:a.postalCode,countryCode:a.countryCode,phone:buyer.phone,email:buyer.email});
+    const recipientResult=LogisticsAddressSchema.safeParse({name:a.recipient,address1:a.lines[0],address2:a.lines.slice(1).join(" "),city:a.city,region:a.region,postalCode:a.postalCode,countryCode:a.countryCode,phone:a.phone !== undefined ? a.phone : buyer.phone,email:buyer.email});
     if(!recipientResult.success) throw new ConflictException("收件地址或联系方式不完整，请先审单核对");
     const outcome=await withTenant(this.database.db,context,async tx=>{
       await logisticsLock(tx,context,`order:${input.orderId}`);
@@ -114,6 +123,9 @@ export class LogisticsService {
       const first=rows[0];
       if(rows.length!==input.productionOrderIds.length || !first?.version.factoryId || !first.version.factoryVersionId || rows.some(r=>r.version.factoryId!==first.version.factoryId || r.version.factoryVersionId!==first.version.factoryVersionId || ["cancelled","cancel_requested","failed"].includes(r.production.status) || r.version.expectedCompletionAt>new Date(input.readyAt))) throw new ConflictException("请按已确认工厂拆分物流任务，并核对数量和预计完工时间");
       const connection=await this.connection(tx,input.connectionId); const [parent]=await tx.select().from(connections).where(eq(connections.id,input.connectionId));
+      // Only OpenAPI documents HS codes as optional; keep the legacy OMS requirement.
+      if(connection.profile.provider==="yunexpress"&&connection.profile.yunexpressProtocol!=="openapi"&&input.packages.some(pack=>pack.declarations.some(item=>!/^\d{6,12}$/.test(item.hsCode))))
+        throw new ConflictException("云途跨境申报须填写有效的海关编码");
       const rule=await this.rule(tx,input.connectionId,parent!.ruleVersion); if(!rule || rule.connectionVersionId!==connection.id) throw new ConflictException("请为当前发货连接设置预算和时效规则");
       if(parent!.factoryId!==first.version.factoryId) throw new ConflictException("物流路线须属于生产任务的实际工厂");
       const [factory]=await tx.select().from(fulfillmentFactoryVersions).where(eq(fulfillmentFactoryVersions.id,first.version.factoryVersionId));
@@ -139,7 +151,7 @@ export class LogisticsService {
       const { idempotencyKey: _requestKey, ...basis }=input;
       void _requestKey;
       let channelCode=input.channelCode,routingDocumentProfileVersionId:string|undefined;
-      if(connection.profile.provider==="yunexpress"&&!channelCode){
+      if(connection.profile.provider==="yunexpress"&&connection.profile.channelSelection!=="compare_eligible"&&!channelCode){
         const [packing]=await tx.select().from(logisticsDocumentProfiles).where(and(eq(logisticsDocumentProfiles.factoryId,first.version.factoryId),eq(logisticsDocumentProfiles.factoryVersionId,first.version.factoryVersionId))).orderBy(desc(logisticsDocumentProfiles.versionNumber)).limit(1);
         if(packing?.profile.route==="yunexpress"){
           const source=await new OrderDocumentSourceReader(this.pii).read(tx,context,input.orderId);
@@ -167,7 +179,7 @@ export class LogisticsService {
       await tx.insert(events).values({id:createEntityId(),tenantId:context.tenantId,createdBy:context.userId,taskId:id,action:"task.created",data:{productionOrderIds:input.productionOrderIds,ruleVersionId:rule.id,connectionVersionId:connection.id}});
       return {taskId:id,replayed:false};
     });
-    await this.queue.enqueue({taskId:outcome.taskId,tenantId:context.tenantId,requestedBy:context.userId,mode:"purchase",requestKey:input.idempotencyKey});
+    await this.queue.enqueue({taskId:outcome.taskId,tenantId:context.tenantId,requestedBy:context.userId,mode:execution.mode,requestKey:input.idempotencyKey});
     const [task]=await withTenant(this.database.db,context,tx=>tx.select().from(tasks).where(eq(tasks.id,outcome.taskId)));
     if(task)await this.queue.enqueue({taskId:task.id,tenantId:context.tenantId,requestedBy:context.userId,mode:"retention",requestKey:task.id,delayMs:Math.max(0,task.expiresAt.getTime()-Date.now())});
     return outcome;
@@ -184,6 +196,12 @@ export class LogisticsService {
           blockers:[...(r.order.sideState?["订单已暂停或取消"]:[]),...(r.order.addressStatus!=="protected"?["有效收件资料缺失"]:[]),...(["cancel_requested","quality_hold"].includes(r.production.status)?["生产任务暂不可购单"]:[])]})),
       });
     });
+  }
+  async requestHandoverRead(context:TenantContext,id:string) {
+    this.write(context);
+    const task=await this.get(context,id);
+    if(task.status!=="completed" || !task.carrierWaybill || task.trackingNumbers.length>1 || !trackingCheckDue(task.carrierObservation??null)) return;
+    await this.queue.enqueue({tenantId:context.tenantId,requestedBy:context.userId,taskId:id,mode:"track",requestKey:`handover:${Math.floor(Date.now()/HANDOVER_POLL_MS)}`});
   }
   async dispatch(context: TenantContext,id: string,raw: unknown) {
     this.write(context);const input=z.object({mode:z.enum(["quote","purchase","reconcile"]),idempotencyKey:z.uuid()}).strict().parse(raw);

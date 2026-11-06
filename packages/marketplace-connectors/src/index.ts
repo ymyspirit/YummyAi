@@ -120,3 +120,5 @@ export { storeNodeAmazonApplication, assertStoreNodeAmazonCredentialBinding, ass
   StoreNodeAmazonApplicationError, type StoreNodeAmazonApplication } from "./store-node-amazon-application.js";
 export { createStoreNodeSubmissionTransport, assertStoreNodeSubmissionLease, StoreNodeSubmissionPolicyError,
   type StoreNodeSubmissionTransportOptions } from "./store-node-submission-transport.js";
+export { createStoreNodeOrdersTransport, assertStoreNodeOrdersLease, StoreNodeOrdersPolicyError,
+  type StoreNodeOrdersTransportOptions } from "./store-node-orders-transport.js";

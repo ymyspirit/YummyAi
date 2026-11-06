@@ -3,6 +3,10 @@ import type {
   NormalizeOrderInput,
 } from "@yummyai/contracts";
 import { z } from "zod";
+import { OrderSyncCheckpointSchema, OrderSyncRequestSchema, OrderSyncPageMetadataSchema,
+  type OrderSyncCheckpoint, type OrderSyncRequest, type OrderSyncPageMetadata } from "@yummyai/contracts/order/sync";
+export { OrderSyncCheckpointSchema, OrderSyncRequestSchema, OrderSyncPageMetadataSchema,
+  type OrderSyncCheckpoint, type OrderSyncRequest, type OrderSyncPageMetadata } from "@yummyai/contracts/order/sync";
 
 import type {
   MarketplaceConnectorContext,
@@ -11,36 +15,6 @@ import type {
 
 const MAX_BACKFILL_DAYS = 30;
 const DEFAULT_LATE_UPDATE_OVERLAP_MINUTES = 5;
-
-export const OrderSyncCheckpointSchema = z.object({
-  cursor: z.string().trim().min(1).max(4_000).nullable(),
-  highWaterAt: z.iso.datetime().nullable(),
-  version: z.number().int().positive(),
-}).strict();
-
-export const OrderSyncRequestSchema = z.object({
-  checkpoint: OrderSyncCheckpointSchema,
-  updatedAfter: z.iso.datetime(),
-  updatedBefore: z.iso.datetime(),
-  pageSize: z.number().int().min(1).max(100),
-  maxPages: z.number().int().min(1).max(50),
-}).strict().superRefine((value, context) => {
-  if (Date.parse(value.updatedAfter) >= Date.parse(value.updatedBefore)) {
-    context.addIssue({ code: "custom", path: ["updatedAfter"], message: "updatedAfter must be earlier than updatedBefore" });
-  }
-});
-
-export const OrderSyncPageMetadataSchema = z.object({
-  fetchedAt: z.iso.datetime(),
-  highWaterAt: z.iso.datetime(),
-  nextCursor: z.string().trim().min(1).max(4_000).nullable(),
-  reportedCount: z.number().int().nonnegative().nullable(),
-  sourceVersion: z.string().trim().min(1).max(200),
-}).strict();
-
-export type OrderSyncCheckpoint = z.infer<typeof OrderSyncCheckpointSchema>;
-export type OrderSyncRequest = z.infer<typeof OrderSyncRequestSchema>;
-export type OrderSyncPageMetadata = z.infer<typeof OrderSyncPageMetadataSchema>;
 
 export interface ProviderOrderRecord {
   order: NormalizeOrderInput;
@@ -56,7 +30,7 @@ export interface ProviderOrderPage extends OrderSyncPageMetadata {
 export interface MarketplaceOrderIngestionAdapter {
   readonly platform: MarketplacePlatform;
   fetchPage(
-    context: MarketplaceConnectorContext,
+    context: Omit<MarketplaceConnectorContext, "tenantId">,
     credentials: MarketplaceCredentialAccessor,
     request: OrderSyncRequest,
     signal: AbortSignal,
@@ -250,7 +224,8 @@ export function assessOrderIngestion(input: AssessOrderIngestionInput): OrderIng
         risks.push(risk("unsupported_mapping", "warning", order.externalOrderId, line.externalLineId, "Order line has no listing or SKU mapping reference"));
       }
     }
-    if (record.buyerRequestedCancellation || /cancel(?:led|ed|ation|_requested)/i.test(order.providerStatus)) {
+    if (record.buyerRequestedCancellation || [order.redactedSource.cancelledLineIds, order.redactedSource.cancellationRequestedLineIds].some(ids => Array.isArray(ids) && ids.length > 0)
+      || /cancel(?:led|ed|ation|_requested)/i.test(order.providerStatus)) {
       risks.push(risk("cancellation_requested", "blocker", order.externalOrderId, null, "Provider reports a cancellation request or cancelled state"));
     }
     const providerUpdatedAt = Date.parse(z.iso.datetime().parse(record.providerUpdatedAt));

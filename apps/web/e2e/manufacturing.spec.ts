@@ -6,6 +6,7 @@ import { ManufacturingRecipeContentSchema, ManufacturingRecipeVersionViewSchema,
 import { manufacturingBasis } from "../../api/src/catalog/manufacturing.test-fixture";
 import { requireDisposableIntegrationEnvironment } from "../../../tools/testing/require-disposable-integration.mjs";
 import { actors, changeErpRights, identityControl, loginErp, scopedErpRole } from "./erp-identity-fixture";
+import { syntheticFactoryProfile, syntheticSupplierProfile } from "../../../tools/testing/factory-fixtures";
 
 const readRights = ["product:read", "design:read", "research:read", "capture:read"];
 async function source() {
@@ -44,6 +45,37 @@ async function noHorizontalOverflow(page: Page) {
   expect(dimensions.document, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.viewport);
 }
 
+test("outsourced finished goods are configured once on a specification and retain the selected factory after reload", async ({ page }, info) => {
+  const own=await source(), key=randomUUID(), {access_token:token}=await identityControl("token",{account:"operator"});
+  async function create(path:string, body:unknown) {
+    const response=await fetch(`${process.env.API_BASE_URL}/v1/${path}`,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(body)});
+    expect(response.status).toBe(201);
+    return await response.json() as {id:string};
+  }
+  const supplier=await create("sourcing/suppliers",{name:"Synthetic supplier "+key,kind:"manual",regionCode:"CA",settlementCurrency:"CAD",profile:syntheticSupplierProfile});
+  const factory=await create("sourcing/factories",{supplierId:supplier.id,code:"TEST-"+key,profile:syntheticFactoryProfile("Synthetic external factory"),idempotencyKey:randomUUID()});
+  await loginErp(page,"operator",`/manufacturing-recipes?spuId=${own.spuId}&specificationId=${own.specificationId}&new=1`);
+  const form=page.getByRole("form",{name:"制造模板编辑"});
+  await form.getByLabel("制造模板编号",{exact:true}).fill("EXTERNAL-"+key);
+  await form.getByLabel("制造名称",{exact:true}).fill("Synthetic finished goods specification");
+  await form.getByLabel("备料与排产",{exact:true}).selectOption(factory.id);
+  await expect(form.getByRole("button",{name:"增加材料"})).toHaveCount(0);
+  await expect(form.getByLabel("每份成品数量",{exact:true})).toHaveValue("1");
+  await form.getByRole("button",{name:"保存制造模板",exact:true}).click();
+  await expect(page).toHaveURL(/recipe=/);
+  await page.reload();
+  await expect(form.getByLabel("备料与排产",{exact:true})).toHaveValue(factory.id);
+  await page.getByLabel("本次审核说明",{exact:true}).fill("Synthetic outsourcing approval");
+  await page.getByRole("button",{name:"批准当前版本",exact:true}).click();
+  await expect(page.getByRole("group",{name:"制造版本状态"})).toContainText("已批准");
+  await expect(page.getByRole("button",{name:"生成备料建议"})).toHaveCount(0);
+  for (const width of [1440,390]) {
+    await page.setViewportSize({width,height:880});
+    await noHorizontalOverflow(page);
+    await form.scrollIntoViewIfNeeded();
+    await page.screenshot({path:info.outputPath(`outsourced-${width}.png`)});
+  }
+});
 test("SPU specification to unknown draft, approved exact demand, next draft and immutable history at desktop and mobile widths", async ({ page }, info) => {
   const own = await source();
   await page.setViewportSize({ width: 1440, height: 960 });

@@ -82,7 +82,7 @@ export const FactoryCapacityReservationViewSchema = z.object({ id: Id, factoryId
 }).strict().superRefine((value, context) => {
   if (value.committedUnits + value.releasedUnits > value.totalUnits || value.totalUnits !== value.quantity * value.unitsPerItem) context.addIssue({ code: "custom", path: ["totalUnits"], message: "产能原数量 单位换算 承诺与释放须守恒" });
 });
-export const ProductionCapacityViewSchema = z.object({ ...Authority, productionOrderId: Id, status: z.enum(["reserved", "legacy_unreserved"]), reservations: z.array(FactoryCapacityReservationViewSchema) }).strict().superRefine((value, context) => {
+export const ProductionCapacityViewSchema = z.object({ ...Authority, productionOrderId: Id, status: z.enum(["reserved", "factory_managed", "legacy_unreserved"]), reservations: z.array(FactoryCapacityReservationViewSchema) }).strict().superRefine((value, context) => {
   validateAuthority(value, context);
   if ((value.status === "reserved") !== (value.reservations.length > 0) || value.reservations.some(row => row.productionOrderId !== value.productionOrderId) || new Set(value.reservations.map(row => row.id)).size !== value.reservations.length || new Set(value.reservations.map(row => `${row.productionVersionId}:${row.poolId}`)).size !== value.reservations.length) context.addIssue({ code: "custom", path: ["reservations"], message: "生产产能回执须归属原生产单 旧无预留不得补造" });
 });

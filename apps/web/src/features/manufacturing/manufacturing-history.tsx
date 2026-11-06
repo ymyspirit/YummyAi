@@ -1,19 +1,20 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ManufacturingRecipeVersionViewSchema, ManufacturingVersionListSchema, type ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
+import { ManufacturingRecipeVersionViewSchema, ManufacturingVersionListSchema, outsourcedManufacturingFactory, type ManufacturingRecipeVersionView } from "@yummyai/contracts/catalog/manufacturing";
 import { ManufacturingContextChanged, ManufacturingRequestError, manufacturingRequest } from "./manufacturing-api";
 import { quantityText, responsibilityLabels, unitLabels } from "./manufacturing-model";
 import type { z } from "zod";
 import { manufacturingTransition } from "./manufacturing-transition";
 type Rows = z.infer<typeof ManufacturingVersionListSchema>;
 export function ManufacturingVersionSummary({ version }: { version: ManufacturingRecipeVersionView }) {
+  const factoryManaged = !!outsourcedManufacturingFactory(version.content);
   return <div className="mf-version-summary">
     <p>V{version.versionNumber} · {version.content.name} · 固定规格{version.specificationVersionNumber ? ` V${version.specificationVersionNumber}` : "历史版本"}</p>
-    <p>以下用量对应产出 {version.content.outputQuantity} {unitLabels[version.content.outputUnit]}</p>
-    <h3>原材料记录</h3><ul>{version.content.materials.map(row => <li key={row.code}><strong>{row.code} {row.name}</strong>
+    <p>{factoryManaged ? "每份成品" : "以下用量对应产出"} {version.content.outputQuantity} {unitLabels[version.content.outputUnit]}</p>
+    {factoryManaged ? <p>外协工厂负责备料与排产</p> : <><h3>原材料记录</h3><ul>{version.content.materials.map(row => <li key={row.code}><strong>{row.code} {row.name}</strong>
       <span>净用量 {quantityText(row.quantityNumerator, row.quantityDenominator) || "待确认"} {row.unit ? unitLabels[row.unit] : "单位待确认"} · {responsibilityLabels[row.responsibility]}供料</span>
       <span>损耗 {row.lossBps === null ? "待确认" : quantityText(row.lossBps, 100) + "%"} · {row.lossBasis === "add_to_net" ? "净耗量额外增加" : row.lossBasis === "fraction_of_input" ? "占总投入量" : "口径待确认"}</span>
-      {row.notes && <span>{row.notes}</span>}</li>)}</ul>
+      {row.notes && <span>{row.notes}</span>}</li>)}</ul></>}
     <h3>原工序记录</h3><ol>{version.content.operations.map(row => <li key={row.code}><strong>{row.code} {row.name}</strong><span>{row.processCode} · {responsibilityLabels[row.responsibility]}执行</span>{row.notes && <span>{row.notes}</span>}</li>)}</ol>
     {version.review && <p>{version.review.decision === "approved" ? "已批准" : "已驳回"} · {new Date(version.review.reviewedAt).toLocaleString("zh-CN")} · {version.review.note}</p>}
     {version.content.notes && <p>{version.content.notes}</p>}

@@ -182,7 +182,8 @@ export class ProductionQuantityService {
       await lockBasis(tx, productionOrderId);
       const basis = await readProductionQuantityBasis(tx, current, productionOrderId);
       assertBasis(basis, input);
-      if (basis.blockers.length || basis.capacityStatus !== "reserved" || !basis.manufacturingBindingId || !basis.reservations.length)
+      const hasPlan = basis.capacityStatus === "factory_managed" || (basis.capacityStatus === "reserved" && basis.reservations.length > 0);
+      if (basis.blockers.length || !basis.manufacturingBindingId || !hasPlan)
         conflict("production_quantity_basis_unavailable");
       const [report] = await tx.select().from(reports).where(and(eq(reports.id, input.reportId), eq(reports.productionOrderId, productionOrderId)));
       if (!report) throw new NotFoundException({ code: "production_quantity_report_not_found", message: "数量报告不存在或不属于本生产单" });

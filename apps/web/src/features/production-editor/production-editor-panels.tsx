@@ -15,9 +15,9 @@ export function ProductionProcessPanel({ document, onChange }: { document: Produ
   function tire(patch: Partial<TireCoverDocument["spec"]>) { if (document.productType === "tire_cover") onChange({ ...document, spec: { ...document.spec, ...patch } }); }
   function rectangle(patch: Partial<RectangularPrintDocument["spec"]>) { if (document.productType === "rectangular_print") onChange({ ...document, spec: { ...document.spec, ...patch } }); }
   return <section className="pe-inspector-section"><h2>工艺与尺寸</h2>
-    <p className="pe-hint">当前为起始示例。请按实际工厂确认尺寸与计量口径，未确认时可保存草稿。</p>
+    {!(document.productType === "shaped_pillow" && document.spec.productionFactory) && <p className="pe-hint">请按工厂资料核对尺寸与计量口径。</p>}
     {document.productType === "shaped_pillow" ? <>
-      <p className="pe-hint">工厂交付：JPG · 150 DPI · RGB 白底；底部条码框 600 × 200 px，正反片净距 100 px，四周留白 50 px。</p>
+      <p className="pe-hint">JPG · 150 DPI · RGB 白底 · 正反片净距 100 px · 四周留白 50 px · {document.spec.productionFactory?.adapter === "yicai_folder" ? "义彩生产稿省略底部条码框" : "底部条码框 600 × 200 px"}</p>
       {!document.spec.factoryStandardId && <button type="button" className="pe-button" onClick={() => onChange(applyPillowFactoryStandard(document))}>应用工厂 JPG 标准并重新核对</button>}
       <div className="pe-fields-two"><NumberField label="单片轮廓宽（mm）" value={size.width} min={10} max={5000} onChange={(value) => onChange(resizedProductionBody(document, value!, size.height))} /><NumberField label="单片轮廓高（mm）" value={size.height} min={10} max={5000} onChange={(value) => onChange(resizedProductionBody(document, size.width, value!))} /></div>
       <label>尺寸口径<select value={document.spec.sizeBasis} onChange={(event) => pillow({ sizeBasis: event.target.value as ShapedPillowDocument["spec"]["sizeBasis"] })}><option value="unconfirmed">待工厂确认</option><option value="artwork">图案尺寸</option><option value="cut_contour">裁剪轮廓尺寸</option><option value="finished">缝制后成品尺寸</option></select></label>
@@ -30,10 +30,10 @@ export function ProductionProcessPanel({ document, onChange }: { document: Produ
       <div className="pe-fields-two"><NumberField label="最细部位要求（mm）" value={document.spec.minimumNeckMm} min={1} max={500} onChange={(value) => pillow({ minimumNeckMm: value! })} /><NumberField label="前后片间距（mm）" value={document.spec.panelGapMm} min={0} max={500} onChange={(value) => pillow({ panelGapMm: value! })} /></div>
       <NumberField label="画布四周留白（px）" value={document.spec.sheetMarginMm === undefined ? null : document.spec.sheetMarginMm * 150 / 25.4} min={0} max={2952} nullable onChange={(value) => pillow({ sheetMarginMm: value === null ? undefined : value * 25.4 / 150 })} />
       <label>最细部位计量口径<select aria-label="最细部位计量口径" value={document.spec.minimumNeckBasis} onChange={(event) => pillow({ minimumNeckBasis: event.target.value as ShapedPillowDocument["spec"]["minimumNeckBasis"] })}><option value="unconfirmed">待工厂确认</option><option value="cut_contour">按裁剪轮廓测量</option><option value="finished">按缝制后成品测量</option></select></label>
-      <h3>最下方空白条码框</h3><p className="pe-hint">固定连接主体最下方，正反片同步。宽高按实际要求填写，不允许放在侧边或上方。</p>
+      {document.spec.productionFactory?.adapter !== "yicai_folder" && <><h3>最下方空白条码框</h3><p className="pe-hint">固定连接主体最下方，正反片同步。宽高按实际要求填写，不允许放在侧边或上方。</p>
       <div className="pe-fields-two"><NumberField label="条码框宽（mm）" value={document.spec.barcodeTab.widthMm} min={1} max={5000} nullable onChange={(value) => pillow({ barcodeTab: { ...document.spec.barcodeTab, widthMm: value } })} /><NumberField label="条码框高（mm）" value={document.spec.barcodeTab.heightMm} min={1} max={5000} nullable onChange={(value) => pillow({ barcodeTab: { ...document.spec.barcodeTab, heightMm: value } })} /></div>
       <NumberField label="条码框中心 X（mm）" value={document.spec.barcodeTab.centerXMm} min={0} max={size.width} onChange={(value) => pillow({ barcodeTab: { ...document.spec.barcodeTab, centerXMm: value! } })} />
-      <button className="pe-button" onClick={() => pillow({ barcodeTab: { ...document.spec.barcodeTab, centerXMm: pillowBottomCenter(document) } })}>条码移到主体最下方</button>
+      <button className="pe-button" onClick={() => pillow({ barcodeTab: { ...document.spec.barcodeTab, centerXMm: pillowBottomCenter(document) } })}>条码移到主体最下方</button></>}
     </> : document.productType === "tire_cover" ? <>
       <NumberField label="圆形直径（mm）" value={document.spec.diameterMm} min={10} max={5000} onChange={(value) => tire({ diameterMm: value! })} />
       <NumberField label="输出 DPI" value={document.spec.dpi} min={72} max={600} integer onChange={(value) => tire({ dpi: value! })} />
@@ -86,7 +86,13 @@ export function ProductionContourPanel({ points, onChange }: { points: Productio
 }
 
 export function ProductionConfirmations({ document, onChange, hasPreview }: { document: ProductionEditorDocument; onChange: (document: ProductionEditorDocument) => void; hasPreview: boolean }) {
-  const labels: Array<[keyof ProductionEditorDocument["confirmations"], string]> = [["physicalSize", "实际尺寸与尺寸口径已由工厂确认"], ...(document.productType === "shaped_pillow" ? [["whiteBorderRule", "白边与黑裁线规则已确认"], ["narrowParts", "已按工厂口径人工检查最细部位"], ["barcodeTab", "条码框宽、高、位置已确认"], ["backText", "背片工艺与文字阅读方向已确认"]] as Array<[keyof ProductionEditorDocument["confirmations"], string]> : []), ["visualReview", "已查看当前图稿的后台校对预览"]];
+  const labels: Array<[keyof ProductionEditorDocument["confirmations"], string]> = [["physicalSize", "实际尺寸与尺寸口径已由工厂确认"]];
+  if (document.productType === "shaped_pillow") {
+    labels.push(["whiteBorderRule", "白边与黑裁线规则已确认"], ["narrowParts", "已按工厂口径人工检查最细部位"]);
+    if (document.spec.productionFactory?.adapter !== "yicai_folder") labels.push(["barcodeTab", "条码框宽、高、位置已确认"]);
+    labels.push(["backText", "背片工艺与文字阅读方向已确认"]);
+  }
+  labels.push(["visualReview", "已查看当前图稿的后台校对预览"]);
   return <section className="pe-inspector-section"><h2>生产前确认</h2>{labels.map(([key, label]) => <label className="pe-check" key={key}><input type="checkbox" checked={document.confirmations[key]} disabled={key === "visualReview" && !hasPreview && !document.confirmations.visualReview} onChange={(event) => onChange({ ...document, confirmations: { ...document.confirmations, [key]: event.target.checked } })} />{label}</label>)}{!hasPreview && <p className="pe-hint">先生成后台校对预览，再确认图文与正反面效果。</p>}</section>;
 }
 

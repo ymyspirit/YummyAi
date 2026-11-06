@@ -73,6 +73,7 @@ export function OrderWorkDetailPanel({
   onStateChange,
   onModuleChange,
   unified = false,
+  automaticDesign = false,
   navigationReady = false,
   onSelectItem,
   refreshToken = 0,
@@ -86,6 +87,7 @@ export function OrderWorkDetailPanel({
   onChanged: () => void;
   inline?: boolean;
   unified?: boolean;
+  automaticDesign?: boolean;
   navigationReady?: boolean;
   onSelectItem?: (id: string, module: OrderWorkspaceModule) => void;
   refreshToken?: number;
@@ -445,7 +447,9 @@ export function OrderWorkDetailPanel({
         return;
       }
       update(next);
-      setNotice(recovering ? "上次保存结果已核对。" : attempt.body.status === "ready_to_push" ? "审单已确认 下一步点击推送本件设计派发任务" : "草稿已保存。");
+      setNotice(attempt.body.status === "ready_to_push"
+        ? "审单已通过 系统已登记后续处理 可继续审核下一单"
+        : recovering ? "上次保存结果已核对。" : "草稿已保存。");
       setReason("");
       if (!recovering && attempt.advance) review?.onSavedNext();
     } catch (cause) {
@@ -1420,7 +1424,7 @@ export function OrderWorkDetailPanel({
                     disabled={busy || navigationLoading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push")}
                 >
-                  确认审单并保存
+                  {automaticDesign ? "审单通过并开始设计" : "确认审单并保存"}
                 </button>
                 <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>
@@ -1630,7 +1634,7 @@ export function OrderWorkDetailPanel({
                   disabled={busy || loading || !draft.printProfileVersionId || !reviewReady}
                   onClick={() => void save("ready_to_push", true)}
                 >
-                  {busy ? "正在保存…" : unified ? "确认本件审单" : review.hasNext ? "确认审单并下一单" : "确认审单并返回列表"}
+                  {busy ? "正在保存…" : automaticDesign ? "审单通过并开始设计" : unified ? "确认本件审单" : review.hasNext ? "确认审单并处理下一单" : "确认审单并返回列表"}
                 </button>
                 <p className={`oc-review-confirm-hint ${reviewReady ? "is-ready" : ""}`} role="status">{confirmHint}</p>
               </>

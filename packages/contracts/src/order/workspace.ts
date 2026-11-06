@@ -3,6 +3,7 @@ import { FactoryProductionPinSchema } from "@yummyai/contracts/suppliers/factory
 import { ProductionCapacityPlanSchema } from "@yummyai/contracts/suppliers/factory-capacity";
 import { ShiposShipmentSourceSchema } from "@yummyai/contracts/suppliers/shipos";
 import { z } from "zod";
+import { FulfillmentFlowStageSchema } from "@yummyai/contracts/order/fulfillment-flow";
 import { OrderRequirementInterpretationSchema, OrderRequirementSourceSchema } from "@yummyai/contracts/order/requirement-interpretation";
 import { OrderAutomaticBasisSchema, OrderShippingTimeSchema } from "@yummyai/contracts/order/automatic-basis";
 import { ProductionManufacturingSelectionSchema, ProductionManufacturingPinSchema } from "@yummyai/contracts/order/production-manufacturing";
@@ -236,6 +237,7 @@ export const OrderWorkQuerySchema = z
       ])
       .optional(),
     caseScope: z.enum(["open", "all"]).optional(),
+    focus: z.enum(["review", "artwork", "exceptions", "automatic"]).optional(),
     attention: z.enum(["held", "overdue", "source_changed", "platform_deadline_missing", "platform_overdue", "platform_confirmation_pending"]).optional(),
     from: z.iso.date().optional(),
     to: z.iso.date().optional(),
@@ -330,6 +332,7 @@ export const OrderWorkListItemSchema = z
     editorProjectId: Id.nullable(),
     queueStage: OrderQueueStageSchema.optional(),
     operatorTaskKey: OrderOperatorTaskKeySchema.optional(),
+    fulfillmentFlowStage: FulfillmentFlowStageSchema.nullable().optional(),
     operatorException: z.boolean().optional(),
     designRunStatus: z.string().nullable().optional(),
     // A completed Agent proof awaiting an operator decision, not production approval.

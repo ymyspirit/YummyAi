@@ -3,7 +3,7 @@ import { authorize } from "@yummyai/authz";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
 import { OrderDesignRestoreResponseSchema, ORDER_DESIGN_RECOVERY_MAX_BYTES, type OrderDesignRestoreResponse } from "@yummyai/contracts/order/design-agent";
 import { DesignAutomationStepSchema } from "@yummyai/contracts/pod/design-automation";
-import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignAgentCommands as commands,
+import { orderDesignAgentRuns as runs, orderDesignAgentSteps as steps, orderDesignModelCalls as modelCalls, orderDesignAgentCommands as commands,
   orderDesignAgentOutbox as outbox, productionEditorProjects as projects, aiBudgetLedger, withTenant,
   type DatabaseConnection, type TenantTransaction } from "@yummyai/database";
 import { encryptProductionBytes } from "@yummyai/production-editor";
@@ -37,6 +37,11 @@ export async function responseRecoveryTarget(tx: TenantTransaction, context: Ten
   if (fingerprint(input) !== step.inputChecksum || !paidTool(input.tool)
     || input.dependsOn.some(id => !rows.some(row => row.key === id && row.status === "completed")))
     throw new OrderDesignError("agent_step_dependency_invalid");
+  // Legacy upload recovery identifies a logical request, not a particular
+  // provider attempt. Multiple submitted attempts require explicit provider
+  // reconciliation; guessing an image/call association is unsafe.
+  const submissions=await tx.select({id:modelCalls.id}).from(modelCalls).where(eq(modelCalls.stepId,step.id)).limit(2);
+  if(submissions.length>1)throw new OrderDesignError("agent_response_recovery_multiple_attempts");
   const [budget] = await tx.select().from(aiBudgetLedger).where(and(eq(aiBudgetLedger.requestId, step.requestId),
     eq(aiBudgetLedger.taskType, "order_design"), inArray(aiBudgetLedger.state, ["reserved", "committed"])));
   if (!budget || budget.modelKey !== snapshot.model.model || budget.provider !== snapshot.model.providerConfigId)

@@ -4,7 +4,7 @@ import { ProductionProductTypeSchema } from "@yummyai/contracts/pod/production-e
 
 export const ProductionManufacturingFactoryBasisSchema = z.object({
   productType: ProductionProductTypeSchema, productPlanId: Id, skuId: Id.nullable(),
-  longestMm: z.number().finite().positive(), templateVersionId: Id,
+  longestMm: z.number().finite().positive(), templateVersionId: Id, artworkFactoryId: Id.optional(),
   sideMode: z.enum(["single", "double"]).nullable(), factoryStandardId: z.string().min(1).nullable(),
 }).strict();
 export type ProductionManufacturingFactoryBasis = z.infer<typeof ProductionManufacturingFactoryBasisSchema>;
@@ -44,6 +44,7 @@ export const ProductionManufacturingOptionsSchema = z.object({
   source: z.object({ specificationVersionId: Id, specificationId: Id, spuId: Id, name: z.string(), versionNumber: z.int().positive(),
     packageContents: z.string(), packageQuantity: z.int().positive(), processProfileVersionId: Id }).strict().nullable(),
   items: z.array(z.object({ versionId: Id, recipeId: Id, code: z.string(), name: z.string(), versionNumber: z.int().positive(),
+    outsourcedFactoryId: Id.optional(),
     outputQuantity: z.int().positive(), outputUnit: z.enum(["each", "pair", "set"]), approvedAt: z.iso.datetime() }).strict()),
   nextCursor: Id.nullable(), diagnostics: z.array(z.string()), contextAuthority: z.string().min(1),
 }).strict();

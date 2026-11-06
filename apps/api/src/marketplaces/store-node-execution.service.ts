@@ -29,6 +29,8 @@ import { MarketplaceCapabilityService } from "./marketplace-capability.service.j
 import { StoreNodeService } from "./store-node.service.js";
 import {MarketplacePublicationService} from "./marketplace-publication.service.js";
 import { StoreNodeExecutionRuntime, type StoreNodeExecutionRpc } from "./store-node-execution.types.js";
+import { STORE_NODE_ORDER_SYNC_OPERATION, OrderSyncNodeInputSchema, orderSyncNodeRequestText, type OrderSyncNodeInput } from "@yummyai/contracts/order/sync";
+import { OrderSyncCoordinator } from "../orders/order-sync-coordinator.js";
 import type { StoreNodePeer } from "./store-node.types.js";
 
 type Job = typeof jobs.$inferSelect;
@@ -48,7 +50,42 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StoreNodeService) private readonly identity: StoreNodeService,
     @Inject(MarketplaceCapabilityService) private readonly capabilities: MarketplaceCapabilityService,
-    @Optional() @Inject(MarketplacePublicationService) private readonly publications?:MarketplacePublicationService) { super(); }
+    @Optional() @Inject(MarketplacePublicationService) private readonly publications?:MarketplacePublicationService,
+    @Optional() @Inject(OrderSyncCoordinator) private readonly orderSync?: OrderSyncCoordinator) { super(); }
+
+  async createOrderSyncInTransaction(tx: TenantTransaction, context: TenantContext, accountId: string, raw: OrderSyncNodeInput) {
+    this.requireEnabled();
+    const input = OrderSyncNodeInputSchema.parse(raw);
+    const { account, authority } = await lockMarketplaceAccount(tx, context, accountId, Permission.StoreManage);
+    for (const permission of [Permission.StoreRead, Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead]) authorize(authority, permission);
+    if (account.platform !== "amazon" || !["amazon_private", "amazon_public"].includes(account.authorizationMode)
+      || !["valid", "expiring"].includes(account.credentialStatus) || account.credentialRefreshState !== "known"
+      || ["disabled", "revoked"].includes(account.status)) fail("store_node_configuration_invalid");
+    if (account.authorizationMode === "amazon_public" && !this.amazonPublicKey()) fail("store_node_configuration_invalid");
+    const { node, binding, now } = await this.identity.executionBinding(tx, account, false);
+    const fixed = { nodeId: node.id, certificateGeneration: node.certificateGeneration,
+      authorizationGeneration: account.authorizationGeneration, bindingRevision: binding.revision };
+    const requestChecksum = hash(orderSyncNodeRequestText(accountId, fixed, input));
+    const [row] = await tx.insert(jobs).values({ id: createEntityId(), tenantId: authority.tenantId, accountId, ...fixed,
+      requestId: input.runId, requestChecksum, operation: STORE_NODE_ORDER_SYNC_OPERATION, input,
+      createdBy: authority.userId, membershipId: await this.member(tx, authority), authorityCeiling: authority,
+      expiresAt: new Date(now.getTime() + 30 * 60_000), createdAt: now, updatedAt: now }).returning();
+    await this.event(tx, authority, row!, "create");
+    return row!;
+  }
+
+  async reconcileOrderSyncInTransaction(tx: TenantTransaction, accountId: string, id: string, stop = false) {
+    const row = await this.job(tx, accountId, id), now = await databaseNow(tx);
+    if (!isOrderSync(row)) fail("store_node_policy_rejected");
+    if (!active.includes(row.state as typeof active[number])) return false;
+    if (!stop && row.expiresAt > now && (!row.runExpiresAt || row.runExpiresAt > now)) return true;
+    await this.release(tx, row);
+    const code = stop ? "order_sync_disabled" : "store_node_execution_expired";
+    const updated = await this.update(tx, row, { state: stop ? "cancelled" : "expired", phase: "finished", errorCode: stop ? null : code, completedAt: now });
+    await this.orderSyncOwner().failNodeRunInTransaction(tx, row, code);
+    await this.event(tx, row.authorityCeiling, updated, stop ? "cancel" : "expire");
+    return false;
+  }
 
   async workspace(context: TenantContext, accountId: string) {
     return withTenant(this.database.db, context, async tx => {
@@ -164,23 +201,23 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
         if(!input.supportedOperations.includes(row.operation as typeof input.supportedOperations[number])){if(row.claimId)return this.claimView(null,now);continue;}
         if (row.expiresAt <= now || row.runExpiresAt && row.runExpiresAt <= now) {
           await this.release(tx, row); await this.update(tx, row, { state: row.claimId ? "unknown_outcome" : "expired", phase: "finished", errorCode: "store_node_execution_expired", completedAt: now });
-          await this.publicationFailure(tx,row,!!row.claimId,"store_node_execution_expired");continue;
+          await this.operationFailure(tx,row,!!row.claimId,"store_node_execution_expired");continue;
         }
         if (row.nodeId !== node.id || row.certificateGeneration !== node.certificateGeneration || row.authorizationGeneration !== account.authorizationGeneration || row.bindingRevision !== binding.revision) {
           await this.release(tx, row); await this.update(tx, row, { state: "authority_changed", phase: "finished", errorCode: "store_node_authority_changed", completedAt: now });
-          await this.publicationFailure(tx,row,!!row.claimId,"store_node_authority_changed");continue;
+          await this.operationFailure(tx,row,!!row.claimId,"store_node_authority_changed");continue;
         }
         if(row.operation===STORE_NODE_PUBLICATION_OPERATION&&!await this.publicationOwner().previewNodeDueInTransaction(tx,row,now))continue;
         let authority:TenantContext;
         try{authority=await this.origin(tx,row,account);}catch(error){
-          if(!isPublication(row)||!knownAuthorityError(error))throw error;
+          if(!(isPublication(row)||isOrderSync(row))||!knownAuthorityError(error))throw error;
           await this.release(tx,row);await this.update(tx,row,{state:"authority_changed",phase:"finished",errorCode:"store_node_authority_changed",completedAt:now});
-          await this.publicationFailure(tx,row,!!row.claimId,"store_node_authority_changed");continue;
+          await this.operationFailure(tx,row,!!row.claimId,"store_node_authority_changed");continue;
         }
         if (!input.supportedAuthorizationModes.includes(account.authorizationMode as "amazon_private" | "amazon_public" | "etsy_oauth")) {
           if (row.claimId) return this.claimView(null, now);
           const failed = await this.update(tx, row, { state: "failed", phase: "finished", errorCode: "store_node_configuration_invalid", completedAt: now });
-          await this.publicationFailure(tx,row,false,"store_node_configuration_invalid");
+          await this.operationFailure(tx,row,false,"store_node_configuration_invalid");
           await this.event(tx, authority, failed, "configuration_rejected"); continue;
         }
         if (row.claimId) {
@@ -209,7 +246,7 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
         if ("error" in sealed) {
           await lease.releaseInTransaction(tx);
           const rejected = await this.update(tx, row, { state: "failed", phase: "finished", errorCode: sealed.error, completedAt: now });
-          await this.publicationFailure(tx,row,false,sealed.error);
+          await this.operationFailure(tx,row,false,sealed.error);
           await this.event(tx, authority, rejected, "configuration_rejected"); continue;
         }
         let encryptedTransportKey: string;
@@ -228,12 +265,12 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
     const result=await this.identity.runtimeAccess(peer, input, true, async (tx, { account, binding, node, now }) => {
       const row = await this.runtimeJob(tx, account.id, input);
       try{await this.fresh(tx,row,account,binding.revision,now);}catch(error){
-        if(!isFormalPublication(row)||!active.includes(row.state as typeof active[number])||!knownAuthorityError(error))throw error;
+        if(!(isFormalPublication(row)||isOrderSync(row))||!active.includes(row.state as typeof active[number])||!knownAuthorityError(error))throw error;
         const records=await this.stepRows(tx,row),uncertain=records.some(step=>step.requestClass==="amazon_listing_submit"&&step.outcome!=="not_sent");
         const code=applicationFailureCode(error)??(row.expiresAt<=now||row.runExpiresAt!==null&&row.runExpiresAt<=now?"store_node_execution_expired":"store_node_authority_changed");
         await this.release(tx,row);
         const rejected=await this.update(tx,row,{state:code==="store_node_authority_changed"?"authority_changed":uncertain?"unknown_outcome":"failed",phase:"finished",errorCode:code,completedAt:now});
-        await this.publicationFailure(tx,row,uncertain,code);await this.event(tx,TenantContextSchema.parse(row.authorityCeiling),rejected,"permit_rejected");
+        await this.operationFailure(tx,row,uncertain,code);await this.event(tx,TenantContextSchema.parse(row.authorityCeiling),rejected,"permit_rejected");
         // Persist refusal before sending the error. Throwing inside withTenant would undo the terminal receipt.
         return {rejected:true as const,code};
       }
@@ -310,7 +347,7 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
           const uncertain = (await this.stepRows(tx, row)).some(step => step.outcome === null || step.outcome === "unknown"||isFormalPublication(row)&&step.requestClass==="amazon_listing_submit"&&step.outcome!=="not_sent");
           const rejected = await this.update(tx, row, { state: uncertain ? "unknown_outcome" : "failed", phase: "finished",
             errorCode: applicationCode, completionChecksum: input.payloadChecksum, completedAt: now });
-          await this.publicationFailure(tx,row,uncertain,applicationCode);
+          await this.operationFailure(tx,row,uncertain,applicationCode);
           await this.event(tx, TenantContextSchema.parse(row.authorityCeiling), rejected, "configuration_rejected");
           return this.receiptView(rejected, now);
         }
@@ -319,15 +356,33 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
         const expired = row.expiresAt <= now || row.runExpiresAt !== null && row.runExpiresAt <= now;
         const updated = await this.update(tx, row, { state: expired ? "unknown_outcome" : "authority_changed", phase: "finished",
           errorCode: expired ? "store_node_execution_expired" : "store_node_authority_changed", completionChecksum: input.payloadChecksum, completedAt: now });
-        await this.publicationFailure(tx,row,true,updated.errorCode!);
+        await this.operationFailure(tx,row,true,updated.errorCode!);
         return this.receiptView(updated, now);
       }
       const records = await this.stepRows(tx, row), lease = await this.resume(tx, row);
       if (payload.outcome === "failure"||payload.outcome==="unknown") {
-        if(isPublication(row)){await this.publicationFailure(tx,row,payload.outcome==="unknown",payload.code);await lease.releaseInTransaction(tx);}
+        if(isPublication(row)||isOrderSync(row)){await this.operationFailure(tx,row,payload.outcome==="unknown",payload.code);await lease.releaseInTransaction(tx);}
         else if (payload.outcome === "failure" && !applicationCodeValue(payload.code)) await this.capabilities.recordNodeFailure(lease, connectorFailure(account, payload.code), tx); else await lease.releaseInTransaction(tx);
         const updated = await this.update(tx, row, { state: payload.outcome === "unknown" ? "unknown_outcome" : "failed", phase: "finished",
           errorCode: payload.code, completionChecksum: input.payloadChecksum, completedAt: now });
+        await this.event(tx, authority, updated, "complete"); return this.receiptView(updated, now);
+      }
+      if (isOrderSync(row)) {
+        try {
+          if (payload.outcome !== "order_sync" || records.length !== 2 || records[0]?.requestClass !== "amazon_lwa" || records[1]?.requestClass !== "amazon_orders"
+            || records.some(value => value.outcome !== "received" || !value.httpStatus || value.httpStatus < 200 || value.httpStatus >= 300)) fail("store_node_policy_rejected");
+          await this.noSecrets(lease, row, payload.result);
+          // Roll back all page facts before persisting a rejected result receipt.
+          await tx.transaction(inner => this.orderSyncOwner().adoptNodePageInTransaction(inner, row, payload.result));
+        } catch (error) {
+          if (!knownAuthorityError(error) && !(error instanceof z.ZodError)) throw error;
+          await this.orderSyncOwner().failNodeRunInTransaction(tx, row, "order_sync_result_invalid");
+          await lease.releaseInTransaction(tx);
+          const rejected = await this.update(tx, row, { state: "failed", phase: "finished", errorCode: "store_node_policy_rejected", completionChecksum: input.payloadChecksum, completedAt: now });
+          await this.event(tx, authority, rejected, "complete"); return this.receiptView(rejected, now);
+        }
+        await lease.releaseInTransaction(tx);
+        const updated = await this.update(tx, row, { state: "succeeded", phase: "finished", completionChecksum: input.payloadChecksum, completedAt: now });
         await this.event(tx, authority, updated, "complete"); return this.receiptView(updated, now);
       }
       if(isFormalPublication(row)){
@@ -341,7 +396,7 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
           await this.publicationOwner().adoptSubmissionNodeInTransaction(tx,row,payload.result);
         }catch(error){
           if(!knownAuthorityError(error))throw error;
-          await this.publicationFailure(tx,row,true,"store_node_policy_rejected");await lease.releaseInTransaction(tx);
+          await this.operationFailure(tx,row,true,"store_node_policy_rejected");await lease.releaseInTransaction(tx);
           const rejected=await this.update(tx,row,{state:"unknown_outcome",phase:"finished",errorCode:"store_node_policy_rejected",completionChecksum:input.payloadChecksum,completedAt:now});
           await this.event(tx,authority,rejected,"complete");return this.receiptView(rejected,now);
         }
@@ -391,6 +446,11 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
     return this.origin(tx, row, account);
   }
   private async origin(tx: TenantTransaction, row: Job, account: MarketplaceAccountRow) {
+    if (isOrderSync(row)) {
+      const { authority } = await this.orderSyncOwner().assertNodeRunInTransaction(tx, row);
+      if (await this.member(tx, authority) !== row.membershipId) fail();
+      return authority;
+    }
     if(row.operation===STORE_NODE_PUBLICATION_OPERATION)return (await this.publicationOwner().assertPreviewNodeInTransaction(tx,row)).authority;
     if(isFormalPublication(row))return (await this.publicationOwner().assertSubmissionNodeInTransaction(tx,row)).authority;
     const ceiling = TenantContextSchema.parse(row.authorityCeiling);
@@ -426,6 +486,11 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
     catch (error) { if (!(error instanceof Error) || !["ConflictException", "UnauthorizedException"].includes(error.constructor.name)) throw error; }
   }
   private requestPolicy(account: MarketplaceAccountRow, row: Job, records: Step[], kind: StoreNodeExecutionRequestClass) {
+    if (isOrderSync(row)) {
+      const expected = records.length === 0 ? "amazon_lwa" : records.length === 1 ? "amazon_orders" : null;
+      if (account.platform !== "amazon" || kind !== expected || records.some(step => step.outcome !== "received" || !step.httpStatus || step.httpStatus < 200 || step.httpStatus >= 300)) fail("store_node_policy_rejected");
+      return;
+    }
     if(isFormalPublication(row)){
       const expected=records.length===0?"amazon_lwa":records.length===1?row.operation===STORE_NODE_PUBLICATION_SUBMIT_OPERATION?"amazon_listing_submit":"amazon_listing_status":null;
       if(account.platform!=="amazon"||kind!==expected||records.some(step=>step.outcome!=="received"||!step.httpStatus||step.httpStatus<200||step.httpStatus>=300))fail("store_node_policy_rejected");return;
@@ -434,7 +499,7 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
       const expected=records.length===0?"amazon_lwa":records.length===1?"amazon_listing_validation_preview":null;
       if(account.platform!=="amazon"||kind!==expected||records.some(step=>step.outcome!=="received"||!step.httpStatus||step.httpStatus<200||step.httpStatus>=300))fail("store_node_policy_rejected");return;
     }
-    if(["amazon_listing_validation_preview","amazon_listing_submit","amazon_listing_status"].includes(kind))fail("store_node_policy_rejected");
+    if(["amazon_listing_validation_preview","amazon_listing_submit","amazon_listing_status","amazon_orders"].includes(kind))fail("store_node_policy_rejected");
     const capabilityInput=SyncMarketplaceCapabilitiesInputSchema.parse(row.input);
     if (!kind.startsWith(account.platform + "_")) fail("store_node_policy_rejected");
     const count = records.filter(value => value.requestClass === kind).length;
@@ -515,9 +580,11 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
   private amazonPublicKey() { const key = process.env.AMAZON_SPAPI_LWA_CLIENT_ID?.trim(); return key && key.length <= 16384 ? key : null; }
   private enabled() { return process.env.STORE_NODE_EXECUTION_ENABLED === "1" && process.env.STORE_NODE_RUNTIME_ENABLED === "1"; }
   private publicationOwner(){if(!this.publications)throw new ServiceUnavailableException({code:"store_node_configuration_invalid"});return this.publications;}
-  private async publicationFailure(tx:TenantTransaction,row:Job,unknown:boolean,code:string){
+  private orderSyncOwner() { if (!this.orderSync) throw new ServiceUnavailableException({ code: "store_node_configuration_invalid" }); return this.orderSync; }
+  private async operationFailure(tx:TenantTransaction,row:Job,unknown:boolean,code:string){
     if(row.operation===STORE_NODE_PUBLICATION_OPERATION)await this.publicationOwner().failPreviewNodeInTransaction(tx,row,unknown,code);
     else if(isFormalPublication(row))await this.publicationOwner().failSubmissionNodeInTransaction(tx,row,unknown,code);
+    else if (isOrderSync(row)) await this.orderSyncOwner().failNodeRunInTransaction(tx, row, code);
   }
   private requireCapability(row:Job){if(row.operation!==STORE_NODE_EXECUTION_OPERATION)throw new NotFoundException({code:"store_node_execution_not_found"});}
   private requireEnabled() { if (!this.enabled()) throw new ServiceUnavailableException({ code: "store_node_configuration_invalid" }); }
@@ -525,6 +592,7 @@ export class StoreNodeExecutionService extends StoreNodeExecutionRuntime {
 function pins(row: Job) { return { nodeId: row.nodeId, certificateGeneration: row.certificateGeneration, authorizationGeneration: row.authorizationGeneration, bindingRevision: row.bindingRevision }; }
 function isFormalPublication(row:Job){return row.operation===STORE_NODE_PUBLICATION_SUBMIT_OPERATION||row.operation===STORE_NODE_PUBLICATION_STATUS_OPERATION;}
 function isPublication(row:Job){return row.operation===STORE_NODE_PUBLICATION_OPERATION||isFormalPublication(row);}
+function isOrderSync(row: Job) { return row.operation === STORE_NODE_ORDER_SYNC_OPERATION; }
 function can(context: TenantContext, account: MarketplaceAccountRow) { try { authorize(context, Permission.StoreManage, { ownerId: account.createdBy }); return true; } catch { return false; } }
 function supportedMode(account: MarketplaceAccountRow) { return account.platform === "amazon" && ["amazon_private", "amazon_public"].includes(account.authorizationMode) || account.platform === "etsy" && account.authorizationMode === "etsy_oauth"; }
 function applicationCodeValue(code: string): code is "store_node_configuration_invalid" | "store_node_application_reauthorization_required" {

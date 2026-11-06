@@ -69,7 +69,7 @@ export class OrderProductionService {
     return { productionOrderIds: [id] };
   }
 
-  manufacturingOptions(context: TenantContext, lineId: string, query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string }) {
+  manufacturingOptions(context: TenantContext, lineId: string, query: { originalProductionOrderId?: string; nativeSpecificationVersionId?: string; after?: string; factoryId?: string }) {
     return withOrderAuthority(this.database.db, context, [Permission.OrderRead, Permission.OrderPiiRead],
       tx => orderProductionManufacturingOptions(tx, context, this.vault, lineId, query));
   }
@@ -310,7 +310,7 @@ export class OrderProductionService {
       if (!["not_released", "cancelled"].includes(line.production)) productionBlockers.push("已有生产安排，请查看生产记录");
       if (line.readyQuantity < line.quantity) shipmentBlockers.push(`生产或质检未齐：${line.readyQuantity}/${line.quantity} 件`);
       if (!source.shipmentIds.length && line.shippedQuantity > 0) shipmentBlockers.push("已有实际发货记录，请查看原发货单");
-      let renderId: string | null = null, fileName: string | null = null, editorVersionNumber: number | null = null;
+      let renderId: string | null = null, fileName: string | null = null, editorVersionNumber: number | null = null, renderFailure: string | null = null;
       if (this.editor && row.editorProjectId && row.retained) {
         try {
           const project = await this.editor.get(context, String(row.editorProjectId));
@@ -318,16 +318,22 @@ export class OrderProductionService {
           if (render) {
             renderId = render.id; fileName = render.files[0]!.name; editorVersionNumber = project.version.versionNumber;
             if (!productionBlockers.length) perLineChoices.set(line.id, await this.factoryOptions(context, line.id, render.id));
-          } else productionBlockers.push("当前审核稿的正式生产文件尚未准备好");
+          } else {
+            const attempts = project.renders.filter(item => item.versionId === row.approvedEditorVersionId && item.purpose === "production");
+            if (attempts.length && attempts.every(item => item.status === "failed" || item.status === "completed"))
+              renderFailure = "当前审核稿的正式文件生成失败或未通过检查 请在制作任务中修复并重新生成";
+            productionBlockers.push("当前审核稿的正式生产文件尚未准备好");
+          }
         } catch (cause) {
           if (cause instanceof ForbiddenError) throw cause;
-          productionBlockers.push("正式生产文件不可用，请核对制图记录");
+          renderFailure = "正式生产文件不可用，请核对制图记录";
+          productionBlockers.push(renderFailure);
         }
-      } else productionBlockers.push("尚无可用的正式生产文件");
+      } else { renderFailure = "尚无可用的正式生产文件"; productionBlockers.push(renderFailure); }
       const production = source.production.find(record => record.lineId === line.id);
       items.push({ lineId: line.id, quantity: line.quantity, expectedRevision: line.revision, expectedProjectionVersion: line.projectionVersion,
         externalLineId: line.externalLineId, title: line.title, sku: line.skuCode, specification: line.specificationName ?? null,
-        readyQuantity: line.readyQuantity, shippedQuantity: line.shippedQuantity, renderId, fileName, editorVersionNumber, productionBlockers, shipmentBlockers, operationBlockers: common,
+        readyQuantity: line.readyQuantity, shippedQuantity: line.shippedQuantity, renderId, fileName, editorVersionNumber, renderFailure, productionBlockers, shipmentBlockers, operationBlockers: common,
         production: production ? { id: production.id, status: ProductionOrderStatusSchema.parse(production.status), projectionVersion: production.projectionVersion, wholeOrder: production.idempotencyKey.startsWith("whole-order:"), qualityResult: production.qualityResult } : null });
     }
     const factories: WholeOrderFulfillmentView["factories"] = [];
@@ -391,11 +397,12 @@ export class OrderProductionService {
   }
   private async factoryRequirement(tx: TenantTransaction, orderLineId: string, quantity: number, document?: ProductionEditorDocument, revisionId?: string | null,
     manufacturing?: Awaited<ReturnType<typeof sealProductionManufacturing>>): Promise<FactoryRequirement> {
-    const [link] = await tx.select({ skuId: orderLineCatalogLinks.skuId, productPlanId: factorySpus.productPlanId }).from(orderLineCatalogLinks)
+    const [link] = await tx.select({ skuId: orderLineCatalogLinks.skuId, productPlanId: factorySpus.productPlanId, spuId: factorySpus.id }).from(orderLineCatalogLinks)
       .innerJoin(factorySkus, eq(factorySkus.id, orderLineCatalogLinks.skuId)).innerJoin(factorySpus, eq(factorySpus.id, factorySkus.spuId)).where(eq(orderLineCatalogLinks.orderLineId, orderLineId));
     const [revision] = revisionId ? await tx.select({ templateVersionId: workRevisions.profileVersionId }).from(workRevisions).where(eq(workRevisions.id, revisionId)) : [];
     if (manufacturing && document && manufacturing.productType !== document.productType) throw new ConflictException("制造规格与实际审核稿的产品类型不一致");
-    return { skuId: manufacturing ? manufacturing.skuId : link?.skuId ?? null, productPlanId: manufacturing?.productPlanId ?? link?.productPlanId ?? null, quantity, productType: document?.productType ?? manufacturing?.productType,
+    return { spuId: manufacturing?.spuId ?? link?.spuId ?? null, skuId: manufacturing ? manufacturing.skuId : link?.skuId ?? null, productPlanId: manufacturing?.productPlanId ?? link?.productPlanId ?? null, quantity, productType: document?.productType ?? manufacturing?.productType,
+      artworkFactoryId: (document?.productType === "shaped_pillow" ? document.spec.productionFactory?.factoryId : undefined) ?? manufacturing?.artworkFactoryId,
       longestMm: document?.productType === "shaped_pillow" ? document.spec.declaredLongestMm : document?.productType === "tire_cover" ? document.spec.diameterMm : document ? Math.max(document.spec.widthMm, document.spec.heightMm) : manufacturing?.longestMm ?? null,
       sideMode: document?.productType === "shaped_pillow" ? document.spec.sideMode : manufacturing?.sideMode ?? undefined,
       factoryStandardId: document?.productType === "shaped_pillow" ? document.spec.factoryStandardId : manufacturing?.factoryStandardId ?? undefined, templateVersionId: manufacturing?.templateVersionId ?? revision?.templateVersionId ?? null };
@@ -1088,7 +1095,8 @@ function productionDocumentInstructions({ render, document }: PreparedArtwork) {
   return [header,
     `工艺版本：${spec.factoryStandardId}；${spec.dpi} DPI；白底 JPG；${spec.sideMode === "double" ? "双面印刷" : "单面印刷"}。`,
     ...(spec.declaredLongestMm ? [`${basis}最长边：${Number((spec.declaredLongestMm / 10).toFixed(2))} 厘米。`] : []),
-    `缝边 ${pixels(spec.whiteBorderMm)} px；黑裁线 ${pixels(spec.cutLineMm)} px；空白条码框 ${spec.barcodeTab.widthMm === null ? "待确认" : pixels(spec.barcodeTab.widthMm)} × ${spec.barcodeTab.heightMm === null ? "待确认" : pixels(spec.barcodeTab.heightMm)} px。`,
+    `缝边 ${pixels(spec.whiteBorderMm)} px，黑裁线 ${pixels(spec.cutLineMm)} px。`,
+    spec.productionFactory?.adapter === "yicai_folder" ? "按义彩工艺省略底部空白条码框。" : `空白条码框 ${spec.barcodeTab.widthMm === null ? "待确认" : pixels(spec.barcodeTab.widthMm)} × ${spec.barcodeTab.heightMm === null ? "待确认" : pixels(spec.barcodeTab.heightMm)} px。`,
     `两片净距 ${pixels(spec.panelGapMm)} px；整图四周留白 ${pixels(spec.sheetMarginMm ?? 0)} px。`,
     `细窄处不少于 ${spec.minimumNeckMm / 10} 厘米；${spec.minimumNeckBasis === "cut_contour" ? "按生产稿两侧裁线之间的最窄处核对" : "测量口径以本单核对记录为准"}。`,
   ].join("\n");

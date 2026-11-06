@@ -19,6 +19,7 @@ export const ManufacturingMaterialSchema = z.object({
 export const ManufacturingOperationSchema = z.object({
   code: Code, name: z.string().trim().min(1).max(200), processCode: Code,
   responsibility: ManufacturingResponsibilitySchema,
+  outsourcedFactoryId: Id.optional(),
   expectedSecondsPerOutput: Positive.nullable(), notes: Notes,
 }).strict();
 export const ManufacturingRecipeContentSchema = z.object({
@@ -40,6 +41,10 @@ export const ManufacturingRecipeContentSchema = z.object({
   });
 });
 export type ManufacturingRecipeContent = z.infer<typeof ManufacturingRecipeContentSchema>;
+/** One finished item supplied by a named factory; its own materials and calendar are not merchant stock. */
+export function outsourcedManufacturingFactory(content: ManufacturingRecipeContent) {
+  return content.operations.find(operation => operation.outsourcedFactoryId)?.outsourcedFactoryId;
+}
 export const CreateManufacturingRecipeSchema = z.object({
   spuId: Id, specificationId: Id, code: Code, content: ManufacturingRecipeContentSchema, idempotencyKey: Key,
 }).strict();
@@ -54,6 +59,12 @@ export const ManufacturingDemandSchema = z.object({ versionId: Id, outputQuantit
 
 export function manufacturingApprovalProblems(content: ManufacturingRecipeContent): string[] {
   const problems: string[] = [];
+  if (outsourcedManufacturingFactory(content)) {
+    const operation = content.operations[0];
+    if (content.operations.length !== 1 || operation?.responsibility !== "factory" || operation.processCode !== "FULL_PRODUCT" || content.materials.length)
+      problems.push("外协整件须由指定工厂负责全部制作和备料");
+    return problems;
+  }
   if (!content.materials.length) problems.push("尚未填写材料");
   if (!content.operations.length) problems.push("尚未填写制造工序");
   for (const row of content.materials) {
@@ -123,6 +134,7 @@ export const ManufacturingRecipeListSchema = z.object({
 export const ManufacturingVersionListSchema = z.object({ items: z.array(z.object({ id: Id, versionNumber: z.int().positive(), name: z.string(),
   createdAt: z.iso.datetime(), decision: z.enum(["approved", "rejected"]).nullable() }).strict()), nextVersion: z.int().positive().nullable() }).strict();
 export const ManufacturingReferencesSchema = z.object({
+  outsourcingFactories: z.array(z.object({ id: Id, name: z.string() }).strict()).optional(),
   spu: z.object({ id: Id, code: z.string(), name: z.string(), ownerId: Id.nullable(), teamId: Id.nullable(), active: z.boolean() }).strict(),
   sourceProblems: z.array(z.string()), canReadMaterials: z.boolean(),
   specifications: z.array(z.object({ id: Id, code: z.string(), name: z.string(), versionId: Id, versionNumber: z.int().positive(), factsReady: z.boolean() }).strict()),

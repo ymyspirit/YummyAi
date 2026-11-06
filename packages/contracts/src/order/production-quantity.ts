@@ -40,7 +40,7 @@ export const ProductionQuantityBasisSchema = z.object({
   reviewId: Id.nullable(), cumulativeStoppedQuantity: Count,
   currentQuantities: ProductionPhysicalQuantitiesSchema.nullable(),
   groupedQuantity: ReadCount, groupedPassedQuantity: ReadCount, allocatedQuantity: ReadCount, shippedQuantity: ReadCount, completedLowerBound: ReadCount,
-  unknownShipmentSource: z.boolean(), capacityStatus: z.enum(["reserved", "legacy_unreserved", "legacy_released"]),
+  unknownShipmentSource: z.boolean(), capacityStatus: z.enum(["reserved", "factory_managed", "legacy_unreserved", "legacy_released"]),
   reservations: z.array(ProductionQuantityCapacityBasisSchema).max(32),
   blockers: z.array(z.string()).max(100), fingerprint: Fingerprint,
 }).strict().superRefine((value, context) => {

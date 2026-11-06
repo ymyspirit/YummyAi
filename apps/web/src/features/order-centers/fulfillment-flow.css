@@ -1,0 +1,27 @@
+.oc-flow-panel { margin: 12px 0; padding: 14px 0; border-block: 1px solid var(--border, #e1e5ec); animation: flow-enter 160ms ease-out; }
+.oc-flow-queues { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0; }
+.oc-flow-queues button[aria-current="page"] { color: #174ba5; background: #edf3ff; border-color: #a8bee8; }
+.oc-flow-heading, .oc-flow-route, .oc-flow-links, .oc-route-setup { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.oc-flow-heading h2 { margin: 0; font-size: 15px; }
+.oc-flow-heading > span, .oc-flow-route small { color: #53627a; font-size: 12px; }
+.oc-flow-route { margin-top: 10px; font-size: 13px; }
+.oc-flow-links { font-size: 12px; margin-top: 10px; }
+.oc-flow-links a, .oc-route-setup a { color: #2459c4; text-underline-offset: 3px; }
+.oc-route-setup { padding: 14px 0; font-size: 13px; }
+.oc-route-table { overflow-x: auto; }
+.oc-route-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.oc-route-table th, .oc-route-table td { padding: 13px 12px; border-bottom: 1px solid #e1e5ec; vertical-align: top; overflow-wrap: anywhere; max-width: 260px; }
+.oc-route-table th { color: #53627a; font-weight: 500; }
+.oc-route-table small { display: block; margin-top: 4px; color: #53627a; }
+.oc-route-warning { color: #a13c24; }
+.oc-route-form { padding: 20px 0; border-top: 1px solid #e1e5ec; margin-top: 20px; animation: flow-enter 160ms ease-out; }
+.oc-route-form h2 { font-size: 17px; margin: 0 0 16px; }
+.oc-route-form fieldset { border: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 16px; }
+.oc-route-form label { display: grid; gap: 6px; font-size: 13px; min-width: 0; }
+.oc-route-form input, .oc-route-form select { min-width: 0; width: 100%; min-height: 38px; padding: 7px 10px; border: 1px solid #ccd4df; border-radius: 5px; background: white; color: #18243a; }
+.oc-flow-panel button, .oc-routes-page button, .oc-route-setup a { transition: background-color 140ms, color 140ms, transform 140ms; }
+.oc-flow-panel button:active:not(:disabled), .oc-routes-page button:active:not(:disabled) { transform: scale(.98); }
+.oc-flow-panel button:focus-visible, .oc-routes-page :is(button,a,input,select):focus-visible { outline: 2px solid #2459c4; outline-offset: 3px; }
+@keyframes flow-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 700px) { .oc-route-table table { min-width: 650px; } .oc-flow-heading { gap: 8px; } .oc-routes-page .oc-header { align-items: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .oc-flow-panel, .oc-route-form { animation: none; } .oc-flow-panel button, .oc-routes-page button, .oc-route-setup a { transition: none; transform: none; } }

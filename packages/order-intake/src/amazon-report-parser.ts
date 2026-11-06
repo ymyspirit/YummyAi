@@ -165,6 +165,7 @@ export function parseAmazonOrderReport(text: string): { orders: ParsedAmazonRepo
         lines: [get("ship-address-1"), get("ship-address-2"), get("ship-address-3")].filter(Boolean),
         city: get("ship-city") || null, region: get("ship-state") || null, postalCode: get("ship-postal-code") || null,
         countryCode: country,
+        ...(get("ship-phone-number") ? { phone: get("ship-phone-number") } : {}),
       },
       customizations: [],
     });

@@ -4,15 +4,27 @@ import { z } from "zod";
 import type { ProviderOrderRecord } from "./order-ingestion.js";
 
 const AmazonMoneySchema = z.object({ amount: z.string().regex(/^-?\d+(?:\.\d+)?$/), currencyCode: z.string().regex(/^[A-Z]{3}$/) }).passthrough();
+const AmazonAddressSchema = z.object({
+  name: z.string().nullish(), addressLines: z.array(z.string()).max(5).optional(),
+  addressLine1: z.string().nullish(), addressLine2: z.string().nullish(), addressLine3: z.string().nullish(),
+  city: z.string().nullish(), stateOrRegion: z.string().nullish(), postalCode: z.string().nullish(),
+  countryCode: z.string().length(2).nullish(), phone: z.string().nullish(),
+}).passthrough();
 const AmazonOrderItemSchema = z.object({
   orderItemId: z.string().min(1),
   product: z.object({
     asin: z.string().optional(), sellerSku: z.string().optional(), title: z.string().min(1),
     price: z.object({ unitPrice: AmazonMoneySchema.optional() }).passthrough().optional(),
+    customization: z.object({ customizedUrl: z.url({ protocol: /^https$/ }).max(1_000).nullish() }).passthrough().nullish(),
   }).passthrough(),
   quantityOrdered: z.number().int().positive(),
   unitPrice: AmazonMoneySchema.optional(),
-  proceeds: z.object({ total: AmazonMoneySchema.optional() }).passthrough().optional(),
+  proceeds: z.object({ proceedsTotal: AmazonMoneySchema.optional(),
+    breakdowns: z.array(z.object({ type: z.string(), subtotal: AmazonMoneySchema }).passthrough()).optional(),
+  }).passthrough().optional(),
+  cancellation: z.object({ cancellationRequest: z.object({ requester: z.string().optional() }).passthrough().optional(),
+    cancellationExecution: z.object({ cancelledBy: z.string().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
   customization: z.array(z.object({ name: z.string().min(1), value: z.string() }).passthrough()).optional(),
 }).passthrough();
 const AmazonOrderSchema = z.object({
@@ -22,17 +34,16 @@ const AmazonOrderSchema = z.object({
   fulfillmentStatus: z.string().min(1).optional(),
   fulfillment: z.object({
     fulfillmentStatus: z.string().min(1).optional(),
+    fulfilledBy: z.string().min(1).optional(),
     shipByWindow: z.object({ latestDateTime: z.iso.datetime({ offset: true }).nullish() }).passthrough().nullish(),
   }).passthrough().optional(),
   salesChannel: z.object({ marketplaceId: z.string().min(1) }).passthrough(),
   orderItems: z.array(AmazonOrderItemSchema).min(1),
   orderTotal: AmazonMoneySchema.optional(),
   proceeds: z.object({ total: AmazonMoneySchema.optional(), grandTotal: AmazonMoneySchema.optional() }).passthrough().optional(),
-  buyer: z.object({ name: z.string().nullable().optional(), email: z.email().nullable().optional(), phone: z.string().nullable().optional() }).passthrough().optional(),
-  recipient: z.object({
-    name: z.string().nullable().optional(), addressLines: z.array(z.string()).max(5).optional(), city: z.string().nullable().optional(),
-    stateOrRegion: z.string().nullable().optional(), postalCode: z.string().nullable().optional(), countryCode: z.string().length(2).nullable().optional(),
-  }).passthrough().optional(),
+  buyer: z.object({ buyerName: z.string().nullish(), buyerEmail: z.email().nullish(),
+    name: z.string().nullish(), email: z.email().nullish(), phone: z.string().nullish() }).passthrough().optional(),
+  recipient: AmazonAddressSchema.extend({ deliveryAddress: AmazonAddressSchema.nullish() }).optional(),
 }).passthrough();
 
 const AmazonOrderChangeSchema = z.object({
@@ -78,18 +89,18 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
   if (order.fulfillment?.fulfillmentStatus && order.fulfillmentStatus && order.fulfillment.fulfillmentStatus !== order.fulfillmentStatus)
     throw new Error("Amazon fulfillment statuses conflict");
   const total = order.proceeds?.grandTotal ?? order.orderTotal ?? order.proceeds?.total;
-  if (!total) throw new Error("Amazon order total was not included");
   const lines = order.orderItems.map((line) => {
-    const price = line.product.price?.unitPrice ?? line.unitPrice ?? line.proceeds?.total;
-    if (!price) throw new Error(`Amazon order item ${line.orderItemId} has no price`);
+    const price = line.product.price?.unitPrice ?? line.unitPrice;
+    const itemTotal = amazonItemTotal(line);
     return {
       externalLineId: line.orderItemId,
       externalListingId: line.product.asin ?? null,
       skuCode: line.product.sellerSku ?? null,
       title: line.product.title,
       quantity: line.quantityOrdered,
-      unitPrice: amazonMoney(price),
-      customizationCount: line.customization?.length ?? 0,
+      unitPrice: price ? amazonMoney(price) : itemTotal && itemTotal.amountMinor % line.quantityOrdered === 0
+        ? { ...itemTotal, amountMinor: itemTotal.amountMinor / line.quantityOrdered } : null,
+      customizationCount: (line.customization?.length ?? 0) + (line.product.customization ? 1 : 0),
     };
   });
   const protectedDetails = amazonProtectedDetails(order);
@@ -101,11 +112,15 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
     externalOrderId: order.orderId,
     providerStatus,
     placedAt: order.createdTime,
-    orderTotal: amazonMoney(total),
+    orderTotal: total ? amazonMoney(total) : null,
     lines,
     redactedSource: {
       apiVersion: "2026-01-01", orderId: order.orderId, marketplaceId: order.salesChannel.marketplaceId,
       fulfillmentStatus: providerStatus, lastUpdatedTime: order.lastUpdatedTime,
+      fulfilledBy: order.fulfillment?.fulfilledBy ?? null,
+      cancellationRequestedLineIds: order.orderItems.filter(line => line.cancellation?.cancellationRequest).map(line => line.orderItemId),
+      cancelledLineIds: order.orderItems.filter(line => line.cancellation?.cancellationExecution).map(line => line.orderItemId),
+      itemTotals: order.orderItems.flatMap(line => { const amount = amazonItemTotal(line); return amount ? [{ externalLineId: line.orderItemId, ...amount }] : []; }),
       orderItemIds: order.orderItems.map((line) => line.orderItemId),
       platformShipByAt: platformShipByAt ? new Date(platformShipByAt).toISOString() : null,
       platformShipBySource: "amazon_orders_2026_fulfillment_ship_by_window",
@@ -113,7 +128,15 @@ export function normalizeAmazonOrder(accountId: string, externalEventId: string,
     },
     protectedDetails,
   });
-  return { order: normalized, providerUpdatedAt: order.lastUpdatedTime };
+  return { order: normalized, providerUpdatedAt: order.lastUpdatedTime,
+    buyerRequestedCancellation: order.orderItems.some(line => line.cancellation?.cancellationRequest?.requester === "BUYER"),
+    requiresCustomizationLineIds: order.orderItems.filter(line => line.product.customization || line.customization?.length).map(line => line.orderItemId) };
+}
+
+function amazonItemTotal(line: z.infer<typeof AmazonOrderItemSchema>) {
+  const items = line.proceeds?.breakdowns?.filter(item => item.type === "ITEM") ?? [];
+  if (items.length > 1) throw new Error("Amazon item proceeds are ambiguous");
+  return items[0] ? amazonMoney(items[0].subtotal) : null;
 }
 
 export function normalizeAmazonOrderChange(raw: unknown): AmazonOrderChangeReference {
@@ -160,18 +183,31 @@ export function normalizeEtsyReceipt(accountId: string, raw: unknown): ProviderO
 }
 
 function amazonProtectedDetails(order: z.infer<typeof AmazonOrderSchema>): NormalizeOrderInput["protectedDetails"] {
-  if (!order.buyer && !order.recipient && !order.orderItems.some((line) => line.customization?.length)) return null;
+  const customizations = order.orderItems.map(line => ({
+    externalLineId: line.orderItemId,
+    values: [
+      ...(line.customization ?? []).map((entry, index) => ({ key: `amazon:${index}`, label: entry.name, type: "text" as const, value: entry.value })),
+      ...(line.product.customization?.customizedUrl ? [{ key: "amazon:customized-url", label: "Amazon Custom file", type: "file_reference" as const,
+        externalReference: line.product.customization.customizedUrl }] : []),
+    ],
+  })).filter(line => line.values.length);
+  if (!order.buyer && !order.recipient && !customizations.length) return null;
+  // A supplied official address, even redacted or partial, must not fall back to legacy address fields.
+  const nestedAddress = order.recipient?.deliveryAddress !== undefined;
+  const address = nestedAddress ? order.recipient?.deliveryAddress : order.recipient;
+  const name = order.buyer?.buyerName !== undefined ? order.buyer.buyerName : order.buyer?.name;
+  const email = order.buyer?.buyerEmail !== undefined ? order.buyer.buyerEmail : order.buyer?.email;
   return {
-    buyer: { name: order.buyer?.name ?? null, email: order.buyer?.email ?? null, phone: order.buyer?.phone?.trim() || null },
+    buyer: { name: name?.trim() || null, email: email ?? null, phone: order.buyer?.phone?.trim() || null },
     shippingAddress: {
-      recipient: order.recipient?.name ?? null, lines: order.recipient?.addressLines ?? [], city: order.recipient?.city ?? null,
-      region: order.recipient?.stateOrRegion ?? null, postalCode: order.recipient?.postalCode ?? null,
-      countryCode: order.recipient?.countryCode?.toUpperCase() ?? null,
+      recipient: address?.name?.trim() || null,
+      lines: (nestedAddress ? [address?.addressLine1, address?.addressLine2, address?.addressLine3] : address?.addressLines ?? [])
+        .map(line => line?.trim() ?? "").filter(Boolean),
+      city: address?.city?.trim() || null, region: address?.stateOrRegion?.trim() || null, postalCode: address?.postalCode?.trim() || null,
+      countryCode: address?.countryCode?.toUpperCase() ?? null,
+      ...(nestedAddress || address?.phone !== undefined ? { phone: address?.phone?.trim() || null } : {}),
     },
-    customizations: order.orderItems.filter((line) => line.customization?.length).map((line) => ({
-      externalLineId: line.orderItemId,
-      values: line.customization!.map((entry, index) => ({ key: `amazon:${index}`, label: entry.name, type: "text" as const, value: entry.value })),
-    })),
+    customizations,
   };
 }
 

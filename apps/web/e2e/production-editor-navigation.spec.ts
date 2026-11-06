@@ -23,7 +23,7 @@ test("selected projects and historical versions survive reload and deletion clea
     const first = await create(`E2E Navigation A ${suffix}`);
     const second = await create(`E2E Navigation B ${suffix}`);
     await page.goto("/pod-workbench/production-editor?kind=tire_cover");
-    const selector = page.getByRole("combobox", { name: "打开生产项目", exact: true });
+    const selector = page.getByRole("combobox", { name: "打开工艺底稿", exact: true });
     const name = page.getByRole("textbox", { name: "图稿名称", exact: true });
     const versions = page.getByRole("combobox", { name: "历史版本", exact: true });
     await selector.selectOption(first.project.id);

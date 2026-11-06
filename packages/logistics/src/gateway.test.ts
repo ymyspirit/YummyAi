@@ -2,7 +2,8 @@ import { describe,expect,it,vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { createEntityId } from "@yummyai/contracts";
 import { LogisticsConnectionProfileSchema,LogisticsTaskSnapshotSchema,type LogisticsQuote } from "@yummyai/contracts/logistics";
-import { HttpLogisticsGateway } from "./gateway.js";
+import { HttpLogisticsGateway,channelFits } from "./gateway.js";
+import { selectLogisticsQuote } from "./policy.js";
 import { recommendYunexpressChannel } from "./document-planning.js";
 export const logisticsFixtureProfile=(provider:"shipos"|"yunexpress"="shipos")=>LogisticsConnectionProfileSchema.parse({name:"Synthetic connection",provider,factoryId:createEntityId(),originCountryCode:provider==="shipos"?"US":"CN",sender:{name:"Synthetic sender",address1:"1 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:provider==="shipos"?"US":"CN",phone:"1234567890",email:"fixture@example.invalid"},baseUrl:provider==="shipos"?"https://api.shipos.cn":"https://oms.example.invalid",currency:"USD",currencySource:"Synthetic account currency confirmation",labelHosts:["labels.example.invalid"],channels:[{code:"fixture",name:"Synthetic channel",countryCodes:["US"],transitDaysMin:3,transitDaysMax:5,transitSource:"Confirmed calendar-day maximum including weekends",conditionsVerified:true,conditionsEvidence:"Synthetic service conditions checked",maxWeightGrams:10000,maxDimensionMm:1000}],apiCompatibilityEvidence:"Synthetic compatibility evidence",purchasePermissionEvidence:"Synthetic account purchase permission",labelMode:provider==="shipos"?"factory_pull":"include"});
 export const logisticsFixtureTask=()=>LogisticsTaskSnapshotSchema.parse({orderId:createEntityId(),productionOrderIds:[createEntityId()],connectionId:createEntityId(),packages:[{weightGrams:500,dimensionsMm:{length:300,width:200,height:100},evidence:"Measured synthetic package",containsBattery:false,declarations:[{sku:"FIXTURE",nameEn:"Synthetic pillow",nameCn:"测试抱枕",quantity:1,unitPriceMinor:1000,currency:"USD",unitWeightGrams:400,hsCode:"940490",originCountryCode:"CN"}]}],readyAt:new Date(Date.now()+86400000).toISOString(),latestShipAt:new Date(Date.now()+2*86400000).toISOString(),deliverBy:new Date(Date.now()+10*86400000).toISOString(),deadlineSource:"Synthetic platform requirement",expectedOrderSequence:1,factoryId:createEntityId(),factoryVersionId:createEntityId(),connectionVersionId:createEntityId(),ruleVersionId:createEntityId(),recipient:{name:"Synthetic buyer",address1:"2 Test Street",city:"Test City",region:"CA",postalCode:"00000",countryCode:"US",phone:"1234567890",email:"buyer@example.invalid"},productionPins:[{productionOrderId:createEntityId(),versionId:createEntityId(),lineId:createEntityId(),quantity:1}],addressEnvelopeVersion:1,retentionExpiresAt:new Date(Date.now()+20*86400000).toISOString()});
@@ -10,6 +11,23 @@ const environment={YUNEXPRESS_ALLOWED_ORIGINS:"https://oms.example.invalid",LOGI
 const credentials={provider:"yunexpress" as const,customerCode:"synthetic",apiSecret:"fixture-secret"};
 const q:LogisticsQuote={channelCode:"fixture",channelName:"Synthetic channel",totalMinor:500,currency:"USD",currencySource:"Synthetic account confirmation",transitDaysMin:3,transitDaysMax:5,transitSource:"Synthetic SLA",conditionsVerified:true,priceSource:"fixture",quotedAt:new Date().toISOString(),diagnostic:null};
 describe("supported carrier transports",()=>{
+  it("reuses a verified ShipOS sender ID for quoting and creation without inventing a contact phone",async()=>{
+    const base=logisticsFixtureProfile(),profile=LogisticsConnectionProfileSchema.parse({...base,shiposSenderAddressId:123456,sender:{...base.sender,phone:""}});
+    const sent:Array<{url:string;body:Record<string,unknown>}>=[];
+    const fetcher=vi.fn<typeof fetch>(async(url,init)=>{sent.push({url:String(url),body:JSON.parse(String(init?.body))});return Response.json({code:200,data:String(url).endsWith("getChannel.php")?[{channel_id:"fixture",qudao:"Synthetic channel"}]:String(url).endsWith("getPrice.php")?{total_fee:5}:{orderid:"synthetic-ref"}});});
+    const gateway=new HttpLogisticsGateway(fetcher,environment),auth={provider:"shipos" as const,appKey:"synthetic",appSecret:"synthetic"},task=logisticsFixtureTask();
+    expect(await gateway.quote(profile,auth,task,"synthetic-ref")).toHaveLength(1);
+    expect(sent.some(row=>row.url.endsWith("createOrder.php"))).toBe(false);
+    await gateway.create(profile,auth,task,"synthetic-ref",q);
+    for(const row of sent.filter(row=>/getPrice|createOrder/.test(row.url))){
+      expect(row.body.from_address).toEqual({faddid:123456});
+      expect(row.body.to_address).toMatchObject({name:task.recipient.name,tel:task.recipient.phone});
+    }
+    expect(()=>LogisticsConnectionProfileSchema.parse({...base,sender:{...base.sender,phone:""}})).toThrow();
+    const yun=logisticsFixtureProfile("yunexpress");
+    expect(()=>LogisticsConnectionProfileSchema.parse({...yun,shiposSenderAddressId:123456,sender:{...yun.sender,phone:""}})).toThrow();
+    for(const invalid of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1])expect(()=>LogisticsConnectionProfileSchema.parse({...base,shiposSenderAddressId:invalid})).toThrow();
+  });
   it("reuses the confirmed Yun size strategy independently of the sales SKU",()=>{
     expect(recommendYunexpressChannel([{productKind:"shaped_pillow",sizeIn:20}])).toBe("THPHR");
     expect(recommendYunexpressChannel([{productKind:"shaped_pillow",sizeIn:20},{productKind:"shaped_pillow",sizeIn:22}])).toBe("ZBZXRPH");
@@ -103,6 +121,28 @@ describe("YunExpress official OpenAPI",()=>{
     expect(()=>t.gateway.assertAccount({...profile(),baseUrl:"https://evil.example.invalid"})).toThrow();
     await expect(t.gateway.accountChannels(profile(),{provider:"yunexpress",customerCode:"legacy",apiSecret:"legacy"})).rejects.toThrow("CREDENTIAL_PROTOCOL_MISMATCH");
   });
+  it("recognises physical tracking only for the exact waybill, order and tracking number with a real UTC node",async()=>{
+    const born=new Date("2024-06-01T00:00:00Z"), utc="2024-06-18T08:54:51Z";
+    let tracking=info.tracking_number, status="F", events:unknown[]=[
+      {track_node_code:"ORDER_CREATION",process_utc_time:utc},{track_node_code:"FIRST_MILE_ARRIVE",process_time:utc},
+      {track_node_code:"DELIVERED",process_utc_time:"0001-01-01T00:00:00Z"},
+      {track_node_code:"FIRST_MILE_DEPART",process_utc_time:"2099-01-01T00:00:00Z"}];
+    const t=transport((url,init)=>{
+      expect(init.method).toBe("GET");expect(url.pathname).toBe("/v1/track-service/getAllForOPenApi");
+      expect(url.searchParams.get("order_number")).toBe(info.waybill_number);
+      return ok([{order_number:info.waybill_number,package_status:status,track_Info:status==="N"?null:{...info,tracking_number:tracking,track_events:events}}]);
+    });
+    const read=()=>t.gateway.handover(profile(),c,info.customer_order_number,info.waybill_number,info.tracking_number,born);
+    expect(await read()).toEqual({status:"F",proof:null});
+    status="T";
+    expect(await read()).toEqual({status:"T",proof:null});
+    events=[{track_node_code:"DELIVERED",process_utc_time:"2024-06-20T10:00:00Z"},{track_node_code:"FIRST_MILE_ARRIVE",process_utc_time:utc,process_content:"Private free text"}];
+    expect(await read()).toEqual({status:"T",proof:{node:"FIRST_MILE_ARRIVE",occurredAt:"2024-06-18T08:54:51.000Z"}});
+    for(status of ["N","R","C","E"]) expect(await read()).toEqual({status,proof:null});
+    status="unknown";await expect(read()).rejects.toThrow();
+    status="D";
+    tracking="DIFFERENT";await expect(read()).rejects.toMatchObject({code:"INVALID_RESPONSE"});
+  });
   it("refreshes an expired token once for a read but never retries a create",async()=>{
     let count=0;
     const t=transport(()=>++count===1?Response.json({success:false,code:"0200401002",msg:"must not expose"},{status:401}):Response.json({success:true,detail:[]}));
@@ -120,18 +160,45 @@ describe("YunExpress official OpenAPI",()=>{
     expect((await t.gateway.quote(profile(),c,logisticsFixtureTask(),"YMYfixture"))[0]).toMatchObject({totalMinor:2025,currency:"CNY",transitDaysMax:8,diagnostic:null});
     expect(t.fetcher.mock.calls.filter(([url])=>String(url).includes("price-trial"))).toHaveLength(1);
   });
+  it("omits only the explicitly selected OpenAPI default sender while preserving recipient checks",async()=>{
+    const base=profile(),p=LogisticsConnectionProfileSchema.parse({...base,yunexpressSenderMode:"platform_default",sender:{...base.sender,name:"",phone:"",address1:"",postalCode:""}});
+    const t=transport((_url,init)=>{expect(JSON.parse(String(init.body))).not.toHaveProperty("sender");return ok(info);});
+    await t.gateway.create(p,c,logisticsFixtureTask(),"YMYfixture",q);
+    for(const changes of [{yunexpressSenderMode:undefined},{yunexpressProtocol:"oms"},{provider:"shipos",originCountryCode:"US"}])expect(()=>LogisticsConnectionProfileSchema.parse({...p,...changes})).toThrow();
+    const invalid=logisticsFixtureTask();invalid.recipient.name="Fady";
+    await expect(t.gateway.create(p,c,invalid,"YMYfixture",q)).rejects.toThrow("YUN_RECIPIENT_FULL_NAME_REQUIRED");
+    expect(t.fetcher.mock.calls.filter(([url])=>String(url).includes("package/create"))).toHaveLength(1);
+  });
+  it("compares Canada special and medium parcels from the same raw whole-order package and includes every fee",async()=>{
+    const base=profile(),p={...base,channelSelection:"compare_eligible" as const,channels:["THPHR","ZBZXRPH"].map(code=>({...base.channels[0]!,code,countryCodes:["CA"]}))};
+    const task=logisticsFixtureTask();task.recipient.countryCode="CA";task.recipient.region="Ontario";task.recipient.postalCode="K1A0B1";
+    task.packages[0]!.dimensionsMm={length:400,width:300,height:200};task.packages[0]!.weightGrams=1000;
+    const t=transport(url=>{
+      if(url.pathname.endsWith("getlist"))return Response.json({success:true,detail:p.channels.map(ch=>({product_code:ch.code,product_name:ch.name}))});
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({weight:"1",length:"40",width:"30",height:"20",country_code:"CA"});
+      return ok([{product_code:"THPHR",fee_name:"freight",calculate_amount:"100",currency:"RMB"},{product_code:"ZBZXRPH",fee_name:"freight",calculate_amount:"70",currency:"RMB"},{product_code:"ZBZXRPH",fee_name:"handling",calculate_amount:"10",currency:"RMB"}]);
+    });
+    const quotes=await t.gateway.quote(p,c,task,"YMYfixture");expect(quotes.map(row=>row.totalMinor)).toEqual([10000,8000]);
+    const selection=selectLogisticsQuote(quotes,{name:"Synthetic confirmed compare",autoPurchase:false,costControl:"lowest_eligible",currency:"CNY",maxTicketMinor:null,maxDailyMinor:null,quoteMaxAgeSeconds:120,allowedChannelCodes:["THPHR","ZBZXRPH"],evidence:"Synthetic explicit no-fixed-limit policy"},task);
+    expect(selection.selected?.channelCode).toBe("ZBZXRPH");expect(t.fetcher.mock.calls.filter(([url])=>String(url).includes("price-trial"))).toHaveLength(1);
+    task.channelCode="THPHR";expect((await t.gateway.quote(p,c,task,"YMYfixture")).map(row=>row.channelCode)).toEqual(["THPHR"]);
+  });
   it.each(["mixed currency","duplicate fee","different tariff"])("rejects ambiguous quotes: %s",async(mode)=>{
     const base={product_code:"fixture",fee_name:"E1",calculate_amount:"10",currency:"RMB",price_name:"A"};
     const second={...base,fee_name:"E2",...(mode==="mixed currency"?{currency:"USD"}:mode==="duplicate fee"?{fee_name:"E1"}:{price_name:"B"})};
     const t=transport(url=>url.pathname.endsWith("getlist")?Response.json({success:true,detail:[{product_code:"fixture",product_name:"Synthetic"}]}):ok([base,second]));
     expect((await t.gateway.quote(profile(),c,logisticsFixtureTask(),"YMYfixture"))[0]).toMatchObject({diagnostic:"QUOTE_UNAVAILABLE",conditionsVerified:false});
   });
-  it("sends a single PDF parcel with upward units and complete declarations",async()=>{
+  it.each(["940490", ""])("sends a single PDF parcel with upward units and preserves optional HS code %s",async(hsCode)=>{
     const task=logisticsFixtureTask();task.packages[0]!.weightGrams=117.934;task.packages[0]!.dimensionsMm.length=304.8;task.recipient.region="California";
+    task.packages[0]!.declarations[0]!.hsCode=hsCode;
     const t=transport((url,init)=>{
       expect(url.pathname).toBe("/v1/order/package/create");
       const body=JSON.parse(String(init.body));expect(body).toMatchObject({customer_order_number:"YMYfixture",product_code:"fixture",weight_unit:"KG",size_unit:"CM",label_type:"PDF",sensitive_type:"W",receiver:{first_name:"Synthetic",last_name:"buyer",province:"CA",address_lines:["2 Test Street"]},packages:[{weight:0.118,length:30.48}],declaration_info:[{name_en:"Synthetic pillow",name_local:"测试抱枕",quantity:1,unit_price:10,currency:"USD",origin_country:"CN"}]});
-      expect(body).not.toHaveProperty("sourceKey");return ok(info);
+      expect(body).not.toHaveProperty("sourceKey");
+      if(hsCode)expect(body.declaration_info[0].hs_code).toBe(hsCode);
+      else expect(body.declaration_info[0]).not.toHaveProperty("hs_code");
+      return ok(info);
     });
     expect(await t.gateway.create(profile(),c,task,"YMYfixture",q)).toMatchObject({providerOrderId:"YTfixture",trackingNumbers:["TRACKfixture"],labelUrls:[]});
   });
@@ -155,5 +222,28 @@ describe("YunExpress official OpenAPI",()=>{
     await expect(t.gateway.create(profile(),c,task,"YMYfixture",q)).rejects.toThrow("YUN_RECIPIENT_FULL_NAME_REQUIRED");
     task.recipient.name="Synthetic Buyer";task.packages[0]!.containsBattery=true;
     await expect(t.gateway.quote(profile(),c,task,"YMYfixture")).rejects.toThrow("YUN_DANGEROUS_GOODS_REQUIRES_REVIEW");expect(t.fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("rotatable parcel limits and volumetric eligibility",()=>{
+  function fixture(){const profile=logisticsFixtureProfile("yunexpress");profile.yunexpressProtocol="openapi";const task=logisticsFixtureTask();task.recipient.countryCode="CA";task.packages[0]!.weightGrams=1000;
+    const channel={...profile.channels[0]!,countryCodes:["CA"],maxWeightGrams:30000,maxDimensionMm:1000,maxSecondDimensionMm:760,maxLengthPlusGirthMm:2500,minLongestDimensionMm:200,minSecondDimensionMm:100};return {profile,task,channel};}
+  it.each([
+    [{length:1000,width:500,height:250},true],
+    [{length:250,width:1000,height:500},true],
+    [{length:1000.001,width:500,height:250},false],
+    [{length:760,width:760,height:100},true],
+    [{length:761,width:761,height:100},false],
+    [{length:1000,width:501,height:250},false],
+    [{length:199.99,width:150,height:100},false],
+    [{length:250,width:99.99,height:80},false],
+  ])("checks actual parcel shape %j",(dimensionsMm,expected)=>{const {profile,task,channel}=fixture();task.packages[0]!.dimensionsMm=dimensionsMm;expect(channelFits(profile,channel,task)).toBe(expected);});
+  it("uses the channel-specific two-times volume threshold and its chargeable weight limit",()=>{
+    const {profile,task,channel}=fixture();task.packages[0]!.dimensionsMm={length:400,width:400,height:100};
+    const special={...channel,maxWeightGrams:1900,volumetricBilling:{divisorCm3PerKg:8000,actualWeightThresholdMultiple:2,minimumGrams:0,stepGrams:1}};
+    expect(channelFits(profile,special,task)).toBe(false);
+    expect(channelFits(profile,{...special,volumetricBilling:{...special.volumetricBilling,divisorCm3PerKg:12000}},task)).toBe(true);
+    task.packages[0]!.dimensionsMm.length=399;expect(channelFits(profile,special,task)).toBe(true);
+    task.packages[0]!.weightGrams=1900.01;expect(channelFits(profile,special,task)).toBe(false);
   });
 });

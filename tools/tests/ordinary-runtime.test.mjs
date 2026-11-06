@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import test from "node:test";
 import { acquireStartupGate, applyStorageOverlay, componentDecision, localPath, runtimeEnvironment, runtimePlans, stopSpawnedChildren, validateRuntimeManifest } from "../scripts/ordinary-runtime.mjs";
+import { orderWorkerProfile, orderWorkerQueues, orderWorkerSchedulers, orderWorkerProfiles, orderWorkerReady } from "../scripts/ordinary-worker-runtime.mjs";
 
 const root = path.resolve("ordinary-runtime-fixture");
 const manifest = {
@@ -57,6 +58,62 @@ test("snapshot and configuration paths cannot escape the reviewed workspace", ()
   for (const name of ["../outside", "C:/outside", "/outside", "x/../outside", "x\\outside", "x//outside"])
     assert.throws(() => localPath(root, name), /INVALID_PATH/);
   assert.equal(localPath(root, ".env"), path.join(root, ".env"));
+});
+
+test("only a v3 manifest enables the exact reviewed order consumers and loopback health", () => {
+  const selected = { ...manifest, schemaVersion: 3,
+    studioRuntime: { bundleId: "a".repeat(64), deploymentSha256: "b".repeat(64) }, workerRuntime: { profile: orderWorkerProfile } };
+  const plans = runtimePlans(root, selected, { ...environment, WORKER_QUEUES: "all", WORKER_SCHEDULERS: "all", WORKER_HEALTH_PORT: "9000" });
+  assert.deepEqual(plans.map(plan => plan.component), ["api", "web", "worker"]);
+  const worker = plans[2];
+  assert.equal(worker.cwd, path.join(root, manifest.snapshot, "apps/worker"));
+  assert.deepEqual(worker.args.slice(-3), ["--import", "tsx", "src/run.ts"]);
+  const effective = runtimeEnvironment(environment, worker.env);
+  assert.equal(effective.WORKER_QUEUES, orderWorkerQueues.join(","));
+  assert.equal(effective.WORKER_SCHEDULERS, orderWorkerSchedulers.join(","));
+  assert.equal(worker.health, "http://127.0.0.1:8001/health");
+  assert.equal(effective.WORKER_HEALTH_PORT, "8001");
+  for (const workerRuntime of [null, {}, { profile: "all" }, { profile: orderWorkerProfile, queues: ["media"] }])
+    assert.throws(() => validateRuntimeManifest({ ...selected, workerRuntime }), /INVALID_WORKER_PROFILE/);
+  assert.throws(() => validateRuntimeManifest({ ...selected, schemaVersion: 2 }), /INVALID_MANIFEST/);
+});
+
+test("Worker HTTP success cannot hide a different PID or extra background consumers", () => {
+  const healthy = { state: "ready", pid: 1234, queues: [...orderWorkerQueues], schedulers: [...orderWorkerSchedulers] };
+  assert.equal(orderWorkerReady(healthy, 1234), true);
+  assert.equal(orderWorkerReady({ ...healthy, queues: [...healthy.queues].reverse() }, 1234), true);
+  for (const change of [{ state: "starting" }, { pid: 5678 }, { queues: [...healthy.queues, "media"] }, { queues: healthy.queues.slice(1) },
+    { schedulers: [...healthy.schedulers, "aiAssistScheduler"] }]) assert.equal(orderWorkerReady({ ...healthy, ...change }, 1234), false);
+});
+
+test("the new order profile adds only private-order retention and never widens a restored v1 manifest", () => {
+  const selected = { ...manifest, schemaVersion: 3, studioRuntime: { bundleId: "a".repeat(64), deploymentSha256: "b".repeat(64) },
+    workerRuntime: { profile: "order-fulfillment-v2" } };
+  const [,, worker] = runtimePlans(root, selected, { ...environment, WORKER_QUEUES: "all", WORKER_SCHEDULERS: "all" });
+  assert.equal(worker.workerProfile, "order-fulfillment-v2");
+  assert.deepEqual(worker.env.WORKER_QUEUES.split(","), [...orderWorkerQueues, "amazon-order-report-retention"]);
+  assert.equal(worker.env.WORKER_SCHEDULERS, orderWorkerSchedulers.join(","));
+  const current = { state: "ready", pid: 1234, ...orderWorkerProfiles[worker.workerProfile] };
+  assert.equal(orderWorkerReady(current, 1234, worker.workerProfile), true);
+  assert.equal(orderWorkerReady(current, 1234, orderWorkerProfile), false);
+  assert.equal(orderWorkerReady({ ...current, queues: orderWorkerQueues }, 1234, worker.workerProfile), false);
+  assert.equal(orderWorkerReady(current, 1234, "all"), false);
+  const [,, restored] = runtimePlans(root, { ...selected, workerRuntime: { profile: orderWorkerProfile } }, environment);
+  assert.deepEqual(restored.env.WORKER_QUEUES.split(","), orderWorkerQueues);
+  for (const profile of ["toString", "__proto__", "order-fulfillment-v3"])
+    assert.throws(() => validateRuntimeManifest({ ...selected, workerRuntime: { profile } }), /INVALID_WORKER_PROFILE/);
+});
+
+test("owned daily Worker receives graceful shutdown and waits for its real process exit", { skip: process.platform !== "win32", timeout: 10_000 }, async () => {
+  const child = spawn(process.execPath, ["-e", "process.on('message', message => { if (message?.type === 'worker.shutdown') setTimeout(() => process.exit(0), 20); }); process.send('ready');"],
+    { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
+  child.dailyWorker = true;
+  try {
+    await new Promise((resolve, reject) => { child.once("error", reject); child.once("message", resolve); });
+    await stopSpawnedChildren([child]);
+    assert.equal(child.exitCode, 0);
+    assert.equal(child.killed, false);
+  } finally { if (child.exitCode === null && !child.signalCode) child.kill(); }
 });
 
 test("the exact original API and Web plans use files and argv without shell URL launch", () => {

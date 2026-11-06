@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { MarketplacePlatform } from "@yummyai/contracts";
+import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
 import { z } from "zod";
 
 import type { MarketplaceConnectorContext, MarketplaceCredentialAccessor } from "./connector.js";
@@ -13,7 +15,7 @@ import { normalizeAmazonOrder, normalizeEtsyReceipt } from "./provider-orders.js
 
 const AccessTokenSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1).optional() }).passthrough();
 const AmazonSearchResponseSchema = z.object({
-  orders: z.array(z.unknown()).default([]),
+  orders: z.array(z.unknown()),
   pagination: z.object({ nextToken: z.string().min(1).nullable().optional() }).passthrough().optional(),
   totalCount: z.number().int().nonnegative().optional(),
 }).passthrough();
@@ -29,7 +31,7 @@ export class AmazonOrdersAdapter implements MarketplaceOrderIngestionAdapter {
   ) {}
 
   fetchPage(
-    context: MarketplaceConnectorContext,
+    context: Omit<MarketplaceConnectorContext, "tenantId">,
     credentials: MarketplaceCredentialAccessor,
     rawRequest: OrderSyncRequest,
     signal: AbortSignal,
@@ -57,9 +59,10 @@ export class AmazonOrdersAdapter implements MarketplaceOrderIngestionAdapter {
       }, AmazonSearchResponseSchema, this.platform);
       const fetchedAt = this.now().toISOString();
       return {
-        records: response.orders.map((order, index) => normalizeAmazonOrder(
+        records: response.orders.map((order) => normalizeAmazonOrder(
           context.accountId,
-          `search:${input.updatedAfter}:${input.updatedBefore}:${input.checkpoint.cursor ?? "first"}:${index}`,
+          // Query windows and page positions change when overlapping polls replay an order.
+          `search:${createHash("sha256").update(canonicalJson(order)).digest("hex")}`,
           order,
         )),
         fetchedAt,
@@ -82,7 +85,7 @@ export class EtsyReceiptsAdapter implements MarketplaceOrderIngestionAdapter {
   ) {}
 
   fetchPage(
-    context: MarketplaceConnectorContext,
+    context: Omit<MarketplaceConnectorContext, "tenantId">,
     credentials: MarketplaceCredentialAccessor,
     rawRequest: OrderSyncRequest,
     signal: AbortSignal,

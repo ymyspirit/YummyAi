@@ -2,9 +2,9 @@
 
 局部开发验证通过的独立协议 `erp-store-node-execution-v1` · 2026-10-22 · e6f2c8a1
 
-本批将原 `HttpMarketplaceCapabilityGateway` 放到真实绑定节点执行，中央仍通过原 `MarketplaceCredentialUse` 保存凭据刷新检查点，并由原 `MarketplaceCapabilityService` 校验、保存能力版本和审计。支持 Amazon private 与 Etsy OAuth。没有新增通用 HTTP、SQL 或 Shell 工具，发布、订单、广告等其余节点操作继续保留完整 B21 待办。
+本节记录原 `HttpMarketplaceCapabilityGateway` 在真实绑定节点上的执行，中央仍通过原 `MarketplaceCredentialUse` 保存凭据刷新检查点，并由原 `MarketplaceCapabilityService` 校验、保存能力版本和审计。支持 Amazon private 与 Etsy OAuth。没有新增通用 HTTP、SQL 或 Shell 工具。后续订单自动同步沿用同一节点协议，见[订单履约流程](order-fulfillment-flow.md)；其他 B21 操作不能从能力同步成功推定已完成。
 
-共享输入输出以 [执行契约](../../packages/contracts/src/marketplace/store-node-execution.ts) 为准；原 `erp-store-node-v1` 的 Schema、心跳封套和历史回执不改。中央 `.env` 和普通148环境不改。新迁移180仅用于一次性隔离验证，不能在普通148上运行当前源。
+共享输入输出以 [执行契约](../../packages/contracts/src/marketplace/store-node-execution.ts) 为准；原 `erp-store-node-v1` 的 Schema、心跳封套和历史回执不改。最初迁移180的验收没有修改中央 `.env` 和当时普通148环境。当前隔离 fixture 要求数据库迁移数与候选迁移目录完全一致；历史升级测试仍使用固定旧 schema，不能用旧业务库运行新源码。
 
 ## 原权限与自举
 
@@ -48,3 +48,9 @@ Etsy 应用级 shared secret 不由中央封包下发。节点仅从本地 `STOR
 ## 当前验证状态
 
 本批36项去重检查通过：节点/受限传输9条、前端14条、当前真实接口10组、真正179升级1组、本人编译页面2条；另4组20种连接前隔离拒绝通过。仅补跑失败或受影响叶，未重跑全ERP套件。11资源组及13个自有目标已清并独立复核。一次本地写盘中断未能复现并确定原因，已加入有限诊断，不把补验通过解释为已修复其原因。完整B21、实际宿主/店铺、Linux、普通采用、跨域编排和全平台业务验收继续，见[本批进度](../project-control/ERP_STORE_NODE_EXECUTION_PROGRESS_20261022.md)。
+
+2026-11-06 的订单扩展在当前候选 schema 上运行完整原生节点套件，14 项测试通过。
+新增四项从本人 HTTP 启用同步开始，由原 API 协调器派发、真实 CLI 和 mTLS 完成入库：
+正常订单与 Custom 附件请求登记、完成 ACK 丢失后的加密 journal 恢复、跨站点整页拒绝、
+请求在途撤销订单权限后的迟到结果拒绝。ACK 恢复仍只有一次平台订单读取，来源和附件请求不重复。
+提供方是隔离 HTTPS 合成服务，没有连接真实 Amazon/Etsy 店铺；不能据此声称真实授权和发货回传已验收。

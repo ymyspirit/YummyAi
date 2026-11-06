@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL, URL } from "node:url";
 import { parseEnv } from "node:util";
 import { verifyLocalWebCandidate } from "./local-web-candidate.mjs";
 import { acquireStartupGate, closeStartupGate } from "./runtime-startup-gate.mjs";
+import { orderWorkerProfiles, orderWorkerReady } from "./ordinary-worker-runtime.mjs";
 export { acquireStartupGate } from "./runtime-startup-gate.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
@@ -27,9 +28,10 @@ export function localPath(root, relative) {
 
 export function validateRuntimeManifest(value) {
   const keys = ["schemaVersion", "scope", "snapshot", "sourceManifest", "sourceManifestSha256", "sourceSha256", "sourceFiles", "migrations", "candidate", "buildId", "envSha256", "overlay", "overlaySha256", "storageEndpoint"];
-  if (value?.schemaVersion === 2) keys.push("studioRuntime");
+  if (value?.schemaVersion >= 2) keys.push("studioRuntime");
+  if (value?.schemaVersion === 3) keys.push("workerRuntime");
   if (!value || Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) fail("INVALID_MANIFEST");
-  if (![1, 2].includes(value.schemaVersion) || value.scope !== "adopted-personal-runtime" ||
+  if (![1, 2, 3].includes(value.schemaVersion) || value.scope !== "adopted-personal-runtime" ||
       !/^\.artifacts\/ordinary-api-source-[A-Za-z0-9-]+$/.test(value.snapshot) ||
       !/^docs\/project-control\/checkpoints\/[A-Za-z0-9-]+\.json$/.test(value.sourceManifest) ||
       !/^\.artifacts\/ordinary-runtime-recovery-[A-Za-z0-9-]+\/storage\.env$/.test(value.overlay) ||
@@ -37,8 +39,10 @@ export function validateRuntimeManifest(value) {
       !Number.isSafeInteger(value.sourceFiles) || value.sourceFiles < 1 ||
       !Number.isSafeInteger(value.migrations) || value.migrations < 1 ||
       [value.sourceManifestSha256, value.sourceSha256, value.envSha256, value.overlaySha256].some((hash) => !hashPattern.test(hash))) fail("INVALID_MANIFEST");
-  if (value.schemaVersion === 2 && (!value.studioRuntime || Object.keys(value.studioRuntime).sort().join() !== "bundleId,deploymentSha256"
+  if (value.schemaVersion >= 2 && (!value.studioRuntime || Object.keys(value.studioRuntime).sort().join() !== "bundleId,deploymentSha256"
       || !hashPattern.test(value.studioRuntime.bundleId) || !hashPattern.test(value.studioRuntime.deploymentSha256))) fail("INVALID_STUDIO_PAIR");
+  if (value.schemaVersion === 3 && (!value.workerRuntime || Object.keys(value.workerRuntime).join() !== "profile"
+      || !Object.hasOwn(orderWorkerProfiles, value.workerRuntime.profile))) fail("INVALID_WORKER_PROFILE");
   const endpoint = new URL(value.storageEndpoint);
   if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !["9000", "19000", "19001", "19002", "19003"].includes(endpoint.port) ||
       endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) fail("UNTRUSTED_STORAGE_ENDPOINT");
@@ -53,7 +57,7 @@ export function runtimePlans(root, manifest, environment) {
       !environment.LOCAL_OIDC_CLIENT_SECRET || Object.entries(environment).some(([key, value]) => /^(DEMO_|E2E_|YUMMYAI_TEST_)/.test(key) && value && value !== "0")) fail("PERSONAL_ENVIRONMENT_REQUIRED");
   const snapshot = localPath(root, manifest.snapshot);
   const files = [`--env-file=${path.join(root, ".env")}`, `--env-file=${localPath(root, manifest.overlay)}`];
-  return [
+  const plans = [
     { component: "api", port: 8000, health: "http://127.0.0.1:8000/health", cwd: path.join(snapshot, "apps/api"),
       args: [...files, "--import", "tsx", "src/main.ts"], env: { NODE_ENV: "development", TSX_DISABLE_CACHE: "1", PORT: "8000" } },
     { component: "web", port: 3000, health: "http://localhost:3000/login", cwd: path.join(snapshot, ".artifacts/local-web-releases", manifest.candidate, "apps/web"),
@@ -61,6 +65,17 @@ export function runtimePlans(root, manifest, environment) {
       env: { NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
         CANVAS_STUDIO_PRODUCTION_ENABLED: manifest.studioRuntime ? "1" : "0", CANVAS_STUDIO_URL: "http://127.0.0.1:4176" } },
   ];
+  if (manifest.workerRuntime) {
+    const worker = orderWorkerProfiles[manifest.workerRuntime.profile];
+    plans.push({
+    component: "worker", port: 8001, health: "http://127.0.0.1:8001/health", cwd: path.join(snapshot, "apps/worker"),
+    workerProfile: manifest.workerRuntime.profile,
+    args: [...files, "--import", "tsx", "src/run.ts"],
+    env: { NODE_ENV: "development", TSX_DISABLE_CACHE: "1", WORKER_HEALTH_PORT: "8001",
+      WORKER_QUEUES: worker.queues.join(","), WORKER_SCHEDULERS: worker.schedulers.join(",") },
+  });
+  }
+  return plans;
 }
 
 export function componentDecision({ listening, healthy, identity, expected, listenerPid }) {
@@ -90,10 +105,11 @@ export function applyStorageOverlay(base, overlay, manifest) {
 export async function stopSpawnedChildren(children) {
   await Promise.all(children.map((child) => new Promise((resolve, reject) => {
     if (!child.pid || child.exitCode !== null || child.signalCode) { resolve(); return; }
-    const timer = setTimeout(() => { child.removeListener("exit", done); reject(Error("ORDINARY_RUNTIME_OWNED_CHILD_CLEANUP_FAILED")); }, 5000);
+    const timer = setTimeout(() => { child.removeListener("exit", done); reject(Error("ORDINARY_RUNTIME_OWNED_CHILD_CLEANUP_FAILED")); }, child.dailyWorker ? 35_000 : 5000);
     function done() { clearTimeout(timer); resolve(); }
     child.once("exit", done);
-    if (!child.killed) child.kill();
+    if (child.dailyWorker && child.connected) child.send({ type: "worker.shutdown" }, () => undefined);
+    else if (!child.killed) child.kill();
   })));
 }
 
@@ -129,6 +145,15 @@ async function portListening(port) {
 async function health(url) {
   try { const response = await globalThis.fetch(url, { signal: globalThis.AbortSignal.timeout(5000), redirect: "manual" }); await response.body?.cancel(); return response.status === 200; }
   catch { return false; }
+}
+
+async function componentHealth(plan, pid) {
+  if (plan.component !== "worker") return health(plan.health);
+  try {
+    const response = await globalThis.fetch(plan.health, { signal: globalThis.AbortSignal.timeout(5000), redirect: "manual" });
+    if (response.status !== 200) { await response.body?.cancel(); return false; }
+    return orderWorkerReady(await response.json(), pid, plan.workerProfile);
+  } catch { return false; }
 }
 
 async function regular(root, relative) {
@@ -168,7 +193,7 @@ async function inspect(prepared) {
     const owner = listening ? listenerPid(plan.port) : null;
     const listener = owner ? processIdentity(owner) : null;
     if (listening && plan.component === "web" && expected?.listenerPid !== identity?.pid && listener?.parentPid !== identity?.pid) fail("UNRECOGNIZED_LISTENER");
-    const decision = componentDecision({ listening, identity, expected, listenerPid: owner, healthy: listening && await health(plan.health) });
+    const decision = componentDecision({ listening, identity, expected, listenerPid: owner, healthy: listening && await componentHealth(plan, owner) });
     result.push({ component: plan.component, decision, pid: identity?.pid ?? null, listenerPid: owner });
   }
   return result;
@@ -212,12 +237,14 @@ async function startMissingComponents(root, prepared, { children, assertNotInter
         } catch { fail("PERSONAL_WEB_PREFLIGHT_FAILED"); }
     }
     assertNotInterrupted();
-    const child = spawn(process.execPath, plan.args, { cwd: plan.cwd, env: runtimeEnvironment(prepared.environment, plan.env), stdio: "inherit", windowsHide: true });
+    const child = spawn(process.execPath, plan.args, { cwd: plan.cwd, env: runtimeEnvironment(prepared.environment, plan.env),
+      stdio: plan.component === "worker" ? ["inherit", "inherit", "inherit", "ipc"] : "inherit", windowsHide: true });
+    child.dailyWorker = plan.component === "worker";
     children.push(child);
     let spawnError = false;
     child.once("error", () => { spawnError = true; });
     const deadline = Date.now() + 45_000;
-    while (!await health(plan.health)) {
+    while (!await componentHealth(plan, child.pid)) {
       assertNotInterrupted();
       if (spawnError || child.exitCode !== null || child.signalCode || Date.now() > deadline) fail("START_FAILED");
       await delay(250);
@@ -283,13 +310,17 @@ export function createOrdinaryRuntimeRunner({ acquireGate = acquireStartupGate, 
           const observations = await inspectRuntime(prepared);
           report = { mode, recordedAt: new Date().toISOString(), sourceSha256: prepared.manifest.sourceSha256, migrations: prepared.manifest.migrations,
             candidate: prepared.manifest.candidate, buildId: prepared.manifest.buildId, components: observations,
-            ...(studio ? { studioRuntime: studio } : {}), backgroundConsumersStarted: false, noSecurityPolicyChanged: true };
+            ...(studio ? { studioRuntime: studio } : {}),
+            ...(prepared.manifest.workerRuntime ? { workerRuntime: { profile: prepared.manifest.workerRuntime.profile,
+              ...orderWorkerProfiles[prepared.manifest.workerRuntime.profile] } } : {}),
+            backgroundConsumersStarted: observations.some(row => row.component === "worker" && row.decision === "reuse"), noSecurityPolicyChanged: true };
           assertNotInterrupted();
           if (mode === "status" || observations.every(row => row.decision === "reuse")) return report;
           await startMissing(root, prepared, { children, assertNotInterrupted });
           assertNotInterrupted();
           report.components = await inspectRuntime(prepared);
           if (report.components.some(row => row.decision !== "reuse")) fail("START_FAILED");
+          report.backgroundConsumersStarted = report.components.some(row => row.component === "worker" && row.decision === "reuse");
           assertNotInterrupted();
         } catch (error) {
           if (gate) {

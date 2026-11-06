@@ -15,6 +15,7 @@ import { authorizeAmazonPrivate, revokeMarketplaceAuthorization, setMarketplaceA
 import { StoreRecordButton } from "./store-record-form";
 import { StoreNodeWorkspace } from "./store-node-workspace";
 import { StoreNodeExecutionWorkspace } from "./store-node-execution-workspace";
+import { OrderSyncSettings } from "./order-sync-settings";
 import { ErpIdentityContext, useErpAccess } from "../identity/erp-access";
 import { MarketplaceLifecycleActionSchema, MarketplaceLifecycleError, marketplaceAuthorityDigest, marketplaceAuthorityMatches,
   marketplaceLifecycleFailure, marketplaceLifecycleState, marketplaceOAuthAuthorizationUrl, marketplaceResponseCode,
@@ -214,6 +215,7 @@ function MarketplaceAccountAuthority({ account: originalAccount, contextAuthorit
         {canAuthorize && account.hasCredential && <form onSubmit={event => { event.preventDefault(); void run("revoke", new FormData(event.currentTarget)); }}><SubmitButton danger icon={Unplug} pending={operation === "revoke"} disabled={locked || !canInterrupt}>撤销授权</SubmitButton></form>}
         {!canAuthorize && !canManage && <p className="store-lifecycle-note">当前仅可读取本店授权状态 无授权或管理操作权限</p>}
       </div></section>
+      <OrderSyncSettings key={`orders:${data.lifecycle.authorizationGeneration}`} accountId={accountId} contextAuthority={data.context.authority} sourceBusy={locked || busy || reading} onDenied={() => deny("本店或本人权限已变化 请重新读取授权状态")} />
       <StoreNodeWorkspace key={data.lifecycle.authorizationGeneration} accountId={accountId} contextAuthority={data.context.authority} onDenied={() => deny("本店或本人权限已变化 原资料和填写已隐藏 请重新读取授权状态")} />
       <ActionNotice state={actionState} />{account.lastErrorCode && <p className="store-diagnostic"><CircleAlert size={14} />{account.lastErrorCode}</p>}
     </article>

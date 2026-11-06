@@ -12,12 +12,17 @@ import { syntheticProductionPng } from "./production-editor-fixture";
 import { createFactoryFixture } from "./factory-directory-fixture";
 import { syntheticSupplierProfile, syntheticFactoryProfile } from "../../../tools/testing/factory-fixtures";
 import { createCapacityFixture } from "./factory-capacity-fixture";
-export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; materialResponsibility?: "merchant" | "factory"; originCountry?: "US" | "CN" } = {}) {
+export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false, options: { release?: boolean; approveArtwork?: boolean; materialResponsibility?: "merchant" | "factory"; originCountry?: "US" | "CN" } = {}) {
   const suffix = createEntityId().slice(-8), externalId = `E2E-DELIVERY-${suffix}`, factoryName = `Synthetic delivery factory ${suffix}`;
   const supplier = await centerApi<{ id: string }>("sourcing/suppliers", { name: `Synthetic delivery supplier ${suffix}`, kind: "manual", regionCode: "CN", settlementCurrency: "CNY", profile: syntheticSupplierProfile });
   const factoryProfile = syntheticFactoryProfile(factoryName);
   factoryProfile.productionAddress!.postalCode = "000000";
   if (options.originCountry) factoryProfile.productionAddress!.countryCode = options.originCountry;
+  if (options.originCountry === "US") {
+    factoryProfile.productionAddress!.province = "CA";
+    factoryProfile.productionAddress!.postalCode = "00000";
+    factoryProfile.timeZone = "America/Los_Angeles";
+  }
   const factory = await createFactoryFixture(supplier.id, "shaped_pillow", factoryName, factoryProfile);
   const assignments = [factory];
   if (splitFactories && lineCount > 1) {
@@ -66,8 +71,8 @@ export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false
   await centerApi(`manufacturing-recipes/${manufacturing.recipeId}/reviews`, { expectedVersion: 1, versionId: manufacturing.versionId, decision: "approved", note: "Synthetic operator reviewed exact material and process", idempotencyKey: randomUUID() });
   const account = await centerApi<MarketplaceAccountView>("marketplace-accounts", { platform: "amazon", displayName: externalId, region: "NA", marketplaceIds: ["ATVPDKIKX0DER"], authorizationMode: "amazon_private", requestedScopes: [] });
   const purchaseDate = new Date().toISOString();
-  const rows = Array.from({ length: lineCount }, (_, index) => `${externalId}\tITEM-${suffix}-${index}\t${purchaseDate}\tDELIVERY-${suffix}\tSynthetic pillow\t2\tUSD\t20.00\tSynthetic recipient\t1 Test Street\tTest City\tCA\t00000\tUS\t1234567890`).join("\n");
-  const batch = await centerApi<AmazonReportBatchView>("orders/reports/import", { accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-delivery.txt", content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\trecipient-name\tship-address-1\tship-city\tship-state\tship-postal-code\tship-country\tbuyer-phone-number\n${rows}` });
+  const rows = Array.from({ length: lineCount }, (_, index) => `${externalId}\tITEM-${suffix}-${index}\t${purchaseDate}\tDELIVERY-${suffix}\tSynthetic pillow\t2\tUSD\t20.00\tSynthetic recipient\t1 Test Street\tTest City\tCA\t00000\tUS\t1234567890\tsynthetic-buyer@example.invalid`).join("\n");
+  const batch = await centerApi<AmazonReportBatchView>("orders/reports/import", { accountId: account.id, marketplaceId: "ATVPDKIKX0DER", fileName: "synthetic-delivery.txt", content: `order-id\torder-item-id\tpurchase-date\tsku\tproduct-name\tquantity-purchased\tcurrency\titem-price\trecipient-name\tship-address-1\tship-city\tship-state\tship-postal-code\tship-country\tbuyer-phone-number\tbuyer-email\n${rows}` });
   const workspace = await centerApi<AmazonReportWorkspaceView>(`orders/reports/workspace?batchId=${batch.id}`), lines: string[] = [];
   for (const row of workspace.lines) {
     const id = row.orderLineId; lines.push(id);
@@ -80,7 +85,8 @@ export async function prepareDeliveryOrder(lineCount = 1, splitFactories = false
     document.layers = doc.layers.map(layer => layer.kind === "image" ? { ...layer, assetId: orderImage.id } : layer);
     document.confirmations = { physicalSize: true, whiteBorderRule: true, narrowParts: true, barcodeTab: true, backText: true, visualReview: true };
     const checked = await centerApi<ProductionEditorDetailView>(`production-editor/projects/${project.project.id}/versions`, { expectedVersionId: project.version.id, document });
-    for (const action of ["submit_artwork", "approve_artwork"] as const) detail = await centerApi(`order-centers/lines/${id}/actions`, { action, expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: checked.version.id, reason: "Synthetic operator reviewed fixture artwork", idempotencyKey: randomUUID() });
+    for (const action of options.approveArtwork===false ? ["submit_artwork"] as const : ["submit_artwork", "approve_artwork"] as const) detail = await centerApi(`order-centers/lines/${id}/actions`, { action, expectedRevision: detail.line.revision, expectedProjectionVersion: detail.line.projectionVersion, expectedEditorVersionId: checked.version.id, reason: "Synthetic operator reviewed fixture artwork", idempotencyKey: randomUUID() });
+    if(options.approveArtwork===false)continue;
     let renderId = "";
     await expect.poll(async () => { const result = await centerApi<ProductionEditorDetailView>(`production-editor/projects/${project.project.id}`); const render = result.renders.find(render => render.versionId === checked.version.id && render.purpose === "production" && render.status === "completed"); renderId = render?.id ?? ""; return !!render; }, { timeout: 60_000 }).toBe(true);
     const assigned = assignments[(lines.length - 1) % assignments.length]!;

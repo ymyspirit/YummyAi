@@ -1,4 +1,4 @@
-import { SHAPED_PILLOW_FACTORY_STANDARD, type ProductionEditorDocument, type ProductionEditorExportOptions, type ProductionProductType, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
+import { pillowOrderLengthMm, SHAPED_PILLOW_FACTORY_STANDARD, type PillowProductionFactory, type ProductionEditorDocument, type ProductionEditorExportOptions, type ProductionProductType, type ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
 
 export interface ProductionProductDefinition {
   readonly productType: ProductionProductType;
@@ -29,6 +29,25 @@ export function productionExportDefaults(document: ProductionEditorDocument): Pi
     : { format: "png", background: document.exportBackground ?? "transparent" };
 }
 
+export function factoryBarcodeDimensions(factory?: PillowProductionFactory) {
+  const rule = SHAPED_PILLOW_FACTORY_STANDARD;
+  return factory?.adapter === "yicai_folder"
+    ? { widthMm: null, heightMm: null }
+    : { widthMm: rule.barcodeWidthPx * 25.4 / rule.dpi, heightMm: rule.barcodeHeightPx * 25.4 / rule.dpi };
+}
+
+export function pinPillowProductionFactory(document: ShapedPillowDocument, factory: PillowProductionFactory): ShapedPillowDocument {
+  if (document.spec.factoryStandardId !== SHAPED_PILLOW_FACTORY_STANDARD.id)
+    throw new Error("本件工艺底稿尚未固定已确认的抱枕制作教程");
+  const longest = pillowOrderLengthMm(factory.sizeIn, factory);
+  const original = document.spec.declaredLongestMm;
+  if (original === null || ![longest, pillowOrderLengthMm(factory.sizeIn)].some(size => Math.abs(size - original) < 0.01))
+    throw new Error("已审核底稿的主体尺寸与本件固定规格不匹配");
+  return { ...document, spec: { ...document.spec, productionFactory: factory, declaredLongestMm: longest,
+    barcodeTab: { ...document.spec.barcodeTab, ...factoryBarcodeDimensions(factory) } },
+    confirmations: { physicalSize: false, whiteBorderRule: false, narrowParts: false, barcodeTab: false, backText: false, visualReview: false } };
+}
+
 /** Explicit draft operation: keeps artwork and contour intact and revokes review. */
 export function applyPillowFactoryStandard(document: ShapedPillowDocument): ShapedPillowDocument {
   const rule = SHAPED_PILLOW_FACTORY_STANDARD;
@@ -38,7 +57,7 @@ export function applyPillowFactoryStandard(document: ShapedPillowDocument): Shap
     whiteBorderMm: mm(rule.whiteBorderPx), cutLineMm: mm(rule.cutLinePx),
     panelGapMm: mm(rule.panelGapPx), sheetMarginMm: mm(rule.sheetMarginPx),
     minimumNeckMm: rule.minimumNeckMm, minimumNeckBasis: "cut_contour", artworkClipMode: "none",
-    barcodeTab: { ...document.spec.barcodeTab, widthMm: mm(rule.barcodeWidthPx), heightMm: mm(rule.barcodeHeightPx) },
+    barcodeTab: { ...document.spec.barcodeTab, ...factoryBarcodeDimensions(document.spec.productionFactory) },
   }, confirmations: { physicalSize: false, whiteBorderRule: false, narrowParts: false, barcodeTab: false, backText: false, visualReview: false } };
 }
 

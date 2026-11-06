@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { OriginalOwnerError } from "@yummyai/contracts/common/original-owner-error";
 import { canonicalJson } from "@yummyai/contracts/common/canonical-json";
-import { ManufacturingRecipeContentSchema, calculateManufacturingDemand } from "@yummyai/contracts/catalog/manufacturing";
+import { ManufacturingRecipeContentSchema, calculateManufacturingDemand, outsourcedManufacturingFactory } from "@yummyai/contracts/catalog/manufacturing";
 import { FactoryManufacturingPlanContentSchema, FactoryManufacturingPlanSchema, ProductionDeliveryManufacturingSchema } from "@yummyai/contracts/order/manufacturing-delivery";
 import { productionManufacturingBindings, manufacturingRecipes, manufacturingRecipeVersions, type TenantTransaction } from "@yummyai/database";
 import { eq } from "drizzle-orm";
@@ -29,6 +29,7 @@ export async function readManufacturingDelivery(tx: TenantTransaction, productio
   if (!row) return null;
   const { binding, content, demand } = row;
     const publicContent = FactoryManufacturingPlanContentSchema.parse({ schemaVersion: 1, code: row.code, name: content.name, versionNumber: row.versionNumber,
+      ...(outsourcedManufacturingFactory(content) ? { factorySuppliesFinishedGoods: true as const } : {}),
       sourceContentChecksum: binding.contentChecksum, quantity: binding.quantity, unit: binding.outputUnit, recipeOutputQuantity: content.outputQuantity, proposalOnly: true,
       materials: content.materials.map((line, index) => ({ code: line.code, name: line.name, unit: line.unit, responsibility: line.responsibility, operationCode: line.operationCode,
         recipeQuantityNumerator: line.quantityNumerator, recipeQuantityDenominator: line.quantityDenominator, lossBps: line.lossBps, lossBasis: line.lossBasis,

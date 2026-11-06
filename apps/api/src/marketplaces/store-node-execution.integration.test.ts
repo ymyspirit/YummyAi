@@ -3,19 +3,22 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Permission } from "@yummyai/authz";
 import { createEntityId } from "@yummyai/contracts";
 import { ErpSessionViewSchema } from "@yummyai/contracts/auth/session";
+import { OrderSyncSettingsViewSchema, OrderSyncNodeInputSchema } from "@yummyai/contracts/order/sync";
 import { StoreNodeWorkspaceSchema, STORE_NODE_PROTOCOL } from "@yummyai/contracts/marketplace/store-node";
 import { STORE_NODE_EXECUTION_PROTOCOL, StoreNodeExecutionWorkspaceSchema, StoreNodeExecutionViewSchema, StoreNodeExecutionReceiptSchema,
   StoreNodeExecutionClaimSchema, StoreNodeExecutionHistorySchema, StoreNodeExecutionCallSchema, StoreNodeExecutionLeaseSchema, storeNodeExecutionRequestText } from "@yummyai/contracts/marketplace/store-node-execution";
-import { connectDatabase, memberships, withTenant } from "@yummyai/database";
+import { connectDatabase, memberships, withTenant, orders, orderSourceSnapshots, orderProtectedDetails,
+  orderSyncSchedules, orderIngestionRuns, amazonOrderReportLines, amazonOrderReportProcessingRequests } from "@yummyai/database";
+import { marketplaceStoreNodeExecutions as nodeExecutions } from "@yummyai/database";
 import { openStoreNodeSealedCredential } from "@yummyai/marketplace-connectors";
 import { openStoreNodeJournal } from "../../../store-api-node/src/identity.js";
 import { requireStoreNodeExecutionEnvironment } from "../../../../tools/testing/require-store-node-execution-environment.mjs";
 import { executionBounded } from "./store-node-execution-provider.test-fixture.js";
-import { executionCleanupDiagnostic, lane, nodeExecutionSha, safeCode, storeNodeExecutionFixture } from "./store-node-execution.test-fixture.js";
+import { executionCleanupDiagnostic, lane, nodeExecutionPermissions, nodeExecutionSha, safeCode, storeNodeExecutionFixture } from "./store-node-execution.test-fixture.js";
 
 const isolated = requireStoreNodeExecutionEnvironment(), database = connectDatabase(isolated.url), f = storeNodeExecutionFixture(database), proof: object[] = [];
 const rootPath = (accountId: string) => `/v1/marketplace-accounts/${accountId}/node-executions`;
@@ -66,7 +69,7 @@ const restore = async () => { for (const who of [f.a, f.peer, f.foreign]) {
   await f.rights(who);
 } };
 beforeAll(() => f.initialize());
-afterEach(async () => { f.provider.controls.fault = "none"; f.provider.controls.faultKind = null; f.provider.controls.schemaOutsideDefinition = false;
+afterEach(async () => { f.provider.controls.fault = "none"; f.provider.controls.faultKind = null; f.provider.controls.schemaOutsideDefinition = false; f.provider.controls.orderForeignSite = false;
   await f.stopChildren(); await restore(); });
 afterAll(async () => { const errors: Error[] = [], cleanupDiagnostics: ReturnType<typeof executionCleanupDiagnostic> = [];
   const failure = (phase: string, error: unknown) => { const safe = executionCleanupDiagnostic(error, phase); cleanupDiagnostics.push(...safe);
@@ -79,6 +82,116 @@ afterAll(async () => { const errors: Error[] = [], cleanupDiagnostics: ReturnTyp
 });
 
 describe("real node CLI, original marketplace owners and mTLS capability execution", () => {
+  async function orderScene() {
+    await f.rights(f.a, [...nodeExecutionPermissions, Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead]);
+    const s = await scene("amazon"), path = `/v1/marketplace-accounts/${s.store.id}/order-sync`;
+    const response = await f.http(path, { requestKey: createEntityId(), expectedVersion: 0, enabled: true });
+    expect(response.status).toBe(201);
+    const settings = OrderSyncSettingsViewSchema.parse(response.body);
+    expect(settings).toMatchObject({ enabled: true, version: 1 });
+    const schedule = async () => (await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orderSyncSchedules).where(eq(orderSyncSchedules.accountId, s.store.id))))[0]!;
+    await expect.poll(async () => (await schedule()).activeExecutionId, { timeout: 20_000 }).not.toBeNull();
+    const id = (await schedule()).activeExecutionId!;
+    const stop = async () => {
+      const current = OrderSyncSettingsViewSchema.parse((await f.http(path)).body);
+      expect((await f.http(path, { requestKey: createEntityId(), expectedVersion: current.version, enabled: false })).status).toBe(201);
+    };
+    return { ...s, id, schedule, stop };
+  }
+  async function orderResult(s: Awaited<ReturnType<typeof orderScene>>, child: Awaited<ReturnType<typeof f.workNode>>) {
+    const read = () => withTenant(database.db, f.a.ceiling, tx => tx.select({ id: nodeExecutions.id, state: nodeExecutions.state,
+      phase: nodeExecutions.phase, errorCode: nodeExecutions.errorCode, snapshotId: nodeExecutions.snapshotId }).from(nodeExecutions)
+      .where(and(eq(nodeExecutions.id, s.id), eq(nodeExecutions.accountId, s.store.id))));
+    await expect.poll(async () => {
+      const [row] = await read();
+      if (child.evidence.exited && !terminal.includes(row?.state ?? "")) throw new Error("order_node_exited:" + JSON.stringify({ state: row?.state, code: child.evidence.stderrCode }));
+      return terminal.includes(row?.state ?? "");
+    }, { timeout: 60_000 }).toBe(true);
+    return (await read())[0]!;
+  }
+
+  it.each([false, true])("commits Amazon orders and Custom sources through the real mTLS node with completion ACK loss=%s", async loss => {
+    const s = await orderScene(), before = f.provider.counts(), child = await f.workNode(s.node.keys, loss ? { loss: "complete" } : {});
+    try {
+      const result = await orderResult(s, child);
+      expect(result.state, JSON.stringify({ code: result.errorCode, phase: result.phase })).toBe("succeeded");
+      expect(result.snapshotId).toBeNull();
+      const read = () => withTenant(database.db, f.a.ceiling, async tx => {
+        const owned = await tx.select().from(orders).where(eq(orders.accountId, s.store.id));
+        const custom = owned.find(row => row.externalOrderId === "SYNTHETIC-NODE-CUSTOM")!;
+        const reports = await tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.orderId, custom.id));
+        const requests = await tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, reports[0]!.id));
+        const sources = await tx.select().from(orderSourceSnapshots).where(eq(orderSourceSnapshots.accountId, s.store.id));
+        const [privacy] = await tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, custom.id));
+        return { owned, reports, requests, sources, privacy };
+      });
+      const adopted = await read();
+      expect(adopted.owned).toHaveLength(2); expect(adopted.sources).toHaveLength(2);
+      expect(adopted.owned.find(row => row.externalOrderId === "SYNTHETIC-NODE-PENDING")).toMatchObject({ sideState: "on_hold", providerBlockReason: "payment_pending", orderTotalMinor: null });
+      expect(adopted.owned.find(row => row.externalOrderId === "SYNTHETIC-NODE-CUSTOM")).toMatchObject({ sideState: null, orderTotalMinor: 2500 });
+      expect(adopted.reports).toHaveLength(1); expect(adopted.requests).toHaveLength(1);
+      expect(adopted.requests[0]).toMatchObject({ status: "pending", requestedBy: f.a.userId });
+      expect(adopted.privacy?.encryptedEnvelope).toBeTruthy();
+      expect(JSON.stringify([adopted.sources, adopted.reports, adopted.requests, result])).not.toMatch(/Synthetic Private|node-custom-private/);
+      expect(await s.schedule()).toMatchObject({ activeExecutionId: null, request: null });
+      const account = await f.accountRows(s.store.id), job = account.executions.find(row => row.id === s.id)!;
+      const runId = OrderSyncNodeInputSchema.parse(job.input).runId;
+      const [run] = await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orderIngestionRuns).where(eq(orderIngestionRuns.id, runId)));
+      expect(run).toMatchObject({ status: "completed", collectedCount: 2 });
+      if (loss) {
+        await expect.poll(async () => { try { return JSON.parse(await readFile(child.lossMarker, "utf8")); } catch { return null; } }, { timeout: 15_000 })
+          .toEqual({ rpc: "complete", status: 200, explicitSyntheticLoss: true });
+        await child.close();
+        const restarted = await f.workNode(s.node.keys), node = (await f.rows(s.node.nodeId)).node!;
+        try {
+          await expect.poll(async () => { const bytes = await readFile(resolve(s.node.keys.directory, "execution.pe"));
+            try { return z.object({ completed: z.boolean() }).parse(await openStoreNodeJournal(bytes, s.node.keys.passphrase, node.publicKeySpkiSha256)).completed; }
+            finally { bytes.fill(0); }
+          }, { timeout: 15_000 }).toBe(true);
+          const replayed = await read();
+          expect(replayed.sources).toEqual(adopted.sources); expect(replayed.reports).toEqual(adopted.reports); expect(replayed.requests).toEqual(adopted.requests);
+          expect(restarted.evidence.leaked).toBe(false);
+        } finally { await restarted.close(); }
+      }
+      expect((f.provider.counts().amazon_lwa ?? 0) - (before.amazon_lwa ?? 0)).toBe(1);
+      expect((f.provider.counts().amazon_orders ?? 0) - (before.amazon_orders ?? 0)).toBe(1);
+      await f.provider.assertEncryptedFiles([resolve(s.node.keys.directory, "execution.pe"), resolve(s.node.keys.directory, "state.pe")]);
+      expect(child.evidence.leaked).toBe(false);
+      proof.push({ case: "order_sync_native_completion", completionAckLoss: loss, executionId: s.id, orders: 2, sourceRequests: 1, physicalOrderReads: 1 });
+    } finally { await child.close(); await s.stop(); }
+  });
+
+  it("rejects a foreign-marketplace order page through the native completion owner without partial intake", async () => {
+    const s = await orderScene(); f.provider.controls.orderForeignSite = true;
+    const child = await f.workNode(s.node.keys);
+    try {
+      const result = await orderResult(s, child);
+      expect(result).toMatchObject({ state: "failed", errorCode: "store_node_policy_rejected" });
+      expect(await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orders).where(eq(orders.accountId, s.store.id)))).toHaveLength(0);
+      expect(await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orderSourceSnapshots).where(eq(orderSourceSnapshots.accountId, s.store.id)))).toHaveLength(0);
+      expect(await s.schedule()).toMatchObject({ enabled: false, errorCode: "order_sync_result_invalid", activeExecutionId: null });
+      proof.push({ case: "order_sync_foreign_page", executionId: s.id, adoptedOrders: 0, partialSources: 0 });
+    } finally { await child.close(); await s.stop(); }
+  });
+
+  it("does not adopt a late native order response after order permissions are withdrawn", async () => {
+    const s = await orderScene(), held = f.provider.arm("amazon_orders"), child = await f.workNode(s.node.keys);
+    try {
+      await executionBounded(held.entered.promise, "store_node_order_permission_gate_deadline");
+      await f.rights(f.a, nodeExecutionPermissions);
+      held.release.release();
+      const result = await orderResult(s, child);
+      expect(result.state).toBe("authority_changed");
+      expect(await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orders).where(eq(orders.accountId, s.store.id)))).toHaveLength(0);
+      expect(await withTenant(database.db, f.a.ceiling, tx => tx.select().from(orderSourceSnapshots).where(eq(orderSourceSnapshots.accountId, s.store.id)))).toHaveLength(0);
+      proof.push({ case: "order_sync_revoked_permission", executionId: s.id, lateResponseAdopted: false });
+    } finally {
+      held.release.release(); await child.close();
+      await f.rights(f.a, [...nodeExecutionPermissions, Permission.OrderRead, Permission.OrderWrite, Permission.OrderPiiRead]);
+      await s.stop();
+    }
+  });
+
   it("bootstraps a known pending Etsy grant through the actual CLI and original refresh checkpoint before all eight capability reads", async () => {
     const beforeWrites = await zeroWrites(), s = await scene(), initial = await f.accountRows(s.store.id), counts = f.provider.counts();
     expect(initial.snapshots).toHaveLength(0); expect(initial.account?.status).toBe("pending_authorization"); expect(initial.credential?.version).toBe(1);

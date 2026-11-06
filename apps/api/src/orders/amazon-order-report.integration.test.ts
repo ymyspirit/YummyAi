@@ -10,6 +10,7 @@ import {
   orderProtectedDetails, orders, withTenant, memberships, membershipRoles, roles, purgeExpiredAmazonOrderReports,
 } from "@yummyai/database";
 import { eq } from "drizzle-orm";
+import { normalizeAmazonOrder } from "@yummyai/marketplace-connectors";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -77,6 +78,108 @@ describe("manual Amazon order reports and private customization files", () => {
   const retention: AmazonReportRetentionEnqueuer = { schedule: vi.fn(async () => undefined) };
   const service = new AmazonOrderReportService(database, vault, orderService, audit, gateway, retention, processing);
   const input = (rows: SourceRow[], accountId = accountA): AmazonReportImportInput => ({ accountId, marketplaceId, fileName: "synthetic-report.txt", content: tsv(rows) });
+  function apiInput(row: SourceRow, eventId = createEntityId()) {
+    return normalizeAmazonOrder(accountA, eventId, { orderId: row.orderId, createdTime: "2026-09-01T12:00:00Z", lastUpdatedTime: new Date().toISOString(),
+      fulfillment: { fulfillmentStatus: "UNSHIPPED", fulfilledBy: "MERCHANT" }, salesChannel: { marketplaceId },
+      proceeds: { grandTotal: { amount: "29.99", currencyCode: "USD" } },
+      recipient: { deliveryAddress: { name: "Synthetic Recipient", addressLine1: "Synthetic address", countryCode: "US" } },
+      orderItems: [{ orderItemId: row.lineId, quantityOrdered: row.quantity ?? 1, product: { title: "Synthetic custom product", sellerSku: row.sku ?? "SYNTHETIC-SAME-SKU",
+        price: { unitPrice: { amount: "29.99", currencyCode: "USD" } }, customization: { customizedUrl: sourceUrl(row) } } }],
+    }).order;
+  }
+  const apiBatch = async (orderId: string) => (await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportLines).where(eq(amazonOrderReportLines.orderId, orderId))))[0]!;
+  const apiWorker = () => createAmazonReportBatchProcessor(database, new AmazonReportArchiveProcessor(database, vault, gateway));
+
+  it("adopts API Custom files into the original private archive and review workspace without a report upload", async () => {
+    const row = sourceRow(), source = apiInput(row);
+    archives.set(sourceUrl(row), await customZip(row));
+    processing.schedule.mockClear();
+    const result = await service.materializeApiOrder(contextA, source), line = await apiBatch(result.orderId);
+    expect(processing.schedule).not.toHaveBeenCalled();
+    const [batch] = await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportBatches).where(eq(amazonOrderReportBatches.id, line.batchId)));
+    expect(batch).toMatchObject({ sourceType: "orders_api", fileName: "Amazon API 自动同步", dispatchedAt: null, encryptedReport: null });
+    expect(line.encryptedSource).not.toContain(sourceUrl(row));
+    await service.dispatchApiSources(contextA);
+    expect(processing.schedule).toHaveBeenCalledWith(expect.objectContaining({ userId: userA }), line.batchId);
+    expect(JSON.stringify(processing.schedule.mock.calls)).not.toContain(sourceUrl(row));
+    expect(await apiWorker().process(contextA, line.batchId)).toMatchObject({ completed: 1, failed: 0 });
+    const detail = await service.detail(contextA, line.id);
+    expect(detail.line).toMatchObject({ state: "ready", reviewed: false });
+    expect(detail.surfaces[0]!.fields.some(field => field.value === "Synthetic buyer choice")).toBe(true);
+    expect((await service.workspace(contextA, { accountId: accountA })).lines.some(item => item.id === line.id)).toBe(true);
+    await expect(service.detail(contextB, line.id)).rejects.toBeInstanceOf(NotFoundException);
+    await service.review(contextA, line.id, detail.versionId!);
+    const request = (await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, line.id))))[0]!;
+    await service.materializeApiOrder(contextA, source);
+    await service.materializeApiOrder(contextA, { ...source, externalEventId: createEntityId() });
+    expect(await apiBatch(result.orderId)).toMatchObject({ batchId: line.batchId, currentVersionId: detail.versionId, reviewedVersionId: detail.versionId });
+    expect((await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, line.id))))[0]!.requestId).toBe(request.requestId);
+  });
+
+  it("rolls back source work with its order receipt and recovers queue failure without losing the committed request", async () => {
+    const source = apiInput(sourceRow());
+    await expect(withTenant(database.db, contextA, async tx => {
+      const result = await orderService.materializeNormalizedInTransaction(tx, contextA, source);
+      await service.registerApiSourcesInTransaction(tx, contextA, result.orderId, source);
+      throw new Error("synthetic receipt rollback");
+    })).rejects.toThrow("synthetic receipt rollback");
+    expect(await withTenant(database.db, contextA, tx => tx.select().from(orders).where(eq(orders.externalOrderId, source.externalOrderId)))).toHaveLength(0);
+    const result = await service.materializeApiOrder(contextA, source), line = await apiBatch(result.orderId);
+    processing.schedule.mockRejectedValueOnce(new Error("synthetic queue unavailable"));
+    await expect(service.dispatchApiSources(contextA)).rejects.toThrow("synthetic queue unavailable");
+    expect((await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportBatches).where(eq(amazonOrderReportBatches.id, line.batchId))))[0]!.dispatchedAt).toBeNull();
+    await service.dispatchApiSources(contextA);
+    expect((await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportBatches).where(eq(amazonOrderReportBatches.id, line.batchId))))[0]!.dispatchedAt).not.toBeNull();
+  });
+
+  it("keeps reviewed bytes when an API link changes and never extends or revives expired customer sources", async () => {
+    const row = sourceRow(), source = apiInput(row);
+    archives.set(sourceUrl(row), await customZip(row));
+    const result = await service.materializeApiOrder(contextA, source), line = await apiBatch(result.orderId);
+    await apiWorker().process(contextA, line.batchId);
+    const original = await service.detail(contextA, line.id);
+    await service.review(contextA, line.id, original.versionId!);
+    const changed = { ...row, url: sourceUrl(row) + "?synthetic=new" };
+    archives.set(sourceUrl(changed), await customZip(row, "Changed remote bytes"));
+    const [privacy] = await withTenant(database.db, contextA, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, result.orderId)));
+    await service.materializeApiOrder(contextA, apiInput(changed));
+    const updated = await apiBatch(result.orderId);
+    expect((await withTenant(database.db, contextA, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, result.orderId))))[0]!.retentionExpiresAt).toEqual(privacy!.retentionExpiresAt);
+    await apiWorker().process(contextA, updated.batchId);
+    expect(await apiBatch(result.orderId)).toMatchObject({ state: "failed", lastErrorCode: "attachment_changed", currentVersionId: original.versionId, reviewedVersionId: original.versionId });
+    await withTenant(database.db, contextA, tx => tx.update(orderProtectedDetails).set({ retentionExpiresAt: new Date(0) }).where(eq(orderProtectedDetails.orderId, result.orderId)));
+    const before = (await withTenant(database.db, contextA, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, result.orderId))))[0]!;
+    await service.materializeApiOrder(contextA, apiInput(row));
+    expect(await apiBatch(result.orderId)).toMatchObject({ batchId: updated.batchId, sourceChecksum: updated.sourceChecksum });
+    expect((await withTenant(database.db, contextA, tx => tx.select().from(orderProtectedDetails).where(eq(orderProtectedDetails.orderId, result.orderId))))[0]).toEqual(before);
+  });
+
+  it("does not replace the private Custom source or enqueue new work from an older platform update", async () => {
+    const row = sourceRow(), source = apiInput(row);
+    const result = await service.materializeApiOrder(contextA, source), before = await apiBatch(result.orderId);
+    const requests = () => withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, before.id)));
+    const queued = await requests(), older = apiInput({ ...row, url: sourceUrl(row) + "?synthetic=older" });
+    older.redactedSource.lastUpdatedTime = new Date(Date.parse(String(source.redactedSource.lastUpdatedTime)) - 60_000).toISOString();
+    await service.materializeApiOrder(contextA, older);
+    expect(await apiBatch(result.orderId)).toEqual(before);
+    expect(await requests()).toEqual(queued);
+  });
+
+  it("retains an explicit missing-file diagnostic and rechecks membership before downloading API sources", async () => {
+    const row = sourceRow(), missing = apiInput(row);
+    missing.protectedDetails!.customizations = [];
+    const result = await service.materializeApiOrder(contextA, missing), unavailable = await apiBatch(result.orderId);
+    expect(unavailable).toMatchObject({ state: "failed", lastErrorCode: "customization_missing", currentVersionId: null });
+    expect(await withTenant(database.db, contextA, tx => tx.select().from(amazonOrderReportProcessingRequests).where(eq(amazonOrderReportProcessingRequests.reportLineId, unavailable.id)))).toHaveLength(0);
+    await service.materializeApiOrder(contextA, apiInput(row));
+    const pending = await apiBatch(result.orderId), download = vi.fn(gateway.download);
+    await withTenant(database.db, contextA, tx => tx.update(roles).set({ permissions: [Permission.OrderRead] }).where(eq(roles.id, roleA)));
+    try {
+      await createAmazonReportBatchProcessor(database, new AmazonReportArchiveProcessor(database, vault, { download, scan: gateway.scan })).process(contextA, pending.batchId);
+      expect(download).not.toHaveBeenCalled();
+      expect(await apiBatch(result.orderId)).toMatchObject({ state: "failed", lastErrorCode: "processing_blocked" });
+    } finally { await withTenant(database.db, contextA, tx => tx.update(roles).set({ permissions: contextA.permissions }).where(eq(roles.id, roleA))); }
+  });
   it("imports an unpriced unshipped report with unknown money and still processes its private customization", async () => {
     const row = sourceRow();
     archives.set(sourceUrl(row), await customZip(row));

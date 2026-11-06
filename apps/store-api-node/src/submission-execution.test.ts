@@ -9,7 +9,8 @@ import { STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_
   publicationSubmitRequestText, publicationStatusRequestText } from "@yummyai/contracts/marketplace/publication-submit";
 import { STORE_NODE_EXECUTION_OPERATION, STORE_NODE_EXECUTION_PROTOCOL, StoreNodeExecutionClaimInputSchema, StoreNodeExecutionCompleteInputSchema,
   StoreNodeExecutionPermitInputSchema, type StoreNodeExecutionCredential, type StoreNodeAmazonSubmissionLease,
-  type StoreNodeAmazonStatusLease, type StoreNodeExecutionCompletionPayloadSchema } from "@yummyai/contracts/marketplace/store-node-execution";
+  type StoreNodeAmazonStatusLease, type StoreNodeExecutionLease, type StoreNodeOrderSyncLease, type StoreNodeExecutionCompletionPayloadSchema } from "@yummyai/contracts/marketplace/store-node-execution";
+import { STORE_NODE_ORDER_SYNC_OPERATION, orderSyncNodeRequestText } from "@yummyai/contracts/order/sync";
 import { createStoreNodeSealedCredential, openStoreNodeExecutionPayload, sealStoreNodeExecutionPayload,
   storeNodeExecutionPayloadChecksum } from "@yummyai/marketplace-connectors";
 import type { z } from "zod";
@@ -91,7 +92,7 @@ async function runtimeFixture(kind: "submit" | "status" = "submit", publicApp = 
   };
   return { ...f, options, stop, journal, writes, request, receipt, close };
 }
-function central(f: Awaited<ReturnType<typeof runtimeFixture>>, accept: (value: z.infer<typeof StoreNodeExecutionCompletionPayloadSchema>) => void) {
+function central(f: Pick<Awaited<ReturnType<typeof runtimeFixture>>, "journal" | "transportKey" | "receipt"> & { lease: StoreNodeExecutionLease }, accept: (value: z.infer<typeof StoreNodeExecutionCompletionPayloadSchema>) => void) {
   return vi.spyOn(StoreNodeExecutionTransport.prototype, "call").mockImplementation(async (operation, raw) => {
     if (operation === "permit") {
       const input = StoreNodeExecutionPermitInputSchema.parse(raw);
@@ -243,13 +244,45 @@ describe("store node original formal Amazon execution and durable recovery", () 
     } finally { await f.close(); }
   });
 
-  it("advertises the two new explicit operations alongside the unchanged capability and preview operations", async () => {
+  it("recovers a received order page after a lost step ACK without a second Amazon read", async () => {
+    const base = await runtimeFixture();
+    const input = { runId: createEntityId(), request: { checkpoint: { cursor: null, highWaterAt: null, version: 1 },
+      updatedAfter: "2026-11-01T00:00:00.000Z", updatedBefore: "2026-11-02T00:00:00.000Z", pageSize: 50, maxPages: 1 } };
+    const pins = { ...base.lease, requestChecksum: sha(orderSyncNodeRequestText(base.lease.accountId, base.lease, input)) };
+    const sealed = createStoreNodeSealedCredential(base.seed, pins, pair.publicKey.export({ type: "spki", format: "pem" }).toString());
+    const lease: StoreNodeOrderSyncLease = { ...pins, operation: STORE_NODE_ORDER_SYNC_OPERATION, input, sealedCredential: sealed.sealed };
+    const journal = await StoreNodeExecutionJournal.create(lease, { passphrase: journalPassphrase, lock: base.options.lock,
+      spki: sha(pair.publicKey.export({ type: "spki", format: "der" })) });
+    const f = { ...base, lease, journal, transportKey: sealed.key };
+    const request = vi.fn(async (url: Parameters<typeof fetch>[0]) => String(url).includes("/auth/o2/token")
+      ? Response.json({ access_token: "synthetic-order-access" }) : Response.json({ orders: [] }));
+    try {
+      vi.spyOn(StoreNodeExecutionJournal, "open").mockResolvedValue(journal);
+      const handler = central(f, () => { throw new Error("must recover the original step receipt first"); });
+      const original = handler.getMockImplementation()!;
+      handler.mockImplementation(async (operation, raw) => {
+        if (operation === "step" && journal.data.rows.at(-1)?.requestClass === "amazon_orders") {
+          f.stop.abort(); throw new StoreNodeExecutionRpcError("store_node_operation_unknown", true);
+        }
+        return original(operation, raw);
+      });
+      await runStoreNodeExecution({ ...f.options, request: request as typeof fetch });
+      expect(request).toHaveBeenCalledTimes(2); expect(journal.data.rows.at(-1)).toMatchObject({ state: "received", stepAcknowledged: false });
+      expect(journal.data.completion).toBeNull(); handler.mockRestore(); let finished = false;
+      central(f, result => { expect(result).toMatchObject({ outcome: "order_sync", result: { records: [], highWaterAt: input.request.updatedBefore } }); finished = true; });
+      await runStoreNodeExecution({ ...f.options, request: request as typeof fetch, signal: new AbortController().signal, heartbeat: () => null, shouldStop: () => finished });
+      expect(request).toHaveBeenCalledTimes(2); expect(journal.data.completed).toBe(true);
+      expect(journal.data.rows.every(row => row.stepAcknowledged)).toBe(true);
+    } finally { sealed.key.fill(0); await base.close(); }
+  });
+
+  it("advertises order reading alongside the unchanged store operations", async () => {
     const f = await runtimeFixture();
     try {
       vi.spyOn(StoreNodeExecutionJournal, "open").mockResolvedValue(null);
       vi.spyOn(StoreNodeExecutionTransport.prototype, "call").mockImplementation(async (operation, raw) => {
         expect(operation).toBe("claim"); expect(StoreNodeExecutionClaimInputSchema.parse(raw).supportedOperations)
-          .toEqual([STORE_NODE_EXECUTION_OPERATION, "marketplace.publication.validation-preview.v1", STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION]);
+          .toEqual([STORE_NODE_EXECUTION_OPERATION, "marketplace.publication.validation-preview.v1", STORE_NODE_PUBLICATION_SUBMIT_OPERATION, STORE_NODE_PUBLICATION_STATUS_OPERATION, STORE_NODE_ORDER_SYNC_OPERATION]);
         f.stop.abort(); return { protocol: STORE_NODE_EXECUTION_PROTOCOL, state: "empty", lease: null, observedAt: new Date().toISOString() };
       });
       await runStoreNodeExecution(f.options); expect(f.request).not.toHaveBeenCalled();

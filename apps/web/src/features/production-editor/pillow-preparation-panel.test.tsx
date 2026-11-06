@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShapedPillowDocument } from "@yummyai/contracts/pod/production-editor";
 import { preflightProductionDocument } from "@yummyai/production-editor";
+import { pinPillowProductionFactory } from "@yummyai/production-editor/products";
+import { createEntityId } from "@yummyai/contracts";
 import { PillowPreparationPanel } from "./pillow-preparation-panel";
 import { createProductionDocument, invalidateProductionEdit, PILLOW_SIZES_IN } from "./production-editor-model";
 
@@ -48,6 +50,16 @@ async function clickSize(inches: number) {
 }
 
 describe("pillow size preset interaction", () => {
+  it("shows the fixed Yicai size and omits the barcode reminder without another operator selection", async () => {
+    const template = pillow();
+    template.spec.declaredLongestMm = 16 * 25.4;
+    const draft = pinPillowProductionFactory(template, { factoryId: createEntityId(), documentProfileVersionId: createEntityId(), adapter: "yicai_folder", sizeIn: 16 });
+    const view = await mount(draft);
+    expect(host.textContent).toContain("16 in / 400.0 mm");
+    expect(host.textContent).toContain("义彩工艺省略底部条码框");
+    expect((await clickSize(18)).disabled).toBe(true);
+    expect(view.changed).not.toHaveBeenCalled();
+  });
   it.each(PILLOW_SIZES_IN)("keeps the pinned factory artwork basis when the actual %i in button is clicked", async inches => {
     const source = pillow(); source.spec.sizeBasis = "finished";
     const original = structuredClone(source), view = await mount(source);

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEntityId, type TenantContext } from "@yummyai/contracts";
-import { normalizeModelTokenUsage, type SecretVault } from "@yummyai/ai-core";
+import { normalizeModelTokenUsage, parseModelProviderHttpFailure, type SecretVault } from "@yummyai/ai-core";
 import { withTenant, type DatabaseConnection } from "@yummyai/database";
 import type * as DatabaseModule from "@yummyai/database";
 import sharp from "sharp";
 import { OrderDesignStudioGateway } from "./order-design.processor.js";
 import type { StudioGateway, StudioOutput } from "./studio-generation.gateway.js";
-import type { OrderDesignImageGateway } from "@yummyai/order-design";
+import { OrderDesignProviderRejectedError, type OrderDesignImageGateway } from "@yummyai/order-design";
 
 vi.mock("@yummyai/database", async original => ({ ...await original<typeof DatabaseModule>(), withTenant: vi.fn() }));
 
@@ -60,5 +60,32 @@ describe("order design original provider receipt", () => {
     const unsupported = vi.fn<StudioGateway["generate"]>(async () => ({ bytes, mediaType: "image/png" }));
     expect(await new OrderDesignStudioGateway(database, vault, { generate: unsupported }).generate(input)).toEqual({ bytes, tokenUsage: null });
     expect(input.onReceipt).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { status: 400, type: "image_generation_user_error", code: "moderation_blocked", kind: "moderation" },
+    { status: 429, type: "rate_limit_error", code: "rate_limit_exceeded", kind: "rate_limit" },
+    { status: 500, type: "server_error", code: "internal_error", kind: "unavailable" },
+  ])("carries the original HTTP $status failure into the guarded order processor without resubmission", async failure => {
+    const { input } = await fixture();
+    const upstream = await parseModelProviderHttpFailure(Response.json({ error: {
+      type: failure.type, code: failure.code, message: "synthetic-private-order-error",
+    } }, { status: failure.status, headers: { "x-request-id": "request-order-failure-fixture" } }));
+    const generate = vi.fn<StudioGateway["generate"]>(async () => { throw upstream; });
+    const error = await new OrderDesignStudioGateway(database, vault, { generate }).generate(input).catch(cause => cause);
+    expect(error).toBeInstanceOf(OrderDesignProviderRejectedError);
+    expect(error.failure).toEqual(upstream.failure);
+    expect(error.failure).toMatchObject({ status: failure.status, kind: failure.kind,
+      providerRequestId: "request-order-failure-fixture" });
+    expect(JSON.stringify(error)).not.toContain("synthetic-private-order-error");
+    expect(input.onReceipt).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledOnce();
+  });
+  it("leaves an unknown transport outcome unknown without a fabricated rejection or usage receipt", async () => {
+    const { input } = await fixture();
+    const disconnected = new TypeError("Synthetic connection lost");
+    const generate = vi.fn<StudioGateway["generate"]>(async () => { throw disconnected; });
+    await expect(new OrderDesignStudioGateway(database, vault, { generate }).generate(input)).rejects.toBe(disconnected);
+    expect(input.onReceipt).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledOnce();
   });
 });

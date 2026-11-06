@@ -121,6 +121,24 @@ describe("physical package handover is independent of marketplace acknowledgemen
     await expect(service.dispatch(context, fixture.shipmentId, { expectedVersion: 1, reason: "Duplicate", occurredAt: new Date().toISOString(), idempotencyKey: randomUUID() })).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it("keeps delivery on the prior approval exceptional while the current shipment revision is unreviewed", async () => {
+    const fixture = await shipmentFixture(1), request = await startWriteback(fixture);
+    await service.recordWritebackEvent(context, request.id, { action: "accepted", expectedProjectionVersion: 2,
+      providerCode: "HTTP_200", externalReference: "synthetic-before-revision", occurredAt: new Date().toISOString() });
+    expect((await orderService.get(context, fixture.orderId)).workflowState).toBe("shipped");
+    const editor = await service.versionEditor(context, fixture.shipmentId);
+    await service.appendVersion(context, fixture.shipmentId, { ...editor.content, expectedCurrentVersion: 1, idempotencyKey: randomUUID() });
+    const delivered = await service.recordTrackingEvent(context, fixture.shipmentId, { packageId: fixture.packages[0]!.id,
+      status: "delivered", provider: "synthetic", externalEventId: randomUUID(), detailCode: "DELIVERED",
+      occurredAt: new Date().toISOString(), estimatedDeliveryAt: null });
+    expect(delivered.tracking).toHaveLength(1);
+    expect(delivered.shipment).toMatchObject({ status: "exception", currentVersionNumber: 2, approvedVersionNumber: 1 });
+    expect((await orderService.get(context, fixture.orderId)).workflowState).toBe("shipped");
+    expect(await orderService.exceptions(context, fixture.orderId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "PRODUCTION_SOURCE_CHANGED_AT_HANDOVER" }),
+    ]));
+  });
+
   it("retains actual tracking on other versions without borrowing current approval and enforces tenant isolation", async () => {
     const fixture = await shipmentFixture(1);
     const editor = await service.versionEditor(context, fixture.shipmentId);

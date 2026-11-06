@@ -57,6 +57,7 @@ export function OrderWorkbenchFilters({ query, options, disabled, onSubmit, onCl
         </div>
       </div>
       <input type="hidden" name="caseScope" value={params.get("caseScope") ?? ""} />
+      <input type="hidden" name="focus" value={params.get("focus") ?? ""} />
       <input type="hidden" name="attention" value={params.get("attention") ?? ""} />
       <input type="hidden" name="timeZone" value={Intl.DateTimeFormat().resolvedOptions().timeZone} />
       <div className="oc-operations-quick-filters" role="group" aria-label="优先处理筛选">

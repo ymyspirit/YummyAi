@@ -7,7 +7,7 @@ import { specificationProductionFactsReady } from "@yummyai/contracts/catalog/sp
 import { assertCatalogSourceActive, assertCatalogSpuAccess, currentCatalogContext } from "@yummyai/catalog-core";
 import { manufacturingRecipes as recipes, manufacturingRecipeVersions as versions, manufacturingRecipeReviews as reviews,
   spus, productSpecifications, productSpecificationVersions, inventoryStockItems, salesRecipeVersions, printProfileVersions, skus, type TenantTransaction } from "@yummyai/database";
-import { and, asc, desc, lt, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, lt, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { throwCatalogFailure } from "./catalog-access.js";
 import { readManufacturingVersion } from "./manufacturing-read.js";
@@ -123,7 +123,7 @@ export async function manufacturingSku(tx: TenantTransaction, skuId: string | nu
   return sku.id;
 }
 
-export async function productionManufacturingOptions(tx: TenantTransaction, input: TenantContext, specificationVersionId: string | null, after?: string) {
+export async function productionManufacturingOptions(tx: TenantTransaction, input: TenantContext, specificationVersionId: string | null, after?: string, factoryId?: string) {
   try {
     const current = await currentCatalogContext(tx, input); authorize(current, Permission.ProductRead);
     const contextAuthority = catalogContextAuthority(current);
@@ -136,15 +136,23 @@ export async function productionManufacturingOptions(tx: TenantTransaction, inpu
     await assertCatalogSourceActive(tx, source.identity.spuId);
     if (!source.specification.processProfileVersionId || !specificationProductionFactsReady(source.specification.facts)) return ProductionManufacturingOptionsSchema.parse({ source: null, items: [], nextCursor: null, contextAuthority,
       diagnostics: ["原产品规格的工艺、尺寸口径或制造事实不完整 请核对新的审单及审核稿"] });
-    const rows = await tx.select({ root: recipes, version: versions, approvedAt: reviews.createdAt }).from(versions)
+    const outsourcedFactory = sql<string | null>`(select op.payload->>'outsourcedFactoryId' from manufacturing_operations op
+      where op.tenant_id=${versions.tenantId} and op.version_id=${versions.id} and op.payload ? 'outsourcedFactoryId' limit 1)`;
+    const rows = await tx.select({ root: recipes, version: versions, approvedAt: reviews.createdAt, outsourcedFactoryId: outsourcedFactory }).from(versions)
       .innerJoin(recipes, eq(recipes.id, versions.recipeId)).innerJoin(reviews, eq(reviews.versionId, versions.id))
-      .where(and(eq(versions.specificationVersionId, specificationVersionId), eq(reviews.decision, "approved"), isNull(recipes.archivedAt), after ? lt(versions.id, z.uuidv7().parse(after)) : undefined))
+      .where(and(eq(versions.specificationVersionId, specificationVersionId), eq(reviews.decision, "approved"), isNull(recipes.archivedAt),
+        factoryId ? sql`(${outsourcedFactory} is null or (${outsourcedFactory}=${z.uuidv7().parse(factoryId)}
+          and not exists(select 1 from manufacturing_recipe_versions newer join manufacturing_recipe_reviews review
+            on review.tenant_id=newer.tenant_id and review.version_id=newer.id and review.decision='approved'
+            where newer.tenant_id=${versions.tenantId} and newer.recipe_id=${versions.recipeId} and newer.version_number>${versions.versionNumber})))` : undefined,
+        after ? lt(versions.id, z.uuidv7().parse(after)) : undefined))
       .orderBy(desc(versions.id)).limit(26);
     const page = rows.slice(0, 25);
     return ProductionManufacturingOptionsSchema.parse({ source: { specificationVersionId, specificationId: source.identity.id, spuId: source.identity.spuId,
       name: source.specification.name, versionNumber: source.specification.versionNumber, packageContents: source.specification.facts.packageContents,
       packageQuantity: source.specification.facts.packageQuantity, processProfileVersionId: source.specification.processProfileVersionId },
-      items: page.map(({ root, version, approvedAt }) => ({ versionId: version.id, recipeId: root.id, code: root.code, name: version.name,
+      items: page.map(({ root, version, approvedAt, outsourcedFactoryId }) => ({ versionId: version.id, recipeId: root.id, code: root.code, name: version.name,
+        ...(outsourcedFactoryId ? { outsourcedFactoryId } : {}),
         versionNumber: version.versionNumber, outputQuantity: version.outputQuantity, outputUnit: version.outputUnit, approvedAt: approvedAt.toISOString() })),
       nextCursor: rows.length > 25 ? page.at(-1)!.version.id : null, diagnostics: page.length ? [] : ["原规格尚无已批准制造版本 请商品负责人建立并审核"], contextAuthority });
   } catch (error) { throwCatalogFailure(error); }
